@@ -8,7 +8,7 @@ use merlin::Transcript;
 use criterion::*;
 
 fn snark_encode_benchmark(c: &mut Criterion) {
-  for &s in [10, 12, 16].iter() {
+  for s in 10..21 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_encode_benchmark");
     group.plot_config(plot_config);
@@ -33,7 +33,7 @@ fn snark_encode_benchmark(c: &mut Criterion) {
 }
 
 fn snark_prove_benchmark(c: &mut Criterion) {
-  for &s in [10, 12, 16].iter() {
+  for s in 10..21 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_prove_benchmark");
     group.plot_config(plot_config);
@@ -71,7 +71,7 @@ fn snark_prove_benchmark(c: &mut Criterion) {
 }
 
 fn snark_verify_benchmark(c: &mut Criterion) {
-  for &s in [10, 12, 16].iter() {
+  for s in 10..21 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_verify_benchmark");
     group.plot_config(plot_config);

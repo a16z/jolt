@@ -230,7 +230,7 @@ impl BulletReductionProof {
     let scalars = s.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
 
     let G_hat = VariableBaseMSM::multi_scalar_mul(G.as_ref(), scalars.as_ref());
-    println!("a {} s {}", a.len(), s.len());
+
     let a_hat = inner_product(a, &s);
 
     let bases = GroupElement::batch_normalization_into_affine(

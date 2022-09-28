@@ -380,7 +380,7 @@ impl PolyEvalProof {
 
     let L_repr = L.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
     let C_LZ = VariableBaseMSM::multi_scalar_mul(C_affine.as_ref(), L_repr.as_ref());
-    println!("\n\n here \n\n");
+
     self
       .proof
       .verify(R.len(), &gens.gens, transcript, &R, &C_LZ, C_Zr)
@@ -594,7 +594,7 @@ mod tests {
     );
 
     let mut verifier_transcript = Transcript::new(b"example");
-    println!("\n\n here1 \n\n");
+
     assert!(proof
       .verify(&gens, &mut verifier_transcript, &r, &C_Zr, &poly_commitment)
       .is_ok());

@@ -57,6 +57,10 @@ harness = false
 
 [features]
 # default = ["curve25519-dalek/simd_backend"]
-default = [ "ark-ec/parallel" ]
+default = [ 
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",    
+]
 multicore = ["rayon"]
 profile = []

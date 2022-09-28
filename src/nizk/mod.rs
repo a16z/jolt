@@ -581,12 +581,12 @@ impl DotProductProofLog {
     let delta_s = self.delta;
     let z1_s = &self.z1;
     let z2_s = &self.z2;
-    println!("\n\n here3 \n\n");
+
     let lhs = (Gamma_hat.mul(c_s) + beta_s).mul(a_hat_s) + delta_s;
     let rhs = (g_hat + gens.gens_1.G[0].mul(a_hat_s)).mul(z1_s) + gens.gens_1.h.mul(z2_s);
-    println!("\n\n here4 \n\n");
+
     assert_eq!(lhs, rhs);
-    println!("\n\n here5 \n\n");
+
     if lhs == rhs {
       Ok(())
     } else {
