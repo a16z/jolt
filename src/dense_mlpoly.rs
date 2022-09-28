@@ -1,15 +1,19 @@
 #![allow(clippy::too_many_arguments)]
 use super::commitments::{Commitments, MultiCommitGens};
 use super::errors::ProofVerifyError;
-use super::group::{CompressedGroup, GroupElement, VartimeMultiscalarMul};
+use super::group::GroupElement;
 use super::math::Math;
 use super::nizk::{DotProductProofGens, DotProductProofLog};
 use super::random::RandomTape;
 use super::scalar::Scalar;
 use super::transcript::{AppendToTranscript, ProofTranscript};
+use ark_ec::msm::VariableBaseMSM;
+use ark_ec::ProjectiveCurve;
+use ark_ff::PrimeField;
+use ark_serialize::*;
+use ark_std::{One, Zero};
 use core::ops::Index;
 use merlin::Transcript;
-use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
@@ -38,14 +42,14 @@ pub struct PolyCommitmentBlinds {
   blinds: Vec<Scalar>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyCommitment {
-  C: Vec<CompressedGroup>,
+  C: Vec<GroupElement>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ConstPolyCommitment {
-  C: CompressedGroup,
+  C: GroupElement,
 }
 
 pub struct EqPolynomial {
@@ -166,11 +170,7 @@ impl DensePolynomial {
     let R_size = self.Z.len() / L_size;
     assert_eq!(L_size * R_size, self.Z.len());
     let C = (0..L_size)
-      .map(|i| {
-        self.Z[R_size * i..R_size * (i + 1)]
-          .commit(&blinds[i], gens)
-          .compress()
-      })
+      .map(|i| self.Z[R_size * i..R_size * (i + 1)].commit(&blinds[i], gens))
       .collect();
     PolyCommitment { C }
   }
@@ -214,7 +214,7 @@ impl DensePolynomial {
   pub fn bound_poly_var_top(&mut self, r: &Scalar) {
     let n = self.len() / 2;
     for i in 0..n {
-      self.Z[i] = self.Z[i] + r * (self.Z[i + n] - self.Z[i]);
+      self.Z[i] = self.Z[i] + *r * (self.Z[i + n] - self.Z[i]);
     }
     self.num_vars -= 1;
     self.len = n;
@@ -223,7 +223,7 @@ impl DensePolynomial {
   pub fn bound_poly_var_bot(&mut self, r: &Scalar) {
     let n = self.len() / 2;
     for i in 0..n {
-      self.Z[i] = self.Z[2 * i] + r * (self.Z[2 * i + 1] - self.Z[2 * i]);
+      self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
     }
     self.num_vars -= 1;
     self.len = n;
@@ -296,7 +296,7 @@ impl AppendToTranscript for PolyCommitment {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyEvalProof {
   proof: DotProductProofLog,
 }
@@ -315,7 +315,7 @@ impl PolyEvalProof {
     gens: &PolyCommitmentGens,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape,
-  ) -> (PolyEvalProof, CompressedGroup) {
+  ) -> (PolyEvalProof, GroupElement) {
     transcript.append_protocol_name(PolyEvalProof::protocol_name());
 
     // assert vectors are of the right size
@@ -365,8 +365,8 @@ impl PolyEvalProof {
     &self,
     gens: &PolyCommitmentGens,
     transcript: &mut Transcript,
-    r: &[Scalar],           // point at which the polynomial is evaluated
-    C_Zr: &CompressedGroup, // commitment to \widetilde{Z}(r)
+    r: &[Scalar],        // point at which the polynomial is evaluated
+    C_Zr: &GroupElement, // commitment to \widetilde{Z}(r)
     comm: &PolyCommitment,
   ) -> Result<(), ProofVerifyError> {
     transcript.append_protocol_name(PolyEvalProof::protocol_name());
@@ -376,10 +376,11 @@ impl PolyEvalProof {
     let (L, R) = eq.compute_factored_evals();
 
     // compute a weighted sum of commitments and L
-    let C_decompressed = comm.C.iter().map(|pt| pt.decompress().unwrap());
+    let C_affine = GroupElement::batch_normalization_into_affine(&comm.C);
 
-    let C_LZ = GroupElement::vartime_multiscalar_mul(&L, C_decompressed).compress();
-
+    let L_repr = L.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+    let C_LZ = VariableBaseMSM::multi_scalar_mul(C_affine.as_ref(), L_repr.as_ref());
+    println!("\n\n here \n\n");
     self
       .proof
       .verify(R.len(), &gens.gens, transcript, &R, &C_LZ, C_Zr)
@@ -394,7 +395,7 @@ impl PolyEvalProof {
     comm: &PolyCommitment,
   ) -> Result<(), ProofVerifyError> {
     // compute a commitment to Zr with a blind of zero
-    let C_Zr = Zr.commit(&Scalar::zero(), &gens.gens.gens_1).compress();
+    let C_Zr = Zr.commit(&Scalar::zero(), &gens.gens.gens_1);
 
     self.verify(gens, transcript, r, &C_Zr, comm)
   }
@@ -402,9 +403,9 @@ impl PolyEvalProof {
 
 #[cfg(test)]
 mod tests {
-  use super::super::scalar::ScalarFromPrimitives;
   use super::*;
-  use rand::rngs::OsRng;
+  use ark_std::test_rng;
+  use ark_std::UniformRand;
 
   fn evaluate_with_LR(Z: &[Scalar], r: &[Scalar]) -> Scalar {
     let eq = EqPolynomial::new(r.to_vec());
@@ -432,19 +433,19 @@ mod tests {
     // Z = [1, 2, 1, 4]
     let Z = vec![
       Scalar::one(),
-      (2_usize).to_scalar(),
-      (1_usize).to_scalar(),
-      (4_usize).to_scalar(),
+      Scalar::from(2u64),
+      Scalar::one(),
+      Scalar::from(4u64),
     ];
 
     // r = [4,3]
-    let r = vec![(4_usize).to_scalar(), (3_usize).to_scalar()];
+    let r = vec![Scalar::from(4u64), Scalar::from(3u64)];
 
     let eval_with_LR = evaluate_with_LR(&Z, &r);
     let poly = DensePolynomial::new(Z);
 
     let eval = poly.evaluate(&r);
-    assert_eq!(eval, (28_usize).to_scalar());
+    assert_eq!(eval, Scalar::from(28u64));
     assert_eq!(eval_with_LR, eval);
   }
 
@@ -518,12 +519,12 @@ mod tests {
 
   #[test]
   fn check_memoized_chis() {
-    let mut csprng: OsRng = OsRng;
+    let mut prng = test_rng();
 
     let s = 10;
     let mut r: Vec<Scalar> = Vec::new();
     for _i in 0..s {
-      r.push(Scalar::random(&mut csprng));
+      r.push(Scalar::rand(&mut prng));
     }
     let chis = tests::compute_chis_at_r(&r);
     let chis_m = EqPolynomial::new(r).evals();
@@ -532,12 +533,12 @@ mod tests {
 
   #[test]
   fn check_factored_chis() {
-    let mut csprng: OsRng = OsRng;
+    let mut prng = test_rng();
 
     let s = 10;
     let mut r: Vec<Scalar> = Vec::new();
     for _i in 0..s {
-      r.push(Scalar::random(&mut csprng));
+      r.push(Scalar::rand(&mut prng));
     }
     let chis = EqPolynomial::new(r.clone()).evals();
     let (L, R) = EqPolynomial::new(r).compute_factored_evals();
@@ -547,12 +548,12 @@ mod tests {
 
   #[test]
   fn check_memoized_factored_chis() {
-    let mut csprng: OsRng = OsRng;
+    let mut prng = test_rng();
 
     let s = 10;
     let mut r: Vec<Scalar> = Vec::new();
     for _i in 0..s {
-      r.push(Scalar::random(&mut csprng));
+      r.push(Scalar::rand(&mut prng));
     }
     let (L, R) = tests::compute_factored_chis_at_r(&r);
     let eq = EqPolynomial::new(r);
@@ -564,17 +565,17 @@ mod tests {
   #[test]
   fn check_polynomial_commit() {
     let Z = vec![
-      (1_usize).to_scalar(),
-      (2_usize).to_scalar(),
-      (1_usize).to_scalar(),
-      (4_usize).to_scalar(),
+      Scalar::one(),
+      Scalar::from(2u64),
+      Scalar::one(),
+      Scalar::from(4u64),
     ];
     let poly = DensePolynomial::new(Z);
 
     // r = [4,3]
-    let r = vec![(4_usize).to_scalar(), (3_usize).to_scalar()];
+    let r = vec![Scalar::from(4u64), Scalar::from(3u64)];
     let eval = poly.evaluate(&r);
-    assert_eq!(eval, (28_usize).to_scalar());
+    assert_eq!(eval, Scalar::from(28u64));
 
     let gens = PolyCommitmentGens::new(poly.get_num_vars(), b"test-two");
     let (poly_commitment, blinds) = poly.commit(&gens, None);
@@ -593,6 +594,7 @@ mod tests {
     );
 
     let mut verifier_transcript = Transcript::new(b"example");
+    println!("\n\n here1 \n\n");
     assert!(proof
       .verify(&gens, &mut verifier_transcript, &r, &C_Zr, &poly_commitment)
       .is_ok());

@@ -10,12 +10,14 @@ use super::sparse_mlpoly::{
   SparseMatPolyCommitmentGens, SparseMatPolyEvalProof, SparseMatPolynomial,
 };
 use super::timer::Timer;
-use flate2::{write::ZlibEncoder, Compression};
+use ark_ff::Field;
+use ark_serialize::*;
+use ark_std::test_rng;
+use ark_std::UniformRand;
+use ark_std::{One, Zero};
 use merlin::Transcript;
-use rand::rngs::OsRng;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSInstance {
   num_cons: usize,
   num_vars: usize,
@@ -27,10 +29,10 @@ pub struct R1CSInstance {
 
 impl AppendToTranscript for R1CSInstance {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    bincode::serialize_into(&mut encoder, &self).unwrap();
-    let bytes = encoder.finish().unwrap();
-    transcript.append_message(b"R1CSInstance", &bytes);
+    let mut data = vec![];
+    self.serialize(&mut data).unwrap();
+
+    transcript.append_message(b"R1CSInstance", &data);
   }
 }
 
@@ -55,7 +57,7 @@ impl R1CSCommitmentGens {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSCommitment {
   num_cons: usize,
   num_vars: usize,
@@ -164,7 +166,7 @@ impl R1CSInstance {
     Timer::print(&format!("number_of_variables {}", num_vars));
     Timer::print(&format!("number_of_inputs {}", num_inputs));
 
-    let mut csprng: OsRng = OsRng;
+    let mut prng = test_rng();
 
     // assert num_cons and num_vars are power of 2
     assert_eq!((num_cons.log_2() as usize).pow2(), num_cons);
@@ -179,7 +181,7 @@ impl R1CSInstance {
     // produce a random satisfying assignment
     let Z = {
       let mut Z: Vec<Scalar> = (0..size_z)
-        .map(|_i| Scalar::random(&mut csprng))
+        .map(|_i| Scalar::rand(&mut prng))
         .collect::<Vec<Scalar>>();
       Z[num_vars] = Scalar::one(); // set the constant term to 1
       Z
@@ -206,7 +208,7 @@ impl R1CSInstance {
         C.push(SparseMatEntry::new(
           i,
           C_idx,
-          AB_val * C_val.invert().unwrap(),
+          AB_val * C_val.inverse().unwrap(),
         ));
       }
     }
@@ -319,7 +321,7 @@ impl R1CSInstance {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSEvalProof {
   proof: SparseMatPolyEvalProof,
 }

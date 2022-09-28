@@ -3,18 +3,22 @@
 use super::commitments::{Commitments, MultiCommitGens};
 use super::dense_mlpoly::DensePolynomial;
 use super::errors::ProofVerifyError;
-use super::group::{CompressedGroup, GroupElement, VartimeMultiscalarMul};
+use super::group::GroupElement;
 use super::nizk::DotProductProof;
 use super::random::RandomTape;
 use super::scalar::Scalar;
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use super::unipoly::{CompressedUniPoly, UniPoly};
-use core::iter;
+use ark_ec::msm::VariableBaseMSM;
+use ark_ec::ProjectiveCurve;
+use ark_ff::PrimeField;
+use ark_serialize::*;
+use ark_std::{One, Zero};
+
 use itertools::izip;
 use merlin::Transcript;
-use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct SumcheckInstanceProof {
   compressed_polys: Vec<CompressedUniPoly>,
 }
@@ -61,17 +65,17 @@ impl SumcheckInstanceProof {
   }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct ZKSumcheckInstanceProof {
-  comm_polys: Vec<CompressedGroup>,
-  comm_evals: Vec<CompressedGroup>,
+  comm_polys: Vec<GroupElement>,
+  comm_evals: Vec<GroupElement>,
   proofs: Vec<DotProductProof>,
 }
 
 impl ZKSumcheckInstanceProof {
   pub fn new(
-    comm_polys: Vec<CompressedGroup>,
-    comm_evals: Vec<CompressedGroup>,
+    comm_polys: Vec<GroupElement>,
+    comm_evals: Vec<GroupElement>,
     proofs: Vec<DotProductProof>,
   ) -> Self {
     ZKSumcheckInstanceProof {
@@ -83,13 +87,13 @@ impl ZKSumcheckInstanceProof {
 
   pub fn verify(
     &self,
-    comm_claim: &CompressedGroup,
+    comm_claim: &GroupElement,
     num_rounds: usize,
     degree_bound: usize,
     gens_1: &MultiCommitGens,
     gens_n: &MultiCommitGens,
     transcript: &mut Transcript,
-  ) -> Result<(CompressedGroup, Vec<Scalar>), ProofVerifyError> {
+  ) -> Result<(GroupElement, Vec<Scalar>), ProofVerifyError> {
     // verify degree bound
     assert_eq!(gens_n.n, degree_bound + 1);
 
@@ -124,14 +128,10 @@ impl ZKSumcheckInstanceProof {
         let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
 
         // compute a weighted sum of the RHS
-        let comm_target = GroupElement::vartime_multiscalar_mul(
-          w.iter(),
-          iter::once(&comm_claim_per_round)
-            .chain(iter::once(&comm_eval))
-            .map(|pt| pt.decompress().unwrap())
-            .collect::<Vec<GroupElement>>(),
-        )
-        .compress();
+        let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+        let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
+
+        let comm_target = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), w_repr.as_ref());
 
         let a = {
           // the vector to use to decommit for sum-check test
@@ -445,11 +445,11 @@ impl ZKSumcheckInstanceProof {
       random_tape.random_vector(b"blinds_evals", num_rounds),
     );
     let mut claim_per_round = *claim;
-    let mut comm_claim_per_round = claim_per_round.commit(blind_claim, gens_1).compress();
+    let mut comm_claim_per_round = claim_per_round.commit(blind_claim, gens_1);
 
     let mut r: Vec<Scalar> = Vec::new();
-    let mut comm_polys: Vec<CompressedGroup> = Vec::new();
-    let mut comm_evals: Vec<CompressedGroup> = Vec::new();
+    let mut comm_polys: Vec<GroupElement> = Vec::new();
+    let mut comm_evals: Vec<GroupElement> = Vec::new();
     let mut proofs: Vec<DotProductProof> = Vec::new();
 
     for j in 0..num_rounds {
@@ -470,7 +470,7 @@ impl ZKSumcheckInstanceProof {
 
         let evals = vec![eval_point_0, claim_per_round - eval_point_0, eval_point_2];
         let poly = UniPoly::from_evals(&evals);
-        let comm_poly = poly.commit(gens_n, &blinds_poly[j]).compress();
+        let comm_poly = poly.commit(gens_n, &blinds_poly[j]);
         (poly, comm_poly)
       };
 
@@ -488,7 +488,7 @@ impl ZKSumcheckInstanceProof {
       // produce a proof of sum-check and of evaluation
       let (proof, claim_next_round, comm_claim_next_round) = {
         let eval = poly.evaluate(&r_j);
-        let comm_eval = eval.commit(&blinds_evals[j], gens_1).compress();
+        let comm_eval = eval.commit(&blinds_evals[j], gens_1);
 
         // we need to prove the following under homomorphic commitments:
         // (1) poly(0) + poly(1) = claim_per_round
@@ -508,14 +508,10 @@ impl ZKSumcheckInstanceProof {
 
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
-        let comm_target = GroupElement::vartime_multiscalar_mul(
-          w.iter(),
-          iter::once(&comm_claim_per_round)
-            .chain(iter::once(&comm_eval))
-            .map(|pt| pt.decompress().unwrap())
-            .collect::<Vec<GroupElement>>(),
-        )
-        .compress();
+
+        let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+        let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
+        let comm_target = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), w_repr.as_ref());
 
         let blind = {
           let blind_sc = if j == 0 {
@@ -528,7 +524,7 @@ impl ZKSumcheckInstanceProof {
 
           w[0] * blind_sc + w[1] * blind_eval
         };
-        assert_eq!(target.commit(&blind, gens_1).compress(), comm_target);
+        assert_eq!(target.commit(&blind, gens_1), comm_target);
 
         let a = {
           // the vector to use to decommit for sum-check test
@@ -608,11 +604,11 @@ impl ZKSumcheckInstanceProof {
     );
 
     let mut claim_per_round = *claim;
-    let mut comm_claim_per_round = claim_per_round.commit(blind_claim, gens_1).compress();
+    let mut comm_claim_per_round = claim_per_round.commit(blind_claim, gens_1);
 
     let mut r: Vec<Scalar> = Vec::new();
-    let mut comm_polys: Vec<CompressedGroup> = Vec::new();
-    let mut comm_evals: Vec<CompressedGroup> = Vec::new();
+    let mut comm_polys: Vec<GroupElement> = Vec::new();
+    let mut comm_evals: Vec<GroupElement> = Vec::new();
     let mut proofs: Vec<DotProductProof> = Vec::new();
 
     for j in 0..num_rounds {
@@ -658,7 +654,7 @@ impl ZKSumcheckInstanceProof {
           eval_point_3,
         ];
         let poly = UniPoly::from_evals(&evals);
-        let comm_poly = poly.commit(gens_n, &blinds_poly[j]).compress();
+        let comm_poly = poly.commit(gens_n, &blinds_poly[j]);
         (poly, comm_poly)
       };
 
@@ -678,7 +674,7 @@ impl ZKSumcheckInstanceProof {
       // produce a proof of sum-check and of evaluation
       let (proof, claim_next_round, comm_claim_next_round) = {
         let eval = poly.evaluate(&r_j);
-        let comm_eval = eval.commit(&blinds_evals[j], gens_1).compress();
+        let comm_eval = eval.commit(&blinds_evals[j], gens_1);
 
         // we need to prove the following under homomorphic commitments:
         // (1) poly(0) + poly(1) = claim_per_round
@@ -698,14 +694,11 @@ impl ZKSumcheckInstanceProof {
 
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
-        let comm_target = GroupElement::vartime_multiscalar_mul(
-          w.iter(),
-          iter::once(&comm_claim_per_round)
-            .chain(iter::once(&comm_eval))
-            .map(|pt| pt.decompress().unwrap())
-            .collect::<Vec<GroupElement>>(),
-        )
-        .compress();
+
+        let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+        let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
+
+        let comm_target = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), w_repr.as_ref());
 
         let blind = {
           let blind_sc = if j == 0 {
@@ -719,7 +712,7 @@ impl ZKSumcheckInstanceProof {
           w[0] * blind_sc + w[1] * blind_eval
         };
 
-        assert_eq!(target.commit(&blind, gens_1).compress(), comm_target);
+        assert_eq!(target.commit(&blind, gens_1), comm_target);
 
         let a = {
           // the vector to use to decommit for sum-check test

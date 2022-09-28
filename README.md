@@ -103,13 +103,14 @@ Here is another example to use the NIZK variant of the Spartan proof system:
 Finally, we provide an example that specifies a custom R1CS instance instead of using a synthetic instance
 ```rust
 #![allow(non_snake_case)]
-# extern crate curve25519_dalek;
 # extern crate libspartan;
 # extern crate merlin;
-# use curve25519_dalek::scalar::Scalar;
-# use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK};
+# use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK, Scalar};
 # use merlin::Transcript;
-# use rand::rngs::OsRng;
+# use ark_std::test_rng;
+# use ark_std::{One, Zero};
+# use ark_std::UniformRand;
+#
 # fn main() {
   // produce a tiny instance
   let (
@@ -171,16 +172,16 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 
   // We will encode the above constraints into three matrices, where
   // the coefficients in the matrix are in the little-endian byte order
-  let mut A: Vec<(usize, usize, [u8; 32])> = Vec::new();
-  let mut B: Vec<(usize, usize, [u8; 32])> = Vec::new();
-  let mut C: Vec<(usize, usize, [u8; 32])> = Vec::new();
+  let mut A: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut B: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut C: Vec<(usize, usize, Scalar)> = Vec::new();
 
   // The constraint system is defined over a finite field, which in our case is
   // the scalar field of ristreeto255/curve25519 i.e., p =  2^{252}+27742317777372353535851937790883648493
   // To construct these matrices, we will use `curve25519-dalek` but one can use any other method.
 
   // a variable that holds a byte representation of 1
-  let one = Scalar::one().to_bytes();
+  let one = Scalar::one();
 
   // R1CS is a set of three sparse matrices A B C, where is a row for every 
   // constraint and a column for every entry in z = (vars, 1, inputs)
@@ -210,28 +211,28 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
   let inst = Instance::new(num_cons, num_vars, num_inputs, &A, &B, &C).unwrap();
 
   // compute a satisfying assignment
-  let mut csprng: OsRng = OsRng;
-  let i0 = Scalar::random(&mut csprng);
-  let i1 = Scalar::random(&mut csprng);
-  let z0 = Scalar::random(&mut csprng);
-  let z1 = Scalar::random(&mut csprng);
+  let mut prng = test_rng();
+  let i0 = Scalar::rand(&mut prng);
+  let i1 = Scalar::rand(&mut prng);
+  let z0 = Scalar::rand(&mut prng);
+  let z1 = Scalar::rand(&mut prng);
   let z2 = (z0 + z1) * i0; // constraint 0
   let z3 = (z0 + i1) * z2; // constraint 1
   let z4 = Scalar::zero(); //constraint 2
 
   // create a VarsAssignment
-  let mut vars = vec![Scalar::zero().to_bytes(); num_vars];
-  vars[0] = z0.to_bytes();
-  vars[1] = z1.to_bytes();
-  vars[2] = z2.to_bytes();
-  vars[3] = z3.to_bytes();
-  vars[4] = z4.to_bytes();
+  let mut vars = vec![Scalar::zero(); num_vars];
+  vars[0] = z0;
+  vars[1] = z1;
+  vars[2] = z2;
+  vars[3] = z3;
+  vars[4] = z4;
   let assignment_vars = VarsAssignment::new(&vars).unwrap();
 
   // create an InputsAssignment
-  let mut inputs = vec![Scalar::zero().to_bytes(); num_inputs];
-  inputs[0] = i0.to_bytes();
-  inputs[1] = i1.to_bytes();
+  let mut inputs = vec![Scalar::zero(); num_inputs];
+  inputs[0] = i0;
+  inputs[1] = i1;
   let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
   
   // check if the instance we created is satisfiable

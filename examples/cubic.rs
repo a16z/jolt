@@ -9,10 +9,11 @@
 //!
 //! [here]: https://medium.com/@VitalikButerin/quadratic-arithmetic-programs-from-zero-to-hero-f6d558cea649
 #![allow(clippy::assertions_on_result_states)]
-use curve25519_dalek::scalar::Scalar;
-use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK};
+use ark_std::test_rng;
+use ark_std::UniformRand;
+use ark_std::{One, Zero};
+use libspartan::{InputsAssignment, Instance, SNARKGens, Scalar, VarsAssignment, SNARK};
 use merlin::Transcript;
-use rand::rngs::OsRng;
 
 #[allow(non_snake_case)]
 fn produce_r1cs() -> (
@@ -32,11 +33,11 @@ fn produce_r1cs() -> (
 
   // We will encode the above constraints into three matrices, where
   // the coefficients in the matrix are in the little-endian byte order
-  let mut A: Vec<(usize, usize, [u8; 32])> = Vec::new();
-  let mut B: Vec<(usize, usize, [u8; 32])> = Vec::new();
-  let mut C: Vec<(usize, usize, [u8; 32])> = Vec::new();
+  let mut A: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut B: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut C: Vec<(usize, usize, Scalar)> = Vec::new();
 
-  let one = Scalar::one().to_bytes();
+  let one = Scalar::one();
 
   // R1CS is a set of three sparse matrices A B C, where is a row for every
   // constraint and a column for every entry in z = (vars, 1, inputs)
@@ -65,31 +66,31 @@ fn produce_r1cs() -> (
   // constraint 3 entries in (A,B,C)
   // constraint 3 is (Z3 + 5) * 1 - I0 = 0.
   A.push((3, 3, one));
-  A.push((3, num_vars, Scalar::from(5u32).to_bytes()));
+  A.push((3, num_vars, Scalar::from(5u32)));
   B.push((3, num_vars, one));
   C.push((3, num_vars + 1, one));
 
   let inst = Instance::new(num_cons, num_vars, num_inputs, &A, &B, &C).unwrap();
 
   // compute a satisfying assignment
-  let mut csprng: OsRng = OsRng;
-  let z0 = Scalar::random(&mut csprng);
+  let mut prng = test_rng();
+  let z0 = Scalar::rand(&mut prng);
   let z1 = z0 * z0; // constraint 0
   let z2 = z1 * z0; // constraint 1
   let z3 = z2 + z0; // constraint 2
   let i0 = z3 + Scalar::from(5u32); // constraint 3
 
   // create a VarsAssignment
-  let mut vars = vec![Scalar::zero().to_bytes(); num_vars];
-  vars[0] = z0.to_bytes();
-  vars[1] = z1.to_bytes();
-  vars[2] = z2.to_bytes();
-  vars[3] = z3.to_bytes();
+  let mut vars = vec![Scalar::zero(); num_vars];
+  vars[0] = z0;
+  vars[1] = z1;
+  vars[2] = z2;
+  vars[3] = z3;
   let assignment_vars = VarsAssignment::new(&vars).unwrap();
 
   // create an InputsAssignment
-  let mut inputs = vec![Scalar::zero().to_bytes(); num_inputs];
-  inputs[0] = i0.to_bytes();
+  let mut inputs = vec![Scalar::zero(); num_inputs];
+  inputs[0] = i0;
   let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
 
   // check if the instance we created is satisfiable

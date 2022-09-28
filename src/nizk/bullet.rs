@@ -4,18 +4,21 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 use super::super::errors::ProofVerifyError;
-use super::super::group::{CompressedGroup, GroupElement, VartimeMultiscalarMul};
+use super::super::group::GroupElement;
 use super::super::math::Math;
 use super::super::scalar::Scalar;
 use super::super::transcript::ProofTranscript;
+use ark_ec::{msm::VariableBaseMSM, ProjectiveCurve};
+use ark_ff::{Field, PrimeField};
+use ark_serialize::*;
+use ark_std::{One, Zero};
 use core::iter;
 use merlin::Transcript;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BulletReductionProof {
-  L_vec: Vec<CompressedGroup>,
-  R_vec: Vec<CompressedGroup>,
+  L_vec: Vec<GroupElement>,
+  R_vec: Vec<GroupElement>,
 }
 
 impl BulletReductionProof {
@@ -80,38 +83,59 @@ impl BulletReductionProof {
 
       let (blind_L, blind_R) = blinds_iter.next().unwrap();
 
-      let L = GroupElement::vartime_multiscalar_mul(
-        a_L
-          .iter()
-          .chain(iter::once(&c_L))
-          .chain(iter::once(blind_L)),
-        G_R.iter().chain(iter::once(Q)).chain(iter::once(H)),
-      );
+      let scalars = a_L
+        .iter()
+        .chain(iter::once(&c_L))
+        .chain(iter::once(blind_L))
+        .map(|x| x.into_repr())
+        .collect::<Vec<_>>();
 
-      let R = GroupElement::vartime_multiscalar_mul(
-        a_R
-          .iter()
-          .chain(iter::once(&c_R))
-          .chain(iter::once(blind_R)),
-        G_L.iter().chain(iter::once(Q)).chain(iter::once(H)),
-      );
+      let bases = G_R
+        .iter()
+        .chain(iter::once(Q))
+        .chain(iter::once(H))
+        .map(|x| *x)
+        .collect::<Vec<_>>();
 
-      transcript.append_point(b"L", &L.compress());
-      transcript.append_point(b"R", &R.compress());
+      let bases = GroupElement::batch_normalization_into_affine(bases.as_ref());
+
+      let L = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
+
+      let scalars = a_R
+        .iter()
+        .chain(iter::once(&c_R))
+        .chain(iter::once(blind_R))
+        .map(|x| x.into_repr())
+        .collect::<Vec<_>>();
+
+      let bases = G_L
+        .iter()
+        .chain(iter::once(Q))
+        .chain(iter::once(H))
+        .map(|x| *x)
+        .collect::<Vec<_>>();
+
+      let bases = GroupElement::batch_normalization_into_affine(bases.as_ref());
+
+      let R = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
+
+      transcript.append_point(b"L", &L);
+      transcript.append_point(b"R", &R);
 
       let u = transcript.challenge_scalar(b"u");
-      let u_inv = u.invert().unwrap();
+      let u_inv = u.inverse().unwrap();
 
       for i in 0..n {
         a_L[i] = a_L[i] * u + u_inv * a_R[i];
         b_L[i] = b_L[i] * u_inv + u * b_R[i];
-        G_L[i] = GroupElement::vartime_multiscalar_mul(&[u_inv, u], &[G_L[i], G_R[i]]);
+
+        G_L[i] = G_L[i].mul(u_inv.into_repr()) + G_R[i].mul(u.into_repr());
       }
 
-      blind_fin = blind_fin + blind_L * u * u + blind_R * u_inv * u_inv;
+      blind_fin = blind_fin + *blind_L * u * u + *blind_R * u_inv * u_inv;
 
-      L_vec.push(L.compress());
-      R_vec.push(R.compress());
+      L_vec.push(L);
+      R_vec.push(R);
 
       a = a_L;
       b = b_L;
@@ -119,7 +143,7 @@ impl BulletReductionProof {
     }
 
     let Gamma_hat =
-      GroupElement::vartime_multiscalar_mul(&[a[0], a[0] * b[0], blind_fin], &[G[0], *Q, *H]);
+      G[0].mul(a[0].into_repr()) + Q.mul((a[0] * b[0]).into_repr()) + H.mul(blind_fin.into_repr());
 
     (
       BulletReductionProof { L_vec, R_vec },
@@ -158,8 +182,13 @@ impl BulletReductionProof {
     }
 
     // 2. Compute 1/(u_k...u_1) and 1/u_k, ..., 1/u_1
-    let mut challenges_inv = challenges.clone();
-    let allinv = Scalar::batch_invert(&mut challenges_inv);
+    // let mut challenges_inv = challenges.clone();
+    let mut challenges_inv = challenges
+      .iter()
+      .map(|x| x.inverse().unwrap())
+      .collect::<Vec<_>>();
+    let mut all_inv = Scalar::one();
+    challenges_inv.iter().for_each(|c| all_inv *= *c);
 
     // 3. Compute u_i^2 and (1/u_i)^2
     for i in 0..lg_n {
@@ -170,8 +199,7 @@ impl BulletReductionProof {
     let challenges_inv_sq = challenges_inv;
 
     // 4. Compute s values inductively.
-    let mut s = Vec::with_capacity(n);
-    s.push(allinv);
+    let mut s = vec![all_inv];
     for i in 1..n {
       let lg_i = (32 - 1 - (i as u32).leading_zeros()) as usize;
       let k = 1 << lg_i;
@@ -198,28 +226,26 @@ impl BulletReductionProof {
   ) -> Result<(GroupElement, GroupElement, Scalar), ProofVerifyError> {
     let (u_sq, u_inv_sq, s) = self.verification_scalars(n, transcript)?;
 
-    let Ls = self
-      .L_vec
-      .iter()
-      .map(|p| p.decompress().ok_or(ProofVerifyError::InternalError))
-      .collect::<Result<Vec<_>, _>>()?;
+    let G = GroupElement::batch_normalization_into_affine(G);
+    let scalars = s.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
 
-    let Rs = self
-      .R_vec
-      .iter()
-      .map(|p| p.decompress().ok_or(ProofVerifyError::InternalError))
-      .collect::<Result<Vec<_>, _>>()?;
-
-    let G_hat = GroupElement::vartime_multiscalar_mul(s.iter(), G.iter());
+    let G_hat = VariableBaseMSM::multi_scalar_mul(G.as_ref(), scalars.as_ref());
+    println!("a {} s {}", a.len(), s.len());
     let a_hat = inner_product(a, &s);
 
-    let Gamma_hat = GroupElement::vartime_multiscalar_mul(
-      u_sq
-        .iter()
-        .chain(u_inv_sq.iter())
-        .chain(iter::once(&Scalar::one())),
-      Ls.iter().chain(Rs.iter()).chain(iter::once(Gamma)),
+    let bases = GroupElement::batch_normalization_into_affine(
+      &[self.L_vec.as_slice(), self.R_vec.as_slice(), &[*Gamma]]
+        .concat()
+        .as_ref(),
     );
+    let scalars = u_sq
+      .iter()
+      .chain(u_inv_sq.iter())
+      .chain(iter::once(&Scalar::one()))
+      .map(|x| x.into_repr())
+      .collect::<Vec<_>>();
+
+    let Gamma_hat = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
 
     Ok((G_hat, Gamma_hat, a_hat))
   }

@@ -1,6 +1,13 @@
-use super::group::{GroupElement, VartimeMultiscalarMul, GROUP_BASEPOINT_COMPRESSED};
+use super::group::GroupElement;
 use super::scalar::Scalar;
+use crate::group::group_basepoint_compressed;
+use ark_ec::msm::VariableBaseMSM;
+use ark_ec::ProjectiveCurve;
+use ark_ff::PrimeField;
+use ark_ff::UniformRand;
+use ark_std::rand::SeedableRng;
 use digest::{ExtendableOutput, Input};
+use rand_chacha::ChaCha20Rng;
 use sha3::Shake256;
 use std::io::Read;
 
@@ -15,14 +22,16 @@ impl MultiCommitGens {
   pub fn new(n: usize, label: &[u8]) -> Self {
     let mut shake = Shake256::default();
     shake.input(label);
-    shake.input(GROUP_BASEPOINT_COMPRESSED.as_bytes());
+    shake.input(group_basepoint_compressed().as_slice());
 
     let mut reader = shake.xof_result();
+    let mut seed = [0u8; 32];
+    reader.read_exact(&mut seed).unwrap();
+    let mut rng = ChaCha20Rng::from_seed(seed);
+
     let mut gens: Vec<GroupElement> = Vec::new();
-    let mut uniform_bytes = [0u8; 64];
     for _ in 0..n + 1 {
-      reader.read_exact(&mut uniform_bytes).unwrap();
-      gens.push(GroupElement::from_uniform_bytes(&uniform_bytes));
+      gens.push(GroupElement::rand(&mut rng));
     }
 
     MultiCommitGens {
@@ -65,20 +74,33 @@ pub trait Commitments {
 impl Commitments for Scalar {
   fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
     assert_eq!(gens_n.n, 1);
-    GroupElement::vartime_multiscalar_mul(&[*self, *blind], &[gens_n.G[0], gens_n.h])
+
+    gens_n.G[0].mul(self.into_repr()) + gens_n.h.mul(blind.into_repr())
   }
 }
 
 impl Commitments for Vec<Scalar> {
   fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
     assert_eq!(gens_n.n, self.len());
-    GroupElement::vartime_multiscalar_mul(self, &gens_n.G) + blind * gens_n.h
+
+    let mut bases = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
+    let mut scalars = self.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+    bases.push(gens_n.h.into_affine());
+    scalars.push(blind.into_repr());
+
+    VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref())
   }
 }
 
 impl Commitments for [Scalar] {
   fn commit(&self, blind: &Scalar, gens_n: &MultiCommitGens) -> GroupElement {
     assert_eq!(gens_n.n, self.len());
-    GroupElement::vartime_multiscalar_mul(self, &gens_n.G) + blind * gens_n.h
+
+    let mut bases = ProjectiveCurve::batch_normalization_into_affine(gens_n.G.as_ref());
+    let mut scalars = self.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+    bases.push(gens_n.h.into_affine());
+    scalars.push(blind.into_repr());
+
+    VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref())
   }
 }

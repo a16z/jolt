@@ -12,11 +12,13 @@ use super::random::RandomTape;
 use super::scalar::Scalar;
 use super::timer::Timer;
 use super::transcript::{AppendToTranscript, ProofTranscript};
+use ark_ff::Field;
+use ark_serialize::*;
+use ark_std::{One, Zero};
 use core::cmp::Ordering;
 use merlin::Transcript;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatEntry {
   row: usize,
   col: usize,
@@ -29,7 +31,7 @@ impl SparseMatEntry {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatPolynomial {
   num_vars_x: usize,
   num_vars_y: usize,
@@ -42,7 +44,7 @@ pub struct Derefs {
   comb: DensePolynomial,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DerefsCommitment {
   comm_ops_val: PolyCommitment,
 }
@@ -71,7 +73,7 @@ impl Derefs {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DerefsEvalProof {
   proof_derefs: PolyEvalProof,
 }
@@ -321,7 +323,7 @@ impl SparseMatPolyCommitmentGens {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatPolyCommitment {
   batch_size: usize,
   num_ops: usize,
@@ -464,7 +466,7 @@ impl SparseMatPolynomial {
       .map(|i| {
         let row = self.M[i].row;
         let col = self.M[i].col;
-        let val = &self.M[i].val;
+        let val = self.M[i].val;
         (row, val * z[col])
       })
       .fold(vec![Scalar::zero(); num_rows], |mut Mz, (r, v)| {
@@ -552,9 +554,9 @@ impl Layers {
     let (r_hash, r_multiset_check) = r_mem_check;
 
     //hash(addr, val, ts) = ts * r_hash_sqr + val * r_hash + addr
-    let r_hash_sqr = r_hash * r_hash;
+    let r_hash_sqr = r_hash.square();
     let hash_func = |addr: &Scalar, val: &Scalar, ts: &Scalar| -> Scalar {
-      ts * r_hash_sqr + val * r_hash + addr
+      *ts * r_hash_sqr + *val * *r_hash + *addr
     };
 
     // hash init and audit that does not depend on #instances
@@ -687,7 +689,7 @@ impl PolyEvalNetwork {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct HashLayerProof {
   eval_row: (Vec<Scalar>, Vec<Scalar>, Scalar),
   eval_col: (Vec<Scalar>, Vec<Scalar>, Scalar),
@@ -855,9 +857,9 @@ impl HashLayerProof {
     r_hash: &Scalar,
     r_multiset_check: &Scalar,
   ) -> Result<(), ProofVerifyError> {
-    let r_hash_sqr = r_hash * r_hash;
+    let r_hash_sqr = r_hash.square();
     let hash_func = |addr: &Scalar, val: &Scalar, ts: &Scalar| -> Scalar {
-      ts * r_hash_sqr + val * r_hash + addr
+      *ts * r_hash_sqr + *val * *r_hash + *addr
     };
 
     let (rand_mem, _rand_ops) = rand;
@@ -1032,7 +1034,7 @@ impl HashLayerProof {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct ProductLayerProof {
   eval_row: (Scalar, Vec<Scalar>, Vec<Scalar>, Scalar),
   eval_col: (Scalar, Vec<Scalar>, Vec<Scalar>, Scalar),
@@ -1216,7 +1218,11 @@ impl ProductLayerProof {
       proof_ops,
     };
 
-    let product_layer_proof_encoded: Vec<u8> = bincode::serialize(&product_layer_proof).unwrap();
+    let mut product_layer_proof_encoded = vec![];
+    product_layer_proof
+      .serialize(&mut product_layer_proof_encoded)
+      .unwrap();
+
     let msg = format!(
       "len_product_layer_proof {:?}",
       product_layer_proof_encoded.len()
@@ -1255,7 +1261,7 @@ impl ProductLayerProof {
       .map(|i| row_eval_write[i])
       .product();
     let rs: Scalar = (0..row_eval_read.len()).map(|i| row_eval_read[i]).product();
-    assert_eq!(row_eval_init * ws, rs * row_eval_audit);
+    assert_eq!(*row_eval_init * ws, rs * row_eval_audit);
 
     row_eval_init.append_to_transcript(b"claim_row_eval_init", transcript);
     row_eval_read.append_to_transcript(b"claim_row_eval_read", transcript);
@@ -1270,7 +1276,7 @@ impl ProductLayerProof {
       .map(|i| col_eval_write[i])
       .product();
     let rs: Scalar = (0..col_eval_read.len()).map(|i| col_eval_read[i]).product();
-    assert_eq!(col_eval_init * ws, rs * col_eval_audit);
+    assert_eq!(*col_eval_init * ws, rs * col_eval_audit);
 
     col_eval_init.append_to_transcript(b"claim_col_eval_init", transcript);
     col_eval_read.append_to_transcript(b"claim_col_eval_read", transcript);
@@ -1322,7 +1328,7 @@ impl ProductLayerProof {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct PolyEvalNetworkProof {
   proof_prod_layer: ProductLayerProof,
   proof_hash_layer: HashLayerProof,
@@ -1433,7 +1439,7 @@ impl PolyEvalNetworkProof {
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatPolyEvalProof {
   comm_derefs: DerefsCommitment,
   poly_eval_network_proof: PolyEvalNetworkProof,
@@ -1620,11 +1626,13 @@ impl SparsePolynomial {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use rand::rngs::OsRng;
-  use rand::RngCore;
+  use ark_std::rand::RngCore;
+  use ark_std::test_rng;
+  use ark_std::UniformRand;
+
   #[test]
   fn check_sparse_polyeval_proof() {
-    let mut csprng: OsRng = OsRng;
+    let mut prng = test_rng();
 
     let num_nz_entries: usize = 256;
     let num_rows: usize = 256;
@@ -1636,9 +1644,9 @@ mod tests {
 
     for _i in 0..num_nz_entries {
       M.push(SparseMatEntry::new(
-        (csprng.next_u64() % (num_rows as u64)) as usize,
-        (csprng.next_u64() % (num_cols as u64)) as usize,
-        Scalar::random(&mut csprng),
+        (prng.next_u64() % (num_rows as u64)) as usize,
+        (prng.next_u64() % (num_cols as u64)) as usize,
+        Scalar::rand(&mut prng),
       ));
     }
 
@@ -1656,10 +1664,10 @@ mod tests {
 
     // evaluation
     let rx: Vec<Scalar> = (0..num_vars_x)
-      .map(|_i| Scalar::random(&mut csprng))
+      .map(|_i| Scalar::rand(&mut prng))
       .collect::<Vec<Scalar>>();
     let ry: Vec<Scalar> = (0..num_vars_y)
-      .map(|_i| Scalar::random(&mut csprng))
+      .map(|_i| Scalar::rand(&mut prng))
       .collect::<Vec<Scalar>>();
     let eval = SparseMatPolynomial::multi_evaluate(&[&poly_M], &rx, &ry);
     let evals = vec![eval[0], eval[0], eval[0]];

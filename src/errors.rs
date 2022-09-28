@@ -1,3 +1,4 @@
+use ark_serialize::SerializationError;
 use core::fmt::Debug;
 use thiserror::Error;
 
@@ -15,7 +16,7 @@ impl Default for ProofVerifyError {
   }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum R1CSError {
   /// returned if the number of constraints is not a power of 2
   NonPowerOfTwoCons,
@@ -29,4 +30,12 @@ pub enum R1CSError {
   InvalidScalar,
   /// returned if the supplied row or col in (row,col,val) tuple is out of range
   InvalidIndex,
+  /// Ark serialization error
+  ArkSerializationError(SerializationError),
+}
+
+impl From<SerializationError> for R1CSError {
+  fn from(e: SerializationError) -> Self {
+    Self::ArkSerializationError(e)
+  }
 }
