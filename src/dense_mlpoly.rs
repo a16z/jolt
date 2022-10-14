@@ -270,7 +270,7 @@ impl<F: PrimeField> DensePolynomial<F> {
 
   pub fn merge(polys: &[DensePolynomial<F>]) -> DensePolynomial<F> {
     let mut Z: Vec<F> = Vec::new();
-    for poly in polys.into_iter() {
+    for poly in polys.iter() {
       Z.extend(poly.vec().iter());
     }
 

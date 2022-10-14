@@ -435,9 +435,9 @@ impl<G: ProjectiveCurve> SNARK<G> {
 
     let timer_eval_proof = Timer::new("verify_eval_proof");
     let (Ar, Br, Cr) = &self.inst_evals;
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Ar);
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Br);
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", &Cr);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Ar);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Br);
+    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"Ar_claim", Cr);
     self.r1cs_eval_proof.verify(
       &comm.comm,
       &rx,

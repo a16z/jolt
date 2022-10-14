@@ -68,6 +68,7 @@ impl<G: ProjectiveCurve> R1CSGens<G> {
 }
 
 impl<G: ProjectiveCurve> R1CSProof<G> {
+  #[allow(clippy::type_complexity)]
   fn prove_phase_one(
     num_rounds: usize,
     evals_tau: &mut DensePolynomial<G::ScalarField>,
@@ -109,6 +110,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     (sc_proof_phase_one, r, claims, blind_claim_postsc)
   }
 
+  #[allow(clippy::type_complexity)]
   fn prove_phase_two(
     num_rounds: usize,
     claim: &G::ScalarField,
@@ -367,6 +369,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     )
   }
 
+  #[allow(clippy::type_complexity)]
   pub fn verify(
     &self,
     num_vars: usize,
@@ -422,13 +425,13 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
       comm_prod_Az_Bz_claims,
     )?;
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", &comm_Az_claim);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", &comm_Bz_claim);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", &comm_Cz_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Az_claim", comm_Az_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Bz_claim", comm_Bz_claim);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_Cz_claim", comm_Cz_claim);
     <Transcript as ProofTranscript<G>>::append_point(
       transcript,
       b"comm_prod_Az_Bz_claims",
-      &comm_prod_Az_Bz_claims,
+      comm_prod_Az_Bz_claims,
     );
 
     let taus_bound_rx: G::ScalarField = (0..rx.len())

@@ -1385,22 +1385,22 @@ impl<F: PrimeField> ProductLayerProof<F> {
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
       b"claim_row_eval_init",
-      &row_eval_init,
+      row_eval_init,
     );
     <Transcript as ProofTranscript<G>>::append_scalars(
       transcript,
       b"claim_row_eval_read",
-      &row_eval_read,
+      row_eval_read,
     );
     <Transcript as ProofTranscript<G>>::append_scalars(
       transcript,
       b"claim_row_eval_write",
-      &row_eval_write,
+      row_eval_write,
     );
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
       b"claim_row_eval_audit",
-      &row_eval_audit,
+      row_eval_audit,
     );
 
     // subset check
@@ -1416,22 +1416,22 @@ impl<F: PrimeField> ProductLayerProof<F> {
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
       b"claim_col_eval_init",
-      &col_eval_init,
+      col_eval_init,
     );
     <Transcript as ProofTranscript<G>>::append_scalars(
       transcript,
       b"claim_col_eval_read",
-      &col_eval_read,
+      col_eval_read,
     );
     <Transcript as ProofTranscript<G>>::append_scalars(
       transcript,
       b"claim_col_eval_write",
-      &col_eval_write,
+      col_eval_write,
     );
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
       b"claim_col_eval_audit",
-      &col_eval_audit,
+      col_eval_audit,
     );
 
     // verify the evaluation of the sparse polynomial

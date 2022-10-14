@@ -65,13 +65,13 @@ impl<G: ProjectiveCurve> KnowledgeProof<G> {
       KnowledgeProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", &C);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", C);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
 
     let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let lhs = self.z1.commit(&self.z2, gens_n);
-    let rhs = C.mul(&c.into_repr()) + self.alpha;
+    let rhs = C.mul(c.into_repr()) + self.alpha;
 
     if lhs == rhs {
       Ok(())
@@ -115,7 +115,7 @@ impl<G: ProjectiveCurve> EqualityProof<G> {
     let C2 = v2.commit(s2, gens_n);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"C2", &C2);
 
-    let alpha = gens_n.h.mul(&r.into_repr());
+    let alpha = gens_n.h.mul(r.into_repr());
 
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
 
@@ -138,18 +138,18 @@ impl<G: ProjectiveCurve> EqualityProof<G> {
       EqualityProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C1", &C1);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C2", &C2);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C1", C1);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C2", C2);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
 
     let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let rhs = {
       let C = *C1 - *C2;
-      C.mul(&c.into_repr()) + self.alpha
+      C.mul(c.into_repr()) + self.alpha
     };
 
-    let lhs = gens_n.h.mul(&self.z.into_repr());
+    let lhs = gens_n.h.mul(self.z.into_repr());
 
     if lhs == rhs {
       Ok(())
@@ -309,9 +309,9 @@ impl<G: ProjectiveCurve> ProductProof<G> {
       ProductProof::<G>::protocol_name(),
     );
 
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"X", &X);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Y", &Y);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Z", &Z);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"X", X);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Y", Y);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Z", Z);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &self.beta);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &self.delta);
@@ -397,7 +397,7 @@ impl<G: ProjectiveCurve> DotProductProof<G> {
     let Cy = y.commit(blind_y, gens_1);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", &a_vec);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
 
     let delta = Commitments::batch_commit(&d_vec, &r_delta, gens_n);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
@@ -455,11 +455,11 @@ impl<G: ProjectiveCurve> DotProductProof<G> {
 
     let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
-    let mut result = Cx.mul(&c.into_repr()) + self.delta
+    let mut result = Cx.mul(c.into_repr()) + self.delta
       == Commitments::batch_commit(self.z.as_ref(), &self.z_delta, gens_n);
 
     let dotproduct_z_a = DotProductProof::<G>::compute_dotproduct(&self.z, a);
-    result &= Cy.mul(&c.into_repr()) + self.beta == dotproduct_z_a.commit(&self.z_beta, gens_1);
+    result &= Cy.mul(c.into_repr()) + self.beta == dotproduct_z_a.commit(&self.z_beta, gens_1);
 
     if result {
       Ok(())
@@ -538,7 +538,7 @@ impl<G: ProjectiveCurve> DotProductProofLog<G> {
     let Cy = y.commit(blind_y, &gens.gens_1);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", &a_vec);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
 
     let blind_Gamma = *blind_x + *blind_y;
     let (bullet_reduction_proof, _Gamma_hat, x_hat, a_hat, g_hat, rhat_Gamma) =
@@ -601,9 +601,9 @@ impl<G: ProjectiveCurve> DotProductProofLog<G> {
       transcript,
       DotProductProofLog::<G>::protocol_name(),
     );
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
-    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", &a);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", Cx);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", Cy);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a);
 
     let Gamma = *Cx + *Cy;
 

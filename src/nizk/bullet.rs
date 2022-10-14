@@ -85,7 +85,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
         .iter()
         .chain(iter::once(Q))
         .chain(iter::once(H))
-        .map(|x| *x)
+        .copied()
         .collect::<Vec<_>>();
 
       let bases = G::batch_normalization_into_affine(bases.as_ref());
@@ -103,7 +103,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
         .iter()
         .chain(iter::once(Q))
         .chain(iter::once(H))
-        .map(|x| *x)
+        .copied()
         .collect::<Vec<_>>();
 
       let bases = G::batch_normalization_into_affine(bases.as_ref());
@@ -175,8 +175,8 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
     // 1. Recompute x_k,...,x_1 based on the proof transcript
     let mut challenges = Vec::with_capacity(lg_n);
     for (L, R) in self.L_vec.iter().zip(self.R_vec.iter()) {
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", &L);
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", &R);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", L);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", R);
       challenges.push(<Transcript as ProofTranscript<G>>::challenge_scalar(
         transcript, b"u",
       ));
@@ -235,7 +235,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
     let a_hat = inner_product(a, &s);
 
     let bases = G::batch_normalization_into_affine(
-      &[self.L_vec.as_slice(), self.R_vec.as_slice(), &[*Gamma]]
+      [self.L_vec.as_slice(), self.R_vec.as_slice(), &[*Gamma]]
         .concat()
         .as_ref(),
     );
