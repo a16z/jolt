@@ -2,12 +2,14 @@
 extern crate libspartan;
 extern crate merlin;
 
+use ark_bls12_381::G1Projective;
+use ark_ec::ProjectiveCurve;
 use libspartan::{Instance, SNARKGens, SNARK};
 use merlin::Transcript;
 
 use criterion::*;
 
-fn snark_encode_benchmark(c: &mut Criterion) {
+fn snark_encode_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
   for s in 10..21 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_encode_benchmark");
@@ -16,10 +18,11 @@ fn snark_encode_benchmark(c: &mut Criterion) {
     let num_vars = (2_usize).pow(s as u32);
     let num_cons = num_vars;
     let num_inputs = 10;
-    let (inst, _vars, _inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, _vars, _inputs) =
+      Instance::<G::ScalarField>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
     // produce public parameters
-    let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_cons);
+    let gens = SNARKGens::<G>::new(num_cons, num_vars, num_inputs, num_cons);
 
     // produce a commitment to R1CS instance
     let name = format!("SNARK_encode_{}", num_cons);
@@ -32,8 +35,8 @@ fn snark_encode_benchmark(c: &mut Criterion) {
   }
 }
 
-fn snark_prove_benchmark(c: &mut Criterion) {
-  for s in 10..21 {
+fn snark_prove_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
+  for s in 9..21 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_prove_benchmark");
     group.plot_config(plot_config);
@@ -42,10 +45,11 @@ fn snark_prove_benchmark(c: &mut Criterion) {
     let num_cons = num_vars;
     let num_inputs = 10;
 
-    let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, inputs) =
+      Instance::<G::ScalarField>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
     // produce public parameters
-    let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_cons);
+    let gens = SNARKGens::<G>::new(num_cons, num_vars, num_inputs, num_cons);
 
     // produce a commitment to R1CS instance
     let (comm, decomm) = SNARK::encode(&inst, &gens);
@@ -70,7 +74,7 @@ fn snark_prove_benchmark(c: &mut Criterion) {
   }
 }
 
-fn snark_verify_benchmark(c: &mut Criterion) {
+fn snark_verify_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
   for s in 10..21 {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("SNARK_verify_benchmark");
@@ -79,10 +83,11 @@ fn snark_verify_benchmark(c: &mut Criterion) {
     let num_vars = (2_usize).pow(s as u32);
     let num_cons = num_vars;
     let num_inputs = 10;
-    let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, inputs) =
+      Instance::<G::ScalarField>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
     // produce public parameters
-    let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_cons);
+    let gens = SNARKGens::<G>::new(num_cons, num_vars, num_inputs, num_cons);
 
     // produce a commitment to R1CS instance
     let (comm, decomm) = SNARK::encode(&inst, &gens);
@@ -125,7 +130,8 @@ fn set_duration() -> Criterion {
 criterion_group! {
 name = benches_snark;
 config = set_duration();
-targets = snark_encode_benchmark, snark_prove_benchmark, snark_verify_benchmark
+targets = snark_encode_benchmark::<G1Projective>,
+snark_prove_benchmark::<G1Projective>, snark_verify_benchmark::<G1Projective>
 }
 
 criterion_main!(benches_snark);

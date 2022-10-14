@@ -1,33 +1,30 @@
-use crate::transcript::AppendToTranscript;
-
 use super::dense_mlpoly::DensePolynomial;
 use super::errors::ProofVerifyError;
 use super::math::Math;
 use super::random::RandomTape;
-use super::scalar::Scalar;
 use super::sparse_mlpoly::{
   MultiSparseMatPolynomialAsDense, SparseMatEntry, SparseMatPolyCommitment,
   SparseMatPolyCommitmentGens, SparseMatPolyEvalProof, SparseMatPolynomial,
 };
 use super::timer::Timer;
-use ark_ff::Field;
+use crate::transcript::AppendToTranscript;
+use ark_ec::ProjectiveCurve;
+use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::test_rng;
-use ark_std::UniformRand;
-use ark_std::{One, Zero};
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSInstance {
+pub struct R1CSInstance<F: PrimeField> {
   num_cons: usize,
   num_vars: usize,
   num_inputs: usize,
-  A: SparseMatPolynomial,
-  B: SparseMatPolynomial,
-  C: SparseMatPolynomial,
+  A: SparseMatPolynomial<F>,
+  B: SparseMatPolynomial<F>,
+  C: SparseMatPolynomial<F>,
 }
 
-impl AppendToTranscript for R1CSInstance {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for R1CSInstance<G::ScalarField> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     let mut data = vec![];
     self.serialize(&mut data).unwrap();
@@ -36,18 +33,18 @@ impl AppendToTranscript for R1CSInstance {
   }
 }
 
-pub struct R1CSCommitmentGens {
-  gens: SparseMatPolyCommitmentGens,
+pub struct R1CSCommitmentGens<G> {
+  gens: SparseMatPolyCommitmentGens<G>,
 }
 
-impl R1CSCommitmentGens {
+impl<G: ProjectiveCurve> R1CSCommitmentGens<G> {
   pub fn new(
     label: &'static [u8],
     num_cons: usize,
     num_vars: usize,
     num_inputs: usize,
     num_nz_entries: usize,
-  ) -> R1CSCommitmentGens {
+  ) -> R1CSCommitmentGens<G> {
     assert!(num_inputs < num_vars);
     let num_poly_vars_x = num_cons.log_2() as usize;
     let num_poly_vars_y = (2 * num_vars).log_2() as usize;
@@ -58,14 +55,14 @@ impl R1CSCommitmentGens {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment {
+pub struct R1CSCommitment<G: ProjectiveCurve> {
   num_cons: usize,
   num_vars: usize,
   num_inputs: usize,
-  comm: SparseMatPolyCommitment,
+  comm: SparseMatPolyCommitment<G>,
 }
 
-impl AppendToTranscript for R1CSCommitment {
+impl<G: ProjectiveCurve> AppendToTranscript<G> for R1CSCommitment<G> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_u64(b"num_cons", self.num_cons as u64);
     transcript.append_u64(b"num_vars", self.num_vars as u64);
@@ -74,11 +71,11 @@ impl AppendToTranscript for R1CSCommitment {
   }
 }
 
-pub struct R1CSDecommitment {
-  dense: MultiSparseMatPolynomialAsDense,
+pub struct R1CSDecommitment<F> {
+  dense: MultiSparseMatPolynomialAsDense<F>,
 }
 
-impl R1CSCommitment {
+impl<G: ProjectiveCurve> R1CSCommitment<G> {
   pub fn get_num_cons(&self) -> usize {
     self.num_cons
   }
@@ -92,15 +89,15 @@ impl R1CSCommitment {
   }
 }
 
-impl R1CSInstance {
+impl<F: PrimeField> R1CSInstance<F> {
   pub fn new(
     num_cons: usize,
     num_vars: usize,
     num_inputs: usize,
-    A: &[(usize, usize, Scalar)],
-    B: &[(usize, usize, Scalar)],
-    C: &[(usize, usize, Scalar)],
-  ) -> R1CSInstance {
+    A: &[(usize, usize, F)],
+    B: &[(usize, usize, F)],
+    C: &[(usize, usize, F)],
+  ) -> R1CSInstance<F> {
     Timer::print(&format!("number_of_constraints {}", num_cons));
     Timer::print(&format!("number_of_variables {}", num_vars));
     Timer::print(&format!("number_of_inputs {}", num_inputs));
@@ -123,13 +120,13 @@ impl R1CSInstance {
 
     let mat_A = (0..A.len())
       .map(|i| SparseMatEntry::new(A[i].0, A[i].1, A[i].2))
-      .collect::<Vec<SparseMatEntry>>();
+      .collect::<Vec<SparseMatEntry<F>>>();
     let mat_B = (0..B.len())
       .map(|i| SparseMatEntry::new(B[i].0, B[i].1, B[i].2))
-      .collect::<Vec<SparseMatEntry>>();
+      .collect::<Vec<SparseMatEntry<F>>>();
     let mat_C = (0..C.len())
       .map(|i| SparseMatEntry::new(C[i].0, C[i].1, C[i].2))
-      .collect::<Vec<SparseMatEntry>>();
+      .collect::<Vec<SparseMatEntry<F>>>();
 
     let poly_A = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, mat_A);
     let poly_B = SparseMatPolynomial::new(num_poly_vars_x, num_poly_vars_y, mat_B);
@@ -161,7 +158,7 @@ impl R1CSInstance {
     num_cons: usize,
     num_vars: usize,
     num_inputs: usize,
-  ) -> (R1CSInstance, Vec<Scalar>, Vec<Scalar>) {
+  ) -> (R1CSInstance<F>, Vec<F>, Vec<F>) {
     Timer::print(&format!("number_of_constraints {}", num_cons));
     Timer::print(&format!("number_of_variables {}", num_vars));
     Timer::print(&format!("number_of_inputs {}", num_inputs));
@@ -180,18 +177,16 @@ impl R1CSInstance {
 
     // produce a random satisfying assignment
     let Z = {
-      let mut Z: Vec<Scalar> = (0..size_z)
-        .map(|_i| Scalar::rand(&mut prng))
-        .collect::<Vec<Scalar>>();
-      Z[num_vars] = Scalar::one(); // set the constant term to 1
+      let mut Z: Vec<F> = (0..size_z).map(|_i| F::rand(&mut prng)).collect::<Vec<F>>();
+      Z[num_vars] = F::one(); // set the constant term to 1
       Z
     };
 
     // three sparse matrices
-    let mut A: Vec<SparseMatEntry> = Vec::new();
-    let mut B: Vec<SparseMatEntry> = Vec::new();
-    let mut C: Vec<SparseMatEntry> = Vec::new();
-    let one = Scalar::one();
+    let mut A: Vec<SparseMatEntry<F>> = Vec::new();
+    let mut B: Vec<SparseMatEntry<F>> = Vec::new();
+    let mut C: Vec<SparseMatEntry<F>> = Vec::new();
+    let one = F::one();
     for i in 0..num_cons {
       let A_idx = i % size_z;
       let B_idx = (i + 2) % size_z;
@@ -202,7 +197,7 @@ impl R1CSInstance {
       let C_idx = (i + 3) % size_z;
       let C_val = Z[C_idx];
 
-      if C_val == Scalar::zero() {
+      if C_val == F::zero() {
         C.push(SparseMatEntry::new(i, num_vars, AB_val));
       } else {
         C.push(SparseMatEntry::new(
@@ -237,13 +232,13 @@ impl R1CSInstance {
     (inst, Z[..num_vars].to_vec(), Z[num_vars + 1..].to_vec())
   }
 
-  pub fn is_sat(&self, vars: &[Scalar], input: &[Scalar]) -> bool {
+  pub fn is_sat(&self, vars: &[F], input: &[F]) -> bool {
     assert_eq!(vars.len(), self.num_vars);
     assert_eq!(input.len(), self.num_inputs);
 
     let z = {
       let mut z = vars.to_vec();
-      z.extend(&vec![Scalar::one()]);
+      z.extend(&vec![F::one()]);
       z.extend(input);
       z
     };
@@ -273,8 +268,8 @@ impl R1CSInstance {
     &self,
     num_rows: usize,
     num_cols: usize,
-    z: &[Scalar],
-  ) -> (DensePolynomial, DensePolynomial, DensePolynomial) {
+    z: &[F],
+  ) -> (DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>) {
     assert_eq!(num_rows, self.num_cons);
     assert_eq!(z.len(), num_cols);
     assert!(num_cols > self.num_vars);
@@ -289,8 +284,8 @@ impl R1CSInstance {
     &self,
     num_rows: usize,
     num_cols: usize,
-    evals: &[Scalar],
-  ) -> (Vec<Scalar>, Vec<Scalar>, Vec<Scalar>) {
+    evals: &[F],
+  ) -> (Vec<F>, Vec<F>, Vec<F>) {
     assert_eq!(num_rows, self.num_cons);
     assert!(num_cols > self.num_vars);
 
@@ -301,12 +296,15 @@ impl R1CSInstance {
     (evals_A, evals_B, evals_C)
   }
 
-  pub fn evaluate(&self, rx: &[Scalar], ry: &[Scalar]) -> (Scalar, Scalar, Scalar) {
+  pub fn evaluate(&self, rx: &[F], ry: &[F]) -> (F, F, F) {
     let evals = SparseMatPolynomial::multi_evaluate(&[&self.A, &self.B, &self.C], rx, ry);
     (evals[0], evals[1], evals[2])
   }
 
-  pub fn commit(&self, gens: &R1CSCommitmentGens) -> (R1CSCommitment, R1CSDecommitment) {
+  pub fn commit<G: ProjectiveCurve<ScalarField = F>>(
+    &self,
+    gens: &R1CSCommitmentGens<G>,
+  ) -> (R1CSCommitment<G>, R1CSDecommitment<F>) {
     let (comm, dense) = SparseMatPolynomial::multi_commit(&[&self.A, &self.B, &self.C], &gens.gens);
     let r1cs_comm = R1CSCommitment {
       num_cons: self.num_cons,
@@ -322,20 +320,20 @@ impl R1CSInstance {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSEvalProof {
-  proof: SparseMatPolyEvalProof,
+pub struct R1CSEvalProof<G: ProjectiveCurve> {
+  proof: SparseMatPolyEvalProof<G>,
 }
 
-impl R1CSEvalProof {
+impl<G: ProjectiveCurve> R1CSEvalProof<G> {
   pub fn prove(
-    decomm: &R1CSDecommitment,
-    rx: &[Scalar], // point at which the polynomial is evaluated
-    ry: &[Scalar],
-    evals: &(Scalar, Scalar, Scalar),
-    gens: &R1CSCommitmentGens,
+    decomm: &R1CSDecommitment<G::ScalarField>,
+    rx: &[G::ScalarField], // point at which the polynomial is evaluated
+    ry: &[G::ScalarField],
+    evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
+    gens: &R1CSCommitmentGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-  ) -> R1CSEvalProof {
+    random_tape: &mut RandomTape<G>,
+  ) -> R1CSEvalProof<G> {
     let timer = Timer::new("R1CSEvalProof::prove");
     let proof = SparseMatPolyEvalProof::prove(
       &decomm.dense,
@@ -353,11 +351,11 @@ impl R1CSEvalProof {
 
   pub fn verify(
     &self,
-    comm: &R1CSCommitment,
-    rx: &[Scalar], // point at which the R1CS matrix polynomials are evaluated
-    ry: &[Scalar],
-    evals: &(Scalar, Scalar, Scalar),
-    gens: &R1CSCommitmentGens,
+    comm: &R1CSCommitment<G>,
+    rx: &[G::ScalarField], // point at which the R1CS matrix polynomials are evaluated
+    ry: &[G::ScalarField],
+    evals: &(G::ScalarField, G::ScalarField, G::ScalarField),
+    gens: &R1CSCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     self.proof.verify(

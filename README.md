@@ -40,6 +40,8 @@ Some of our public APIs' style is inspired by the underlying crates we use.
 # extern crate merlin;
 # use libspartan::{Instance, SNARKGens, SNARK};
 # use merlin::Transcript;
+# use ark_bls12_381::{G1Projective, Fr};
+#
 # fn main() {
     // specify the size of an R1CS instance
     let num_vars = 1024;
@@ -48,7 +50,7 @@ Some of our public APIs' style is inspired by the underlying crates we use.
     let num_non_zero_entries = 1024;
 
     // produce public parameters
-    let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
+    let gens = SNARKGens::<G1Projective>::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
 
     // ask the library to produce a synthentic R1CS instance
     let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
@@ -75,6 +77,8 @@ Here is another example to use the NIZK variant of the Spartan proof system:
 # extern crate merlin;
 # use libspartan::{Instance, NIZKGens, NIZK};
 # use merlin::Transcript;
+# use ark_bls12_381::{G1Projective, Fr};
+#
 # fn main() {
     // specify the size of an R1CS instance
     let num_vars = 1024;
@@ -82,10 +86,10 @@ Here is another example to use the NIZK variant of the Spartan proof system:
     let num_inputs = 10;
 
     // produce public parameters
-    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+    let gens = NIZKGens::<G1Projective>::new(num_cons, num_vars, num_inputs);
 
     // ask the library to produce a synthentic R1CS instance
-    let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, inputs) = Instance::<Fr>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
     // produce a proof of satisfiability
     let mut prover_transcript = Transcript::new(b"nizk_example");
@@ -105,11 +109,12 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 #![allow(non_snake_case)]
 # extern crate libspartan;
 # extern crate merlin;
-# use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK, Scalar};
+# use libspartan::{InputsAssignment, Instance, SNARKGens, VarsAssignment, SNARK};
 # use merlin::Transcript;
 # use ark_std::test_rng;
 # use ark_std::{One, Zero};
 # use ark_std::UniformRand;
+# use ark_bls12_381::{Fr, G1Projective};
 #
 # fn main() {
   // produce a tiny instance
@@ -124,10 +129,10 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
   ) = produce_tiny_r1cs();
 
   // produce public parameters
-  let gens = SNARKGens::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
+  let gens = SNARKGens::<G1Projective>::new(num_cons, num_vars, num_inputs, num_non_zero_entries);
 
   // create a commitment to the R1CS instance
-  let (comm, decomm) = SNARK::encode(&inst, &gens);
+  let (comm, decomm) = SNARK::<G1Projective>::encode(&inst, &gens);
 
   // produce a proof of satisfiability
   let mut prover_transcript = Transcript::new(b"snark_example");
@@ -154,9 +159,9 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 #  usize,
 #  usize,
 #  usize,
-#  Instance,
-#  VarsAssignment,
-#  InputsAssignment,
+#  Instance<Fr>,
+#  VarsAssignment<Fr>,
+#  InputsAssignment<Fr>,
 # ) {
   // We will use the following example, but one could construct any R1CS instance.
   // Our R1CS instance is three constraints over five variables and two public inputs
@@ -172,16 +177,16 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 
   // We will encode the above constraints into three matrices, where
   // the coefficients in the matrix are in the little-endian byte order
-  let mut A: Vec<(usize, usize, Scalar)> = Vec::new();
-  let mut B: Vec<(usize, usize, Scalar)> = Vec::new();
-  let mut C: Vec<(usize, usize, Scalar)> = Vec::new();
+  let mut A: Vec<(usize, usize, Fr)> = Vec::new();
+  let mut B: Vec<(usize, usize, Fr)> = Vec::new();
+  let mut C: Vec<(usize, usize, Fr)> = Vec::new();
 
   // The constraint system is defined over a finite field, which in our case is
   // the scalar field of ristreeto255/curve25519 i.e., p =  2^{252}+27742317777372353535851937790883648493
   // To construct these matrices, we will use `curve25519-dalek` but one can use any other method.
 
   // a variable that holds a byte representation of 1
-  let one = Scalar::one();
+  let one = Fr::one();
 
   // R1CS is a set of three sparse matrices A B C, where is a row for every 
   // constraint and a column for every entry in z = (vars, 1, inputs)
@@ -212,16 +217,16 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
 
   // compute a satisfying assignment
   let mut prng = test_rng();
-  let i0 = Scalar::rand(&mut prng);
-  let i1 = Scalar::rand(&mut prng);
-  let z0 = Scalar::rand(&mut prng);
-  let z1 = Scalar::rand(&mut prng);
+  let i0 = Fr::rand(&mut prng);
+  let i1 = Fr::rand(&mut prng);
+  let z0 = Fr::rand(&mut prng);
+  let z1 = Fr::rand(&mut prng);
   let z2 = (z0 + z1) * i0; // constraint 0
   let z3 = (z0 + i1) * z2; // constraint 1
-  let z4 = Scalar::zero(); //constraint 2
+  let z4 = Fr::zero(); //constraint 2
 
   // create a VarsAssignment
-  let mut vars = vec![Scalar::zero(); num_vars];
+  let mut vars = vec![Fr::zero(); num_vars];
   vars[0] = z0;
   vars[1] = z1;
   vars[2] = z2;
@@ -230,7 +235,7 @@ Finally, we provide an example that specifies a custom R1CS instance instead of 
   let assignment_vars = VarsAssignment::new(&vars).unwrap();
 
   // create an InputsAssignment
-  let mut inputs = vec![Scalar::zero(); num_inputs];
+  let mut inputs = vec![Fr::zero(); num_inputs];
   inputs[0] = i0;
   inputs[1] = i1;
   let assignment_inputs = InputsAssignment::new(&inputs).unwrap();

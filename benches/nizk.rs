@@ -8,12 +8,14 @@ extern crate merlin;
 extern crate rand;
 extern crate sha3;
 
+use ark_bls12_381::G1Projective;
+use ark_ec::ProjectiveCurve;
 use libspartan::{Instance, NIZKGens, NIZK};
 use merlin::Transcript;
 
 use criterion::*;
 
-fn nizk_prove_benchmark(c: &mut Criterion) {
+fn nizk_prove_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
   for &s in [10, 12, 16].iter() {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("NIZK_prove_benchmark");
@@ -23,9 +25,10 @@ fn nizk_prove_benchmark(c: &mut Criterion) {
     let num_cons = num_vars;
     let num_inputs = 10;
 
-    let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, inputs) =
+      Instance::<G::ScalarField>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
-    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+    let gens = NIZKGens::<G>::new(num_cons, num_vars, num_inputs);
 
     let name = format!("NIZK_prove_{}", num_vars);
     group.bench_function(&name, move |b| {
@@ -44,7 +47,7 @@ fn nizk_prove_benchmark(c: &mut Criterion) {
   }
 }
 
-fn nizk_verify_benchmark(c: &mut Criterion) {
+fn nizk_verify_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
   for &s in [10, 12, 16].iter() {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("NIZK_verify_benchmark");
@@ -53,9 +56,10 @@ fn nizk_verify_benchmark(c: &mut Criterion) {
     let num_vars = (2_usize).pow(s as u32);
     let num_cons = num_vars;
     let num_inputs = 10;
-    let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, inputs) =
+      Instance::<G::ScalarField>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
-    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+    let gens = NIZKGens::<G>::new(num_cons, num_vars, num_inputs);
 
     // produce a proof of satisfiability
     let mut prover_transcript = Transcript::new(b"example");
@@ -86,7 +90,7 @@ fn set_duration() -> Criterion {
 criterion_group! {
 name = benches_nizk;
 config = set_duration();
-targets = nizk_prove_benchmark, nizk_verify_benchmark
+targets = nizk_prove_benchmark::<G1Projective>, nizk_verify_benchmark::<G1Projective>
 }
 
 criterion_main!(benches_nizk);

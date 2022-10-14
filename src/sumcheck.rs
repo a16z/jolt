@@ -3,10 +3,8 @@
 use super::commitments::{Commitments, MultiCommitGens};
 use super::dense_mlpoly::DensePolynomial;
 use super::errors::ProofVerifyError;
-use super::group::GroupElement;
 use super::nizk::DotProductProof;
 use super::random::RandomTape;
-use super::scalar::Scalar;
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use super::unipoly::{CompressedUniPoly, UniPoly};
 use ark_ec::msm::VariableBaseMSM;
@@ -19,24 +17,27 @@ use itertools::izip;
 use merlin::Transcript;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SumcheckInstanceProof {
-  compressed_polys: Vec<CompressedUniPoly>,
+pub struct SumcheckInstanceProof<F: PrimeField> {
+  compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
-impl SumcheckInstanceProof {
-  pub fn new(compressed_polys: Vec<CompressedUniPoly>) -> SumcheckInstanceProof {
+impl<F: PrimeField> SumcheckInstanceProof<F> {
+  pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> SumcheckInstanceProof<F> {
     SumcheckInstanceProof { compressed_polys }
   }
 
-  pub fn verify(
+  pub fn verify<G>(
     &self,
-    claim: Scalar,
+    claim: F,
     num_rounds: usize,
     degree_bound: usize,
     transcript: &mut Transcript,
-  ) -> Result<(Scalar, Vec<Scalar>), ProofVerifyError> {
+  ) -> Result<(F, Vec<F>), ProofVerifyError>
+  where
+    G: ProjectiveCurve<ScalarField = F>,
+  {
     let mut e = claim;
-    let mut r: Vec<Scalar> = Vec::new();
+    let mut r: Vec<F> = Vec::new();
 
     // verify that there is a univariate polynomial for each round
     assert_eq!(self.compressed_polys.len(), num_rounds);
@@ -50,10 +51,11 @@ impl SumcheckInstanceProof {
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
       // append the prover's message to the transcript
-      poly.append_to_transcript(b"poly", transcript);
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_i = transcript.challenge_scalar(b"challenge_nextround");
+      let r_i =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       r.push(r_i);
 
@@ -66,18 +68,14 @@ impl SumcheckInstanceProof {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct ZKSumcheckInstanceProof {
-  comm_polys: Vec<GroupElement>,
-  comm_evals: Vec<GroupElement>,
-  proofs: Vec<DotProductProof>,
+pub struct ZKSumcheckInstanceProof<G: ProjectiveCurve> {
+  comm_polys: Vec<G>,
+  comm_evals: Vec<G>,
+  proofs: Vec<DotProductProof<G>>,
 }
 
-impl ZKSumcheckInstanceProof {
-  pub fn new(
-    comm_polys: Vec<GroupElement>,
-    comm_evals: Vec<GroupElement>,
-    proofs: Vec<DotProductProof>,
-  ) -> Self {
+impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
+  pub fn new(comm_polys: Vec<G>, comm_evals: Vec<G>, proofs: Vec<DotProductProof<G>>) -> Self {
     ZKSumcheckInstanceProof {
       comm_polys,
       comm_evals,
@@ -87,13 +85,13 @@ impl ZKSumcheckInstanceProof {
 
   pub fn verify(
     &self,
-    comm_claim: &GroupElement,
+    comm_claim: &G,
     num_rounds: usize,
     degree_bound: usize,
-    gens_1: &MultiCommitGens,
-    gens_n: &MultiCommitGens,
+    gens_1: &MultiCommitGens<G>,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-  ) -> Result<(GroupElement, Vec<Scalar>), ProofVerifyError> {
+  ) -> Result<(G, Vec<G::ScalarField>), ProofVerifyError> {
     // verify degree bound
     assert_eq!(gens_n.n, degree_bound + 1);
 
@@ -101,15 +99,16 @@ impl ZKSumcheckInstanceProof {
     assert_eq!(self.comm_polys.len(), num_rounds);
     assert_eq!(self.comm_evals.len(), num_rounds);
 
-    let mut r: Vec<Scalar> = Vec::new();
+    let mut r: Vec<G::ScalarField> = Vec::new();
     for i in 0..self.comm_polys.len() {
       let comm_poly = &self.comm_polys[i];
 
       // append the prover's polynomial to the transcript
-      comm_poly.append_to_transcript(b"comm_poly", transcript);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", comm_poly);
 
       //derive the verifier's challenge for the next round
-      let r_i = transcript.challenge_scalar(b"challenge_nextround");
+      let r_i =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // verify the proof of sum-check and evals
       let res = {
@@ -121,11 +120,19 @@ impl ZKSumcheckInstanceProof {
         let comm_eval = &self.comm_evals[i];
 
         // add two claims to transcript
-        comm_claim_per_round.append_to_transcript(b"comm_claim_per_round", transcript);
-        comm_eval.append_to_transcript(b"comm_eval", transcript);
+        <Transcript as ProofTranscript<G>>::append_point(
+          transcript,
+          b"comm_claim_per_round",
+          comm_claim_per_round,
+        );
+        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", comm_eval);
 
         // produce two weights
-        let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
+        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+          transcript,
+          b"combine_two_claims_to_one",
+          2,
+        );
 
         // compute a weighted sum of the RHS
         let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
@@ -136,14 +143,14 @@ impl ZKSumcheckInstanceProof {
         let a = {
           // the vector to use to decommit for sum-check test
           let a_sc = {
-            let mut a = vec![Scalar::one(); degree_bound + 1];
-            a[0] += Scalar::one();
+            let mut a = vec![G::ScalarField::one(); degree_bound + 1];
+            a[0] += G::ScalarField::one();
             a
           };
 
           // the vector to use to decommit for evaluation
           let a_eval = {
-            let mut a = vec![Scalar::one(); degree_bound + 1];
+            let mut a = vec![G::ScalarField::one(); degree_bound + 1];
             for j in 1..a.len() {
               a[j] = a[j - 1] * r_i;
             }
@@ -154,7 +161,7 @@ impl ZKSumcheckInstanceProof {
           assert_eq!(a_sc.len(), a_eval.len());
           (0..a_sc.len())
             .map(|i| w[0] * a_sc[i] + w[1] * a_eval[i])
-            .collect::<Vec<Scalar>>()
+            .collect::<Vec<G::ScalarField>>()
         };
 
         self.proofs[i]
@@ -179,26 +186,27 @@ impl ZKSumcheckInstanceProof {
   }
 }
 
-impl SumcheckInstanceProof {
-  pub fn prove_cubic<F>(
-    claim: &Scalar,
+impl<F: PrimeField> SumcheckInstanceProof<F> {
+  pub fn prove_cubic<Func, G>(
+    claim: &F,
     num_rounds: usize,
-    poly_A: &mut DensePolynomial,
-    poly_B: &mut DensePolynomial,
-    poly_C: &mut DensePolynomial,
-    comb_func: F,
+    poly_A: &mut DensePolynomial<F>,
+    poly_B: &mut DensePolynomial<F>,
+    poly_C: &mut DensePolynomial<F>,
+    comb_func: Func,
     transcript: &mut Transcript,
-  ) -> (Self, Vec<Scalar>, Vec<Scalar>)
+  ) -> (Self, Vec<F>, Vec<F>)
   where
-    F: Fn(&Scalar, &Scalar, &Scalar) -> Scalar,
+    Func: Fn(&F, &F, &F) -> F,
+    G: ProjectiveCurve<ScalarField = F>,
   {
     let mut e = *claim;
-    let mut r: Vec<Scalar> = Vec::new();
-    let mut cubic_polys: Vec<CompressedUniPoly> = Vec::new();
+    let mut r: Vec<F> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
     for _j in 0..num_rounds {
-      let mut eval_point_0 = Scalar::zero();
-      let mut eval_point_2 = Scalar::zero();
-      let mut eval_point_3 = Scalar::zero();
+      let mut eval_point_0 = F::zero();
+      let mut eval_point_2 = F::zero();
+      let mut eval_point_3 = F::zero();
 
       let len = poly_A.len() / 2;
       for i in 0..len {
@@ -231,10 +239,12 @@ impl SumcheckInstanceProof {
       let poly = UniPoly::from_evals(&evals);
 
       // append the prover's message to the transcript
-      poly.append_to_transcript(b"poly", transcript);
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+
       r.push(r_j);
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -251,46 +261,42 @@ impl SumcheckInstanceProof {
     )
   }
 
-  pub fn prove_cubic_batched<F>(
-    claim: &Scalar,
+  pub fn prove_cubic_batched<Func, G>(
+    claim: &F,
     num_rounds: usize,
     poly_vec_par: (
-      &mut Vec<&mut DensePolynomial>,
-      &mut Vec<&mut DensePolynomial>,
-      &mut DensePolynomial,
+      &mut Vec<&mut DensePolynomial<F>>,
+      &mut Vec<&mut DensePolynomial<F>>,
+      &mut DensePolynomial<F>,
     ),
     poly_vec_seq: (
-      &mut Vec<&mut DensePolynomial>,
-      &mut Vec<&mut DensePolynomial>,
-      &mut Vec<&mut DensePolynomial>,
+      &mut Vec<&mut DensePolynomial<F>>,
+      &mut Vec<&mut DensePolynomial<F>>,
+      &mut Vec<&mut DensePolynomial<F>>,
     ),
-    coeffs: &[Scalar],
-    comb_func: F,
+    coeffs: &[F],
+    comb_func: Func,
     transcript: &mut Transcript,
-  ) -> (
-    Self,
-    Vec<Scalar>,
-    (Vec<Scalar>, Vec<Scalar>, Scalar),
-    (Vec<Scalar>, Vec<Scalar>, Vec<Scalar>),
-  )
+  ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F), (Vec<F>, Vec<F>, Vec<F>))
   where
-    F: Fn(&Scalar, &Scalar, &Scalar) -> Scalar,
+    Func: Fn(&F, &F, &F) -> F,
+    G: ProjectiveCurve<ScalarField = F>,
   {
     let (poly_A_vec_par, poly_B_vec_par, poly_C_par) = poly_vec_par;
     let (poly_A_vec_seq, poly_B_vec_seq, poly_C_vec_seq) = poly_vec_seq;
 
     //let (poly_A_vec_seq, poly_B_vec_seq, poly_C_vec_seq) = poly_vec_seq;
     let mut e = *claim;
-    let mut r: Vec<Scalar> = Vec::new();
-    let mut cubic_polys: Vec<CompressedUniPoly> = Vec::new();
+    let mut r: Vec<F> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _j in 0..num_rounds {
-      let mut evals: Vec<(Scalar, Scalar, Scalar)> = Vec::new();
+      let mut evals: Vec<(F, F, F)> = Vec::new();
 
       for (poly_A, poly_B) in poly_A_vec_par.iter().zip(poly_B_vec_par.iter()) {
-        let mut eval_point_0 = Scalar::zero();
-        let mut eval_point_2 = Scalar::zero();
-        let mut eval_point_3 = Scalar::zero();
+        let mut eval_point_0 = F::zero();
+        let mut eval_point_2 = F::zero();
+        let mut eval_point_3 = F::zero();
 
         let len = poly_A.len() / 2;
         for i in 0..len {
@@ -327,9 +333,9 @@ impl SumcheckInstanceProof {
         poly_B_vec_seq.iter(),
         poly_C_vec_seq.iter()
       ) {
-        let mut eval_point_0 = Scalar::zero();
-        let mut eval_point_2 = Scalar::zero();
-        let mut eval_point_3 = Scalar::zero();
+        let mut eval_point_0 = F::zero();
+        let mut eval_point_2 = F::zero();
+        let mut eval_point_3 = F::zero();
         let len = poly_A.len() / 2;
         for i in 0..len {
           // eval 0: bound_func is A(low)
@@ -369,10 +375,11 @@ impl SumcheckInstanceProof {
       let poly = UniPoly::from_evals(&evals);
 
       // append the prover's message to the transcript
-      poly.append_to_transcript(b"poly", transcript);
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
       r.push(r_j);
 
       // bound all tables to the verifier's challenege
@@ -424,21 +431,26 @@ impl SumcheckInstanceProof {
   }
 }
 
-impl ZKSumcheckInstanceProof {
-  pub fn prove_quad<F>(
-    claim: &Scalar,
-    blind_claim: &Scalar,
+impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
+  pub fn prove_quad<Func>(
+    claim: &G::ScalarField,
+    blind_claim: &G::ScalarField,
     num_rounds: usize,
-    poly_A: &mut DensePolynomial,
-    poly_B: &mut DensePolynomial,
-    comb_func: F,
-    gens_1: &MultiCommitGens,
-    gens_n: &MultiCommitGens,
+    poly_A: &mut DensePolynomial<G::ScalarField>,
+    poly_B: &mut DensePolynomial<G::ScalarField>,
+    comb_func: Func,
+    gens_1: &MultiCommitGens<G>,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-  ) -> (Self, Vec<Scalar>, Vec<Scalar>, Scalar)
+    random_tape: &mut RandomTape<G>,
+  ) -> (
+    Self,
+    Vec<G::ScalarField>,
+    Vec<G::ScalarField>,
+    G::ScalarField,
+  )
   where
-    F: Fn(&Scalar, &Scalar) -> Scalar,
+    Func: Fn(&G::ScalarField, &G::ScalarField) -> G::ScalarField,
   {
     let (blinds_poly, blinds_evals) = (
       random_tape.random_vector(b"blinds_poly", num_rounds),
@@ -447,15 +459,15 @@ impl ZKSumcheckInstanceProof {
     let mut claim_per_round = *claim;
     let mut comm_claim_per_round = claim_per_round.commit(blind_claim, gens_1);
 
-    let mut r: Vec<Scalar> = Vec::new();
-    let mut comm_polys: Vec<GroupElement> = Vec::new();
-    let mut comm_evals: Vec<GroupElement> = Vec::new();
-    let mut proofs: Vec<DotProductProof> = Vec::new();
+    let mut r: Vec<G::ScalarField> = Vec::new();
+    let mut comm_polys: Vec<G> = Vec::new();
+    let mut comm_evals: Vec<G> = Vec::new();
+    let mut proofs: Vec<DotProductProof<G>> = Vec::new();
 
     for j in 0..num_rounds {
       let (poly, comm_poly) = {
-        let mut eval_point_0 = Scalar::zero();
-        let mut eval_point_2 = Scalar::zero();
+        let mut eval_point_0 = G::ScalarField::zero();
+        let mut eval_point_2 = G::ScalarField::zero();
 
         let len = poly_A.len() / 2;
         for i in 0..len {
@@ -475,11 +487,12 @@ impl ZKSumcheckInstanceProof {
       };
 
       // append the prover's message to the transcript
-      comm_poly.append_to_transcript(b"comm_poly", transcript);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
       comm_polys.push(comm_poly);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -500,11 +513,19 @@ impl ZKSumcheckInstanceProof {
         // for efficiency we batch them using random weights
 
         // add two claims to transcript
-        comm_claim_per_round.append_to_transcript(b"comm_claim_per_round", transcript);
-        comm_eval.append_to_transcript(b"comm_eval", transcript);
+        <Transcript as ProofTranscript<G>>::append_point(
+          transcript,
+          b"comm_claim_per_round",
+          &comm_claim_per_round,
+        );
+        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
 
         // produce two weights
-        let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
+        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+          transcript,
+          b"combine_two_claims_to_one",
+          2,
+        );
 
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
@@ -529,14 +550,14 @@ impl ZKSumcheckInstanceProof {
         let a = {
           // the vector to use to decommit for sum-check test
           let a_sc = {
-            let mut a = vec![Scalar::one(); poly.degree() + 1];
-            a[0] += Scalar::one();
+            let mut a = vec![G::ScalarField::one(); poly.degree() + 1];
+            a[0] += G::ScalarField::one();
             a
           };
 
           // the vector to use to decommit for evaluation
           let a_eval = {
-            let mut a = vec![Scalar::one(); poly.degree() + 1];
+            let mut a = vec![G::ScalarField::one(); poly.degree() + 1];
             for j in 1..a.len() {
               a[j] = a[j - 1] * r_j;
             }
@@ -547,7 +568,7 @@ impl ZKSumcheckInstanceProof {
           assert_eq!(a_sc.len(), a_eval.len());
           (0..a_sc.len())
             .map(|i| w[0] * a_sc[i] + w[1] * a_eval[i])
-            .collect::<Vec<Scalar>>()
+            .collect::<Vec<G::ScalarField>>()
         };
 
         let (proof, _comm_poly, _comm_sc_eval) = DotProductProof::prove(
@@ -581,22 +602,27 @@ impl ZKSumcheckInstanceProof {
     )
   }
 
-  pub fn prove_cubic_with_additive_term<F>(
-    claim: &Scalar,
-    blind_claim: &Scalar,
+  pub fn prove_cubic_with_additive_term<Func>(
+    claim: &G::ScalarField,
+    blind_claim: &G::ScalarField,
     num_rounds: usize,
-    poly_A: &mut DensePolynomial,
-    poly_B: &mut DensePolynomial,
-    poly_C: &mut DensePolynomial,
-    poly_D: &mut DensePolynomial,
-    comb_func: F,
-    gens_1: &MultiCommitGens,
-    gens_n: &MultiCommitGens,
+    poly_A: &mut DensePolynomial<G::ScalarField>,
+    poly_B: &mut DensePolynomial<G::ScalarField>,
+    poly_C: &mut DensePolynomial<G::ScalarField>,
+    poly_D: &mut DensePolynomial<G::ScalarField>,
+    comb_func: Func,
+    gens_1: &MultiCommitGens<G>,
+    gens_n: &MultiCommitGens<G>,
     transcript: &mut Transcript,
-    random_tape: &mut RandomTape,
-  ) -> (Self, Vec<Scalar>, Vec<Scalar>, Scalar)
+    random_tape: &mut RandomTape<G>,
+  ) -> (
+    Self,
+    Vec<G::ScalarField>,
+    Vec<G::ScalarField>,
+    G::ScalarField,
+  )
   where
-    F: Fn(&Scalar, &Scalar, &Scalar, &Scalar) -> Scalar,
+    Func: Fn(&G::ScalarField, &G::ScalarField, &G::ScalarField, &G::ScalarField) -> G::ScalarField,
   {
     let (blinds_poly, blinds_evals) = (
       random_tape.random_vector(b"blinds_poly", num_rounds),
@@ -606,16 +632,16 @@ impl ZKSumcheckInstanceProof {
     let mut claim_per_round = *claim;
     let mut comm_claim_per_round = claim_per_round.commit(blind_claim, gens_1);
 
-    let mut r: Vec<Scalar> = Vec::new();
-    let mut comm_polys: Vec<GroupElement> = Vec::new();
-    let mut comm_evals: Vec<GroupElement> = Vec::new();
-    let mut proofs: Vec<DotProductProof> = Vec::new();
+    let mut r: Vec<G::ScalarField> = Vec::new();
+    let mut comm_polys: Vec<G> = Vec::new();
+    let mut comm_evals: Vec<G> = Vec::new();
+    let mut proofs: Vec<DotProductProof<G>> = Vec::new();
 
     for j in 0..num_rounds {
       let (poly, comm_poly) = {
-        let mut eval_point_0 = Scalar::zero();
-        let mut eval_point_2 = Scalar::zero();
-        let mut eval_point_3 = Scalar::zero();
+        let mut eval_point_0 = G::ScalarField::zero();
+        let mut eval_point_2 = G::ScalarField::zero();
+        let mut eval_point_3 = G::ScalarField::zero();
 
         let len = poly_A.len() / 2;
         for i in 0..len {
@@ -659,11 +685,12 @@ impl ZKSumcheckInstanceProof {
       };
 
       // append the prover's message to the transcript
-      comm_poly.append_to_transcript(b"comm_poly", transcript);
+      <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", &comm_poly);
       comm_polys.push(comm_poly);
 
       //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       // bound all tables to the verifier's challenege
       poly_A.bound_poly_var_top(&r_j);
@@ -686,11 +713,19 @@ impl ZKSumcheckInstanceProof {
         // for efficiency we batch them using random weights
 
         // add two claims to transcript
-        comm_claim_per_round.append_to_transcript(b"comm_claim_per_round", transcript);
-        comm_eval.append_to_transcript(b"comm_eval", transcript);
+        <Transcript as ProofTranscript<G>>::append_point(
+          transcript,
+          b"comm_claim_per_round",
+          &comm_claim_per_round,
+        );
+        <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_eval", &comm_eval);
 
         // produce two weights
-        let w = transcript.challenge_vector(b"combine_two_claims_to_one", 2);
+        let w = <Transcript as ProofTranscript<G>>::challenge_vector(
+          transcript,
+          b"combine_two_claims_to_one",
+          2,
+        );
 
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
@@ -717,14 +752,14 @@ impl ZKSumcheckInstanceProof {
         let a = {
           // the vector to use to decommit for sum-check test
           let a_sc = {
-            let mut a = vec![Scalar::one(); poly.degree() + 1];
-            a[0] += Scalar::one();
+            let mut a = vec![G::ScalarField::one(); poly.degree() + 1];
+            a[0] += G::ScalarField::one();
             a
           };
 
           // the vector to use to decommit for evaluation
           let a_eval = {
-            let mut a = vec![Scalar::one(); poly.degree() + 1];
+            let mut a = vec![G::ScalarField::one(); poly.degree() + 1];
             for j in 1..a.len() {
               a[j] = a[j - 1] * r_j;
             }
@@ -735,7 +770,7 @@ impl ZKSumcheckInstanceProof {
           assert_eq!(a_sc.len(), a_eval.len());
           (0..a_sc.len())
             .map(|i| w[0] * a_sc[i] + w[1] * a_eval[i])
-            .collect::<Vec<Scalar>>()
+            .collect::<Vec<G::ScalarField>>()
         };
 
         let (proof, _comm_poly, _comm_sc_eval) = DotProductProof::prove(

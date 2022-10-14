@@ -5,6 +5,7 @@ extern crate libspartan;
 extern crate merlin;
 extern crate rand;
 
+use ark_bls12_381::{Fr, G1Projective};
 use ark_serialize::CanonicalSerialize;
 use libspartan::{Instance, NIZKGens, NIZK};
 use merlin::Transcript;
@@ -25,10 +26,11 @@ pub fn main() {
     let num_inputs = 10;
 
     // produce a synthetic R1CSInstance
-    let (inst, vars, inputs) = Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+    let (inst, vars, inputs) =
+      Instance::<Fr>::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
 
     // produce public generators
-    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+    let gens = NIZKGens::<G1Projective>::new(num_cons, num_vars, num_inputs);
 
     // produce a proof of satisfiability
     let mut prover_transcript = Transcript::new(b"nizk_example");
