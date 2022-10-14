@@ -1,17 +1,23 @@
 [package]
-name = "spartan"
-version = "0.7.0"
-authors = ["Srinath Setty <srinath@microsoft.com>"]
+name = "ark-spartan"
+# sync up with Arkwork's version
+version = "0.3.0"
+authors = [
+    # author of original Spartan paper and code base 
+    # for which this library is modified from
+    "Srinath Setty <srinath@microsoft.com>",
+    # authors who contributed to this modification
+    "Zhenfei Zhang <zhenfei.zhang@hotmail.com>"
+]
 edition = "2021"
-description = "High-speed zkSNARKs without trusted setup"
+description = "Spartan ZKP system over arkworks"
 documentation = "https://docs.rs/spartan/"
 readme = "README.md"
-repository = "https://github.com/microsoft/Spartan"
+repository = "https://github.com/zhenfeizhang/ark-spartan"
 license-file = "LICENSE"
 keywords = ["zkSNARKs", "cryptography", "proofs"]
 
 [dependencies]
-# curve25519-dalek = {version = "3.2.0", features = ["serde"]}
 merlin = "3.0.0"
 rand = "0.7.3"
 digest = "0.8.1"
