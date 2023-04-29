@@ -7,8 +7,8 @@ use super::nizk::DotProductProof;
 use super::random::RandomTape;
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use super::unipoly::{CompressedUniPoly, UniPoly};
-use ark_ec::msm::VariableBaseMSM;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
+use ark_ec::VariableBaseMSM;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::{One, Zero};
@@ -34,7 +34,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     transcript: &mut Transcript,
   ) -> Result<(F, Vec<F>), ProofVerifyError>
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let mut e = claim;
     let mut r: Vec<F> = Vec::new();
@@ -68,13 +68,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct ZKSumcheckInstanceProof<G: ProjectiveCurve> {
+pub struct ZKSumcheckInstanceProof<G: CurveGroup> {
   comm_polys: Vec<G>,
   comm_evals: Vec<G>,
   proofs: Vec<DotProductProof<G>>,
 }
 
-impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
+impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
   pub fn new(comm_polys: Vec<G>, comm_evals: Vec<G>, proofs: Vec<DotProductProof<G>>) -> Self {
     ZKSumcheckInstanceProof {
       comm_polys,
@@ -135,10 +135,9 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
         );
 
         // compute a weighted sum of the RHS
-        let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
         let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
 
-        let comm_target = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), w_repr.as_ref());
+        let comm_target = VariableBaseMSM::msm(bases.as_ref(), w.as_ref()).unwrap();
 
         let a = {
           // the vector to use to decommit for sum-check test
@@ -198,7 +197,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   ) -> (Self, Vec<F>, Vec<F>)
   where
     Func: Fn(&F, &F, &F) -> F,
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let mut e = *claim;
     let mut r: Vec<F> = Vec::new();
@@ -280,7 +279,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F), (Vec<F>, Vec<F>, Vec<F>))
   where
     Func: Fn(&F, &F, &F) -> F,
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let (poly_A_vec_par, poly_B_vec_par, poly_C_par) = poly_vec_par;
     let (poly_A_vec_seq, poly_B_vec_seq, poly_C_vec_seq) = poly_vec_seq;
@@ -431,7 +430,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   }
 }
 
-impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
+impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
   pub fn prove_quad<Func>(
     claim: &G::ScalarField,
     blind_claim: &G::ScalarField,
@@ -530,9 +529,8 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
 
-        let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
         let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
-        let comm_target = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), w_repr.as_ref());
+        let comm_target = VariableBaseMSM::msm(bases.as_ref(), w.as_ref()).unwrap();
 
         let blind = {
           let blind_sc = if j == 0 {
@@ -730,10 +728,9 @@ impl<G: ProjectiveCurve> ZKSumcheckInstanceProof<G> {
         // compute a weighted sum of the RHS
         let target = w[0] * claim_per_round + w[1] * eval;
 
-        let w_repr = w.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
         let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
 
-        let comm_target = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), w_repr.as_ref());
+        let comm_target = VariableBaseMSM::msm(bases.as_ref(), w.as_ref()).unwrap();
 
         let blind = {
           let blind_sc = if j == 0 {

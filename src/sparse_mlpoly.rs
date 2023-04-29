@@ -11,7 +11,7 @@ use super::product_tree::{DotProductCircuit, ProductCircuit, ProductCircuitEvalP
 use super::random::RandomTape;
 use super::timer::Timer;
 use super::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::{One, Zero};
@@ -45,7 +45,7 @@ pub struct Derefs<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsCommitment<G: ProjectiveCurve> {
+pub struct DerefsCommitment<G: CurveGroup> {
   comm_ops_val: PolyCommitment<G>,
 }
 
@@ -71,7 +71,7 @@ impl<F: PrimeField> Derefs<F> {
     derefs
   }
 
-  pub fn commit<G: ProjectiveCurve<ScalarField = F>>(
+  pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &PolyCommitmentGens<G>,
   ) -> DerefsCommitment<G> {
@@ -81,11 +81,11 @@ impl<F: PrimeField> Derefs<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsEvalProof<G: ProjectiveCurve> {
+pub struct DerefsEvalProof<G: CurveGroup> {
   proof_derefs: PolyEvalProof<G>,
 }
 
-impl<G: ProjectiveCurve> DerefsEvalProof<G> {
+impl<G: CurveGroup> DerefsEvalProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"Derefs evaluation proof"
   }
@@ -235,7 +235,7 @@ impl<G: ProjectiveCurve> DerefsEvalProof<G> {
   }
 }
 
-impl<G: ProjectiveCurve> AppendToTranscript<G> for DerefsCommitment<G> {
+impl<G: CurveGroup> AppendToTranscript<G> for DerefsCommitment<G> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_message(b"derefs_commitment", b"begin_derefs_commitment");
     self.comm_ops_val.append_to_transcript(label, transcript);
@@ -319,7 +319,7 @@ pub struct SparseMatPolyCommitmentGens<G> {
   gens_derefs: PolyCommitmentGens<G>,
 }
 
-impl<G: ProjectiveCurve> SparseMatPolyCommitmentGens<G> {
+impl<G: CurveGroup> SparseMatPolyCommitmentGens<G> {
   pub fn new(
     label: &'static [u8],
     num_vars_x: usize,
@@ -349,7 +349,7 @@ impl<G: ProjectiveCurve> SparseMatPolyCommitmentGens<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolyCommitment<G: ProjectiveCurve> {
+pub struct SparseMatPolyCommitment<G: CurveGroup> {
   batch_size: usize,
   num_ops: usize,
   num_mem_cells: usize,
@@ -357,7 +357,7 @@ pub struct SparseMatPolyCommitment<G: ProjectiveCurve> {
   comm_comb_mem: PolyCommitment<G>,
 }
 
-impl<G: ProjectiveCurve> AppendToTranscript<G> for SparseMatPolyCommitment<G> {
+impl<G: CurveGroup> AppendToTranscript<G> for SparseMatPolyCommitment<G> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_u64(b"batch_size", self.batch_size as u64);
     transcript.append_u64(b"num_ops", self.num_ops as u64);
@@ -510,7 +510,7 @@ impl<F: PrimeField> SparseMatPolynomial<F> {
     M_evals
   }
 
-  pub fn multi_commit<G: ProjectiveCurve<ScalarField = F>>(
+  pub fn multi_commit<G: CurveGroup<ScalarField = F>>(
     sparse_polys: &[&SparseMatPolynomial<F>],
     gens: &SparseMatPolyCommitmentGens<G>,
   ) -> (
@@ -709,7 +709,7 @@ impl<F: PrimeField> PolyEvalNetwork<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: ProjectiveCurve> {
+struct HashLayerProof<G: CurveGroup> {
   eval_row: (Vec<G::ScalarField>, Vec<G::ScalarField>, G::ScalarField),
   eval_col: (Vec<G::ScalarField>, Vec<G::ScalarField>, G::ScalarField),
   eval_val: Vec<G::ScalarField>,
@@ -719,7 +719,7 @@ struct HashLayerProof<G: ProjectiveCurve> {
   proof_derefs: DerefsEvalProof<G>,
 }
 
-impl<G: ProjectiveCurve> HashLayerProof<G> {
+impl<G: CurveGroup> HashLayerProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial hash layer proof"
   }
@@ -1131,7 +1131,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
@@ -1342,7 +1342,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
 
     let mut product_layer_proof_encoded = vec![];
     product_layer_proof
-      .serialize(&mut product_layer_proof_encoded)
+      .serialize_compressed(&mut product_layer_proof_encoded)
       .unwrap();
 
     let msg = format!(
@@ -1362,7 +1362,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
     transcript: &mut Transcript,
   ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
@@ -1490,12 +1490,12 @@ impl<F: PrimeField> ProductLayerProof<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PolyEvalNetworkProof<G: ProjectiveCurve> {
+struct PolyEvalNetworkProof<G: CurveGroup> {
   proof_prod_layer: ProductLayerProof<G::ScalarField>,
   proof_hash_layer: HashLayerProof<G>,
 }
 
-impl<G: ProjectiveCurve> PolyEvalNetworkProof<G> {
+impl<G: CurveGroup> PolyEvalNetworkProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial evaluation proof"
   }
@@ -1607,12 +1607,12 @@ impl<G: ProjectiveCurve> PolyEvalNetworkProof<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolyEvalProof<G: ProjectiveCurve> {
+pub struct SparseMatPolyEvalProof<G: CurveGroup> {
   comm_derefs: DerefsCommitment<G>,
   poly_eval_network_proof: PolyEvalNetworkProof<G>,
 }
 
-impl<G: ProjectiveCurve> SparseMatPolyEvalProof<G> {
+impl<G: CurveGroup> SparseMatPolyEvalProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial evaluation proof"
   }
@@ -1813,7 +1813,7 @@ mod tests {
   fn check_sparse_polyeval_proof() {
     check_sparse_polyeval_proof_helper::<G1Projective>()
   }
-  fn check_sparse_polyeval_proof_helper<G: ProjectiveCurve>() {
+  fn check_sparse_polyeval_proof_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let num_nz_entries: usize = 256;

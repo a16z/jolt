@@ -1,7 +1,7 @@
 [package]
 name = "ark-spartan"
 # sync up with Arkwork's version
-version = "0.3.0"
+version = "0.4.0"
 authors = [
     # author of original Spartan paper and code base 
     # for which this library is modified from
@@ -32,12 +32,12 @@ thiserror = "1.0"
 
 rand_chacha = { version = "0.3.0", default-features = false }
 
-ark-ec = { version = "^0.3.0", default-features = false }
-ark-ff = { version = "^0.3.0", default-features = false }
-ark-std = { version = "^0.3.0", default-features = false }
-ark-serialize =  { version = "^0.3.0", default-features = false, features = [ "derive" ] }
+ark-ec = { version = "^0.4.0", default-features = false }
+ark-ff = { version = "^0.4.0", default-features = false }
+ark-std = { version = "^0.4.0", default-features = false }
+ark-serialize =  { version = "^0.4.0", default-features = false, features = [ "derive" ] }
 
-ark-bls12-381 = { version = "0.3.0", default-features = false, features = [ "curve" ] }
+ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
 
 [dev-dependencies]
 criterion = "0.3.1"

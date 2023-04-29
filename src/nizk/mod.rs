@@ -4,22 +4,20 @@ use super::errors::ProofVerifyError;
 use super::math::Math;
 use super::random::RandomTape;
 use super::transcript::ProofTranscript;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_serialize::*;
 use bullet::BulletReductionProof;
 use merlin::Transcript;
 mod bullet;
-use ark_ff::PrimeField;
-use ark_std::Zero;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct KnowledgeProof<G: ProjectiveCurve> {
+pub struct KnowledgeProof<G: CurveGroup> {
   alpha: G,
   z1: G::ScalarField,
   z2: G::ScalarField,
 }
 
-impl<G: ProjectiveCurve> KnowledgeProof<G> {
+impl<G: CurveGroup> KnowledgeProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"knowledge proof"
   }
@@ -71,7 +69,7 @@ impl<G: ProjectiveCurve> KnowledgeProof<G> {
     let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
     let lhs = self.z1.commit(&self.z2, gens_n);
-    let rhs = C.mul(c.into_repr()) + self.alpha;
+    let rhs = *C * c + self.alpha;
 
     if lhs == rhs {
       Ok(())
@@ -82,12 +80,12 @@ impl<G: ProjectiveCurve> KnowledgeProof<G> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct EqualityProof<G: ProjectiveCurve> {
+pub struct EqualityProof<G: CurveGroup> {
   alpha: G,
   z: G::ScalarField,
 }
 
-impl<G: ProjectiveCurve> EqualityProof<G> {
+impl<G: CurveGroup> EqualityProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"equality proof"
   }
@@ -115,7 +113,7 @@ impl<G: ProjectiveCurve> EqualityProof<G> {
     let C2 = v2.commit(s2, gens_n);
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"C2", &C2);
 
-    let alpha = gens_n.h.mul(r.into_repr());
+    let alpha = gens_n.h * r;
 
     <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
 
@@ -146,10 +144,10 @@ impl<G: ProjectiveCurve> EqualityProof<G> {
 
     let rhs = {
       let C = *C1 - *C2;
-      C.mul(c.into_repr()) + self.alpha
+      C * c + self.alpha
     };
 
-    let lhs = gens_n.h.mul(self.z.into_repr());
+    let lhs = gens_n.h * self.z;
 
     if lhs == rhs {
       Ok(())
@@ -159,55 +157,15 @@ impl<G: ProjectiveCurve> EqualityProof<G> {
   }
 }
 
-#[derive(Debug)]
-pub struct ProductProof<G: ProjectiveCurve> {
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct ProductProof<G: CurveGroup> {
   alpha: G,
   beta: G,
   delta: G,
   z: [G::ScalarField; 5],
 }
 
-impl<G: ProjectiveCurve> CanonicalSerialize for ProductProof<G> {
-  fn serialized_size(&self) -> usize {
-    self.alpha.serialized_size() * 3 + self.z[0].serialized_size() * 5
-  }
-
-  fn serialize<W>(&self, mut writer: W) -> Result<(), SerializationError>
-  where
-    W: Write,
-  {
-    self.alpha.serialize(&mut writer)?;
-    self.beta.serialize(&mut writer)?;
-    self.delta.serialize(&mut writer)?;
-    for &e in self.z.iter() {
-      e.serialize(&mut writer)?;
-    }
-    Ok(())
-  }
-}
-
-impl<G: ProjectiveCurve> CanonicalDeserialize for ProductProof<G> {
-  fn deserialize<R>(mut reader: R) -> Result<Self, SerializationError>
-  where
-    R: Read,
-  {
-    let alpha = G::deserialize(&mut reader)?;
-    let beta = G::deserialize(&mut reader)?;
-    let delta = G::deserialize(&mut reader)?;
-    let mut z = [G::ScalarField::zero(); 5];
-    for e in z.iter_mut() {
-      *e = G::ScalarField::deserialize(&mut reader)?;
-    }
-    Ok(Self {
-      alpha,
-      beta,
-      delta,
-      z,
-    })
-  }
-}
-
-impl<G: ProjectiveCurve> ProductProof<G> {
+impl<G: CurveGroup> ProductProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"product proof"
   }
@@ -290,7 +248,7 @@ impl<G: ProjectiveCurve> ProductProof<G> {
     z1: &G::ScalarField,
     z2: &G::ScalarField,
   ) -> bool {
-    let lhs = *P + X.mul(c.into_repr());
+    let lhs = *P + *X * *c;
     let rhs = z1.commit(z2, gens_n);
 
     lhs == rhs
@@ -347,7 +305,7 @@ impl<G: ProjectiveCurve> ProductProof<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DotProductProof<G: ProjectiveCurve> {
+pub struct DotProductProof<G: CurveGroup> {
   delta: G,
   beta: G,
   z: Vec<G::ScalarField>,
@@ -355,7 +313,7 @@ pub struct DotProductProof<G: ProjectiveCurve> {
   z_beta: G::ScalarField,
 }
 
-impl<G: ProjectiveCurve> DotProductProof<G> {
+impl<G: CurveGroup> DotProductProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"dot product proof"
   }
@@ -455,11 +413,11 @@ impl<G: ProjectiveCurve> DotProductProof<G> {
 
     let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
-    let mut result = Cx.mul(c.into_repr()) + self.delta
-      == Commitments::batch_commit(self.z.as_ref(), &self.z_delta, gens_n);
+    let mut result =
+      *Cx * c + self.delta == Commitments::batch_commit(self.z.as_ref(), &self.z_delta, gens_n);
 
     let dotproduct_z_a = DotProductProof::<G>::compute_dotproduct(&self.z, a);
-    result &= Cy.mul(c.into_repr()) + self.beta == dotproduct_z_a.commit(&self.z_beta, gens_1);
+    result &= *Cy * c + self.beta == dotproduct_z_a.commit(&self.z_beta, gens_1);
 
     if result {
       Ok(())
@@ -475,7 +433,7 @@ pub struct DotProductProofGens<G> {
   pub gens_1: MultiCommitGens<G>,
 }
 
-impl<G: ProjectiveCurve> DotProductProofGens<G> {
+impl<G: CurveGroup> DotProductProofGens<G> {
   pub fn new(n: usize, label: &[u8]) -> Self {
     let (gens_n, gens_1) = MultiCommitGens::new(n + 1, label).split_at(n);
     DotProductProofGens { n, gens_n, gens_1 }
@@ -483,7 +441,7 @@ impl<G: ProjectiveCurve> DotProductProofGens<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DotProductProofLog<G: ProjectiveCurve> {
+pub struct DotProductProofLog<G: CurveGroup> {
   bullet_reduction_proof: BulletReductionProof<G>,
   delta: G,
   beta: G,
@@ -491,7 +449,7 @@ pub struct DotProductProofLog<G: ProjectiveCurve> {
   z2: G::ScalarField,
 }
 
-impl<G: ProjectiveCurve> DotProductProofLog<G> {
+impl<G: CurveGroup> DotProductProofLog<G> {
   fn protocol_name() -> &'static [u8] {
     b"dot product proof (log)"
   }
@@ -624,9 +582,8 @@ impl<G: ProjectiveCurve> DotProductProofLog<G> {
     let z1_s = &self.z1;
     let z2_s = &self.z2;
 
-    let lhs = (Gamma_hat.mul(c_s.into_repr()) + beta_s).mul(a_hat_s.into_repr()) + delta_s;
-    let rhs = (g_hat + gens.gens_1.G[0].mul(a_hat_s.into_repr())).mul(z1_s.into_repr())
-      + gens.gens_1.h.mul(z2_s.into_repr());
+    let lhs = (Gamma_hat * c_s + beta_s) * a_hat_s + delta_s;
+    let rhs = (g_hat + gens.gens_1.G[0] * a_hat_s) * z1_s + gens.gens_1.h * z2_s;
 
     assert_eq!(lhs, rhs);
 
@@ -650,7 +607,7 @@ mod tests {
     check_knowledgeproof_helper::<G1Projective>()
   }
 
-  fn check_knowledgeproof_helper<G: ProjectiveCurve>() {
+  fn check_knowledgeproof_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let gens_1 = MultiCommitGens::<G>::new(1, b"test-knowledgeproof");
@@ -674,7 +631,7 @@ mod tests {
     check_equalityproof_helper::<G1Projective>()
   }
 
-  fn check_equalityproof_helper<G: ProjectiveCurve>() {
+  fn check_equalityproof_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let gens_1 = MultiCommitGens::<G>::new(1, b"test-equalityproof");
@@ -706,7 +663,7 @@ mod tests {
     check_productproof_helper::<G1Projective>()
   }
 
-  fn check_productproof_helper<G: ProjectiveCurve>() {
+  fn check_productproof_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let gens_1 = MultiCommitGens::<G>::new(1, b"test-productproof");
@@ -742,7 +699,7 @@ mod tests {
     check_dotproductproof_helper::<G1Projective>()
   }
 
-  fn check_dotproductproof_helper<G: ProjectiveCurve>() {
+  fn check_dotproductproof_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let n = 1024;
@@ -784,7 +741,7 @@ mod tests {
   fn check_dotproductproof_log() {
     check_dotproductproof_log_helper::<G1Projective>()
   }
-  fn check_dotproductproof_log_helper<G: ProjectiveCurve>() {
+  fn check_dotproductproof_log_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let n = 1024;

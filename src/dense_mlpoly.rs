@@ -5,8 +5,8 @@ use super::math::Math;
 use super::nizk::{DotProductProofGens, DotProductProofLog};
 use super::random::RandomTape;
 use super::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::msm::VariableBaseMSM;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
+use ark_ec::VariableBaseMSM;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::Zero;
@@ -27,7 +27,7 @@ pub struct PolyCommitmentGens<G> {
   pub gens: DotProductProofGens<G>,
 }
 
-impl<G: ProjectiveCurve> PolyCommitmentGens<G> {
+impl<G: CurveGroup> PolyCommitmentGens<G> {
   // the number of variables in the multilinear polynomial
   pub fn new(num_vars: usize, label: &'static [u8]) -> Self {
     let (_left, right) = EqPolynomial::<G::ScalarField>::compute_factored_lens(num_vars);
@@ -41,12 +41,12 @@ pub struct PolyCommitmentBlinds<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PolyCommitment<G: ProjectiveCurve> {
+pub struct PolyCommitment<G: CurveGroup> {
   C: Vec<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ConstPolyCommitment<G: ProjectiveCurve> {
+pub struct ConstPolyCommitment<G: CurveGroup> {
   C: G,
 }
 
@@ -163,7 +163,7 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   #[cfg(not(feature = "multicore"))]
-  fn commit_inner<G: ProjectiveCurve<ScalarField = F>>(
+  fn commit_inner<G: CurveGroup<ScalarField = F>>(
     &self,
     blinds: &[F],
     gens: &MultiCommitGens<G>,
@@ -189,7 +189,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     random_tape: Option<&mut RandomTape<G>>,
   ) -> (PolyCommitment<G>, PolyCommitmentBlinds<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let n = self.Z.len();
     let ell = self.get_num_vars();
@@ -244,7 +244,7 @@ impl<F: PrimeField> DensePolynomial<F> {
   // returns Z(r) in O(n) time
   pub fn evaluate<G>(&self, r: &[F]) -> F
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     // r must have a value for each variable
     assert_eq!(r.len(), self.get_num_vars());
@@ -298,7 +298,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
   }
 }
 
-impl<G: ProjectiveCurve> AppendToTranscript<G> for PolyCommitment<G> {
+impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_message(label, b"poly_commitment_begin");
     for i in 0..self.C.len() {
@@ -309,11 +309,11 @@ impl<G: ProjectiveCurve> AppendToTranscript<G> for PolyCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PolyEvalProof<G: ProjectiveCurve> {
+pub struct PolyEvalProof<G: CurveGroup> {
   proof: DotProductProofLog<G>,
 }
 
-impl<G: ProjectiveCurve> PolyEvalProof<G> {
+impl<G: CurveGroup> PolyEvalProof<G> {
   fn protocol_name() -> &'static [u8] {
     b"polynomial evaluation proof"
   }
@@ -395,10 +395,9 @@ impl<G: ProjectiveCurve> PolyEvalProof<G> {
     let (L, R) = eq.compute_factored_evals();
 
     // compute a weighted sum of commitments and L
-    let C_affine = G::batch_normalization_into_affine(&comm.C);
+    let C_affine = G::normalize_batch(&comm.C);
 
-    let L_repr = L.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
-    let C_LZ = VariableBaseMSM::multi_scalar_mul(C_affine.as_ref(), L_repr.as_ref());
+    let C_LZ = VariableBaseMSM::msm(C_affine.as_ref(), L.as_ref()).unwrap();
 
     self
       .proof
@@ -429,10 +428,7 @@ mod tests {
   use ark_std::One;
   use ark_std::UniformRand;
 
-  fn evaluate_with_LR<G: ProjectiveCurve>(
-    Z: &[G::ScalarField],
-    r: &[G::ScalarField],
-  ) -> G::ScalarField {
+  fn evaluate_with_LR<G: CurveGroup>(Z: &[G::ScalarField], r: &[G::ScalarField]) -> G::ScalarField {
     let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
     let (L, R) = eq.compute_factored_evals();
 
@@ -458,7 +454,7 @@ mod tests {
     check_polynomial_evaluation_helper::<G1Projective>()
   }
 
-  fn check_polynomial_evaluation_helper<G: ProjectiveCurve>() {
+  fn check_polynomial_evaluation_helper<G: CurveGroup>() {
     // Z = [1, 2, 1, 4]
     let Z = vec![
       G::ScalarField::one(),
@@ -551,7 +547,7 @@ mod tests {
     check_memoized_chis_helper::<G1Projective>()
   }
 
-  fn check_memoized_chis_helper<G: ProjectiveCurve>() {
+  fn check_memoized_chis_helper<G: CurveGroup>() {
     let mut prng = test_rng();
 
     let s = 10;
@@ -608,7 +604,7 @@ mod tests {
     check_polynomial_commit_helper::<G1Projective>()
   }
 
-  fn check_polynomial_commit_helper<G: ProjectiveCurve>() {
+  fn check_polynomial_commit_helper<G: CurveGroup>() {
     let Z = vec![
       G::ScalarField::one(),
       G::ScalarField::from(2u64),

@@ -1,9 +1,9 @@
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use merlin::Transcript;
 
-pub trait ProofTranscript<G: ProjectiveCurve> {
+pub trait ProofTranscript<G: CurveGroup> {
   fn append_protocol_name(&mut self, protocol_name: &'static [u8]);
   fn append_scalar(&mut self, label: &'static [u8], scalar: &G::ScalarField);
   fn append_scalars(&mut self, label: &'static [u8], scalars: &[G::ScalarField]);
@@ -13,14 +13,14 @@ pub trait ProofTranscript<G: ProjectiveCurve> {
   fn challenge_vector(&mut self, label: &'static [u8], len: usize) -> Vec<G::ScalarField>;
 }
 
-impl<G: ProjectiveCurve> ProofTranscript<G> for Transcript {
+impl<G: CurveGroup> ProofTranscript<G> for Transcript {
   fn append_protocol_name(&mut self, protocol_name: &'static [u8]) {
     self.append_message(b"protocol-name", protocol_name);
   }
 
   fn append_scalar(&mut self, label: &'static [u8], scalar: &G::ScalarField) {
     let mut buf = vec![];
-    scalar.serialize(&mut buf).unwrap();
+    scalar.serialize_compressed(&mut buf).unwrap();
     self.append_message(label, &buf);
   }
 
@@ -34,7 +34,7 @@ impl<G: ProjectiveCurve> ProofTranscript<G> for Transcript {
 
   fn append_point(&mut self, label: &'static [u8], point: &G) {
     let mut buf = vec![];
-    point.serialize(&mut buf).unwrap();
+    point.serialize_compressed(&mut buf).unwrap();
     self.append_message(label, &buf);
   }
 
@@ -59,17 +59,17 @@ impl<G: ProjectiveCurve> ProofTranscript<G> for Transcript {
   }
 }
 
-pub trait AppendToTranscript<G: ProjectiveCurve> {
+pub trait AppendToTranscript<G: CurveGroup> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript);
 }
 
-// // impl<G:ProjectiveCurve> AppendToTranscript<G> for G::ScalarField {
+// // impl<G:CurveGroup> AppendToTranscript<G> for G::ScalarField {
 // //   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
 // //     transcript.append_scalar(label, self);
 // //   }
 // // }
 
-// impl<G:ProjectiveCurve> AppendToTranscript<G> for [G::ScalarField] {
+// impl<G:CurveGroup> AppendToTranscript<G> for [G::ScalarField] {
 //   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
 //     transcript.append_message(label, b"begin_append_vector");
 //     for item in self {
@@ -79,7 +79,7 @@ pub trait AppendToTranscript<G: ProjectiveCurve> {
 //   }
 // }
 
-// impl<G:ProjectiveCurve> AppendToTranscript<G> for G {
+// impl<G:CurveGroup> AppendToTranscript<G> for G {
 //   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
 //     transcript.append_point(label, self);
 //   }

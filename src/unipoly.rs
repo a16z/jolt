@@ -1,6 +1,6 @@
 use super::commitments::{Commitments, MultiCommitGens};
 use super::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use merlin::Transcript;
@@ -87,11 +87,7 @@ impl<F: PrimeField> UniPoly<F> {
     }
   }
 
-  pub fn commit<G: ProjectiveCurve<ScalarField = F>>(
-    &self,
-    gens: &MultiCommitGens<G>,
-    blind: &F,
-  ) -> G {
+  pub fn commit<G: CurveGroup<ScalarField = F>>(&self, gens: &MultiCommitGens<G>, blind: &F) -> G {
     Commitments::batch_commit(&self.coeffs, blind, gens)
   }
 }
@@ -113,7 +109,7 @@ impl<F: PrimeField> CompressedUniPoly<F> {
   }
 }
 
-impl<G: ProjectiveCurve> AppendToTranscript<G> for UniPoly<G::ScalarField> {
+impl<G: CurveGroup> AppendToTranscript<G> for UniPoly<G::ScalarField> {
   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_message(label, b"UniPoly_begin");
     for i in 0..self.coeffs.len() {

@@ -9,13 +9,13 @@ extern crate rand;
 extern crate sha3;
 
 use ark_bls12_381::G1Projective;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use libspartan::{Instance, NIZKGens, NIZK};
 use merlin::Transcript;
 
 use criterion::*;
 
-fn nizk_prove_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
+fn nizk_prove_benchmark<G: CurveGroup>(c: &mut Criterion) {
   for &s in [10, 12, 16].iter() {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("NIZK_prove_benchmark");
@@ -47,7 +47,7 @@ fn nizk_prove_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
   }
 }
 
-fn nizk_verify_benchmark<G: ProjectiveCurve>(c: &mut Criterion) {
+fn nizk_verify_benchmark<G: CurveGroup>(c: &mut Criterion) {
   for &s in [10, 12, 16].iter() {
     let plot_config = PlotConfiguration::default().summary_scale(AxisScale::Logarithmic);
     let mut group = c.benchmark_group("NIZK_verify_benchmark");

@@ -8,7 +8,7 @@ use super::sparse_mlpoly::{
 };
 use super::timer::Timer;
 use crate::transcript::AppendToTranscript;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::test_rng;
@@ -24,10 +24,10 @@ pub struct R1CSInstance<F: PrimeField> {
   C: SparseMatPolynomial<F>,
 }
 
-impl<G: ProjectiveCurve> AppendToTranscript<G> for R1CSInstance<G::ScalarField> {
+impl<G: CurveGroup> AppendToTranscript<G> for R1CSInstance<G::ScalarField> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     let mut data = vec![];
-    self.serialize(&mut data).unwrap();
+    self.serialize_compressed(&mut data).unwrap();
 
     transcript.append_message(b"R1CSInstance", &data);
   }
@@ -37,7 +37,7 @@ pub struct R1CSCommitmentGens<G> {
   gens: SparseMatPolyCommitmentGens<G>,
 }
 
-impl<G: ProjectiveCurve> R1CSCommitmentGens<G> {
+impl<G: CurveGroup> R1CSCommitmentGens<G> {
   pub fn new(
     label: &'static [u8],
     num_cons: usize,
@@ -55,14 +55,14 @@ impl<G: ProjectiveCurve> R1CSCommitmentGens<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment<G: ProjectiveCurve> {
+pub struct R1CSCommitment<G: CurveGroup> {
   num_cons: usize,
   num_vars: usize,
   num_inputs: usize,
   comm: SparseMatPolyCommitment<G>,
 }
 
-impl<G: ProjectiveCurve> AppendToTranscript<G> for R1CSCommitment<G> {
+impl<G: CurveGroup> AppendToTranscript<G> for R1CSCommitment<G> {
   fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
     transcript.append_u64(b"num_cons", self.num_cons as u64);
     transcript.append_u64(b"num_vars", self.num_vars as u64);
@@ -75,7 +75,7 @@ pub struct R1CSDecommitment<F> {
   dense: MultiSparseMatPolynomialAsDense<F>,
 }
 
-impl<G: ProjectiveCurve> R1CSCommitment<G> {
+impl<G: CurveGroup> R1CSCommitment<G> {
   pub fn get_num_cons(&self) -> usize {
     self.num_cons
   }
@@ -301,7 +301,7 @@ impl<F: PrimeField> R1CSInstance<F> {
     (evals[0], evals[1], evals[2])
   }
 
-  pub fn commit<G: ProjectiveCurve<ScalarField = F>>(
+  pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &R1CSCommitmentGens<G>,
   ) -> (R1CSCommitment<G>, R1CSDecommitment<F>) {
@@ -320,11 +320,11 @@ impl<F: PrimeField> R1CSInstance<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSEvalProof<G: ProjectiveCurve> {
+pub struct R1CSEvalProof<G: CurveGroup> {
   proof: SparseMatPolyEvalProof<G>,
 }
 
-impl<G: ProjectiveCurve> R1CSEvalProof<G> {
+impl<G: CurveGroup> R1CSEvalProof<G> {
   pub fn prove(
     decomm: &R1CSDecommitment<G::ScalarField>,
     rx: &[G::ScalarField], // point at which the polynomial is evaluated

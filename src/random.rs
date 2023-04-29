@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use super::transcript::ProofTranscript;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::UniformRand;
 use ark_std::test_rng;
 use merlin::Transcript;
@@ -11,7 +11,7 @@ pub struct RandomTape<G> {
   phantom: PhantomData<G>,
 }
 
-impl<G: ProjectiveCurve> RandomTape<G> {
+impl<G: CurveGroup> RandomTape<G> {
   pub fn new(name: &'static [u8]) -> Self {
     let tape = {
       let mut prng = test_rng();

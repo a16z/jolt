@@ -6,7 +6,7 @@
 use super::super::errors::ProofVerifyError;
 use super::super::math::Math;
 use super::super::transcript::ProofTranscript;
-use ark_ec::{msm::VariableBaseMSM, ProjectiveCurve};
+use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::One;
@@ -14,12 +14,12 @@ use core::iter;
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BulletReductionProof<G: ProjectiveCurve> {
+pub struct BulletReductionProof<G: CurveGroup> {
   L_vec: Vec<G>,
   R_vec: Vec<G>,
 }
 
-impl<G: ProjectiveCurve> BulletReductionProof<G> {
+impl<G: CurveGroup> BulletReductionProof<G> {
   /// Create an inner-product proof.
   ///
   /// The proof is created with respect to the bases \\(G\\).
@@ -78,7 +78,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
         .iter()
         .chain(iter::once(&c_L))
         .chain(iter::once(blind_L))
-        .map(|x| x.into_repr())
+        .copied()
         .collect::<Vec<_>>();
 
       let bases = G_R
@@ -88,15 +88,15 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
         .copied()
         .collect::<Vec<_>>();
 
-      let bases = G::batch_normalization_into_affine(bases.as_ref());
+      let bases = G::normalize_batch(bases.as_ref());
 
-      let L = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
+      let L = VariableBaseMSM::msm(bases.as_ref(), scalars.as_ref()).unwrap();
 
       let scalars = a_R
         .iter()
         .chain(iter::once(&c_R))
         .chain(iter::once(blind_R))
-        .map(|x| x.into_repr())
+        .copied()
         .collect::<Vec<_>>();
 
       let bases = G_L
@@ -106,9 +106,9 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
         .copied()
         .collect::<Vec<_>>();
 
-      let bases = G::batch_normalization_into_affine(bases.as_ref());
+      let bases = G::normalize_batch(bases.as_ref());
 
-      let R = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
+      let R = VariableBaseMSM::msm(bases.as_ref(), scalars.as_ref()).unwrap();
 
       <Transcript as ProofTranscript<G>>::append_point(transcript, b"L", &L);
       <Transcript as ProofTranscript<G>>::append_point(transcript, b"R", &R);
@@ -121,7 +121,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
         a_L[i] = a_L[i] * u + u_inv * a_R[i];
         b_L[i] = b_L[i] * u_inv + u * b_R[i];
 
-        G_L[i] = G_L[i].mul(u_inv.into_repr()) + G_R[i].mul(u.into_repr());
+        G_L[i] = G_L[i] * u_inv + G_R[i] * u;
       }
 
       blind_fin = blind_fin + *blind_L * u * u + *blind_R * u_inv * u_inv;
@@ -134,8 +134,7 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
       G = G_L;
     }
 
-    let Gamma_hat =
-      G[0].mul(a[0].into_repr()) + Q.mul((a[0] * b[0]).into_repr()) + H.mul(blind_fin.into_repr());
+    let Gamma_hat = G[0] * a[0] + *Q * a[0] * b[0] + *H * blind_fin;
 
     (
       BulletReductionProof { L_vec, R_vec },
@@ -227,26 +226,24 @@ impl<G: ProjectiveCurve> BulletReductionProof<G> {
   ) -> Result<(G, G, G::ScalarField), ProofVerifyError> {
     let (u_sq, u_inv_sq, s) = self.verification_scalars(n, transcript)?;
 
-    let group_element = G::batch_normalization_into_affine(G);
-    let scalars = s.iter().map(|x| x.into_repr()).collect::<Vec<_>>();
+    let group_element = G::normalize_batch(G);
 
-    let G_hat = VariableBaseMSM::multi_scalar_mul(group_element.as_ref(), scalars.as_ref());
+    let G_hat = VariableBaseMSM::msm(group_element.as_ref(), s.as_ref()).unwrap();
 
     let a_hat = inner_product(a, &s);
 
-    let bases = G::batch_normalization_into_affine(
+    let bases = G::normalize_batch(
       [self.L_vec.as_slice(), self.R_vec.as_slice(), &[*Gamma]]
         .concat()
         .as_ref(),
     );
     let scalars = u_sq
-      .iter()
-      .chain(u_inv_sq.iter())
-      .chain(iter::once(&G::ScalarField::one()))
-      .map(|x| x.into_repr())
+      .into_iter()
+      .chain(u_inv_sq.into_iter())
+      .chain([G::ScalarField::one()])
       .collect::<Vec<_>>();
 
-    let Gamma_hat = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
+    let Gamma_hat = VariableBaseMSM::msm(bases.as_ref(), scalars.as_ref()).unwrap();
 
     Ok((G_hat, Gamma_hat, a_hat))
   }

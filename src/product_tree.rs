@@ -4,7 +4,7 @@ use super::dense_mlpoly::EqPolynomial;
 use super::math::Math;
 use super::sumcheck::SumcheckInstanceProof;
 use super::transcript::ProofTranscript;
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use merlin::Transcript;
@@ -129,7 +129,7 @@ impl<F: PrimeField> LayerProof<F> {
     transcript: &mut Transcript,
   ) -> (F, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     self
       .proof
@@ -156,7 +156,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
     transcript: &mut Transcript,
   ) -> (F, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     self
       .proof
@@ -180,7 +180,7 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
   #![allow(dead_code)]
   pub fn prove<G>(circuit: &mut ProductCircuit<F>, transcript: &mut Transcript) -> (Self, F, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let mut proof: Vec<LayerProof<F>> = Vec::new();
     let num_layers = circuit.left_vec.len();
@@ -239,7 +239,7 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
 
   pub fn verify<G>(&self, eval: F, len: usize, transcript: &mut Transcript) -> (F, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let num_layers = len.log_2() as usize;
     let mut claim = eval;
@@ -288,7 +288,7 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     assert!(!prod_circuit_vec.is_empty());
 
@@ -446,7 +446,7 @@ impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
     transcript: &mut Transcript,
   ) -> (Vec<F>, Vec<F>, Vec<F>)
   where
-    G: ProjectiveCurve<ScalarField = F>,
+    G: CurveGroup<ScalarField = F>,
   {
     let num_layers = len.log_2() as usize;
     let mut rand: Vec<F> = Vec::new();

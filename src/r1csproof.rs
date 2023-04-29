@@ -12,15 +12,14 @@ use super::sparse_mlpoly::{SparsePolyEntry, SparsePolynomial};
 use super::sumcheck::ZKSumcheckInstanceProof;
 use super::timer::Timer;
 use super::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::msm::VariableBaseMSM;
-use ark_ec::ProjectiveCurve;
-use ark_ff::PrimeField;
+use ark_ec::CurveGroup;
+use ark_ec::VariableBaseMSM;
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct R1CSProof<G: ProjectiveCurve> {
+pub struct R1CSProof<G: CurveGroup> {
   comm_vars: PolyCommitment<G>,
   sc_proof_phase1: ZKSumcheckInstanceProof<G>,
   claims_phase2: (G, G, G, G),
@@ -39,7 +38,7 @@ pub struct R1CSSumcheckGens<G> {
 }
 
 // TODO: fix passing gens_1_ref
-impl<G: ProjectiveCurve> R1CSSumcheckGens<G> {
+impl<G: CurveGroup> R1CSSumcheckGens<G> {
   pub fn new(label: &'static [u8], gens_1_ref: &MultiCommitGens<G>) -> Self {
     let gens_1 = gens_1_ref.clone();
     let gens_3 = MultiCommitGens::new(3, label);
@@ -58,7 +57,7 @@ pub struct R1CSGens<G> {
   gens_pc: PolyCommitmentGens<G>,
 }
 
-impl<G: ProjectiveCurve> R1CSGens<G> {
+impl<G: CurveGroup> R1CSGens<G> {
   pub fn new(label: &'static [u8], _num_cons: usize, num_vars: usize) -> Self {
     let num_poly_vars = num_vars.log_2() as usize;
     let gens_pc = PolyCommitmentGens::new(num_poly_vars, label);
@@ -67,7 +66,7 @@ impl<G: ProjectiveCurve> R1CSGens<G> {
   }
 }
 
-impl<G: ProjectiveCurve> R1CSProof<G> {
+impl<G: CurveGroup> R1CSProof<G> {
   #[allow(clippy::type_complexity)]
   fn prove_phase_one(
     num_rounds: usize,
@@ -437,8 +436,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     let taus_bound_rx: G::ScalarField = (0..rx.len())
       .map(|i| rx[i] * tau[i] + (G::ScalarField::one() - rx[i]) * (G::ScalarField::one() - tau[i]))
       .product();
-    let expected_claim_post_phase1 =
-      (*comm_prod_Az_Bz_claims - *comm_Cz_claim).mul(taus_bound_rx.into_repr());
+    let expected_claim_post_phase1 = (*comm_prod_Az_Bz_claims - *comm_Cz_claim) * taus_bound_rx;
 
     // verify proof that expected_claim_post_phase1 == claim_post_phase1
     self.proof_eq_sc_phase1.verify(
@@ -454,13 +452,12 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     let r_C = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenege_Cz");
 
     // r_A * comm_Az_claim + r_B * comm_Bz_claim + r_C * comm_Cz_claim;
-    let scalars = vec![r_A.into_repr(), r_B.into_repr(), r_C.into_repr()];
+    let scalars = vec![r_A, r_B, r_C];
     let bases = vec![*comm_Az_claim, *comm_Bz_claim, *comm_Cz_claim];
 
-    let bases_affine = G::batch_normalization_into_affine(bases.as_ref());
+    let bases_affine = G::normalize_batch(bases.as_ref());
 
-    let comm_claim_phase2 =
-      VariableBaseMSM::multi_scalar_mul(bases_affine.as_ref(), scalars.as_ref());
+    let comm_claim_phase2 = VariableBaseMSM::msm(bases_affine.as_ref(), scalars.as_ref()).unwrap();
 
     // verify the joint claim with a sum-check protocol
     let (comm_claim_post_phase2, ry) = self.sc_proof_phase2.verify(
@@ -494,10 +491,7 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
     };
 
     // compute commitment to eval_Z_at_ry = (F::one() - ry[0]) * self.eval_vars_at_ry + ry[0] * poly_input_eval
-    let scalars = vec![
-      (G::ScalarField::one() - ry[0]).into_repr(),
-      ry[0].into_repr(),
-    ];
+    let scalars = vec![(G::ScalarField::one() - ry[0]), ry[0]];
 
     let bases = vec![
       self.comm_vars_at_ry.into_affine(),
@@ -506,12 +500,12 @@ impl<G: ProjectiveCurve> R1CSProof<G> {
         .into_affine(),
     ];
 
-    let comm_eval_Z_at_ry = VariableBaseMSM::multi_scalar_mul(bases.as_ref(), scalars.as_ref());
+    let comm_eval_Z_at_ry: G = VariableBaseMSM::msm(bases.as_ref(), scalars.as_ref()).unwrap();
 
     // perform the final check in the second sum-check protocol
     let (eval_A_r, eval_B_r, eval_C_r) = evals;
     let expected_claim_post_phase2 =
-      comm_eval_Z_at_ry.mul((r_A * eval_A_r + r_B * eval_B_r + r_C * eval_C_r).into_repr());
+      comm_eval_Z_at_ry * (r_A * eval_A_r + r_B * eval_B_r + r_C * eval_C_r);
 
     // verify proof that expected_claim_post_phase1 == claim_post_phase1
     self.proof_eq_sc_phase2.verify(
@@ -530,6 +524,7 @@ mod tests {
   use super::*;
   use ark_bls12_381::Fr;
   use ark_bls12_381::G1Projective;
+  use ark_ff::PrimeField;
   use ark_std::test_rng;
 
   fn produce_tiny_r1cs<F: PrimeField>() -> (R1CSInstance<F>, Vec<F>, Vec<F>) {
@@ -616,7 +611,7 @@ mod tests {
     check_r1cs_proof_helper::<G1Projective>()
   }
 
-  fn check_r1cs_proof_helper<G: ProjectiveCurve>() {
+  fn check_r1cs_proof_helper<G: CurveGroup>() {
     let num_vars = 1024;
     let num_cons = num_vars;
     let num_inputs = 10;

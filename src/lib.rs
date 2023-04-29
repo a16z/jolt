@@ -27,7 +27,7 @@ mod timer;
 mod transcript;
 mod unipoly;
 
-use ark_ec::ProjectiveCurve;
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use core::cmp::max;
@@ -42,7 +42,7 @@ use timer::Timer;
 use transcript::{AppendToTranscript, ProofTranscript};
 
 /// `ComputationCommitment` holds a public preprocessed NP statement (e.g., R1CS)
-pub struct ComputationCommitment<G: ProjectiveCurve> {
+pub struct ComputationCommitment<G: CurveGroup> {
   comm: R1CSCommitment<G>,
 }
 
@@ -257,7 +257,7 @@ pub struct SNARKGens<G> {
   gens_r1cs_eval: R1CSCommitmentGens<G>,
 }
 
-impl<G: ProjectiveCurve> SNARKGens<G> {
+impl<G: CurveGroup> SNARKGens<G> {
   /// Constructs a new `SNARKGens` given the size of the R1CS statement
   /// `num_nz_entries` specifies the maximum number of non-zero entries in any of the three R1CS matrices
   pub fn new(num_cons: usize, num_vars: usize, num_inputs: usize, num_nz_entries: usize) -> Self {
@@ -286,13 +286,13 @@ impl<G: ProjectiveCurve> SNARKGens<G> {
 
 /// `SNARK` holds a proof produced by Spartan SNARK
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SNARK<G: ProjectiveCurve> {
+pub struct SNARK<G: CurveGroup> {
   r1cs_sat_proof: R1CSProof<G>,
   inst_evals: (G::ScalarField, G::ScalarField, G::ScalarField),
   r1cs_eval_proof: R1CSEvalProof<G>,
 }
 
-impl<G: ProjectiveCurve> SNARK<G> {
+impl<G: CurveGroup> SNARK<G> {
   fn protocol_name() -> &'static [u8] {
     b"Spartan SNARK proof"
   }
@@ -359,7 +359,7 @@ impl<G: ProjectiveCurve> SNARK<G> {
       };
 
       let mut proof_encoded = vec![];
-      proof.serialize(&mut proof_encoded).unwrap();
+      proof.serialize_compressed(&mut proof_encoded).unwrap();
 
       Timer::print(&format!("len_r1cs_sat_proof {:?}", proof_encoded.len()));
 
@@ -390,7 +390,7 @@ impl<G: ProjectiveCurve> SNARK<G> {
       );
 
       let mut proof_encoded = vec![];
-      proof.serialize(&mut proof_encoded).unwrap();
+      proof.serialize_compressed(&mut proof_encoded).unwrap();
 
       Timer::print(&format!("len_r1cs_eval_proof {:?}", proof_encoded.len()));
       proof
@@ -457,7 +457,7 @@ pub struct NIZKGens<G> {
   gens_r1cs_sat: R1CSGens<G>,
 }
 
-impl<G: ProjectiveCurve> NIZKGens<G> {
+impl<G: CurveGroup> NIZKGens<G> {
   /// Constructs a new `NIZKGens` given the size of the R1CS statement
   pub fn new(num_cons: usize, num_vars: usize, num_inputs: usize) -> Self {
     let num_vars_padded = {
@@ -475,12 +475,12 @@ impl<G: ProjectiveCurve> NIZKGens<G> {
 
 /// `NIZK` holds a proof produced by Spartan NIZK
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct NIZK<G: ProjectiveCurve> {
+pub struct NIZK<G: CurveGroup> {
   r1cs_sat_proof: R1CSProof<G>,
   r: (Vec<G::ScalarField>, Vec<G::ScalarField>),
 }
 
-impl<G: ProjectiveCurve> NIZK<G> {
+impl<G: CurveGroup> NIZK<G> {
   fn protocol_name() -> &'static [u8] {
     b"Spartan NIZK proof"
   }
@@ -528,7 +528,7 @@ impl<G: ProjectiveCurve> NIZK<G> {
       );
 
       let mut proof_encoded = vec![];
-      proof.serialize(&mut proof_encoded).unwrap();
+      proof.serialize_compressed(&mut proof_encoded).unwrap();
 
       Timer::print(&format!("len_r1cs_sat_proof {:?}", proof_encoded.len()));
       (proof, rx, ry)
@@ -598,7 +598,7 @@ mod tests {
   pub fn check_snark() {
     check_snark_helper::<G1Projective>()
   }
-  pub fn check_snark_helper<G: ProjectiveCurve>() {
+  pub fn check_snark_helper<G: CurveGroup>() {
     let num_vars = 256;
     let num_cons = num_vars;
     let num_inputs = 10;
@@ -679,7 +679,7 @@ mod tests {
     test_padded_constraints_helper::<G1Projective>()
   }
 
-  fn test_padded_constraints_helper<G: ProjectiveCurve>() {
+  fn test_padded_constraints_helper<G: CurveGroup>() {
     // parameters of the R1CS instance
     let num_cons = 1;
     let num_vars = 0;
