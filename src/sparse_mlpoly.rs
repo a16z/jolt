@@ -7,7 +7,7 @@ use super::dense_mlpoly::{
 };
 use super::errors::ProofVerifyError;
 use super::math::Math;
-use super::product_tree::{DotProductCircuit, ProductCircuit, ProductCircuitEvalProofBatched};
+use super::product_tree::{DotProductCircuit, GrandProductCircuit, ProductCircuitEvalProofBatched};
 use super::random::RandomTape;
 use super::timer::Timer;
 use super::transcript::{AppendToTranscript, ProofTranscript};
@@ -454,170 +454,137 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
 // }
 
 #[derive(Debug)]
-struct ProductLayer<F> {
-  init: ProductCircuit<F>,
-  read_vec: Vec<ProductCircuit<F>>,
-  write_vec: Vec<ProductCircuit<F>>,
-  audit: ProductCircuit<F>,
+struct GrandProducts<F> {
+  init: GrandProductCircuit<F>,
+  read: GrandProductCircuit<F>,
+  write: GrandProductCircuit<F>,
+  r#final: GrandProductCircuit<F>,
+}
+
+impl<F: PrimeField> GrandProducts<F> {
+  fn build_hash_layer(
+    eval_table: &[F],
+    dim_i: &DensePolynomial<F>,
+    read_i: &DensePolynomial<F>,
+    final_i: &DensePolynomial<F>,
+    r_mem_check: &(F, F),
+  ) -> (
+    DensePolynomial<F>,
+    DensePolynomial<F>,
+    DensePolynomial<F>,
+    DensePolynomial<F>,
+  ) {
+    let (gamma, tau) = r_mem_check;
+
+    // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
+    let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
+
+    // hash init and audit
+    assert_eq!(eval_table.len(), final_i.len());
+    let num_mem_cells = eval_table.len();
+    let grand_product_input_init = DensePolynomial::new(
+      (0..num_mem_cells)
+        .map(|i| {
+          // at init time, addr is given by i, init value is given by eval_table, and ts = 0
+          hash_func(&F::from(i as u64), &eval_table[i], &F::zero())
+        })
+        .collect::<Vec<F>>(),
+    );
+    let grand_product_input_final = DensePolynomial::new(
+      (0..num_mem_cells)
+        .map(|i| {
+          // at audit time, addr is given by i, value is given by eval_table, and ts is given by audit_ts
+          hash_func(&F::from(i as u64), &eval_table[i], &final_i[i])
+        })
+        .collect::<Vec<F>>(),
+    );
+
+    // hash read and write
+    assert_eq!(dim_i.len(), read_i.len());
+    let num_ops = dim_i.len();
+    let grand_product_input_read = DensePolynomial::new(
+      (0..num_ops)
+        .map(|i| {
+          // at read time, addr is given by dim_i, value is given by derefs, and ts is given by read_ts
+          hash_func(&dim_i[i], &eval_table[i], &read_i[i])
+        })
+        .collect::<Vec<F>>(),
+    );
+
+    let grand_product_input_write = DensePolynomial::new(
+      (0..num_ops)
+        .map(|i| {
+          // at write time, addr is given by dim_i, value is given by derefs, and ts is given by write_ts = read_ts + 1
+          hash_func(&dim_i[i], &eval_table[i], &(read_i[i] + F::one()))
+        })
+        .collect::<Vec<F>>(),
+    );
+
+    (
+      grand_product_input_init,
+      grand_product_input_read,
+      grand_product_input_write,
+      grand_product_input_final,
+    )
+  }
+
+  pub fn new(
+    eval_table: &[F],
+    dim_i: &DensePolynomial<F>,
+    read_i: &DensePolynomial<F>,
+    final_i: &DensePolynomial<F>,
+    r_mem_check: &(F, F),
+  ) -> Self {
+    let (
+      grand_product_input_init,
+      grand_product_input_read,
+      grand_product_input_write,
+      grand_product_input_final,
+    ) = GrandProducts::build_hash_layer(eval_table, dim_i, read_i, final_i, r_mem_check);
+
+    let prod_init = GrandProductCircuit::new(&grand_product_input_init);
+    let prod_read = GrandProductCircuit::new(&grand_product_input_read);
+    let prod_write = GrandProductCircuit::new(&grand_product_input_write);
+    let prod_final = GrandProductCircuit::new(&grand_product_input_final);
+
+    // TODO: delete?
+    let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
+    let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
+    assert_eq!(hashed_read_set, hashed_write_set);
+
+    GrandProducts {
+      init: prod_init,
+      read: prod_read,
+      write: prod_write,
+      r#final: prod_final,
+    }
+  }
 }
 
 #[derive(Debug)]
-struct Layers<F> {
-  prod_layer: ProductLayer<F>,
+struct PolyEvalNetwork<F, const c: usize> {
+  grand_products: [GrandProducts<F>; c],
 }
 
-// impl<F: PrimeField> Layers<F> {
-//   fn build_hash_layer(
-//     eval_table: &[F],
-//     addrs_vec: &[DensePolynomial<F>],
-//     derefs_vec: &[DensePolynomial<F>],
-//     read_ts_vec: &[DensePolynomial<F>],
-//     audit_ts: &DensePolynomial<F>,
-//     r_mem_check: &(F, F),
-//   ) -> (
-//     DensePolynomial<F>,
-//     Vec<DensePolynomial<F>>,
-//     Vec<DensePolynomial<F>>,
-//     DensePolynomial<F>,
-//   ) {
-//     let (r_hash, r_multiset_check) = r_mem_check;
-
-//     //hash(addr, val, ts) = ts * r_hash_sqr + val * r_hash + addr
-//     let r_hash_sqr = r_hash.square();
-//     let hash_func = |addr: &F, val: &F, ts: &F| -> F { *ts * r_hash_sqr + *val * *r_hash + *addr };
-
-//     // hash init and audit that does not depend on #instances
-//     let num_mem_cells = eval_table.len();
-//     let poly_init_hashed = DensePolynomial::new(
-//       (0..num_mem_cells)
-//         .map(|i| {
-//           // at init time, addr is given by i, init value is given by eval_table, and ts = 0
-//           hash_func(&F::from(i as u64), &eval_table[i], &F::zero()) - r_multiset_check
-//         })
-//         .collect::<Vec<F>>(),
-//     );
-//     let poly_audit_hashed = DensePolynomial::new(
-//       (0..num_mem_cells)
-//         .map(|i| {
-//           // at audit time, addr is given by i, value is given by eval_table, and ts is given by audit_ts
-//           hash_func(&F::from(i as u64), &eval_table[i], &audit_ts[i]) - r_multiset_check
-//         })
-//         .collect::<Vec<F>>(),
-//     );
-
-//     // hash read and write that depends on #instances
-//     let mut poly_read_hashed_vec: Vec<DensePolynomial<F>> = Vec::new();
-//     let mut poly_write_hashed_vec: Vec<DensePolynomial<F>> = Vec::new();
-//     for i in 0..addrs_vec.len() {
-//       let (addrs, derefs, read_ts) = (&addrs_vec[i], &derefs_vec[i], &read_ts_vec[i]);
-//       assert_eq!(addrs.len(), derefs.len());
-//       assert_eq!(addrs.len(), read_ts.len());
-//       let num_ops = addrs.len();
-//       let poly_read_hashed = DensePolynomial::new(
-//         (0..num_ops)
-//           .map(|i| {
-//             // at read time, addr is given by addrs, value is given by derefs, and ts is given by read_ts
-//             hash_func(&addrs[i], &derefs[i], &read_ts[i]) - r_multiset_check
-//           })
-//           .collect::<Vec<F>>(),
-//       );
-//       poly_read_hashed_vec.push(poly_read_hashed);
-
-//       let poly_write_hashed = DensePolynomial::new(
-//         (0..num_ops)
-//           .map(|i| {
-//             // at write time, addr is given by addrs, value is given by derefs, and ts is given by write_ts = read_ts + 1
-//             hash_func(&addrs[i], &derefs[i], &(read_ts[i] + F::one())) - r_multiset_check
-//           })
-//           .collect::<Vec<F>>(),
-//       );
-//       poly_write_hashed_vec.push(poly_write_hashed);
-//     }
-
-//     (
-//       poly_init_hashed,
-//       poly_read_hashed_vec,
-//       poly_write_hashed_vec,
-//       poly_audit_hashed,
-//     )
-//   }
-
-//   pub fn new(
-//     eval_table: &[F],
-//     addr_timestamps: &MemoryPolynomials<F>,
-//     poly_ops_val: &[DensePolynomial<F>],
-//     r_mem_check: &(F, F),
-//   ) -> Self {
-//     let (poly_init_hashed, poly_read_hashed_vec, poly_write_hashed_vec, poly_audit_hashed) =
-//       Layers::build_hash_layer(
-//         eval_table,
-//         &addr_timestamps.ops_addr,
-//         poly_ops_val,
-//         &addr_timestamps.read_ts,
-//         &addr_timestamps.audit_ts,
-//         r_mem_check,
-//       );
-
-//     let prod_init = ProductCircuit::new(&poly_init_hashed);
-//     let prod_read_vec = (0..poly_read_hashed_vec.len())
-//       .map(|i| ProductCircuit::new(&poly_read_hashed_vec[i]))
-//       .collect::<Vec<ProductCircuit<F>>>();
-//     let prod_write_vec = (0..poly_write_hashed_vec.len())
-//       .map(|i| ProductCircuit::new(&poly_write_hashed_vec[i]))
-//       .collect::<Vec<ProductCircuit<F>>>();
-//     let prod_audit = ProductCircuit::new(&poly_audit_hashed);
-
-//     // subset audit check
-//     let hashed_writes: F = (0..prod_write_vec.len())
-//       .map(|i| prod_write_vec[i].evaluate())
-//       .product();
-//     let hashed_write_set: F = prod_init.evaluate() * hashed_writes;
-
-//     let hashed_reads: F = (0..prod_read_vec.len())
-//       .map(|i| prod_read_vec[i].evaluate())
-//       .product();
-//     let hashed_read_set: F = hashed_reads * prod_audit.evaluate();
-
-//     //assert_eq!(hashed_read_set, hashed_write_set);
-//     debug_assert_eq!(hashed_read_set, hashed_write_set);
-
-//     Layers {
-//       prod_layer: ProductLayer {
-//         init: prod_init,
-//         read_vec: prod_read_vec,
-//         write_vec: prod_write_vec,
-//         audit: prod_audit,
-//       },
-//     }
-//   }
-// }
-
-#[derive(Debug)]
-struct PolyEvalNetwork<F> {
-  layers_by_dimension: Vec<Layers<F>>,
+impl<F: PrimeField, const c: usize> PolyEvalNetwork<F, c> {
+  pub fn new(
+    dense: &DensifiedRepresentation<F, c>,
+    derefs: &Derefs<F>,
+    mems: &Vec<Vec<F>>,
+    r_mem_check: &(F, F),
+  ) -> Self {
+    let grand_products: [GrandProducts<F>; c] = std::array::from_fn(|i| {
+      GrandProducts::new(
+        &mems[i],
+        &dense.dim[i],
+        &dense.read[i],
+        &dense.r#final[i],
+        r_mem_check,
+      )
+    });
+    PolyEvalNetwork { grand_products }
+  }
 }
-
-// impl<F: PrimeField> PolyEvalNetwork<F> {
-//   pub fn new(
-//     dense: &MultiSparseMatPolynomialAsDense<F>,
-//     derefs: &Derefs<F>,
-//     mems: &Vec<Vec<F>>,
-//     r_mem_check: &(F, F),
-//   ) -> Self {
-//     let layers_by_dimension: Vec<_> = mems
-//       .iter()
-//       .zip(dense.dim)
-//       .zip(derefs.ops_vals)
-//       .map(|((eval_table, addr_timestamps), poly_ops_val)| {
-//         Layers::new(eval_table, &addr_timestamps, &poly_ops_val, r_mem_check)
-//       })
-//       .collect();
-
-//     PolyEvalNetwork {
-//       layers_by_dimension,
-//     }
-//   }
-// }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct HashLayerProof<G: CurveGroup> {
@@ -1036,604 +1003,558 @@ struct HashLayerProof<G: CurveGroup> {
 // }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField> {
+struct ProductLayerProof<F: PrimeField, const c: usize> {
   eval_dim: Vec<(F, Vec<F>, Vec<F>, F)>,
   eval_val: (Vec<F>, Vec<F>),
   proof_mem: ProductCircuitEvalProofBatched<F>,
   proof_ops: ProductCircuitEvalProofBatched<F>,
 }
 
-// impl<F: PrimeField> ProductLayerProof<F> {
-//   fn protocol_name() -> &'static [u8] {
-//     b"Sparse polynomial product layer proof"
-//   }
+impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
+  fn protocol_name() -> &'static [u8] {
+    b"Sparse polynomial product layer proof"
+  }
 
-//   pub fn prove<G>(
-//     prod_layers: &Vec<ProductLayer<F>>,
-//     dense: &MultiSparseMatPolynomialAsDense<F>,
-//     derefs: &Derefs<F>,
-//     eval: &[F],
-//     transcript: &mut Transcript,
-//   ) -> (Self, Vec<F>, Vec<F>)
-//   where
-//     G: CurveGroup<ScalarField = F>,
-//   {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       ProductLayerProof::<F>::protocol_name(),
-//     );
+  pub fn prove<G>(
+    prod_layers: &[GrandProducts<F>; c],
+    dense: &DensifiedRepresentation<F, c>,
+    derefs: &Derefs<F>,
+    eval: &F,
+    transcript: &mut Transcript,
+  ) -> (Self, Vec<F>, Vec<F>)
+  where
+    G: CurveGroup<ScalarField = F>,
+  {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      ProductLayerProof::protocol_name(),
+    );
 
-//     for (i, prod_layer) in prod_layers.iter().enumerate() {
-//       let dim_eval_init = prod_layer.init.evaluate();
-//       let dim_eval_audit = prod_layer.audit.evaluate();
-//       let dim_eval_read = (0..prod_layer.read_vec.len())
-//         .map(|i| prod_layer.read_vec[i].evaluate())
-//         .collect::<Vec<F>>();
-//       let dim_eval_write = (0..prod_layer.write_vec.len())
-//         .map(|i| prod_layer.write_vec[i].evaluate())
-//         .collect::<Vec<F>>();
+    for (i, prod_layer) in prod_layers.iter().enumerate() {
+      let dim_eval_init = prod_layer.init.evaluate();
+      let dim_eval_final = prod_layer.r#final.evaluate();
+      let dim_eval_read = prod_layer.read.evaluate();
+      let dim_eval_write = prod_layer.write.evaluate();
 
-//       // subset check
-//       let ws: F = (0..dim_eval_write.len())
-//         .map(|i| dim_eval_write[i])
-//         .product();
-//       let rs: F = (0..dim_eval_read.len()).map(|i| dim_eval_read[i]).product();
-//       assert_eq!(dim_eval_init * ws, rs * dim_eval_audit);
+      assert_eq!(
+        dim_eval_init * dim_eval_write,
+        dim_eval_read * dim_eval_final
+      );
 
-//       // TODO(moodlezoup)
-//       // <Transcript as ProofTranscript<G>>::append_scalar(
-//       //   transcript,
-//       //   b"claim_row_eval_init",
-//       //   &dim_eval_init,
-//       // );
-//       // <Transcript as ProofTranscript<G>>::append_scalars(
-//       //   transcript,
-//       //   b"claim_row_eval_read",
-//       //   &dim_eval_read,
-//       // );
-//       // <Transcript as ProofTranscript<G>>::append_scalars(
-//       //   transcript,
-//       //   b"claim_row_eval_write",
-//       //   &dim_eval_write,
-//       // );
-//       // <Transcript as ProofTranscript<G>>::append_scalar(
-//       //   transcript,
-//       //   b"claim_row_eval_audit",
-//       //   &dim_eval_audit,
-//       // );
-//     }
+      // TODO(moodlezoup)
+      // <Transcript as ProofTranscript<G>>::append_scalar(
+      //   transcript,
+      //   b"claim_row_eval_init",
+      //   &dim_eval_init,
+      // );
+      // <Transcript as ProofTranscript<G>>::append_scalars(
+      //   transcript,
+      //   b"claim_row_eval_read",
+      //   &dim_eval_read,
+      // );
+      // <Transcript as ProofTranscript<G>>::append_scalars(
+      //   transcript,
+      //   b"claim_row_eval_write",
+      //   &dim_eval_write,
+      // );
+      // <Transcript as ProofTranscript<G>>::append_scalar(
+      //   transcript,
+      //   b"claim_row_eval_audit",
+      //   &dim_eval_audit,
+      // );
+    }
 
-//     // TODO(moodlezoup)
-//     // prepare dotproduct circuit for batching then with ops-related product circuits
-//     derefs
-//       .ops_vals
-//       .iter()
-//       .for_each(|ops| assert_eq!(eval.len(), ops.len()));
-//     assert_eq!(eval.len(), dense.val.len());
-//     let mut dotp_circuit_left_vec: Vec<DotProductCircuit<F>> = Vec::new();
-//     let mut dotp_circuit_right_vec: Vec<DotProductCircuit<F>> = Vec::new();
-//     let mut eval_dotp_left_vec: Vec<F> = Vec::new();
-//     let mut eval_dotp_right_vec: Vec<F> = Vec::new();
-//     for i in 0..derefs.row_ops_val.len() {
-//       // evaluate sparse polynomial evaluation using two dotp checks
-//       let left = derefs.row_ops_val[i].clone();
-//       let right = derefs.col_ops_val[i].clone();
-//       let weights = dense.val[i].clone();
+    // TODO(moodlezoup)
+    // prepare dotproduct circuit for batching then with ops-related product circuits
+    derefs
+      .ops_vals
+      .iter()
+      .for_each(|ops| assert_eq!(eval.len(), ops.len()));
+    assert_eq!(eval.len(), dense.val.len());
+    let mut dotp_circuit_left_vec: Vec<DotProductCircuit<F>> = Vec::new();
+    let mut dotp_circuit_right_vec: Vec<DotProductCircuit<F>> = Vec::new();
+    let mut eval_dotp_left_vec: Vec<F> = Vec::new();
+    let mut eval_dotp_right_vec: Vec<F> = Vec::new();
+    for i in 0..derefs.row_ops_val.len() {
+      // evaluate sparse polynomial evaluation using two dotp checks
+      let left = derefs.row_ops_val[i].clone();
+      let right = derefs.col_ops_val[i].clone();
+      let weights = dense.val[i].clone();
 
-//       // build two dot product circuits to prove evaluation of sparse polynomial
-//       let mut dotp_circuit = DotProductCircuit::new(left, right, weights);
-//       let (dotp_circuit_left, dotp_circuit_right) = dotp_circuit.split();
+      // build two dot product circuits to prove evaluation of sparse polynomial
+      let mut dotp_circuit = DotProductCircuit::new(left, right, weights);
+      let (dotp_circuit_left, dotp_circuit_right) = dotp_circuit.split();
 
-//       let (eval_dotp_left, eval_dotp_right) =
-//         (dotp_circuit_left.evaluate(), dotp_circuit_right.evaluate());
+      let (eval_dotp_left, eval_dotp_right) =
+        (dotp_circuit_left.evaluate(), dotp_circuit_right.evaluate());
 
-//       <Transcript as ProofTranscript<G>>::append_scalar(
-//         transcript,
-//         b"claim_eval_dotp_left",
-//         &eval_dotp_left,
-//       );
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_eval_dotp_left",
+        &eval_dotp_left,
+      );
 
-//       <Transcript as ProofTranscript<G>>::append_scalar(
-//         transcript,
-//         b"claim_eval_dotp_right",
-//         &eval_dotp_right,
-//       );
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_eval_dotp_right",
+        &eval_dotp_right,
+      );
 
-//       assert_eq!(eval_dotp_left + eval_dotp_right, eval[i]);
-//       eval_dotp_left_vec.push(eval_dotp_left);
-//       eval_dotp_right_vec.push(eval_dotp_right);
+      assert_eq!(eval_dotp_left + eval_dotp_right, eval[i]);
+      eval_dotp_left_vec.push(eval_dotp_left);
+      eval_dotp_right_vec.push(eval_dotp_right);
 
-//       dotp_circuit_left_vec.push(dotp_circuit_left);
-//       dotp_circuit_right_vec.push(dotp_circuit_right);
-//     }
+      dotp_circuit_left_vec.push(dotp_circuit_left);
+      dotp_circuit_right_vec.push(dotp_circuit_right);
+    }
 
-//     // The number of operations into the memory encoded by rx and ry are always the same (by design)
-//     // So we can produce a batched product proof for all of them at the same time.
-//     // prove the correctness of claim_row_eval_read, claim_row_eval_write, claim_col_eval_read, and claim_col_eval_write
-//     // TODO: we currently only produce proofs for 3 batched sparse polynomial evaluations
-//     assert_eq!(row_prod_layer.read_vec.len(), 3);
-//     let (row_read_A, row_read_B, row_read_C) = {
-//       let (vec_A, vec_BC) = row_prod_layer.read_vec.split_at_mut(1);
-//       let (vec_B, vec_C) = vec_BC.split_at_mut(1);
-//       (vec_A, vec_B, vec_C)
-//     };
+    // The number of operations into the memory encoded by rx and ry are always the same (by design)
+    // So we can produce a batched product proof for all of them at the same time.
+    // prove the correctness of claim_row_eval_read, claim_row_eval_write, claim_col_eval_read, and claim_col_eval_write
+    // TODO: we currently only produce proofs for 3 batched sparse polynomial evaluations
+    assert_eq!(row_prod_layer.read_vec.len(), 3);
+    let (row_read_A, row_read_B, row_read_C) = {
+      let (vec_A, vec_BC) = row_prod_layer.read_vec.split_at_mut(1);
+      let (vec_B, vec_C) = vec_BC.split_at_mut(1);
+      (vec_A, vec_B, vec_C)
+    };
 
-//     let (row_write_A, row_write_B, row_write_C) = {
-//       let (vec_A, vec_BC) = row_prod_layer.write_vec.split_at_mut(1);
-//       let (vec_B, vec_C) = vec_BC.split_at_mut(1);
-//       (vec_A, vec_B, vec_C)
-//     };
+    let (row_write_A, row_write_B, row_write_C) = {
+      let (vec_A, vec_BC) = row_prod_layer.write_vec.split_at_mut(1);
+      let (vec_B, vec_C) = vec_BC.split_at_mut(1);
+      (vec_A, vec_B, vec_C)
+    };
 
-//     let (col_read_A, col_read_B, col_read_C) = {
-//       let (vec_A, vec_BC) = col_prod_layer.read_vec.split_at_mut(1);
-//       let (vec_B, vec_C) = vec_BC.split_at_mut(1);
-//       (vec_A, vec_B, vec_C)
-//     };
+    let (col_read_A, col_read_B, col_read_C) = {
+      let (vec_A, vec_BC) = col_prod_layer.read_vec.split_at_mut(1);
+      let (vec_B, vec_C) = vec_BC.split_at_mut(1);
+      (vec_A, vec_B, vec_C)
+    };
 
-//     let (col_write_A, col_write_B, col_write_C) = {
-//       let (vec_A, vec_BC) = col_prod_layer.write_vec.split_at_mut(1);
-//       let (vec_B, vec_C) = vec_BC.split_at_mut(1);
-//       (vec_A, vec_B, vec_C)
-//     };
+    let (col_write_A, col_write_B, col_write_C) = {
+      let (vec_A, vec_BC) = col_prod_layer.write_vec.split_at_mut(1);
+      let (vec_B, vec_C) = vec_BC.split_at_mut(1);
+      (vec_A, vec_B, vec_C)
+    };
 
-//     let (dotp_left_A, dotp_left_B, dotp_left_C) = {
-//       let (vec_A, vec_BC) = dotp_circuit_left_vec.split_at_mut(1);
-//       let (vec_B, vec_C) = vec_BC.split_at_mut(1);
-//       (vec_A, vec_B, vec_C)
-//     };
+    let (dotp_left_A, dotp_left_B, dotp_left_C) = {
+      let (vec_A, vec_BC) = dotp_circuit_left_vec.split_at_mut(1);
+      let (vec_B, vec_C) = vec_BC.split_at_mut(1);
+      (vec_A, vec_B, vec_C)
+    };
 
-//     let (dotp_right_A, dotp_right_B, dotp_right_C) = {
-//       let (vec_A, vec_BC) = dotp_circuit_right_vec.split_at_mut(1);
-//       let (vec_B, vec_C) = vec_BC.split_at_mut(1);
-//       (vec_A, vec_B, vec_C)
-//     };
+    let (dotp_right_A, dotp_right_B, dotp_right_C) = {
+      let (vec_A, vec_BC) = dotp_circuit_right_vec.split_at_mut(1);
+      let (vec_B, vec_C) = vec_BC.split_at_mut(1);
+      (vec_A, vec_B, vec_C)
+    };
 
-//     let (proof_ops, rand_ops) = ProductCircuitEvalProofBatched::<F>::prove::<G>(
-//       &mut vec![
-//         &mut row_read_A[0],
-//         &mut row_read_B[0],
-//         &mut row_read_C[0],
-//         &mut row_write_A[0],
-//         &mut row_write_B[0],
-//         &mut row_write_C[0],
-//         &mut col_read_A[0],
-//         &mut col_read_B[0],
-//         &mut col_read_C[0],
-//         &mut col_write_A[0],
-//         &mut col_write_B[0],
-//         &mut col_write_C[0],
-//       ],
-//       // &mut vec![
-//       //   &mut dotp_left_A[0],
-//       //   &mut dotp_right_A[0],
-//       //   &mut dotp_left_B[0],
-//       //   &mut dotp_right_B[0],
-//       //   &mut dotp_left_C[0],
-//       //   &mut dotp_right_C[0],
-//       // ],
-//       &mut Vec::new(),
-//       transcript,
-//     );
+    let (proof_ops, rand_ops) = ProductCircuitEvalProofBatched::<F>::prove::<G>(
+      &mut vec![
+        &mut row_read_A[0],
+        &mut row_read_B[0],
+        &mut row_read_C[0],
+        &mut row_write_A[0],
+        &mut row_write_B[0],
+        &mut row_write_C[0],
+        &mut col_read_A[0],
+        &mut col_read_B[0],
+        &mut col_read_C[0],
+        &mut col_write_A[0],
+        &mut col_write_B[0],
+        &mut col_write_C[0],
+      ],
+      // &mut vec![
+      //   &mut dotp_left_A[0],
+      //   &mut dotp_right_A[0],
+      //   &mut dotp_left_B[0],
+      //   &mut dotp_right_B[0],
+      //   &mut dotp_left_C[0],
+      //   &mut dotp_right_C[0],
+      // ],
+      &mut Vec::new(),
+      transcript,
+    );
 
-//     // produce a batched proof of memory-related product circuits
-//     let (proof_mem, rand_mem) = ProductCircuitEvalProofBatched::<F>::prove::<G>(
-//       &mut vec![
-//         &mut row_prod_layer.init,
-//         &mut row_prod_layer.audit,
-//         &mut col_prod_layer.init,
-//         &mut col_prod_layer.audit,
-//       ],
-//       &mut Vec::new(),
-//       transcript,
-//     );
+    // produce a batched proof of memory-related product circuits
+    let (proof_mem, rand_mem) = ProductCircuitEvalProofBatched::<F>::prove::<G>(
+      &mut vec![
+        &mut row_prod_layer.init,
+        &mut row_prod_layer.audit,
+        &mut col_prod_layer.init,
+        &mut col_prod_layer.audit,
+      ],
+      &mut Vec::new(),
+      transcript,
+    );
 
-//     let product_layer_proof = ProductLayerProof {
-//       eval_dim: (row_eval_init, row_eval_read, row_eval_write, row_eval_audit),
-//       eval_val: (eval_dotp_left_vec, eval_dotp_right_vec),
-//       proof_mem,
-//       proof_ops,
-//     };
+    let product_layer_proof = ProductLayerProof {
+      eval_dim: (row_eval_init, row_eval_read, row_eval_write, row_eval_audit),
+      eval_val: (eval_dotp_left_vec, eval_dotp_right_vec),
+      proof_mem,
+      proof_ops,
+    };
 
-//     let mut product_layer_proof_encoded = vec![];
-//     product_layer_proof
-//       .serialize_compressed(&mut product_layer_proof_encoded)
-//       .unwrap();
+    let mut product_layer_proof_encoded = vec![];
+    product_layer_proof
+      .serialize_compressed(&mut product_layer_proof_encoded)
+      .unwrap();
 
-//     let msg = format!(
-//       "len_product_layer_proof {:?}",
-//       product_layer_proof_encoded.len()
-//     );
-//     Timer::print(&msg);
+    (product_layer_proof, rand_mem, rand_ops)
+  }
 
-//     (product_layer_proof, rand_mem, rand_ops)
-//   }
+  pub fn verify<G>(
+    &self,
+    num_ops: usize,
+    num_cells: usize,
+    eval: &[F],
+    transcript: &mut Transcript,
+  ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
+  where
+    G: CurveGroup<ScalarField = F>,
+  {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      ProductLayerProof::protocol_name(),
+    );
 
-//   pub fn verify<G>(
-//     &self,
-//     num_ops: usize,
-//     num_cells: usize,
-//     eval: &[F],
-//     transcript: &mut Transcript,
-//   ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
-//   where
-//     G: CurveGroup<ScalarField = F>,
-//   {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       ProductLayerProof::<F>::protocol_name(),
-//     );
+    let timer = Timer::new("verify_prod_proof");
+    let num_instances = eval.len();
 
-//     let timer = Timer::new("verify_prod_proof");
-//     let num_instances = eval.len();
+    // subset check
+    let (row_eval_init, row_eval_read, row_eval_write, row_eval_audit) = &self.eval_row;
+    assert_eq!(row_eval_write.len(), num_instances);
+    assert_eq!(row_eval_read.len(), num_instances);
+    let ws: F = (0..row_eval_write.len())
+      .map(|i| row_eval_write[i])
+      .product();
+    let rs: F = (0..row_eval_read.len()).map(|i| row_eval_read[i]).product();
+    assert_eq!(*row_eval_init * ws, rs * row_eval_audit);
 
-//     // subset check
-//     let (row_eval_init, row_eval_read, row_eval_write, row_eval_audit) = &self.eval_row;
-//     assert_eq!(row_eval_write.len(), num_instances);
-//     assert_eq!(row_eval_read.len(), num_instances);
-//     let ws: F = (0..row_eval_write.len())
-//       .map(|i| row_eval_write[i])
-//       .product();
-//     let rs: F = (0..row_eval_read.len()).map(|i| row_eval_read[i]).product();
-//     assert_eq!(*row_eval_init * ws, rs * row_eval_audit);
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_row_eval_init",
+      row_eval_init,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalars(
+      transcript,
+      b"claim_row_eval_read",
+      row_eval_read,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalars(
+      transcript,
+      b"claim_row_eval_write",
+      row_eval_write,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_row_eval_audit",
+      row_eval_audit,
+    );
 
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"claim_row_eval_init",
-//       row_eval_init,
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalars(
-//       transcript,
-//       b"claim_row_eval_read",
-//       row_eval_read,
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalars(
-//       transcript,
-//       b"claim_row_eval_write",
-//       row_eval_write,
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"claim_row_eval_audit",
-//       row_eval_audit,
-//     );
+    // subset check
+    let (col_eval_init, col_eval_read, col_eval_write, col_eval_audit) = &self.eval_col;
+    assert_eq!(col_eval_write.len(), num_instances);
+    assert_eq!(col_eval_read.len(), num_instances);
+    let ws: F = (0..col_eval_write.len())
+      .map(|i| col_eval_write[i])
+      .product();
+    let rs: F = (0..col_eval_read.len()).map(|i| col_eval_read[i]).product();
+    assert_eq!(*col_eval_init * ws, rs * col_eval_audit);
 
-//     // subset check
-//     let (col_eval_init, col_eval_read, col_eval_write, col_eval_audit) = &self.eval_col;
-//     assert_eq!(col_eval_write.len(), num_instances);
-//     assert_eq!(col_eval_read.len(), num_instances);
-//     let ws: F = (0..col_eval_write.len())
-//       .map(|i| col_eval_write[i])
-//       .product();
-//     let rs: F = (0..col_eval_read.len()).map(|i| col_eval_read[i]).product();
-//     assert_eq!(*col_eval_init * ws, rs * col_eval_audit);
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_col_eval_init",
+      col_eval_init,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalars(
+      transcript,
+      b"claim_col_eval_read",
+      col_eval_read,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalars(
+      transcript,
+      b"claim_col_eval_write",
+      col_eval_write,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_col_eval_audit",
+      col_eval_audit,
+    );
 
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"claim_col_eval_init",
-//       col_eval_init,
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalars(
-//       transcript,
-//       b"claim_col_eval_read",
-//       col_eval_read,
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalars(
-//       transcript,
-//       b"claim_col_eval_write",
-//       col_eval_write,
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"claim_col_eval_audit",
-//       col_eval_audit,
-//     );
+    // // verify the evaluation of the sparse polynomial
+    // let (eval_dotp_left, eval_dotp_right) = &self.eval_val;
+    // assert_eq!(eval_dotp_left.len(), eval_dotp_left.len());
+    // assert_eq!(eval_dotp_left.len(), num_instances);
+    // let mut claims_dotp_circuit: Vec<F> = Vec::new();
+    // for i in 0..num_instances {
+    //   assert_eq!(eval_dotp_left[i] + eval_dotp_right[i], eval[i]);
 
-//     // // verify the evaluation of the sparse polynomial
-//     // let (eval_dotp_left, eval_dotp_right) = &self.eval_val;
-//     // assert_eq!(eval_dotp_left.len(), eval_dotp_left.len());
-//     // assert_eq!(eval_dotp_left.len(), num_instances);
-//     // let mut claims_dotp_circuit: Vec<F> = Vec::new();
-//     // for i in 0..num_instances {
-//     //   assert_eq!(eval_dotp_left[i] + eval_dotp_right[i], eval[i]);
+    //   <Transcript as ProofTranscript<G>>::append_scalar(
+    //     transcript,
+    //     b"claim_eval_dotp_left",
+    //     &eval_dotp_left[i],
+    //   );
 
-//     //   <Transcript as ProofTranscript<G>>::append_scalar(
-//     //     transcript,
-//     //     b"claim_eval_dotp_left",
-//     //     &eval_dotp_left[i],
-//     //   );
+    //   <Transcript as ProofTranscript<G>>::append_scalar(
+    //     transcript,
+    //     b"claim_eval_dotp_right",
+    //     &eval_dotp_right[i],
+    //   );
 
-//     //   <Transcript as ProofTranscript<G>>::append_scalar(
-//     //     transcript,
-//     //     b"claim_eval_dotp_right",
-//     //     &eval_dotp_right[i],
-//     //   );
+    //   claims_dotp_circuit.push(eval_dotp_left[i]);
+    //   claims_dotp_circuit.push(eval_dotp_right[i]);
+    // }
 
-//     //   claims_dotp_circuit.push(eval_dotp_left[i]);
-//     //   claims_dotp_circuit.push(eval_dotp_right[i]);
-//     // }
+    // verify the correctness of claim_row_eval_read, claim_row_eval_write, claim_col_eval_read, and claim_col_eval_write
+    let mut claims_prod_circuit: Vec<F> = Vec::new();
+    claims_prod_circuit.extend(row_eval_read);
+    claims_prod_circuit.extend(row_eval_write);
+    claims_prod_circuit.extend(col_eval_read);
+    claims_prod_circuit.extend(col_eval_write);
 
-//     // verify the correctness of claim_row_eval_read, claim_row_eval_write, claim_col_eval_read, and claim_col_eval_write
-//     let mut claims_prod_circuit: Vec<F> = Vec::new();
-//     claims_prod_circuit.extend(row_eval_read);
-//     claims_prod_circuit.extend(row_eval_write);
-//     claims_prod_circuit.extend(col_eval_read);
-//     claims_prod_circuit.extend(col_eval_write);
+    let (claims_ops, claims_dotp, rand_ops) = self.proof_ops.verify::<G>(
+      &claims_prod_circuit,
+      // &claims_dotp_circuit,
+      &Vec::new(),
+      num_ops,
+      transcript,
+    );
+    // verify the correctness of claim_row_eval_init and claim_row_eval_audit
+    let (claims_mem, _claims_mem_dotp, rand_mem) = self.proof_mem.verify::<G>(
+      &[
+        *row_eval_init,
+        *row_eval_audit,
+        *col_eval_init,
+        *col_eval_audit,
+      ],
+      &Vec::new(),
+      num_cells,
+      transcript,
+    );
+    timer.stop();
 
-//     let (claims_ops, claims_dotp, rand_ops) = self.proof_ops.verify::<G>(
-//       &claims_prod_circuit,
-//       // &claims_dotp_circuit,
-//       &Vec::new(),
-//       num_ops,
-//       transcript,
-//     );
-//     // verify the correctness of claim_row_eval_init and claim_row_eval_audit
-//     let (claims_mem, _claims_mem_dotp, rand_mem) = self.proof_mem.verify::<G>(
-//       &[
-//         *row_eval_init,
-//         *row_eval_audit,
-//         *col_eval_init,
-//         *col_eval_audit,
-//       ],
-//       &Vec::new(),
-//       num_cells,
-//       transcript,
-//     );
-//     timer.stop();
-
-//     Ok((claims_mem, rand_mem, claims_ops, claims_dotp, rand_ops))
-//   }
-// }
+    Ok((claims_mem, rand_mem, claims_ops, claims_dotp, rand_ops))
+  }
+}
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PolyEvalNetworkProof<G: CurveGroup> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField>,
+struct PolyEvalNetworkProof<G: CurveGroup, const c: usize> {
+  proof_prod_layer: ProductLayerProof<G::ScalarField, c>,
   proof_hash_layer: HashLayerProof<G>,
 }
 
-// impl<G: CurveGroup> PolyEvalNetworkProof<G> {
-//   fn protocol_name() -> &'static [u8] {
-//     b"Sparse polynomial evaluation proof"
-//   }
+impl<G: CurveGroup, const c: usize> PolyEvalNetworkProof<G, c> {
+  fn protocol_name() -> &'static [u8] {
+    b"Sparse polynomial evaluation proof"
+  }
 
-//   pub fn prove(
-//     network: &mut PolyEvalNetwork<G::ScalarField>,
-//     dense: &MultiSparseMatPolynomialAsDense<G::ScalarField>,
-//     derefs: &Derefs<G::ScalarField>,
-//     evals: &[G::ScalarField],
-//     gens: &SparseMatPolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//     random_tape: &mut RandomTape<G>,
-//   ) -> Self {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       PolyEvalNetworkProof::<G>::protocol_name(),
-//     );
+  pub fn prove(
+    network: &mut PolyEvalNetwork<G::ScalarField, c>,
+    dense: &DensifiedRepresentation<G::ScalarField, c>,
+    derefs: &Derefs<G::ScalarField>,
+    eval: &G::ScalarField,
+    gens: &SparseMatPolyCommitmentGens<G>,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      PolyEvalNetworkProof::protocol_name(),
+    );
 
-//     let (proof_prod_layer, rand_mem, rand_ops) = ProductLayerProof::<G::ScalarField>::prove::<G>(
-//       &mut network
-//         .layers_by_dimension
-//         .iter()
-//         .map(|&layer| layer.prod_layer)
-//         .collect(),
-//       dense,
-//       derefs,
-//       evals,
-//       transcript,
-//     );
+    let (proof_prod_layer, rand_mem, rand_ops) = ProductLayerProof::prove::<G>(
+      &mut network
+        .layers_by_dimension
+        .iter()
+        .map(|&layer| layer.prod_layer)
+        .collect(),
+      dense,
+      derefs,
+      eval,
+      transcript,
+    );
 
-//     // proof of hash layer for row and col
-//     let proof_hash_layer = HashLayerProof::prove(
-//       (&rand_mem, &rand_ops),
-//       dense,
-//       derefs,
-//       gens,
-//       transcript,
-//       random_tape,
-//     );
+    // proof of hash layer for row and col
+    let proof_hash_layer = HashLayerProof::prove(
+      (&rand_mem, &rand_ops),
+      dense,
+      derefs,
+      gens,
+      transcript,
+      random_tape,
+    );
 
-//     PolyEvalNetworkProof {
-//       proof_prod_layer,
-//       proof_hash_layer,
-//     }
-//   }
+    PolyEvalNetworkProof {
+      proof_prod_layer,
+      proof_hash_layer,
+    }
+  }
 
-//   pub fn verify(
-//     &self,
-//     comm: &SparsePolynomialCommitment<G>,
-//     comm_derefs: &DerefsCommitment<G>,
-//     evals: &[G::ScalarField],
-//     gens: &SparseMatPolyCommitmentGens<G>,
-//     r: &Vec<Vec<G::ScalarField>>,
-//     r_mem_check: &(G::ScalarField, G::ScalarField),
-//     nz: usize,
-//     transcript: &mut Transcript,
-//   ) -> Result<(), ProofVerifyError> {
-//     let timer = Timer::new("verify_polyeval_proof");
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       PolyEvalNetworkProof::<G>::protocol_name(),
-//     );
+  pub fn verify(
+    &self,
+    comm: &SparsePolynomialCommitment<G>,
+    comm_derefs: &DerefsCommitment<G>,
+    eval: &G::ScalarField,
+    gens: &SparseMatPolyCommitmentGens<G>,
+    r: &Vec<G::ScalarField>,
+    r_mem_check: &(G::ScalarField, G::ScalarField),
+    nz: usize,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    let timer = Timer::new("verify_polyeval_proof");
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      PolyEvalNetworkProof::protocol_name(),
+    );
 
-//     let num_instances = evals.len();
-//     let (r_hash, r_multiset_check) = r_mem_check;
+    let (r_hash, r_multiset_check) = r_mem_check;
 
-//     let num_ops = nz.next_power_of_two();
-//     let num_cells = rx.len().pow2();
-//     assert_eq!(rx.len(), ry.len());
+    let num_ops = nz.next_power_of_two();
+    let num_cells = rx.len().pow2();
+    assert_eq!(rx.len(), ry.len());
 
-//     let (claims_mem, rand_mem, mut claims_ops, claims_dotp, rand_ops) = self
-//       .proof_prod_layer
-//       .verify::<G>(num_ops, num_cells, evals, transcript)?;
-//     assert_eq!(claims_mem.len(), 4);
-//     assert_eq!(claims_ops.len(), 4 * num_instances);
-//     // TODO(moodlezoup)
-//     // assert_eq!(claims_dotp.len(), 3 * num_instances);
+    let (claims_mem, rand_mem, mut claims_ops, claims_dotp, rand_ops) = self
+      .proof_prod_layer
+      .verify::<G>(num_ops, num_cells, eval, transcript)?;
+    assert_eq!(claims_mem.len(), 4);
+    assert_eq!(claims_ops.len(), 4 * num_instances);
+    // TODO(moodlezoup)
+    // assert_eq!(claims_dotp.len(), 3 * num_instances);
 
-//     let (claims_ops_row, claims_ops_col) = claims_ops.split_at_mut(2 * num_instances);
-//     let (claims_ops_row_read, claims_ops_row_write) = claims_ops_row.split_at_mut(num_instances);
-//     let (claims_ops_col_read, claims_ops_col_write) = claims_ops_col.split_at_mut(num_instances);
+    let (claims_ops_row, claims_ops_col) = claims_ops.split_at_mut(2 * num_instances);
+    let (claims_ops_row_read, claims_ops_row_write) = claims_ops_row.split_at_mut(num_instances);
+    let (claims_ops_col_read, claims_ops_col_write) = claims_ops_col.split_at_mut(num_instances);
 
-//     // verify the proof of hash layer
-//     self.proof_hash_layer.verify(
-//       (&rand_mem, &rand_ops),
-//       &(
-//         claims_mem[0],
-//         claims_ops_row_read.to_vec(),
-//         claims_ops_row_write.to_vec(),
-//         claims_mem[1],
-//       ),
-//       // &(
-//       //   claims_mem[2],
-//       //   claims_ops_col_read.to_vec(),
-//       //   claims_ops_col_write.to_vec(),
-//       //   claims_mem[3],
-//       // ),
-//       &claims_dotp,
-//       comm,
-//       gens,
-//       comm_derefs,
-//       r,
-//       r_hash,
-//       r_multiset_check,
-//       transcript,
-//     )?;
-//     timer.stop();
+    // verify the proof of hash layer
+    self.proof_hash_layer.verify(
+      (&rand_mem, &rand_ops),
+      &(
+        claims_mem[0],
+        claims_ops_row_read.to_vec(),
+        claims_ops_row_write.to_vec(),
+        claims_mem[1],
+      ),
+      // &(
+      //   claims_mem[2],
+      //   claims_ops_col_read.to_vec(),
+      //   claims_ops_col_write.to_vec(),
+      //   claims_mem[3],
+      // ),
+      &claims_dotp,
+      comm,
+      gens,
+      comm_derefs,
+      r,
+      r_hash,
+      r_multiset_check,
+      transcript,
+    )?;
+    timer.stop();
 
-//     Ok(())
-//   }
-// }
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolyEvalProof<G: CurveGroup> {
-  comm_derefs: DerefsCommitment<G>,
-  poly_eval_network_proof: PolyEvalNetworkProof<G>,
+    Ok(())
+  }
 }
 
-// impl<G: CurveGroup> SparseMatPolyEvalProof<G> {
-//   fn protocol_name() -> &'static [u8] {
-//     b"Sparse polynomial evaluation proof"
-//   }
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const c: usize> {
+  comm_derefs: DerefsCommitment<G>,
+  poly_eval_network_proof: PolyEvalNetworkProof<G, c>,
+}
 
-//   fn equalize(r: &mut Vec<Vec<G::ScalarField>>) {
-//     let max_len: usize = r.iter().map(|r_dim| r_dim.len()).max().unwrap();
-//     for i in 0..r.len() {
-//       if r[i].len() < max_len {
-//         let diff = max_len - r[i].len();
-//         let mut r_ext = vec![G::ScalarField::zero(); diff];
-//         r_ext.extend(r[i]);
-//         r[i] = r_ext;
-//       }
-//     }
-//   }
+impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
+  fn protocol_name() -> &'static [u8] {
+    b"Sparse polynomial evaluation proof"
+  }
 
-//   pub fn prove(
-//     dense: &MultiSparseMatPolynomialAsDense<G::ScalarField>,
-//     r: &Vec<Vec<G::ScalarField>>, // point at which the polynomial is evaluated
-//     evals: &[G::ScalarField],     // a vector evaluation of \widetilde{M}(r = (rx,ry)) for each M
-//     gens: &SparseMatPolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//     random_tape: &mut RandomTape<G>,
-//   ) -> SparseMatPolyEvalProof<G> {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       SparseMatPolyEvalProof::<G>::protocol_name(),
-//     );
+  pub fn prove(
+    dense: &DensifiedRepresentation<G::ScalarField, c>,
+    r: &Vec<G::ScalarField>,     // point at which the polynomial is evaluated
+    evaluation: &G::ScalarField, // a vector evaluation of \widetilde{M}(r = (rx,ry))
+    gens: &SparseMatPolyCommitmentGens<G>,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> SparsePolynomialEvaluationProof<G, c> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      SparsePolynomialEvaluationProof::protocol_name(),
+    );
 
-//     // ensure there is one eval for each polynomial in dense
-//     assert_eq!(evals.len(), dense.batch_size);
+    let mem = EqPolynomial::new(r.to_vec()).evals();
 
-//     // TODO(moodlezoup)
-//     let mut r_equalized = r;
-//     SparseMatPolyEvalProof::<G>::equalize(&mut r_equalized);
+    let derefs = dense.deref(&mem);
 
-//     let mems: Vec<_> = r_equalized
-//       .iter()
-//       .map(|&r_i| EqPolynomial::new(r_i).evals())
-//       .collect();
+    // commit to non-deterministic choices of the prover
+    let comm_derefs = {
+      let comm = derefs.commit(&gens.gens_derefs);
+      comm.append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+      comm
+    };
 
-//     let derefs = dense.deref(&mems);
+    let poly_eval_network_proof = {
+      // produce a random element from the transcript for hash function
+      let r_mem_check =
+        <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-//     // commit to non-deterministic choices of the prover
-//     let timer_commit = Timer::new("commit_nondet_witness");
-//     let comm_derefs = {
-//       let comm = derefs.commit(&gens.gens_derefs);
-//       comm.append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
-//       comm
-//     };
-//     timer_commit.stop();
+      // build a network to evaluate the sparse polynomial
+      let mut net = PolyEvalNetwork::new(dense, &derefs, &mem, &(r_mem_check[0], r_mem_check[1]));
 
-//     let poly_eval_network_proof = {
-//       // produce a random element from the transcript for hash function
-//       let r_mem_check =
-//         <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
+      let poly_eval_network_proof = PolyEvalNetworkProof::prove(
+        &mut net,
+        dense,
+        &derefs,
+        evaluation,
+        gens,
+        transcript,
+        random_tape,
+      );
 
-//       // build a network to evaluate the sparse polynomial
-//       let timer_build_network = Timer::new("build_layered_network");
-//       let mut net = PolyEvalNetwork::new(dense, &derefs, &mems, &(r_mem_check[0], r_mem_check[1]));
-//       timer_build_network.stop();
+      poly_eval_network_proof
+    };
 
-//       let timer_eval_network = Timer::new("evalproof_layered_network");
-//       let poly_eval_network_proof = PolyEvalNetworkProof::prove(
-//         &mut net,
-//         dense,
-//         &derefs,
-//         evals,
-//         gens,
-//         transcript,
-//         random_tape,
-//       );
-//       timer_eval_network.stop();
+    SparsePolynomialEvaluationProof {
+      comm_derefs,
+      poly_eval_network_proof,
+    }
+  }
 
-//       poly_eval_network_proof
-//     };
+  pub fn verify(
+    &self,
+    commitment: &SparsePolynomialCommitment<G>,
+    r: &Vec<G::ScalarField>,     // point at which the polynomial is evaluated
+    evaluation: &G::ScalarField, // evaluation of \widetilde{M}(r = (rx,ry))
+    gens: &SparseMatPolyCommitmentGens<G>,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      SparsePolynomialEvaluationProof::protocol_name(),
+    );
 
-//     SparseMatPolyEvalProof {
-//       comm_derefs,
-//       poly_eval_network_proof,
-//     }
-//   }
+    assert_eq!(r.len(), c * commitment.log_m);
 
-//   pub fn verify(
-//     &self,
-//     comm: &SparsePolynomialCommitment<G>,
-//     r: &Vec<Vec<G::ScalarField>>, // point at which the polynomial is evaluated
-//     evals: &[G::ScalarField],     // evaluation of \widetilde{M}(r = (rx,ry))
-//     gens: &SparseMatPolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//   ) -> Result<(), ProofVerifyError> {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       SparseMatPolyEvalProof::<G>::protocol_name(),
-//     );
+    // add claims to transcript and obtain challenges for randomized mem-check circuit
+    self
+      .comm_derefs
+      .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
-//     // TODO(moodlezoup)
-//     let mut r_equalized = r;
-//     SparseMatPolyEvalProof::<G>::equalize(&mut r_equalized);
+    // produce a random element from the transcript for hash function
+    let r_mem_check =
+      <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-//     let (nz, num_mem_cells) = (comm.num_ops, comm.num_mem_cells);
-//     assert_eq!(r_equalized[0].len().pow2(), num_mem_cells);
-
-//     // add claims to transcript and obtain challenges for randomized mem-check circuit
-//     self
-//       .comm_derefs
-//       .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
-
-//     // produce a random element from the transcript for hash function
-//     let r_mem_check =
-//       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
-
-//     self.poly_eval_network_proof.verify(
-//       comm,
-//       &self.comm_derefs,
-//       evals,
-//       gens,
-//       r_equalized,
-//       &(r_mem_check[0], r_mem_check[1]),
-//       nz,
-//       transcript,
-//     )
-//   }
-// }
+    self.poly_eval_network_proof.verify(
+      commitment,
+      &self.comm_derefs,
+      evaluation,
+      gens,
+      r,
+      &(r_mem_check[0], r_mem_check[1]),
+      commitment.s,
+      transcript,
+    )
+  }
+}
 
 // pub struct LagrangeBasisCoefficient<F> {
 //   idx: usize,
@@ -1727,7 +1648,7 @@ mod tests {
     let r: Vec<G::ScalarField> = (0..c * log_m)
       .map(|_| G::ScalarField::rand(&mut prng))
       .collect();
-    let eval = sparse_poly.evaluate(&r);
+    let evaluation = sparse_poly.evaluate(&r);
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
@@ -1752,6 +1673,22 @@ mod tests {
     // );
 
     let commitment = dense.commit(&gens);
+
+    let mut random_tape = RandomTape::new(b"proof");
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = SparsePolynomialEvaluationProof::prove(
+      &dense,
+      &r,
+      &evaluation,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
+
+    // let mut verifier_transcript = Transcript::new(b"example");
+    // assert!(proof
+    //   .verify(&commitment, &r, &evals, &gens, &mut verifier_transcript)
+    //   .is_ok());
   }
 
   // #[test]

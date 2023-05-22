@@ -10,12 +10,12 @@ use ark_serialize::*;
 use merlin::Transcript;
 
 #[derive(Debug)]
-pub struct ProductCircuit<F> {
+pub struct GrandProductCircuit<F> {
   left_vec: Vec<DensePolynomial<F>>,
   right_vec: Vec<DensePolynomial<F>>,
 }
 
-impl<F: PrimeField> ProductCircuit<F> {
+impl<F: PrimeField> GrandProductCircuit<F> {
   fn compute_layer(
     inp_left: &DensePolynomial<F>,
     inp_right: &DensePolynomial<F>,
@@ -45,12 +45,12 @@ impl<F: PrimeField> ProductCircuit<F> {
     right_vec.push(outp_right);
 
     for i in 0..num_layers - 1 {
-      let (outp_left, outp_right) = ProductCircuit::compute_layer(&left_vec[i], &right_vec[i]);
+      let (outp_left, outp_right) = GrandProductCircuit::compute_layer(&left_vec[i], &right_vec[i]);
       left_vec.push(outp_left);
       right_vec.push(outp_right);
     }
 
-    ProductCircuit {
+    GrandProductCircuit {
       left_vec,
       right_vec,
     }
@@ -178,7 +178,7 @@ pub struct ProductCircuitEvalProofBatched<F: PrimeField> {
 
 impl<F: PrimeField> ProductCircuitEvalProof<F> {
   #![allow(dead_code)]
-  pub fn prove<G>(circuit: &mut ProductCircuit<F>, transcript: &mut Transcript) -> (Self, F, Vec<F>)
+  pub fn prove<G>(circuit: &mut GrandProductCircuit<F>, transcript: &mut Transcript) -> (Self, F, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
@@ -283,7 +283,7 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
 
 impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {
   pub fn prove<G>(
-    prod_circuit_vec: &mut Vec<&mut ProductCircuit<F>>,
+    prod_circuit_vec: &mut Vec<&mut GrandProductCircuit<F>>,
     dotp_circuit_vec: &mut Vec<&mut DotProductCircuit<F>>,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>)
