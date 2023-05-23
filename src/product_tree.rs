@@ -7,6 +7,7 @@ use super::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
+use itertools::Itertools;
 use merlin::Transcript;
 
 #[derive(Debug)]
@@ -112,6 +113,43 @@ impl<F: PrimeField> DotProductCircuit<F> {
   }
 }
 
+pub struct GeneralizedScalarProduct<F> {
+  operands: Vec<DensePolynomial<F>>,
+}
+
+impl<F: PrimeField> GeneralizedScalarProduct<F> {
+  pub fn new(operands: Vec<DensePolynomial<F>>) -> Self {
+    assert!(operands.iter().all(|poly| poly.len() == operands[0].len()));
+    GeneralizedScalarProduct { operands }
+  }
+
+  pub fn evaluate(&self) -> F {
+    (0..self.operands[0].len())
+      .map(|i| {
+        self
+          .operands
+          .iter()
+          .map(|polynomial| polynomial[i])
+          .product::<F>()
+      })
+      .sum()
+  }
+
+  pub fn split(&mut self) -> (GeneralizedScalarProduct<F>, GeneralizedScalarProduct<F>) {
+    let idx = self.operands[0].len() / 2;
+    assert_eq!(idx * 2, self.operands[0].len());
+    let (left, right): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = self
+      .operands
+      .iter()
+      .map(|polynomial| polynomial.split(idx))
+      .unzip();
+    (
+      GeneralizedScalarProduct { operands: left },
+      GeneralizedScalarProduct { operands: right },
+    )
+  }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct LayerProof<F: PrimeField> {
@@ -166,19 +204,16 @@ impl<F: PrimeField> LayerProofBatched<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProductCircuitEvalProof<F: PrimeField> {
+pub struct GrandProductCircuitEvalProof<F: PrimeField> {
   proof: Vec<LayerProof<F>>,
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProductCircuitEvalProofBatched<F: PrimeField> {
-  proof: Vec<LayerProofBatched<F>>,
-  claims_dotp: (Vec<F>, Vec<F>, Vec<F>),
-}
-
-impl<F: PrimeField> ProductCircuitEvalProof<F> {
+impl<F: PrimeField> GrandProductCircuitEvalProof<F> {
   #![allow(dead_code)]
-  pub fn prove<G>(circuit: &mut GrandProductCircuit<F>, transcript: &mut Transcript) -> (Self, F, Vec<F>)
+  pub fn prove<G>(
+    circuit: &mut GrandProductCircuit<F>,
+    transcript: &mut Transcript,
+  ) -> (Self, F, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
@@ -234,7 +269,7 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
       });
     }
 
-    (ProductCircuitEvalProof { proof }, claim, rand)
+    (GrandProductCircuitEvalProof { proof }, claim, rand)
   }
 
   pub fn verify<G>(&self, eval: F, len: usize, transcript: &mut Transcript) -> (F, Vec<F>)
@@ -279,6 +314,12 @@ impl<F: PrimeField> ProductCircuitEvalProof<F> {
 
     (claim, rand)
   }
+}
+
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct ProductCircuitEvalProofBatched<F: PrimeField> {
+  proof: Vec<LayerProofBatched<F>>,
+  claims_dotp: (Vec<F>, Vec<F>, Vec<F>),
 }
 
 impl<F: PrimeField> ProductCircuitEvalProofBatched<F> {

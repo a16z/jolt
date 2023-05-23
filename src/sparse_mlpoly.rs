@@ -453,6 +453,7 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
 //   }
 // }
 
+// TODO(moodlezoup): Combine init and write, read and final
 #[derive(Debug)]
 struct GrandProducts<F> {
   init: GrandProductCircuit<F>,
@@ -547,7 +548,7 @@ impl<F: PrimeField> GrandProducts<F> {
     let prod_write = GrandProductCircuit::new(&grand_product_input_write);
     let prod_final = GrandProductCircuit::new(&grand_product_input_final);
 
-    // TODO: delete?
+    // TODO(moodlezoup): delete?
     let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
     let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
     assert_eq!(hashed_read_set, hashed_write_set);
@@ -1004,7 +1005,7 @@ struct HashLayerProof<G: CurveGroup> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct ProductLayerProof<F: PrimeField, const c: usize> {
-  eval_dim: Vec<(F, Vec<F>, Vec<F>, F)>,
+  grand_product_evals: [(F, F, F, F); c],
   eval_val: (Vec<F>, Vec<F>),
   proof_mem: ProductCircuitEvalProofBatched<F>,
   proof_ops: ProductCircuitEvalProofBatched<F>,
@@ -1016,7 +1017,7 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
   }
 
   pub fn prove<G>(
-    prod_layers: &[GrandProducts<F>; c],
+    grand_products: &[GrandProducts<F>; c],
     dense: &DensifiedRepresentation<F, c>,
     derefs: &Derefs<F>,
     eval: &F,
@@ -1030,16 +1031,15 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
       ProductLayerProof::protocol_name(),
     );
 
-    for (i, prod_layer) in prod_layers.iter().enumerate() {
-      let dim_eval_init = prod_layer.init.evaluate();
-      let dim_eval_final = prod_layer.r#final.evaluate();
-      let dim_eval_read = prod_layer.read.evaluate();
-      let dim_eval_write = prod_layer.write.evaluate();
+    // std::array::from_fn(|i| i);
 
-      assert_eq!(
-        dim_eval_init * dim_eval_write,
-        dim_eval_read * dim_eval_final
-      );
+    for (i, grand_product) in grand_products.iter().enumerate() {
+      let hash_init = grand_product.init.evaluate();
+      let hash_final = grand_product.r#final.evaluate();
+      let hash_read = grand_product.read.evaluate();
+      let hash_write = grand_product.write.evaluate();
+
+      assert_eq!(hash_init * hash_write, hash_read * hash_final);
 
       // TODO(moodlezoup)
       // <Transcript as ProofTranscript<G>>::append_scalar(
@@ -1065,7 +1065,7 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
     }
 
     // TODO(moodlezoup)
-    // prepare dotproduct circuit for batching then with ops-related product circuits
+    // prepare dotproduct circuit for batching them with ops-related product circuits
     derefs
       .ops_vals
       .iter()
@@ -1189,7 +1189,7 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
     );
 
     let product_layer_proof = ProductLayerProof {
-      eval_dim: (row_eval_init, row_eval_read, row_eval_write, row_eval_audit),
+      grand_product_evals,
       eval_val: (eval_dotp_left_vec, eval_dotp_right_vec),
       proof_mem,
       proof_ops,
