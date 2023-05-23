@@ -1,16 +1,17 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
-use super::dense_mlpoly::DensePolynomial;
-use super::dense_mlpoly::{
+use crate::dense_mlpoly::DensePolynomial;
+use crate::dense_mlpoly::{
   EqPolynomial, IdentityPolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof,
 };
-use super::errors::ProofVerifyError;
-use super::math::Math;
-use super::product_tree::{DotProductCircuit, GrandProductCircuit, ProductCircuitEvalProofBatched};
-use super::random::RandomTape;
-use super::timer::Timer;
-use super::transcript::{AppendToTranscript, ProofTranscript};
+use crate::errors::ProofVerifyError;
+use crate::math::Math;
+use crate::product_tree::{DotProductCircuit, GrandProductCircuit, ProductCircuitEvalProofBatched};
+use crate::random::RandomTape;
+use crate::timer::Timer;
+use crate::transcript::{AppendToTranscript, ProofTranscript};
+use crate::sparse_mlpoly::derefs::{Derefs, DerefsCommitment, DerefsEvalProof};
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
@@ -32,210 +33,6 @@ impl<F: PrimeField, const c: usize> SparseMatEntry<F, c> {
   }
 }
 
-pub struct Derefs<F> {
-  ops_vals: Vec<Vec<DensePolynomial<F>>>,
-  combined_poly: DensePolynomial<F>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsCommitment<G: CurveGroup> {
-  comm_ops_val: PolyCommitment<G>,
-}
-
-// // Optimization: Combines k \mu-variate dense multilinear polynomials into a single
-// //               (\mu + \log k)-variate dense multilinear polynomial.
-// //               See Spartan 7.2.3 #5
-// impl<F: PrimeField> Derefs<F> {
-//   pub fn new(ops_vals: Vec<Vec<DensePolynomial<F>>>) -> Self {
-//     // TODO(moodlezoup)
-//     // assert_eq!(row_ops_val.len(), col_ops_val.len());
-
-//     let derefs = {
-//       // combine all polynomials into a single polynomial (used below to produce a single commitment)
-//       let combined_poly = DensePolynomial::merge(ops_vals.concat().as_slice());
-
-//       Derefs {
-//         ops_vals,
-//         combined_poly,
-//       }
-//     };
-
-//     derefs
-//   }
-
-//   pub fn commit<G: CurveGroup<ScalarField = F>>(
-//     &self,
-//     gens: &PolyCommitmentGens<G>,
-//   ) -> DerefsCommitment<G> {
-//     let (comm_ops_val, _blinds) = self.combined_poly.commit(gens, None);
-//     DerefsCommitment { comm_ops_val }
-//   }
-// }
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsEvalProof<G: CurveGroup> {
-  proof_derefs: PolyEvalProof<G>,
-}
-
-// impl<G: CurveGroup> DerefsEvalProof<G> {
-//   fn protocol_name() -> &'static [u8] {
-//     b"Derefs evaluation proof"
-//   }
-
-//   fn prove_single(
-//     joint_poly: &DensePolynomial<G::ScalarField>,
-//     r: &[G::ScalarField],
-//     evals: Vec<G::ScalarField>,
-//     gens: &PolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//     random_tape: &mut RandomTape<G>,
-//   ) -> PolyEvalProof<G> {
-//     assert_eq!(
-//       joint_poly.get_num_vars(),
-//       r.len() + evals.len().log_2() as usize
-//     );
-
-//     // append the claimed evaluations to transcript
-//     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
-
-//     // n-to-1 reduction
-//     let (r_joint, eval_joint) = {
-//       let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
-//         transcript,
-//         b"challenge_combine_n_to_one",
-//         evals.len().log_2() as usize,
-//       );
-
-//       let mut poly_evals = DensePolynomial::new(evals);
-//       for i in (0..challenges.len()).rev() {
-//         poly_evals.bound_poly_var_bot(&challenges[i]);
-//       }
-//       assert_eq!(poly_evals.len(), 1);
-//       let joint_claim_eval = poly_evals[0];
-//       let mut r_joint = challenges;
-//       r_joint.extend(r);
-
-//       debug_assert_eq!(joint_poly.evaluate::<G>(&r_joint), joint_claim_eval);
-//       (r_joint, joint_claim_eval)
-//     };
-//     // decommit the joint polynomial at r_joint
-//     <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"joint_claim_eval", &eval_joint);
-
-//     let (proof_derefs, _comm_derefs_eval) = PolyEvalProof::prove(
-//       joint_poly,
-//       None,
-//       &r_joint,
-//       &eval_joint,
-//       None,
-//       gens,
-//       transcript,
-//       random_tape,
-//     );
-
-//     proof_derefs
-//   }
-
-//   // evalues both polynomials at r and produces a joint proof of opening
-//   pub fn prove(
-//     derefs: &Derefs<G::ScalarField>,
-//     eval_ops_val_vec: &Vec<Vec<G::ScalarField>>,
-//     r: &[G::ScalarField],
-//     gens: &PolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//     random_tape: &mut RandomTape<G>,
-//   ) -> Self {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       DerefsEvalProof::<G>::protocol_name(),
-//     );
-
-//     let evals = {
-//       let mut evals = eval_ops_val_vec.concat();
-//       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-//       evals
-//     };
-//     let proof_derefs = DerefsEvalProof::prove_single(
-//       &derefs.combined_poly,
-//       r,
-//       evals,
-//       gens,
-//       transcript,
-//       random_tape,
-//     );
-
-//     DerefsEvalProof { proof_derefs }
-//   }
-
-//   fn verify_single(
-//     proof: &PolyEvalProof<G>,
-//     comm: &PolyCommitment<G>,
-//     r: &[G::ScalarField],
-//     evals: Vec<G::ScalarField>,
-//     gens: &PolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//   ) -> Result<(), ProofVerifyError> {
-//     // append the claimed evaluations to transcript
-//     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
-
-//     // n-to-1 reduction
-//     let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
-//       transcript,
-//       b"challenge_combine_n_to_one",
-//       evals.len().log_2() as usize,
-//     );
-//     let mut poly_evals = DensePolynomial::new(evals);
-//     for i in (0..challenges.len()).rev() {
-//       poly_evals.bound_poly_var_bot(&challenges[i]);
-//     }
-//     assert_eq!(poly_evals.len(), 1);
-//     let joint_claim_eval = poly_evals[0];
-//     let mut r_joint = challenges;
-//     r_joint.extend(r);
-
-//     // decommit the joint polynomial at r_joint
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"joint_claim_eval",
-//       &joint_claim_eval,
-//     );
-
-//     proof.verify_plain(gens, transcript, &r_joint, &joint_claim_eval, comm)
-//   }
-
-//   // verify evaluations of both polynomials at r
-//   pub fn verify(
-//     &self,
-//     r: &[G::ScalarField],
-//     eval_ops_val_vec: &Vec<Vec<G::ScalarField>>,
-//     gens: &PolyCommitmentGens<G>,
-//     comm: &DerefsCommitment<G>,
-//     transcript: &mut Transcript,
-//   ) -> Result<(), ProofVerifyError> {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       DerefsEvalProof::<G>::protocol_name(),
-//     );
-//     let mut evals = eval_ops_val_vec.concat();
-//     evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-
-//     DerefsEvalProof::verify_single(
-//       &self.proof_derefs,
-//       &comm.comm_ops_val,
-//       r,
-//       evals,
-//       gens,
-//       transcript,
-//     )
-//   }
-// }
-
-// impl<G: CurveGroup> AppendToTranscript<G> for DerefsCommitment<G> {
-//   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
-//     transcript.append_message(b"derefs_commitment", b"begin_derefs_commitment");
-//     self.comm_ops_val.append_to_transcript(label, transcript);
-//     transcript.append_message(b"derefs_commitment", b"end_derefs_commitment");
-//   }
-// }
 
 pub struct SparseMatPolyCommitmentGens<G> {
   gens_combined_l_variate: PolyCommitmentGens<G>,

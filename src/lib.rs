@@ -26,6 +26,7 @@ mod sumcheck;
 mod timer;
 mod transcript;
 mod unipoly;
+mod utils;
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
