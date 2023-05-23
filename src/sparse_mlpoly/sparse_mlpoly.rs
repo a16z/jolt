@@ -33,7 +33,6 @@ impl<F: PrimeField, const c: usize> SparseMatEntry<F, c> {
   }
 }
 
-
 pub struct SparseMatPolyCommitmentGens<G> {
   gens_combined_l_variate: PolyCommitmentGens<G>,
   gens_combined_log_m_variate: PolyCommitmentGens<G>,
@@ -105,9 +104,8 @@ pub struct DensifiedRepresentation<F: PrimeField, const c: usize> {
 
 impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
-    &self,
-    gens: &SparseMatPolyCommitmentGens<G>,
-  ) -> SparsePolynomialCommitment<G> {
+    &self) -> (SparseMatPolyCommitmentGens<G>, SparsePolynomialCommitment<G>) {
+    let gens = SparseMatPolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, self.s, self.log_m);
     let (l_variate_polys_commitment, _) = self
       .combined_l_variate_polys
       .commit(&gens.gens_combined_l_variate, None);
@@ -115,13 +113,16 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
       .combined_log_m_variate_polys
       .commit(&gens.gens_combined_log_m_variate, None);
 
-    SparsePolynomialCommitment {
-      l_variate_polys_commitment,
-      log_m_variate_polys_commitment,
-      s: self.s,
-      log_m: self.log_m,
-      m: self.m,
-    }
+    (
+      gens,
+      SparsePolynomialCommitment {
+        l_variate_polys_commitment,
+        log_m_variate_polys_commitment,
+        s: self.s,
+        log_m: self.log_m,
+        m: self.m,
+      }
+    )
   }
   // TODO(moodlezoup): implement deref?
 }
@@ -1471,7 +1472,7 @@ mod tests {
     //   dense.combined_log_m_variate_polys.get_num_vars()
     // );
 
-    let commitment = dense.commit(&gens);
+    let (gens, commitment) = dense.commit();
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -1518,7 +1519,6 @@ mod tests {
     }
 
     let sparse_poly = SparseMatPolynomial::new(nonzero_entries, log_m);
-    let gens = SparseMatPolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, log_m);
 
     // evaluation
     let r: Vec<G::ScalarField> = (0..c * log_m)
@@ -1528,7 +1528,7 @@ mod tests {
 
     // commitment
     let dense: DensifiedRepresentation<G::ScalarField, c> = sparse_poly.into();
-    let commitment = dense.commit(&gens);
+    let (gens, commitment) = dense.commit::<G>();
 
     // let mut random_tape = RandomTape::new(b"proof");
     // let mut prover_transcript = Transcript::new(b"example");
@@ -1629,5 +1629,41 @@ mod tests {
     let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
     let combined_index: Vec<Fr> = vec![row, col].concat();
     assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(9));
+  }
+
+  #[test]
+  fn prove() {
+    let mut prng = test_rng();
+    const c: usize = 2;
+
+    let (_, s, m, log_m, sparse_poly) = construct_2d_small::<G1Projective>();
+
+    // Commit
+    let dense: DensifiedRepresentation<Fr, c> = sparse_poly.into();
+    let (gens, commitment) = dense.commit();
+
+    // Eval
+    let mut r: Vec<Vec<Fr>> = Vec::new();
+    for dim in 0..(c) {
+      let mut dimension: Vec<Fr> = Vec::with_capacity(log_m);
+      for i in 0..log_m {
+        dimension.push(Fr::rand(&mut prng));
+      }
+      r.push(dimension);
+    }
+    let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
+    let eval = sparse_poly.evaluate(&flat_r);
+
+    // Prove
+    let mut random_tape = RandomTape::new(b"proof");
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, c>::prove(
+      &dense,
+      &r,
+      &eval,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
   }
 }
