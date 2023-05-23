@@ -1351,57 +1351,6 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
   }
 }
 
-// pub struct LagrangeBasisCoefficient<F> {
-//   idx: usize,
-//   coeff: F,
-// }
-
-// impl<F> LagrangeBasisCoefficient<F> {
-//   pub fn new(idx: usize, coeff: F) -> Self {
-//     LagrangeBasisCoefficient { idx, coeff }
-//   }
-// }
-
-// pub struct SparsePolynomial<F> {
-//   num_vars: usize,
-//   lagrange_representation: Vec<LagrangeBasisCoefficient<F>>,
-// }
-
-// impl<F: PrimeField> SparsePolynomial<F> {
-//   pub fn new(num_vars: usize, lagrange_representation: Vec<LagrangeBasisCoefficient<F>>) -> Self {
-//     SparsePolynomial {
-//       num_vars,
-//       lagrange_representation,
-//     }
-//   }
-
-//   fn evaluate_lagrange_basis_poly(idx_bits: &[bool], r: &[F]) -> F {
-//     assert_eq!(idx_bits.len(), r.len());
-//     let mut chi_i = F::one();
-//     for j in 0..r.len() {
-//       if idx_bits[j] {
-//         chi_i *= r[j];
-//       } else {
-//         chi_i *= F::one() - r[j];
-//       }
-//     }
-//     chi_i
-//   }
-
-//   // Takes O(n log n). TODO: do this in O(n) where n is the number of entries in Z
-//   pub fn evaluate(&self, r: &[F]) -> F {
-//     assert_eq!(self.num_vars, r.len());
-
-//     (0..self.lagrange_representation.len())
-//       .map(|i| {
-//         let idx_bits = self.lagrange_representation[i].idx.get_bits(r.len());
-//         SparsePolynomial::evaluate_lagrange_basis_poly(&idx_bits, r)
-//           * self.lagrange_representation[i].coeff
-//       })
-//       .sum()
-//   }
-// }
-
 #[cfg(test)]
 mod tests {
   use super::*;
