@@ -1326,7 +1326,7 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      SparsePolynomialEvaluationProof::protocol_name(),
+      SparsePolynomialEvaluationProof::<G, c>::protocol_name(),
     );
 
     assert_eq!(r.len(), c * commitment.log_m);
@@ -1407,10 +1407,12 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::G1Projective;
+  use ark_bls12_381::{G1Projective, Fr};
   use ark_std::rand::RngCore;
   use ark_std::test_rng;
   use ark_std::UniformRand;
+
+  use crate::utils::{ff_bitvector_dbg, index_to_field_bitvector};
 
   #[test]
   fn check_evaluation() {
@@ -1543,5 +1545,89 @@ mod tests {
     // assert!(proof
     //   .verify(&commitment, &r, &evals, &gens, &mut verifier_transcript)
     //   .is_ok());
+  }
+
+  /// Construct a 2d sparse integer matrix like the following:
+  /// ```
+  ///     let M: Vec<usize> = vec! [
+  ///         0, 0, 0, 0,
+  ///         2, 0, 4, 0,
+  ///         0, 8, 0, 9,
+  ///         0, 0, 0, 0
+  ///    ];
+  /// ```
+  fn construct_2d_sparse_mat_polynomial_from_ints<F: PrimeField>(ints: Vec<usize>, m: usize, log_m: usize, s: usize) -> SparseMatPolynomial<F, 2> {
+    assert_eq!(m, log_m.pow2());
+    let mut row_index = 0usize;
+    let mut column_index = 0usize;
+    let mut sparse_evals: Vec<SparseMatEntry<F, 2>>  = Vec::new();
+    for entry_index in 0..ints.len() {
+      if ints[entry_index] != 0 {
+        println!("Non-sparse: (row, col, val): ({row_index}, {column_index}, {})", ints[entry_index]);
+        sparse_evals.push(SparseMatEntry::new([row_index, column_index], F::from(ints[entry_index] as u64)));
+      }
+
+      column_index += 1;
+      if column_index >= m {
+        column_index = 0;
+        row_index += 1;
+      }
+    }
+
+    SparseMatPolynomial::<F, 2>::new(sparse_evals, log_m)
+  }
+
+    /// Returns a tuple of (c, s, m, log_m, SparsePoly)
+    fn construct_2d_small<G: CurveGroup>() -> (usize, usize, usize, usize, SparseMatPolynomial<G::ScalarField, 2>) {
+      let c = 2usize;
+      let s = 4usize;
+      let m = 4usize;
+      let log_m = 2usize;
+  
+      let M: Vec<usize> = vec! [
+        0, 0, 0, 0,
+        2, 0, 4, 0,
+        0, 8, 0, 9,
+        0, 0, 0, 0
+      ];
+      (c, s, m, log_m, construct_2d_sparse_mat_polynomial_from_ints(M, m, log_m, s))
+    }
+
+  #[test]
+  fn evaluate_over_known_indices() {
+    // Create SparseMLE and then evaluate over known indices and confirm correct evaluations
+    let (c, s, m, log_m, sparse_poly) = construct_2d_small::<G1Projective>();
+
+    // Evaluations
+    // poly[row, col] = eval
+    // poly[1, 0] = 2
+    // poly[1, 2] = 4
+    // poly[2, 1] = 8
+    // poly[2, 3] = 9 
+    // Check each and a few others over the boolean hypercube to be 0
+
+    // poly[1, 0] = 2
+    let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
+    let col: Vec<Fr> = index_to_field_bitvector(0, log_m);
+    let combined_index: Vec<Fr> = vec![row, col].concat();
+    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(2));
+
+    // poly[1, 2] = 4
+    let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
+    let col: Vec<Fr> = index_to_field_bitvector(2, log_m);
+    let combined_index: Vec<Fr> = vec![row, col].concat();
+    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(4));
+
+    // poly[2, 1] = 8
+    let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
+    let col: Vec<Fr> = index_to_field_bitvector(1, log_m);
+    let combined_index: Vec<Fr> = vec![row, col].concat();
+    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(8));
+
+    // poly[2, 3] = 9 
+    let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
+    let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
+    let combined_index: Vec<Fr> = vec![row, col].concat();
+    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(9));
   }
 }
