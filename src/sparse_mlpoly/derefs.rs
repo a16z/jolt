@@ -5,11 +5,11 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-  dense_mlpoly::{PolyCommitmentGens, PolyEvalProof, DensePolynomial, PolyCommitment},
+  dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
   errors::ProofVerifyError,
+  math::Math,
   random::RandomTape,
   transcript::{AppendToTranscript, ProofTranscript},
-  math::Math
 };
 
 pub struct Derefs<F> {
@@ -202,7 +202,7 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for DerefsCommitment<G> {
-  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
     transcript.append_message(b"derefs_commitment", b"begin_derefs_commitment");
     self.comm_ops_val.append_to_transcript(label, transcript);
     transcript.append_message(b"derefs_commitment", b"end_derefs_commitment");
@@ -241,33 +241,73 @@ mod test {
     // eq(1, 0, 3, 4) = (1 * 3 + (1-1) * (1-3)) * (0 * 4 + (1-0) * (1-4)) = (3)(-3) = -9
     // eq(1, 1, 3, 4) = (1 * 3 + (1-1) * (1-3)) * (1 * 4 + (1-1) * (1-4)) = (3)(4) = 12
     // eq(0, 0, 5, 6) = (0 * 5 + (1-0) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (-4)(-5) = 20
-    // eq(0, 1, 5, 6) = (0 * 5 + (1-0) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (-4)(6) = -24 
+    // eq(0, 1, 5, 6) = (0 * 5 + (1-0) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (-4)(6) = -24
     // eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (5)(-5) = -25
     // eq(1, 1, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (5)(6) = 30
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(0, eq_index_bits)), Fr::from(6));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(0, eq_index_bits)),
+      Fr::from(6)
+    );
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(1, eq_index_bits)), Fr::from(-8));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(1, eq_index_bits)),
+      Fr::from(-8)
+    );
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(2, eq_index_bits)), Fr::from(-9));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(2, eq_index_bits)),
+      Fr::from(-9)
+    );
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(3, eq_index_bits)), Fr::from(12));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(3, eq_index_bits)),
+      Fr::from(12)
+    );
 
     // second poly
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(4, eq_index_bits)), Fr::from(20));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(4, eq_index_bits)),
+      Fr::from(20)
+    );
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(5, eq_index_bits)), Fr::from(-24));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(5, eq_index_bits)),
+      Fr::from(-24)
+    );
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(6, eq_index_bits)), Fr::from(-25));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(6, eq_index_bits)),
+      Fr::from(-25)
+    );
 
     let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
-    assert_eq!(derefs.comb.evaluate::<G1Projective>(&index_to_field_bitvector(7, eq_index_bits)), Fr::from(30));
+    assert_eq!(
+      derefs
+        .comb
+        .evaluate::<G1Projective>(&index_to_field_bitvector(7, eq_index_bits)),
+      Fr::from(30)
+    );
   }
 }

@@ -299,7 +299,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
-  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
     transcript.append_message(label, b"poly_commitment_begin");
     for i in 0..self.C.len() {
       transcript.append_point(b"poly_commitment_share", &self.C[i]);

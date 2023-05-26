@@ -9,10 +9,10 @@ use crate::errors::ProofVerifyError;
 use crate::math::Math;
 use crate::product_tree::{DotProductCircuit, GrandProductCircuit, ProductCircuitEvalProofBatched};
 use crate::random::RandomTape;
+use crate::sparse_mlpoly::densified::DensifiedRepresentation;
+use crate::sparse_mlpoly::derefs::{Derefs, DerefsCommitment, DerefsEvalProof};
 use crate::timer::Timer;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
-use crate::sparse_mlpoly::derefs::{Derefs, DerefsCommitment, DerefsEvalProof};
-use crate::sparse_mlpoly::densified::{DensifiedRepresentation};
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
@@ -78,7 +78,7 @@ pub struct SparsePolynomialCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
-  fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript<T: ProofTranscript<G>>(&self, _label: &'static [u8], transcript: &mut T) {
     self
       .l_variate_polys_commitment
       .append_to_transcript(b"l_variate_polys_commitment", transcript);
@@ -90,8 +90,6 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
     transcript.append_u64(b"m", self.m as u64);
   }
 }
-
-
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseMatPolynomial<F: PrimeField, const c: usize> {
@@ -136,7 +134,7 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
       .sum()
   }
 
-  fn to_densified(&self) -> DensifiedRepresentation<F,c> {
+  fn to_densified(&self) -> DensifiedRepresentation<F, c> {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(c);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
@@ -144,7 +142,7 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
     let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
 
     for i in 0..c {
-      let mut access_sequence = self 
+      let mut access_sequence = self
         .nonzero_entries
         .iter()
         .map(|entry| entry.indices[i])
@@ -172,11 +170,7 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
       dim_usize.push(access_sequence);
     }
 
-    let mut values: Vec<F> = self 
-      .nonzero_entries
-      .iter()
-      .map(|entry| entry.val)
-      .collect();
+    let mut values: Vec<F> = self.nonzero_entries.iter().map(|entry| entry.val).collect();
     // TODO(moodlezoup) Is this resize necessary/in the right place?
     values.resize(self.s, F::zero());
 
@@ -805,27 +799,27 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
 
     //   assert_eq!(hash_init * hash_write, hash_read * hash_final);
 
-      // TODO(moodlezoup)
-      // <Transcript as ProofTranscript<G>>::append_scalar(
-      //   transcript,
-      //   b"claim_row_eval_init",
-      //   &dim_eval_init,
-      // );
-      // <Transcript as ProofTranscript<G>>::append_scalars(
-      //   transcript,
-      //   b"claim_row_eval_read",
-      //   &dim_eval_read,
-      // );
-      // <Transcript as ProofTranscript<G>>::append_scalars(
-      //   transcript,
-      //   b"claim_row_eval_write",
-      //   &dim_eval_write,
-      // );
-      // <Transcript as ProofTranscript<G>>::append_scalar(
-      //   transcript,
-      //   b"claim_row_eval_audit",
-      //   &dim_eval_audit,
-      // );
+    // TODO(moodlezoup)
+    // <Transcript as ProofTranscript<G>>::append_scalar(
+    //   transcript,
+    //   b"claim_row_eval_init",
+    //   &dim_eval_init,
+    // );
+    // <Transcript as ProofTranscript<G>>::append_scalars(
+    //   transcript,
+    //   b"claim_row_eval_read",
+    //   &dim_eval_read,
+    // );
+    // <Transcript as ProofTranscript<G>>::append_scalars(
+    //   transcript,
+    //   b"claim_row_eval_write",
+    //   &dim_eval_write,
+    // );
+    // <Transcript as ProofTranscript<G>>::append_scalar(
+    //   transcript,
+    //   b"claim_row_eval_audit",
+    //   &dim_eval_audit,
+    // );
     // }
 
     // TODO(moodlezoup)
@@ -1243,21 +1237,19 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
   pub fn prove(
     dense: &DensifiedRepresentation<G::ScalarField, c>,
     r: &Vec<Vec<G::ScalarField>>, // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
-    eval: &G::ScalarField,     // a evaluation of \widetilde{M}(r = (r_0, ..., r_logM))
+    eval: &G::ScalarField,        // a evaluation of \widetilde{M}(r = (r_0, ..., r_logM))
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
-      transcript,
-      Self::protocol_name(),
-    );
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     assert_eq!(r.len(), c);
-    r.iter().for_each(|dimensional_coordinate| assert_eq!(dimensional_coordinate.len(), dense.log_m));
+    r.iter()
+      .for_each(|dimensional_coordinate| assert_eq!(dimensional_coordinate.len(), dense.log_m));
 
     // Create an \widetilde{eq}(r) polynomial for each dimension, which we will memory check
-    let eqs: Vec<Vec<G::ScalarField>> = r 
+    let eqs: Vec<Vec<G::ScalarField>> = r
       .iter()
       .map(|r_dim| {
         let eq_evals = EqPolynomial::new(r_dim.clone()).evals();
@@ -1290,7 +1282,8 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
       // build a network to evaluate the sparse polynomial
       let timer_build_network = Timer::new("build_layered_network");
 
-      let mut net: PolyEvalNetwork<G::ScalarField, c> = PolyEvalNetwork::new(dense, &derefs, &eqs, &(r_hash_params[0], r_hash_params[1]));
+      let mut net: PolyEvalNetwork<G::ScalarField, c> =
+        PolyEvalNetwork::new(dense, &derefs, &eqs, &(r_hash_params[0], r_hash_params[1]));
       timer_build_network.stop();
 
       let timer_eval_network = Timer::new("evalproof_layered_network");
@@ -1354,7 +1347,7 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::{G1Projective, Fr};
+  use ark_bls12_381::{Fr, G1Projective};
   use ark_std::rand::RngCore;
   use ark_std::test_rng;
   use ark_std::UniformRand;
@@ -1502,15 +1495,26 @@ mod tests {
   ///         0, 0, 0, 0
   ///    ];
   /// ```
-  fn construct_2d_sparse_mat_polynomial_from_ints<F: PrimeField>(ints: Vec<usize>, m: usize, log_m: usize, s: usize) -> SparseMatPolynomial<F, 2> {
+  fn construct_2d_sparse_mat_polynomial_from_ints<F: PrimeField>(
+    ints: Vec<usize>,
+    m: usize,
+    log_m: usize,
+    s: usize,
+  ) -> SparseMatPolynomial<F, 2> {
     assert_eq!(m, log_m.pow2());
     let mut row_index = 0usize;
     let mut column_index = 0usize;
-    let mut sparse_evals: Vec<SparseMatEntry<F, 2>>  = Vec::new();
+    let mut sparse_evals: Vec<SparseMatEntry<F, 2>> = Vec::new();
     for entry_index in 0..ints.len() {
       if ints[entry_index] != 0 {
-        println!("Non-sparse: (row, col, val): ({row_index}, {column_index}, {})", ints[entry_index]);
-        sparse_evals.push(SparseMatEntry::new([row_index, column_index], F::from(ints[entry_index] as u64)));
+        println!(
+          "Non-sparse: (row, col, val): ({row_index}, {column_index}, {})",
+          ints[entry_index]
+        );
+        sparse_evals.push(SparseMatEntry::new(
+          [row_index, column_index],
+          F::from(ints[entry_index] as u64),
+        ));
       }
 
       column_index += 1;
@@ -1523,21 +1527,28 @@ mod tests {
     SparseMatPolynomial::<F, 2>::new(sparse_evals, log_m)
   }
 
-    /// Returns a tuple of (c, s, m, log_m, SparsePoly)
-    fn construct_2d_small<G: CurveGroup>() -> (usize, usize, usize, usize, SparseMatPolynomial<G::ScalarField, 2>) {
-      let c = 2usize;
-      let s = 4usize;
-      let m = 4usize;
-      let log_m = 2usize;
-  
-      let M: Vec<usize> = vec! [
-        0, 0, 0, 0,
-        2, 0, 4, 0,
-        0, 8, 0, 9,
-        0, 0, 0, 0
-      ];
-      (c, s, m, log_m, construct_2d_sparse_mat_polynomial_from_ints(M, m, log_m, s))
-    }
+  /// Returns a tuple of (c, s, m, log_m, SparsePoly)
+  fn construct_2d_small<G: CurveGroup>() -> (
+    usize,
+    usize,
+    usize,
+    usize,
+    SparseMatPolynomial<G::ScalarField, 2>,
+  ) {
+    let c = 2usize;
+    let s = 4usize;
+    let m = 4usize;
+    let log_m = 2usize;
+
+    let M: Vec<usize> = vec![0, 0, 0, 0, 2, 0, 4, 0, 0, 8, 0, 9, 0, 0, 0, 0];
+    (
+      c,
+      s,
+      m,
+      log_m,
+      construct_2d_sparse_mat_polynomial_from_ints(M, m, log_m, s),
+    )
+  }
 
   #[test]
   fn evaluate_over_known_indices() {
@@ -1549,7 +1560,7 @@ mod tests {
     // poly[1, 0] = 2
     // poly[1, 2] = 4
     // poly[2, 1] = 8
-    // poly[2, 3] = 9 
+    // poly[2, 3] = 9
     // Check each and a few others over the boolean hypercube to be 0
 
     // poly[1, 0] = 2
@@ -1570,7 +1581,7 @@ mod tests {
     let combined_index: Vec<Fr> = vec![row, col].concat();
     assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(8));
 
-    // poly[2, 3] = 9 
+    // poly[2, 3] = 9
     let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
     let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
     let combined_index: Vec<Fr> = vec![row, col].concat();

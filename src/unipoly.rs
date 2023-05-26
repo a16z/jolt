@@ -110,10 +110,10 @@ impl<F: PrimeField> CompressedUniPoly<F> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for UniPoly<G::ScalarField> {
-  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
     transcript.append_message(label, b"UniPoly_begin");
     for i in 0..self.coeffs.len() {
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"coeff", &self.coeffs[i]);
+      transcript.append_scalar(b"coeff", &self.coeffs[i]);
     }
     transcript.append_message(label, b"UniPoly_end");
   }
