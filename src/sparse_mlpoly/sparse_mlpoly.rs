@@ -327,7 +327,6 @@ struct PolyEvalNetwork<F, const c: usize> {
 impl<F: PrimeField, const c: usize> PolyEvalNetwork<F, c> {
   pub fn new(
     dense: &DensifiedRepresentation<F, c>,
-    derefs: &Derefs<F>,
     mems: &Vec<Vec<F>>,
     r_mem_check: &(F, F),
   ) -> Self {
@@ -345,420 +344,403 @@ impl<F: PrimeField, const c: usize> PolyEvalNetwork<F, c> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup> {
-  eval_dim: Vec<(Vec<G::ScalarField>, Vec<G::ScalarField>, G::ScalarField)>,
-  eval_val: Vec<G::ScalarField>,
-  eval_derefs: Vec<Vec<G::ScalarField>>,
+struct HashLayerProof<G: CurveGroup, const c: usize> {
+  eval_dim: Vec<(G::ScalarField, G::ScalarField, G::ScalarField)>,
+  eval_val: G::ScalarField,
+  eval_derefs: Vec<G::ScalarField>,
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
   proof_derefs: DerefsEvalProof<G>,
 }
 
-// impl<G: CurveGroup> HashLayerProof<G> {
-//   fn protocol_name() -> &'static [u8] {
-//     b"Sparse polynomial hash layer proof"
-//   }
+impl<G: CurveGroup, const c: usize> HashLayerProof<G, c> {
+  fn protocol_name() -> &'static [u8] {
+    b"Sparse polynomial hash layer proof"
+  }
 
-//   fn prove_helper(
-//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-//     addr_timestamps: &MemoryPolynomials<G::ScalarField>,
-//   ) -> (Vec<G::ScalarField>, Vec<G::ScalarField>, G::ScalarField) {
-//     let (rand_mem, rand_ops) = rand;
+  fn prove(
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    dense: &DensifiedRepresentation<G::ScalarField, c>,
+    derefs: &Derefs<G::ScalarField>,
+    gens: &SparseMatPolyCommitmentGens<G>,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      HashLayerProof::<G, c>::protocol_name(),
+    );
 
-//     // decommit ops-addr at rand_ops
-//     let mut eval_ops_addr_vec: Vec<G::ScalarField> = Vec::new();
-//     for i in 0..addr_timestamps.ops_addr.len() {
-//       let eval_ops_addr = addr_timestamps.ops_addr[i].evaluate::<G>(rand_ops);
-//       eval_ops_addr_vec.push(eval_ops_addr);
-//     }
+    let (rand_mem, rand_ops) = rand;
 
-//     // decommit read_ts at rand_ops
-//     let mut eval_read_ts_vec: Vec<G::ScalarField> = Vec::new();
-//     for i in 0..addr_timestamps.read_ts.len() {
-//       let eval_read_ts = addr_timestamps.read_ts[i].evaluate::<G>(rand_ops);
-//       eval_read_ts_vec.push(eval_read_ts);
-//     }
+    // decommit derefs at rand_ops
+    let eval_derefs: Vec<G::ScalarField> = derefs
+      .eq_evals
+      .iter()
+      .map(|eq| eq.evaluate::<G>(rand_ops))
+      .collect();
+    let proof_derefs = DerefsEvalProof::prove(
+      derefs,
+      &eval_derefs,
+      rand_ops,
+      &gens.gens_derefs,
+      transcript,
+      random_tape,
+    );
 
-//     // decommit audit-ts at rand_mem
-//     let eval_audit_ts = addr_timestamps.audit_ts.evaluate::<G>(rand_mem);
+    // form a single decommitment using comm_comb_ops
+    let mut evals_ops: Vec<G::ScalarField> = Vec::new();
+    let mut evals_final: Vec<G::ScalarField> = Vec::new();
 
-//     (eval_ops_addr_vec, eval_read_ts_vec, eval_audit_ts)
-//   }
+    let mut eval_dim = Vec::new();
+    for i in 0..c {
+      let dim_eval = dense.dim[i].evaluate::<G>(rand_ops);
+      let read_eval = dense.read[i].evaluate::<G>(rand_ops);
+      let final_eval = dense.r#final[i].evaluate::<G>(rand_mem);
+      eval_dim.push((dim_eval, read_eval, final_eval));
+      evals_ops.push(dim_eval);
+      evals_ops.push(read_eval);
+      evals_final.push(final_eval);
+    }
 
-//   fn prove(
-//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-//     dense: &MultiSparseMatPolynomialAsDense<G::ScalarField>,
-//     derefs: &Derefs<G::ScalarField>,
-//     gens: &SparseMatPolyCommitmentGens<G>,
-//     transcript: &mut Transcript,
-//     random_tape: &mut RandomTape<G>,
-//   ) -> Self {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       HashLayerProof::<G>::protocol_name(),
-//     );
+    let eval_val = dense.val.evaluate::<G>(rand_ops);
 
-//     let (rand_mem, rand_ops) = rand;
+    evals_ops.push(eval_val);
+    evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
 
-//     // decommit derefs at rand_ops
-//     let eval_ops_val = derefs
-//       .ops_vals
-//       .iter()
-//       .map(|ops| ops.iter().map(|op| op.evaluate::<G>(rand_ops)).collect())
-//       .collect();
-//     let proof_derefs = DerefsEvalProof::prove(
-//       derefs,
-//       &eval_ops_val,
-//       rand_ops,
-//       &gens.gens_derefs,
-//       transcript,
-//       random_tape,
-//     );
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
 
-//     // form a single decommitment using comm_comb_ops
-//     let mut evals_ops: Vec<G::ScalarField> = Vec::new();
-//     let mut evals_mem: Vec<G::ScalarField> = Vec::new();
+    let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
+      b"challenge_combine_n_to_one",
+      evals_ops.len().log_2() as usize,
+    );
 
-//     let eval_dim = Vec::new();
-//     for dim_i in dense.dim.iter() {
-//       let (addr, read_ts, audit_ts) =
-//         HashLayerProof::<G>::prove_helper((rand_mem, rand_ops), dim_i);
-//       eval_dim.push((addr, read_ts, audit_ts));
-//       evals_mem.push(audit_ts);
-//       evals_ops.extend(&addr);
-//       evals_ops.extend(&read_ts);
-//     }
+    let mut poly_evals_ops = DensePolynomial::new(evals_ops);
+    for i in (0..challenges_ops.len()).rev() {
+      poly_evals_ops.bound_poly_var_bot(&challenges_ops[i]);
+    }
+    assert_eq!(poly_evals_ops.len(), 1);
 
-//     let eval_val_vec = (0..dense.val.len())
-//       .map(|i| dense.val[i].evaluate::<G>(rand_ops))
-//       .collect::<Vec<G::ScalarField>>();
-//     evals_ops.extend(&eval_val_vec);
-//     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
+    let joint_claim_eval_ops = poly_evals_ops[0];
+    let mut r_joint_ops = challenges_ops;
+    r_joint_ops.extend(rand_ops);
+    debug_assert_eq!(
+      dense.combined_l_variate_polys.evaluate::<G>(&r_joint_ops),
+      joint_claim_eval_ops
+    );
 
-//     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval_ops",
+      &joint_claim_eval_ops,
+    );
 
-//     let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
-//       transcript,
-//       b"challenge_combine_n_to_one",
-//       evals_ops.len().log_2() as usize,
-//     );
+    let (proof_ops, _) = PolyEvalProof::prove(
+      &dense.combined_l_variate_polys,
+      None,
+      &r_joint_ops,
+      &joint_claim_eval_ops,
+      None,
+      &gens.gens_combined_l_variate,
+      transcript,
+      random_tape,
+    );
 
-//     let mut poly_evals_ops = DensePolynomial::new(evals_ops);
-//     for i in (0..challenges_ops.len()).rev() {
-//       poly_evals_ops.bound_poly_var_bot(&challenges_ops[i]);
-//     }
-//     assert_eq!(poly_evals_ops.len(), 1);
-//     let joint_claim_eval_ops = poly_evals_ops[0];
-//     let mut r_joint_ops = challenges_ops;
-//     r_joint_ops.extend(rand_ops);
-//     debug_assert_eq!(
-//       dense.comb_ops.evaluate::<G>(&r_joint_ops),
-//       joint_claim_eval_ops
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"joint_claim_eval_ops",
-//       &joint_claim_eval_ops,
-//     );
+    <Transcript as ProofTranscript<G>>::append_scalars(
+      transcript,
+      b"claim_evals_mem",
+      &evals_final,
+    );
+    let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
+      transcript,
+      b"challenge_combine_two_to_one",
+      evals_final.len().log_2() as usize,
+    );
 
-//     let (proof_ops, _comm_ops_eval) = PolyEvalProof::prove(
-//       &dense.comb_ops,
-//       None,
-//       &r_joint_ops,
-//       &joint_claim_eval_ops,
-//       None,
-//       &gens.gens_ops,
-//       transcript,
-//       random_tape,
-//     );
+    let mut poly_evals_mem = DensePolynomial::new(evals_final);
+    for i in (0..challenges_mem.len()).rev() {
+      poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
+    }
+    assert_eq!(poly_evals_mem.len(), 1);
 
-//     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &evals_mem);
-//     let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
-//       transcript,
-//       b"challenge_combine_two_to_one",
-//       evals_mem.len().log_2() as usize,
-//     );
+    let joint_claim_eval_mem = poly_evals_mem[0];
+    let mut r_joint_mem = challenges_mem;
+    r_joint_mem.extend(rand_mem);
+    debug_assert_eq!(
+      dense
+        .combined_log_m_variate_polys
+        .evaluate::<G>(&r_joint_mem),
+      joint_claim_eval_mem
+    );
 
-//     let mut poly_evals_mem = DensePolynomial::new(evals_mem);
-//     for i in (0..challenges_mem.len()).rev() {
-//       poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
-//     }
-//     assert_eq!(poly_evals_mem.len(), 1);
-//     let joint_claim_eval_mem = poly_evals_mem[0];
-//     let mut r_joint_mem = challenges_mem;
-//     r_joint_mem.extend(rand_mem);
-//     debug_assert_eq!(
-//       dense.comb_mem.evaluate::<G>(&r_joint_mem),
-//       joint_claim_eval_mem
-//     );
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"joint_claim_eval_mem",
-//       &joint_claim_eval_mem,
-//     );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"joint_claim_eval_mem",
+      &joint_claim_eval_mem,
+    );
 
-//     let (proof_mem, _comm_mem_eval) = PolyEvalProof::prove(
-//       &dense.comb_mem,
-//       None,
-//       &r_joint_mem,
-//       &joint_claim_eval_mem,
-//       None,
-//       &gens.gens_mem,
-//       transcript,
-//       random_tape,
-//     );
+    let (proof_mem, _) = PolyEvalProof::prove(
+      &dense.combined_log_m_variate_polys,
+      None,
+      &r_joint_mem,
+      &joint_claim_eval_mem,
+      None,
+      &gens.gens_combined_log_m_variate,
+      transcript,
+      random_tape,
+    );
 
-//     HashLayerProof {
-//       eval_dim,
-//       eval_val: eval_val_vec,
-//       eval_derefs: eval_ops_val,
-//       proof_ops,
-//       proof_mem,
-//       proof_derefs,
-//     }
-//   }
+    HashLayerProof {
+      eval_dim,
+      eval_val,
+      proof_ops,
+      proof_mem,
+      eval_derefs,
+      proof_derefs,
+    }
+  }
 
-//   fn verify_helper(
-//     rand: &(&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-//     claims: &(
-//       G::ScalarField,
-//       Vec<G::ScalarField>,
-//       Vec<G::ScalarField>,
-//       G::ScalarField,
-//     ),
-//     eval_ops_val: &[G::ScalarField],
-//     eval_ops_addr: &[G::ScalarField],
-//     eval_read_ts: &[G::ScalarField],
-//     eval_audit_ts: &G::ScalarField,
-//     r: &[G::ScalarField],
-//     gamma: &G::ScalarField,
-//     tau: &G::ScalarField,
-//   ) -> Result<(), ProofVerifyError> {
-//     let hash_func = |a: &G::ScalarField,
-//                      v: &G::ScalarField,
-//                      t: &G::ScalarField|
-//      -> G::ScalarField { *t * gamma.square() + *v * *gamma + *a - tau };
-//     // moodlezoup: (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
+  // fn verify_helper(
+  //   rand_mem: &Vec<G::ScalarField>,
+  //   claims: &(
+  //     G::ScalarField,
+  //     Vec<G::ScalarField>,
+  //     Vec<G::ScalarField>,
+  //     G::ScalarField,
+  //   ),
+  //   eval_ops_val: &[G::ScalarField],
+  //   eval_ops_addr: &[G::ScalarField],
+  //   eval_read_ts: &[G::ScalarField],
+  //   eval_audit_ts: &G::ScalarField,
+  //   r: &[G::ScalarField],
+  //   gamma: &G::ScalarField,
+  //   tau: &G::ScalarField,
+  // ) -> Result<(), ProofVerifyError> {
+  //   let hash_func = |a: &G::ScalarField,
+  //                    v: &G::ScalarField,
+  //                    t: &G::ScalarField|
+  //    -> G::ScalarField { *t * gamma.square() + *v * *gamma + *a - tau };
+  //   // moodlezoup: (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
 
-//     let (rand_mem, _rand_ops) = rand;
-//     let (claim_init, claim_read, claim_write, claim_audit) = claims;
+  //   let (claim_init, claim_read, claim_write, claim_audit) = claims;
 
-//     // init
-//     // moodlezoup: Collapses Init_row into a single field element
-//     // Spartan 7.2.3 #4
-//     let eval_init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem); // [0, 1, ..., m-1]
-//     let eval_init_val = EqPolynomial::new(r.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
-//     let hash_init_at_rand_mem = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero()); // verify the claim_last of init chunk
-//                                                                                                      // H_\gamma_1(a, v, t)
-//     assert_eq!(&hash_init_at_rand_mem, claim_init);
+  //   // init
+  //   // moodlezoup: Collapses Init_row into a single field element
+  //   // Spartan 7.2.3 #4
+  //   let eval_init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem); // [0, 1, ..., m-1]
+  //   let eval_init_val = EqPolynomial::new(r.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
+  //                                                                         // H_\gamma_1(a, v, t)
+  //   let hash_init_at_rand_mem = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero()); // verify the claim_last of init chunk
+  //   assert_eq!(&hash_init_at_rand_mem, claim_init);
 
-//     // read
-//     for i in 0..eval_ops_addr.len() {
-//       let hash_read_at_rand_ops = hash_func(&eval_ops_addr[i], &eval_ops_val[i], &eval_read_ts[i]); // verify the claim_last of init chunk
-//       assert_eq!(&hash_read_at_rand_ops, &claim_read[i]);
-//     }
+  //   // read
+  //   for i in 0..eval_ops_addr.len() {
+  //     let hash_read_at_rand_ops = hash_func(&eval_ops_addr[i], &eval_ops_val[i], &eval_read_ts[i]); // verify the claim_last of init chunk
+  //     assert_eq!(&hash_read_at_rand_ops, &claim_read[i]);
+  //   }
 
-//     // write: shares addr, val component; only decommit write_ts
-//     for i in 0..eval_ops_addr.len() {
-//       let eval_write_ts = eval_read_ts[i] + G::ScalarField::one();
-//       let hash_write_at_rand_ops = hash_func(&eval_ops_addr[i], &eval_ops_val[i], &eval_write_ts); // verify the claim_last of init chunk
-//       assert_eq!(&hash_write_at_rand_ops, &claim_write[i]);
-//     }
+  //   // write: shares addr, val component; only decommit write_ts
+  //   for i in 0..eval_ops_addr.len() {
+  //     let eval_write_ts = eval_read_ts[i] + G::ScalarField::one();
+  //     let hash_write_at_rand_ops = hash_func(&eval_ops_addr[i], &eval_ops_val[i], &eval_write_ts); // verify the claim_last of init chunk
+  //     assert_eq!(&hash_write_at_rand_ops, &claim_write[i]);
+  //   }
 
-//     // audit: shares addr and val with init
-//     let eval_audit_addr = eval_init_addr;
-//     let eval_audit_val = eval_init_val;
-//     let hash_audit_at_rand_mem = hash_func(&eval_audit_addr, &eval_audit_val, eval_audit_ts);
-//     assert_eq!(&hash_audit_at_rand_mem, claim_audit); // verify the last step of the sum-check for audit
+  //   // audit: shares addr and val with init
+  //   let eval_audit_addr = eval_init_addr;
+  //   let eval_audit_val = eval_init_val;
+  //   let hash_audit_at_rand_mem = hash_func(&eval_audit_addr, &eval_audit_val, eval_audit_ts);
+  //   assert_eq!(&hash_audit_at_rand_mem, claim_audit); // verify the last step of the sum-check for audit
 
-//     Ok(())
-//   }
+  //   Ok(())
+  // }
 
-//   fn verify(
-//     &self,
-//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-//     claims_dim: &Vec<(
-//       G::ScalarField,
-//       Vec<G::ScalarField>,
-//       Vec<G::ScalarField>,
-//       G::ScalarField,
-//     )>,
-//     claims_dotp: &[G::ScalarField],
-//     comm: &SparsePolynomialCommitment<G>,
-//     gens: &SparseMatPolyCommitmentGens<G>,
-//     comm_derefs: &DerefsCommitment<G>,
-//     r: &Vec<Vec<G::ScalarField>>,
-//     r_hash: &G::ScalarField,
-//     r_multiset_check: &G::ScalarField,
-//     transcript: &mut Transcript,
-//   ) -> Result<(), ProofVerifyError> {
-//     let timer = Timer::new("verify_hash_proof");
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(
-//       transcript,
-//       HashLayerProof::<G>::protocol_name(),
-//     );
+  // fn verify(
+  //   &self,
+  //   rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+  //   claims_dim: &Vec<(
+  //     G::ScalarField,
+  //     Vec<G::ScalarField>,
+  //     Vec<G::ScalarField>,
+  //     G::ScalarField,
+  //   )>,
+  //   claims_dotp: &[G::ScalarField],
+  //   comm: &SparsePolynomialCommitment<G>,
+  //   gens: &SparseMatPolyCommitmentGens<G>,
+  //   comm_derefs: &DerefsCommitment<G>,
+  //   r: &Vec<Vec<G::ScalarField>>,
+  //   r_hash: &G::ScalarField,
+  //   r_multiset_check: &G::ScalarField,
+  //   transcript: &mut Transcript,
+  // ) -> Result<(), ProofVerifyError> {
+  //   let timer = Timer::new("verify_hash_proof");
+  //   <Transcript as ProofTranscript<G>>::append_protocol_name(
+  //     transcript,
+  //     HashLayerProof::protocol_name(),
+  //   );
 
-//     let (rand_mem, rand_ops) = rand;
+  //   let (rand_mem, rand_ops) = rand;
 
-//     // struct HashLayerProof<G: CurveGroup> {
-//     //   eval_dim: Vec<(Vec<G::ScalarField>, Vec<G::ScalarField>, G::ScalarField)>,
-//     //                       [addr]            [read_ts]            audit_ts
-//     //   eval_val: Vec<G::ScalarField>,
-//     //   eval_derefs: Vec<Vec<G::ScalarField>>,
-//     //   proof_ops: PolyEvalProof<G>,
-//     //   proof_mem: PolyEvalProof<G>,
-//     //   proof_derefs: DerefsEvalProof<G>,
-//     // }
+  //   // struct HashLayerProof<G: CurveGroup> {
+  //   //   eval_dim: Vec<(Vec<G::ScalarField>, Vec<G::ScalarField>, G::ScalarField)>,
+  //   //                       [addr]            [read_ts]            audit_ts
+  //   //   eval_val: Vec<G::ScalarField>,
+  //   //   eval_derefs: Vec<Vec<G::ScalarField>>,
+  //   //   proof_ops: PolyEvalProof<G>,
+  //   //   proof_mem: PolyEvalProof<G>,
+  //   //   proof_derefs: DerefsEvalProof<G>,
+  //   // }
 
-//     // comm_derefs
-//     // self.eval_derefs = E_i
-//     // self.eval_dim
-//     //
-//     // claims_dim
-//     // claims_dotp
+  //   // comm_derefs
+  //   // self.eval_derefs = E_i
+  //   // self.eval_dim
+  //   //
+  //   // claims_dim
+  //   // claims_dotp
 
-//     // verify derefs at rand_ops
-//     // TODO(moodlezoup)
-//     // assert_eq!(eval_row_ops_val.len(), eval_col_ops_val.len());
-//     self.proof_derefs.verify(
-//       rand_ops,
-//       &self.eval_derefs,
-//       &gens.gens_derefs,
-//       comm_derefs,
-//       transcript,
-//     )?;
+  //   // verify derefs at rand_ops
+  //   // TODO(moodlezoup)
+  //   // assert_eq!(eval_row_ops_val.len(), eval_col_ops_val.len());
+  //   self.proof_derefs.verify(
+  //     rand_ops,
+  //     &self.eval_derefs,
+  //     &gens.gens_derefs,
+  //     comm_derefs,
+  //     transcript,
+  //   )?;
 
-//     // verify the decommitments used in evaluation sum-check
-//     let eval_val_vec = &self.eval_val;
-//     assert_eq!(claims_dotp.len(), 3 * eval_row_ops_val.len());
-//     for i in 0..claims_dotp.len() / 3 {
-//       let claim_row_ops_val = claims_dotp[3 * i];
-//       let claim_col_ops_val = claims_dotp[3 * i + 1];
-//       let claim_val = claims_dotp[3 * i + 2];
+  //   // verify the decommitments used in evaluation sum-check
+  //   let eval_val_vec = &self.eval_val;
+  //   assert_eq!(claims_dotp.len(), 3 * eval_row_ops_val.len());
+  //   for i in 0..claims_dotp.len() / 3 {
+  //     let claim_row_ops_val = claims_dotp[3 * i];
+  //     let claim_col_ops_val = claims_dotp[3 * i + 1];
+  //     let claim_val = claims_dotp[3 * i + 2];
 
-//       assert_eq!(claim_row_ops_val, eval_row_ops_val[i]);
-//       assert_eq!(claim_col_ops_val, eval_col_ops_val[i]);
-//       assert_eq!(claim_val, eval_val_vec[i]);
-//     }
+  //     assert_eq!(claim_row_ops_val, eval_row_ops_val[i]);
+  //     assert_eq!(claim_col_ops_val, eval_col_ops_val[i]);
+  //     assert_eq!(claim_val, eval_val_vec[i]);
+  //   }
 
-//     // verify addr-timestamps using comm_comb_ops at rand_ops
-//     let (eval_row_addr_vec, eval_row_read_ts_vec, eval_row_audit_ts) = &self.eval_row;
-//     let (eval_col_addr_vec, eval_col_read_ts_vec, eval_col_audit_ts) = &self.eval_col;
+  //   // verify addr-timestamps using comm_comb_ops at rand_ops
+  //   let (eval_row_addr_vec, eval_row_read_ts_vec, eval_row_audit_ts) = &self.eval_row;
+  //   let (eval_col_addr_vec, eval_col_read_ts_vec, eval_col_audit_ts) = &self.eval_col;
 
-//     let mut evals_ops: Vec<G::ScalarField> = Vec::new();
-//     evals_ops.extend(eval_row_addr_vec);
-//     evals_ops.extend(eval_row_read_ts_vec);
-//     evals_ops.extend(eval_col_addr_vec);
-//     evals_ops.extend(eval_col_read_ts_vec);
-//     evals_ops.extend(eval_val_vec);
-//     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
+  //   let mut evals_ops: Vec<G::ScalarField> = Vec::new();
+  //   evals_ops.extend(eval_row_addr_vec);
+  //   evals_ops.extend(eval_row_read_ts_vec);
+  //   evals_ops.extend(eval_col_addr_vec);
+  //   evals_ops.extend(eval_col_read_ts_vec);
+  //   evals_ops.extend(eval_val_vec);
+  //   evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
 
-//     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
+  //   <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
 
-//     let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
-//       transcript,
-//       b"challenge_combine_n_to_one",
-//       evals_ops.len().log_2() as usize,
-//     );
+  //   let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
+  //     transcript,
+  //     b"challenge_combine_n_to_one",
+  //     evals_ops.len().log_2() as usize,
+  //   );
 
-//     let mut poly_evals_ops = DensePolynomial::new(evals_ops);
-//     for i in (0..challenges_ops.len()).rev() {
-//       poly_evals_ops.bound_poly_var_bot(&challenges_ops[i]);
-//     }
-//     assert_eq!(poly_evals_ops.len(), 1);
-//     let joint_claim_eval_ops = poly_evals_ops[0];
-//     let mut r_joint_ops = challenges_ops;
-//     r_joint_ops.extend(rand_ops);
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"joint_claim_eval_ops",
-//       &joint_claim_eval_ops,
-//     );
-//     self.proof_ops.verify_plain(
-//       &gens.gens_ops,
-//       transcript,
-//       &r_joint_ops,
-//       &joint_claim_eval_ops,
-//       &comm.comm_comb_ops,
-//     )?;
+  //   let mut poly_evals_ops = DensePolynomial::new(evals_ops);
+  //   for i in (0..challenges_ops.len()).rev() {
+  //     poly_evals_ops.bound_poly_var_bot(&challenges_ops[i]);
+  //   }
+  //   assert_eq!(poly_evals_ops.len(), 1);
+  //   let joint_claim_eval_ops = poly_evals_ops[0];
+  //   let mut r_joint_ops = challenges_ops;
+  //   r_joint_ops.extend(rand_ops);
+  //   <Transcript as ProofTranscript<G>>::append_scalar(
+  //     transcript,
+  //     b"joint_claim_eval_ops",
+  //     &joint_claim_eval_ops,
+  //   );
+  //   self.proof_ops.verify_plain(
+  //     &gens.gens_ops,
+  //     transcript,
+  //     &r_joint_ops,
+  //     &joint_claim_eval_ops,
+  //     &comm.comm_comb_ops,
+  //   )?;
 
-//     // verify proof-mem using comm_comb_mem at rand_mem
-//     // form a single decommitment using comm_comb_mem at rand_mem
-//     let evals_mem: Vec<G::ScalarField> = vec![*eval_row_audit_ts, *eval_col_audit_ts];
-//     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &evals_mem);
-//     let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
-//       transcript,
-//       b"challenge_combine_two_to_one",
-//       evals_mem.len().log_2() as usize,
-//     );
+  //   // verify proof-mem using comm_comb_mem at rand_mem
+  //   // form a single decommitment using comm_comb_mem at rand_mem
+  //   let evals_mem: Vec<G::ScalarField> = vec![*eval_row_audit_ts, *eval_col_audit_ts];
+  //   <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &evals_mem);
+  //   let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
+  //     transcript,
+  //     b"challenge_combine_two_to_one",
+  //     evals_mem.len().log_2() as usize,
+  //   );
 
-//     let mut poly_evals_mem = DensePolynomial::new(evals_mem);
-//     for i in (0..challenges_mem.len()).rev() {
-//       poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
-//     }
-//     assert_eq!(poly_evals_mem.len(), 1);
-//     let joint_claim_eval_mem = poly_evals_mem[0];
-//     let mut r_joint_mem = challenges_mem;
-//     r_joint_mem.extend(rand_mem);
-//     <Transcript as ProofTranscript<G>>::append_scalar(
-//       transcript,
-//       b"joint_claim_eval_mem",
-//       &joint_claim_eval_mem,
-//     );
-//     self.proof_mem.verify_plain(
-//       &gens.gens_mem,
-//       transcript,
-//       &r_joint_mem,
-//       &joint_claim_eval_mem,
-//       &comm.comm_comb_mem,
-//     )?;
+  //   let mut poly_evals_mem = DensePolynomial::new(evals_mem);
+  //   for i in (0..challenges_mem.len()).rev() {
+  //     poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
+  //   }
+  //   assert_eq!(poly_evals_mem.len(), 1);
+  //   let joint_claim_eval_mem = poly_evals_mem[0];
+  //   let mut r_joint_mem = challenges_mem;
+  //   r_joint_mem.extend(rand_mem);
+  //   <Transcript as ProofTranscript<G>>::append_scalar(
+  //     transcript,
+  //     b"joint_claim_eval_mem",
+  //     &joint_claim_eval_mem,
+  //   );
+  //   self.proof_mem.verify_plain(
+  //     &gens.gens_mem,
+  //     transcript,
+  //     &r_joint_mem,
+  //     &joint_claim_eval_mem,
+  //     &comm.comm_comb_mem,
+  //   )?;
 
-//     // // verify the claims from the product layer
+  //   // // verify the claims from the product layer
 
-//     // for (claims) in claims_dim.iter().zip() {
-//     //   let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_row;
-//     //   HashLayerProof::<G>::verify_helper(
-//     //     &(rand_mem, rand_ops),
-//     //     claims,
-//     //     eval_row_ops_val,
-//     //     eval_ops_addr,
-//     //     eval_read_ts,
-//     //     eval_audit_ts,
-//     //     r,
-//     //     r_hash,
-//     //     r_multiset_check,
-//     //   )?;
-//     // }
-//     let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_row;
-//     HashLayerProof::<G>::verify_helper(
-//       &(rand_mem, rand_ops),
-//       claims_row,
-//       eval_row_ops_val,
-//       eval_ops_addr,
-//       eval_read_ts,
-//       eval_audit_ts,
-//       rx,
-//       r_hash,
-//       r_multiset_check,
-//     )?;
+  //   // for (claims) in claims_dim.iter().zip() {
+  //   //   let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_row;
+  //   //   HashLayerProof::<G>::verify_helper(
+  //   //     &(rand_mem, rand_ops),
+  //   //     claims,
+  //   //     eval_row_ops_val,
+  //   //     eval_ops_addr,
+  //   //     eval_read_ts,
+  //   //     eval_audit_ts,
+  //   //     r,
+  //   //     r_hash,
+  //   //     r_multiset_check,
+  //   //   )?;
+  //   // }
+  //   let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_row;
+  //   HashLayerProof::<G>::verify_helper(
+  //     &(rand_mem, rand_ops),
+  //     claims_row,
+  //     eval_row_ops_val,
+  //     eval_ops_addr,
+  //     eval_read_ts,
+  //     eval_audit_ts,
+  //     rx,
+  //     r_hash,
+  //     r_multiset_check,
+  //   )?;
 
-//     let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_col;
-//     HashLayerProof::<G>::verify_helper(
-//       &(rand_mem, rand_ops),
-//       claims_col,
-//       eval_col_ops_val,
-//       eval_ops_addr,
-//       eval_read_ts,
-//       eval_audit_ts,
-//       ry,
-//       r_hash,
-//       r_multiset_check,
-//     )?;
+  //   let (eval_ops_addr, eval_read_ts, eval_audit_ts) = &self.eval_col;
+  //   HashLayerProof::<G>::verify_helper(
+  //     &(rand_mem, rand_ops),
+  //     claims_col,
+  //     eval_col_ops_val,
+  //     eval_ops_addr,
+  //     eval_read_ts,
+  //     eval_audit_ts,
+  //     ry,
+  //     r_hash,
+  //     r_multiset_check,
+  //   )?;
 
-//     timer.stop();
-//     Ok(())
-//   }
-// }
+  //   timer.stop();
+  //   Ok(())
+  // }
+}
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct ProductLayerProof<F: PrimeField, const c: usize> {
@@ -1102,7 +1084,7 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct PolyEvalNetworkProof<G: CurveGroup, const c: usize> {
   proof_prod_layer: ProductLayerProof<G::ScalarField, c>,
-  proof_hash_layer: HashLayerProof<G>,
+  proof_hash_layer: HashLayerProof<G, c>,
 }
 
 impl<G: CurveGroup, const c: usize> PolyEvalNetworkProof<G, c> {
@@ -1283,7 +1265,7 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
       let timer_build_network = Timer::new("build_layered_network");
 
       let mut net: PolyEvalNetwork<G::ScalarField, c> =
-        PolyEvalNetwork::new(dense, &derefs, &eqs, &(r_hash_params[0], r_hash_params[1]));
+        PolyEvalNetwork::new(dense, &eqs, &(r_hash_params[0], r_hash_params[1]));
       timer_build_network.stop();
 
       let timer_eval_network = Timer::new("evalproof_layered_network");

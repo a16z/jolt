@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub struct Derefs<F> {
-  eq_evals: Vec<DensePolynomial<F>>,
+  pub eq_evals: Vec<DensePolynomial<F>>,
   comb: DensePolynomial<F>,
 }
 
@@ -114,7 +114,7 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
   // evalues both polynomials at r and produces a joint proof of opening
   pub fn prove(
     derefs: &Derefs<G::ScalarField>,
-    eval_ops_val_vec: &Vec<Vec<G::ScalarField>>,
+    eval_ops_val_vec: &Vec<G::ScalarField>,
     r: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
@@ -126,9 +126,9 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
     );
 
     let evals = {
-      let mut evals = eval_ops_val_vec.concat();
+      let mut evals = eval_ops_val_vec.clone();
       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-      evals
+      evals.to_vec()
     };
     let proof_derefs =
       DerefsEvalProof::prove_single(&derefs.comb, r, evals, gens, transcript, random_tape);
