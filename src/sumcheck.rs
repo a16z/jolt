@@ -26,12 +26,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     SumcheckInstanceProof { compressed_polys }
   }
 
-  pub fn verify<G>(
+  pub fn verify<G, T: ProofTranscript<G>>(
     &self,
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
-    transcript: &mut Transcript,
+    transcript: &mut T,
   ) -> Result<(F, Vec<F>), ProofVerifyError>
   where
     G: CurveGroup<ScalarField = F>,
@@ -54,14 +54,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_i =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+      let r_i = transcript.challenge_scalar(b"challenge_nextround");
 
       r.push(r_i);
 
       // evaluate the claimed degree-ell polynomial at r_i
       e = poly.evaluate(&r_i);
     }
+
+    // TODO: Doesn't execute the final check against g_v(r_v) = oracle_g(r)
 
     Ok((e, r))
   }
@@ -186,14 +187,14 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
 }
 
 impl<F: PrimeField> SumcheckInstanceProof<F> {
-  pub fn prove_cubic<Func, G>(
+  pub fn prove_cubic<Func, G, T: ProofTranscript<G>>(
     claim: &F,
     num_rounds: usize,
     poly_A: &mut DensePolynomial<F>,
     poly_B: &mut DensePolynomial<F>,
     poly_C: &mut DensePolynomial<F>,
     comb_func: Func,
-    transcript: &mut Transcript,
+    transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
   where
     Func: Fn(&F, &F, &F) -> F,
@@ -241,8 +242,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_j =
-        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+      let r_j = transcript.challenge_scalar(b"challenge_nextround");
 
       r.push(r_j);
       // bound all tables to the verifier's challenege
@@ -258,6 +258,93 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       r,
       vec![poly_A[0], poly_B[0], poly_C[0]],
     )
+  }
+
+  pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>>(
+    claim: &F,
+    num_rounds: usize,
+    polys: &mut Vec<DensePolynomial<F>>,
+    comb_func: Func,
+    transcript: &mut T,
+  ) -> (Self, Vec<F>, Vec<F>)
+  where
+    Func: Fn(&Vec<F>) -> F,
+    G: CurveGroup<ScalarField = F>,
+  {
+    let mut e = *claim;
+    let mut r: Vec<F> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+    // Assume this is also the degree of each unipoly
+    let num_polys = polys.len();
+
+    for _round in 0..num_rounds {
+      // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
+      // for points {0, ..., |g(x)|}
+      let mut eval_points = vec![F::zero(); num_polys + 1];
+
+      let mle_half = polys[0].len() / 2;
+      for poly_term_i in 0..mle_half {
+        // Evaluate P({0, ..., |g(r)|})
+        // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
+        // of the m terms in the Dense multilinear polynomials. Formula is:
+        // half = | D_{n-1}  | / 2
+        // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+
+        // eval 0: bound_func is A(low)
+        eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+
+        // TODO: Note can be computed from prev_round_claim - eval_point_0
+        let eval_at_one: Vec<F> = polys
+          .iter()
+          .map(|poly| poly[mle_half + poly_term_i])
+          .collect();
+        // println!("[{_round}] Eval at one {:?}", eval_at_one);
+        eval_points[1] += comb_func(&eval_at_one);
+        // println!("COMBINED: {:?}", eval_points[1]);
+
+        // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+        // D_n(index, 0) = D_{n-1} +
+        // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+        // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+        // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+        // ...
+        let mut existing_term: Vec<F> = eval_at_one;
+        for eval_i in 2..(num_polys + 1) {
+          let mut poly_evals = vec![F::zero(); polys.len()];
+          for poly_i in 0..polys.len() {
+            let poly = &polys[poly_i];
+            poly_evals[poly_i] =
+              existing_term[poly_i] + poly[mle_half + poly_term_i] - poly[poly_term_i];
+          }
+
+          eval_points[eval_i] += comb_func(&poly_evals);
+          existing_term = poly_evals;
+        }
+      }
+
+      let round_uni_poly = UniPoly::from_evals(&eval_points);
+
+      // append the prover's message to the transcript
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
+        &round_uni_poly,
+        b"poly",
+        transcript,
+      );
+      let r_j = transcript.challenge_scalar(b"challenge_nextround");
+      r.push(r_j);
+
+      // bound all tables to the verifier's challenege
+      for poly_i in 0..polys.len() {
+        polys[poly_i].bound_poly_var_top(&r_j);
+      }
+      e = round_uni_poly.evaluate(&r_j);
+      cubic_polys.push(round_uni_poly.compress());
+    }
+
+    let final_evals = polys.iter().map(|poly| poly[0]).collect();
+
+    (SumcheckInstanceProof::new(cubic_polys), r, final_evals)
   }
 
   pub fn prove_cubic_batched<Func, G>(
@@ -798,5 +885,127 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
       vec![poly_A[0], poly_B[0], poly_C[0], poly_D[0]],
       blinds_evals[num_rounds - 1],
     )
+  }
+}
+
+#[cfg(test)]
+mod test {
+  use super::*;
+  use crate::math::Math;
+  use crate::utils::test::TestTranscript;
+  use ark_bls12_381::{Fr, G1Projective};
+
+  #[test]
+  fn sumcheck_cubic() {
+    // Create three dense polynomials (all the same)
+    let num_vars = 3;
+    let num_evals = num_vars.pow2();
+    let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+    for i in 0..num_evals {
+      evals.push(Fr::from(8 + i as u64));
+    }
+
+    let A: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+    let B: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+    let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+    let mut claim = Fr::zero();
+    for i in 0..num_evals {
+      use crate::utils::index_to_field_bitvector;
+
+      claim += A.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
+        * B.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
+        * C.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars));
+    }
+
+    let comb_func_prod = |poly_A_comp: &Fr, poly_B_comp: &Fr, poly_C_comp: &Fr| -> Fr {
+      *poly_A_comp * *poly_B_comp * *poly_C_comp
+    };
+
+    let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
+
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let (proof, prove_randomness, _final_poly_evals) =
+      SumcheckInstanceProof::<Fr>::prove_cubic::<_, G1Projective, _>(
+        &claim,
+        num_vars,
+        &mut A.clone(),
+        &mut B.clone(),
+        &mut C.clone(),
+        comb_func_prod,
+        &mut transcript,
+      );
+
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let verify_result = proof.verify::<G1Projective, _>(claim, num_vars, 3, &mut transcript);
+    assert!(verify_result.is_ok());
+
+    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+    assert_eq!(prove_randomness, r);
+
+    // Consider this the opening proof to a(r) * b(r) * c(r)
+    let a = A.evaluate::<G1Projective>(prove_randomness.as_slice());
+    let b = B.evaluate::<G1Projective>(prove_randomness.as_slice());
+    let c = C.evaluate::<G1Projective>(prove_randomness.as_slice());
+
+    let oracle_query = a * b * c;
+    assert_eq!(verify_evaluation, oracle_query);
+  }
+
+  #[test]
+  fn sumcheck_arbitrary_cubic() {
+    // Create three dense polynomials (all the same)
+    let num_vars = 3;
+    let num_evals = num_vars.pow2();
+    let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+    for i in 0..num_evals {
+      evals.push(Fr::from(8 + i as u64));
+    }
+
+    let A: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+    let B: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+    let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+    let mut claim = Fr::zero();
+    for i in 0..num_evals {
+      use crate::utils::index_to_field_bitvector;
+
+      claim += A.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
+        * B.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
+        * C.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars));
+    }
+    let mut polys = vec![A.clone(), B.clone(), C.clone()];
+
+    let comb_func_prod =
+      |polys: &Vec<Fr>| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
+
+    let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
+
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let (proof, prove_randomness, _final_poly_evals) =
+      SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _>(
+        &claim,
+        num_vars,
+        &mut polys,
+        comb_func_prod,
+        &mut transcript,
+      );
+
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let verify_result = proof.verify::<G1Projective, _>(claim, num_vars, 3, &mut transcript);
+    assert!(verify_result.is_ok());
+
+    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+    assert_eq!(prove_randomness, r);
+
+    // Consider this the opening proof to a(r) * b(r) * c(r)
+    let a = A.evaluate::<G1Projective>(prove_randomness.as_slice());
+    let b = B.evaluate::<G1Projective>(prove_randomness.as_slice());
+    let c = C.evaluate::<G1Projective>(prove_randomness.as_slice());
+
+    let oracle_query = a * b * c;
+    assert_eq!(verify_evaluation, oracle_query);
   }
 }

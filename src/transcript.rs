@@ -4,8 +4,10 @@ use ark_serialize::CanonicalSerialize;
 use merlin::Transcript;
 
 pub trait ProofTranscript<G: CurveGroup> {
+  // Pass through to Merlin::Transcript
   fn append_message(&mut self, label: &'static [u8], msg: &'static [u8]);
   fn append_u64(&mut self, label: &'static [u8], point: u64);
+
   fn append_protocol_name(&mut self, protocol_name: &'static [u8]);
   fn append_scalar(&mut self, label: &'static [u8], scalar: &G::ScalarField);
   fn append_scalars(&mut self, label: &'static [u8], scalars: &[G::ScalarField]);
