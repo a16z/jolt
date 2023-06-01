@@ -54,7 +54,7 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
   /// \tilde{eq}(i_0, r_0), ..., \tilde{eq}(i_c, r_c) where i_0, ..., i_c \in {0,1}^{logM} (for the non-sparse indices in each dimension)
   /// and r_0, ... r_c are the randomly selected evaluation points by the verifier.
   pub fn deref(&self, eqs: &Vec<Vec<F>>) -> Derefs<F> {
-    let mut derefed_memory: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
+    let derefed_memory: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
 
     // Iterate over each of the 'c' dimensions and their corresponding audit timestamps / counters
     let mut derefs: Vec<DensePolynomial<F>> = Vec::with_capacity(c);

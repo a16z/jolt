@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 #![allow(clippy::assertions_on_result_states)]
+#![feature(extend_one)]
 
 extern crate core;
 extern crate digest;
