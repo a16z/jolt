@@ -33,7 +33,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use core::cmp::max;
-use errors::{ProofVerifyError, R1CSError};
+use errors::{ProofVerifyError};
 use merlin::Transcript;
 // use r1csinstance::{
 //   R1CSCommitment, R1CSCommitmentGens, R1CSDecommitment, R1CSEvalProof, R1CSInstance,
