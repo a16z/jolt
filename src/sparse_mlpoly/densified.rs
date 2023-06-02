@@ -53,9 +53,8 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
   /// - `eqs`: c-dimensional vector containing an M-sized vector for each dimension with evaulations of
   /// \tilde{eq}(i_0, r_0), ..., \tilde{eq}(i_c, r_c) where i_0, ..., i_c \in {0,1}^{logM} (for the non-sparse indices in each dimension)
   /// and r_0, ... r_c are the randomly selected evaluation points by the verifier.
-  pub fn deref(&self, eqs: &Vec<Vec<F>>) -> Derefs<F> {
-    let derefed_memory: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
-
+  pub fn deref(&self, eqs: &Vec<Vec<F>>) -> Derefs<F, c> {
+    // TODO(moodlezoup) std::array::from_fn
     // Iterate over each of the 'c' dimensions and their corresponding audit timestamps / counters
     let mut derefs: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
     for (c_index, dim_i) in self.dim_usize.iter().enumerate() {
@@ -66,7 +65,7 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
       derefs.push(DensePolynomial::new(dim_deref));
     }
 
-    Derefs::new(derefed_memory, c)
+    Derefs::new(derefs.try_into().unwrap())
   }
 }
 

@@ -49,7 +49,7 @@ impl<G: CurveGroup> SparseMatPolyCommitmentGens<G> {
     // final
     // log_2(c * m) = log_2(c) + log_2(m)
     let num_vars_combined_log_m_variate = c.next_power_of_two().log_2() + log_m;
-    // TODO(moodlezoup)
+    // TODO(moodlezoup): idk if this is the right number
     let num_vars_derefs = s.next_power_of_two().log_2() as usize + 1;
 
     let gens_combined_l_variate = PolyCommitmentGens::new(num_vars_combined_l_variate, label);
@@ -247,7 +247,7 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
 
     // TODO(moodlezoup): Move scalar product stuff into separate prove/verify
     // prepare scalar product
-    let mut scalar_product_operands = derefs.eq_evals.clone();
+    let mut scalar_product_operands = derefs.eq_evals.clone().to_vec();
     scalar_product_operands.push(dense.val.clone());
     let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
     let eval_scalar_product = scalar_product.evaluate();
@@ -318,8 +318,21 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
       .comm_derefs
       .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
-    // TODO(moodlezoup): verify primary sumcheck
+    // // TODO(moodlezoup): verify primary sumcheck
     // self.primary_sumcheck_proof.verify(evaluation, num_rounds, degree_bound, transcript)
+
+    // // TODO(moodlezoup): verify the decommitments used in primary sum-check
+    // let eval_val_vec = &self.eval_val;
+    // assert_eq!(claims_dotp.len(), 3 * eval_row_ops_val.len());
+    // for i in 0..claims_dotp.len() / 3 {
+    //   let claim_row_ops_val = claims_dotp[3 * i];
+    //   let claim_col_ops_val = claims_dotp[3 * i + 1];
+    //   let claim_val = claims_dotp[3 * i + 2];
+
+    //   assert_eq!(claim_row_ops_val, eval_row_ops_val[i]);
+    //   assert_eq!(claim_col_ops_val, eval_col_ops_val[i]);
+    //   assert_eq!(claim_val, eval_val_vec[i]);
+    // }
 
     // produce a random element from the transcript for hash function
     let r_mem_check =

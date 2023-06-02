@@ -12,18 +12,16 @@ use crate::{
   transcript::{AppendToTranscript, ProofTranscript},
 };
 
-pub struct Derefs<F> {
-  pub eq_evals: Vec<DensePolynomial<F>>,
+pub struct Derefs<F, const c: usize> {
+  pub eq_evals: [DensePolynomial<F>; c],
   comb: DensePolynomial<F>,
 }
 
 /// Stores the non-sparse evaluations of \tilde{eq} for each of the 'c'-dimensions as DensePolynomials
-impl<F: PrimeField> Derefs<F> {
+impl<F: PrimeField, const c: usize> Derefs<F, c> {
   /// Create new Derefs
   /// - `eq_evals` non-sparse evaluations of \tilde{eq} for each of the 'c'-dimensions as DensePolynomials
-  pub fn new(eq_evals: Vec<DensePolynomial<F>>, c: usize) -> Self {
-    assert_eq!(eq_evals.len(), c);
-
+  pub fn new(eq_evals: [DensePolynomial<F>; c]) -> Self {
     let derefs = {
       // combine all polynomials into a single polynomial (used below to produce a single commitment)
       let comb = DensePolynomial::merge(eq_evals.as_slice());
@@ -49,11 +47,11 @@ pub struct DerefsCommitment<G: CurveGroup> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsEvalProof<G: CurveGroup> {
+pub struct DerefsEvalProof<G: CurveGroup, const c: usize> {
   proof_derefs: PolyEvalProof<G>,
 }
 
-impl<G: CurveGroup> DerefsEvalProof<G> {
+impl<G: CurveGroup, const c: usize> DerefsEvalProof<G, c> {
   fn protocol_name() -> &'static [u8] {
     b"Derefs evaluation proof"
   }
@@ -113,7 +111,7 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
 
   // evalues both polynomials at r and produces a joint proof of opening
   pub fn prove(
-    derefs: &Derefs<G::ScalarField>,
+    derefs: &Derefs<G::ScalarField, c>,
     eval_ops_val_vec: &Vec<G::ScalarField>,
     r: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
@@ -122,7 +120,7 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      DerefsEvalProof::<G>::protocol_name(),
+      DerefsEvalProof::<G, c>::protocol_name(),
     );
 
     let evals = {
@@ -131,7 +129,7 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
       evals.to_vec()
     };
     let proof_derefs =
-      DerefsEvalProof::prove_single(&derefs.comb, r, evals, gens, transcript, random_tape);
+      DerefsEvalProof::<G, c>::prove_single(&derefs.comb, r, evals, gens, transcript, random_tape);
 
     DerefsEvalProof { proof_derefs }
   }
@@ -176,21 +174,19 @@ impl<G: CurveGroup> DerefsEvalProof<G> {
   pub fn verify(
     &self,
     r: &[G::ScalarField],
-    eval_row_ops_val_vec: &[G::ScalarField],
-    eval_col_ops_val_vec: &[G::ScalarField],
+    evals: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     comm: &DerefsCommitment<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      DerefsEvalProof::<G>::protocol_name(),
+      DerefsEvalProof::<G, c>::protocol_name(),
     );
-    let mut evals = eval_row_ops_val_vec.to_owned();
-    evals.extend(eval_col_ops_val_vec);
+    let mut evals = evals.to_owned();
     evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
-    DerefsEvalProof::verify_single(
+    DerefsEvalProof::<G, c>::verify_single(
       &self.proof_derefs,
       &comm.comm_ops_val,
       r,
@@ -221,7 +217,7 @@ mod test {
   fn forms_valid_merged_dense_poly() {
     // Pass in the eq evaluations over log_m boolean variables and log_m fixed variables r
     let log_m = 2;
-    let c = 2;
+    const c: usize = 2;
 
     let r_x: Vec<Fr> = vec![Fr::from(3), Fr::from(4)];
     let r_y: Vec<Fr> = vec![Fr::from(5), Fr::from(6)];
@@ -245,7 +241,7 @@ mod test {
     // eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (5)(-5) = -25
     // eq(1, 1, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (5)(6) = 30
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -253,7 +249,7 @@ mod test {
       Fr::from(6)
     );
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -261,7 +257,7 @@ mod test {
       Fr::from(-8)
     );
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -269,7 +265,7 @@ mod test {
       Fr::from(-9)
     );
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -278,7 +274,7 @@ mod test {
     );
 
     // second poly
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -286,7 +282,7 @@ mod test {
       Fr::from(20)
     );
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -294,7 +290,7 @@ mod test {
       Fr::from(-24)
     );
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
@@ -302,7 +298,7 @@ mod test {
       Fr::from(-25)
     );
 
-    let derefs: Derefs<Fr> = Derefs::new(vec![eq_evals_x_poly.clone(), eq_evals_y_poly.clone()], c);
+    let derefs: Derefs<Fr, c> = Derefs::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       derefs
         .comb
