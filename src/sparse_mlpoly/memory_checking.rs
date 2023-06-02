@@ -585,10 +585,6 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
       (hash_init, hash_read, hash_write, hash_final)
     });
 
-    // The number of operations into the memory encoded by rx and ry are always the same (by design)
-    // So we can produce a batched product proof for all of them at the same time.
-    // prove the correctness of claim_row_eval_read, claim_row_eval_write, claim_col_eval_read, and claim_col_eval_write
-
     let mut read_write_grand_products: Vec<&mut GrandProductCircuit<F>> = grand_products
       .iter_mut()
       .map(|grand_product| [&mut grand_product.read, &mut grand_product.write])
@@ -626,137 +622,57 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
     &self,
     num_ops: usize,
     num_cells: usize,
-    eval: &[F],
+    eval: &F,
     transcript: &mut Transcript,
-  ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
+  ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
   where
     G: CurveGroup<ScalarField = F>,
   {
-    // <Transcript as ProofTranscript<G>>::append_protocol_name(
-    //   transcript,
-    //   ProductLayerProof::protocol_name(),
-    // );
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    // let timer = Timer::new("verify_prod_proof");
-    // let num_instances = eval.len();
+    for (hash_init, hash_read, hash_write, hash_final) in self.grand_product_evals {
+      // Multiset equality check
+      assert_eq!(hash_init * hash_write, hash_read * hash_final);
 
-    // // subset check
-    // let (row_eval_init, row_eval_read, row_eval_write, row_eval_audit) = &self.eval_row;
-    // assert_eq!(row_eval_write.len(), num_instances);
-    // assert_eq!(row_eval_read.len(), num_instances);
-    // let ws: F = (0..row_eval_write.len())
-    //   .map(|i| row_eval_write[i])
-    //   .product();
-    // let rs: F = (0..row_eval_read.len()).map(|i| row_eval_read[i]).product();
-    // assert_eq!(*row_eval_init * ws, rs * row_eval_audit);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_init", &hash_init);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_read", &hash_read);
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_hash_write",
+        &hash_write,
+      );
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_hash_final",
+        &hash_final,
+      );
+    }
 
-    // <Transcript as ProofTranscript<G>>::append_scalar(
-    //   transcript,
-    //   b"claim_row_eval_init",
-    //   row_eval_init,
-    // );
-    // <Transcript as ProofTranscript<G>>::append_scalars(
-    //   transcript,
-    //   b"claim_row_eval_read",
-    //   row_eval_read,
-    // );
-    // <Transcript as ProofTranscript<G>>::append_scalars(
-    //   transcript,
-    //   b"claim_row_eval_write",
-    //   row_eval_write,
-    // );
-    // <Transcript as ProofTranscript<G>>::append_scalar(
-    //   transcript,
-    //   b"claim_row_eval_audit",
-    //   row_eval_audit,
-    // );
+    let read_write_claims: Vec<F> = self
+      .grand_product_evals
+      .iter()
+      .map(|(_, hash_read, hash_write, _)| [*hash_read, *hash_write])
+      .flatten()
+      .collect();
 
-    // // subset check
-    // let (col_eval_init, col_eval_read, col_eval_write, col_eval_audit) = &self.eval_col;
-    // assert_eq!(col_eval_write.len(), num_instances);
-    // assert_eq!(col_eval_read.len(), num_instances);
-    // let ws: F = (0..col_eval_write.len())
-    //   .map(|i| col_eval_write[i])
-    //   .product();
-    // let rs: F = (0..col_eval_read.len()).map(|i| col_eval_read[i]).product();
-    // assert_eq!(*col_eval_init * ws, rs * col_eval_audit);
+    let (claims_ops, rand_ops) =
+      self
+        .proof_ops
+        .verify::<G, Transcript>(&read_write_claims, num_ops, transcript);
 
-    // <Transcript as ProofTranscript<G>>::append_scalar(
-    //   transcript,
-    //   b"claim_col_eval_init",
-    //   col_eval_init,
-    // );
-    // <Transcript as ProofTranscript<G>>::append_scalars(
-    //   transcript,
-    //   b"claim_col_eval_read",
-    //   col_eval_read,
-    // );
-    // <Transcript as ProofTranscript<G>>::append_scalars(
-    //   transcript,
-    //   b"claim_col_eval_write",
-    //   col_eval_write,
-    // );
-    // <Transcript as ProofTranscript<G>>::append_scalar(
-    //   transcript,
-    //   b"claim_col_eval_audit",
-    //   col_eval_audit,
-    // );
+    let init_final_claims: Vec<F> = self
+      .grand_product_evals
+      .iter()
+      .map(|(hash_init, _, _, hash_final)| [*hash_init, *hash_final])
+      .flatten()
+      .collect();
 
-    // // // verify the evaluation of the sparse polynomial
-    // // let (eval_dotp_left, eval_dotp_right) = &self.eval_val;
-    // // assert_eq!(eval_dotp_left.len(), eval_dotp_left.len());
-    // // assert_eq!(eval_dotp_left.len(), num_instances);
-    // // let mut claims_dotp_circuit: Vec<F> = Vec::new();
-    // // for i in 0..num_instances {
-    // //   assert_eq!(eval_dotp_left[i] + eval_dotp_right[i], eval[i]);
+    let (claims_mem, rand_mem) =
+      self
+        .proof_mem
+        .verify::<G, Transcript>(&init_final_claims, num_cells, transcript);
 
-    // //   <Transcript as ProofTranscript<G>>::append_scalar(
-    // //     transcript,
-    // //     b"claim_eval_dotp_left",
-    // //     &eval_dotp_left[i],
-    // //   );
-
-    // //   <Transcript as ProofTranscript<G>>::append_scalar(
-    // //     transcript,
-    // //     b"claim_eval_dotp_right",
-    // //     &eval_dotp_right[i],
-    // //   );
-
-    // //   claims_dotp_circuit.push(eval_dotp_left[i]);
-    // //   claims_dotp_circuit.push(eval_dotp_right[i]);
-    // // }
-
-    // // verify the correctness of claim_row_eval_read, claim_row_eval_write, claim_col_eval_read, and claim_col_eval_write
-    // let mut claims_prod_circuit: Vec<F> = Vec::new();
-    // claims_prod_circuit.extend(row_eval_read);
-    // claims_prod_circuit.extend(row_eval_write);
-    // claims_prod_circuit.extend(col_eval_read);
-    // claims_prod_circuit.extend(col_eval_write);
-
-    // let (claims_ops, claims_dotp, rand_ops) = self.proof_ops.verify::<G>(
-    //   &claims_prod_circuit,
-    //   // &claims_dotp_circuit,
-    //   &Vec::new(),
-    //   num_ops,
-    //   transcript,
-    // );
-    // // verify the correctness of claim_row_eval_init and claim_row_eval_audit
-    // let (claims_mem, _claims_mem_dotp, rand_mem) = self.proof_mem.verify::<G>(
-    //   &[
-    //     *row_eval_init,
-    //     *row_eval_audit,
-    //     *col_eval_init,
-    //     *col_eval_audit,
-    //   ],
-    //   &Vec::new(),
-    //   num_cells,
-    //   transcript,
-    // );
-    // timer.stop();
-
-    // Ok((claims_mem, rand_mem, claims_ops, claims_dotp, rand_ops))
-
-    Err(ProofVerifyError::InternalError)
+    Ok((claims_mem, rand_mem, claims_ops, rand_ops))
   }
 }
 
@@ -779,15 +695,10 @@ impl<G: CurveGroup, const c: usize> MemoryCheckingProof<G, c> {
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
-      transcript,
-      Self::protocol_name(),
-    );
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let (proof_prod_layer, rand_mem, rand_ops) = ProductLayerProof::prove::<G>(
-      grand_products,
-      transcript,
-    );
+    let (proof_prod_layer, rand_mem, rand_ops) =
+      ProductLayerProof::prove::<G>(grand_products, transcript);
 
     // proof of hash layer for row and col
     let proof_hash_layer = HashLayerProof::prove(

@@ -226,7 +226,7 @@ impl<F: PrimeField> GrandProductArgument<F> {
     let mut claim = eval;
     let mut rand: Vec<F> = Vec::new();
     assert_eq!(self.proof.len(), num_layers);
-    
+
     for (num_rounds, i) in (0..num_layers).enumerate() {
       let (claim_last, rand_prod) = self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
 
@@ -364,7 +364,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
   pub fn verify<G, T: ProofTranscript<G>>(
     &self,
-    claims_prod_vec: &[F],
+    claims_prod_vec: &Vec<F>,
     len: usize,
     transcript: &mut T,
   ) -> (Vec<F>, Vec<F>)
