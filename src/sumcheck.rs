@@ -1,10 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
-use super::commitments::{Commitments, MultiCommitGens};
+use super::commitments::MultiCommitGens;
 use super::dense_mlpoly::DensePolynomial;
 use super::errors::ProofVerifyError;
 use super::nizk::DotProductProof;
-use super::random::RandomTape;
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use super::unipoly::{CompressedUniPoly, UniPoly};
 use ark_ec::CurveGroup;
@@ -13,7 +12,6 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::{One, Zero};
 
-use itertools::izip;
 use merlin::Transcript;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
@@ -447,21 +445,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     let final_evals = polys.iter().map(|poly| poly[0]).collect();
 
     (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
-  }
-
-  pub fn prove_arbitrary_batched<Func, G, T: ProofTranscript<G>>(
-    claim: &F,
-    num_rounds: usize,
-    polys: &mut Vec<Vec<DensePolynomial<F>>>,
-    coeffs: &[F],
-    comb_func: Func,
-    transcript: &mut T,
-  ) -> (Self, Vec<F>, Vec<Vec<F>>)
-  where
-    Func: Fn(&Vec<F>) -> F,
-    G: CurveGroup<ScalarField = F>,
-  {
-    todo!("");
   }
 }
 

@@ -7,7 +7,6 @@ use super::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use itertools::Itertools;
 use merlin::Transcript;
 
 #[derive(Debug)]
@@ -62,54 +61,6 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     assert_eq!(self.left_vec[len - 1].get_num_vars(), 0);
     assert_eq!(self.right_vec[len - 1].get_num_vars(), 0);
     self.left_vec[len - 1][0] * self.right_vec[len - 1][0]
-  }
-}
-
-pub struct DotProductCircuit<F> {
-  left: DensePolynomial<F>,
-  right: DensePolynomial<F>,
-  weight: DensePolynomial<F>,
-}
-
-impl<F: PrimeField> DotProductCircuit<F> {
-  pub fn new(
-    left: DensePolynomial<F>,
-    right: DensePolynomial<F>,
-    weight: DensePolynomial<F>,
-  ) -> Self {
-    assert_eq!(left.len(), right.len());
-    assert_eq!(left.len(), weight.len());
-    DotProductCircuit {
-      left,
-      right,
-      weight,
-    }
-  }
-
-  pub fn evaluate(&self) -> F {
-    (0..self.left.len())
-      .map(|i| self.left[i] * self.right[i] * self.weight[i])
-      .sum()
-  }
-
-  pub fn split(&mut self) -> (DotProductCircuit<F>, DotProductCircuit<F>) {
-    let idx = self.left.len() / 2;
-    assert_eq!(idx * 2, self.left.len());
-    let (l1, l2) = self.left.split(idx);
-    let (r1, r2) = self.right.split(idx);
-    let (w1, w2) = self.weight.split(idx);
-    (
-      DotProductCircuit {
-        left: l1,
-        right: r1,
-        weight: w1,
-      },
-      DotProductCircuit {
-        left: l2,
-        right: r2,
-        weight: w2,
-      },
-    )
   }
 }
 
@@ -204,11 +155,11 @@ impl<F: PrimeField> LayerProofBatched<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct GrandProductCircuitEvalProof<F: PrimeField> {
+pub struct GrandProductArgument<F: PrimeField> {
   proof: Vec<LayerProof<F>>,
 }
 
-impl<F: PrimeField> GrandProductCircuitEvalProof<F> {
+impl<F: PrimeField> GrandProductArgument<F> {
   #![allow(dead_code)]
   pub fn prove<G, T: ProofTranscript<G>>(
     circuit: &mut GrandProductCircuit<F>,
@@ -259,7 +210,7 @@ impl<F: PrimeField> GrandProductCircuitEvalProof<F> {
       });
     }
 
-    (GrandProductCircuitEvalProof { proof }, claim, rand)
+    (GrandProductArgument { proof }, claim, rand)
   }
 
   pub fn verify<G, T: ProofTranscript<G>>(
@@ -274,8 +225,8 @@ impl<F: PrimeField> GrandProductCircuitEvalProof<F> {
     let num_layers = len.log_2() as usize;
     let mut claim = eval;
     let mut rand: Vec<F> = Vec::new();
-    //let mut num_rounds = 0;
     assert_eq!(self.proof.len(), num_layers);
+    
     for (num_rounds, i) in (0..num_layers).enumerate() {
       let (claim_last, rand_prod) = self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
 

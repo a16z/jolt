@@ -2,19 +2,18 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 use crate::dense_mlpoly::DensePolynomial;
-use crate::dense_mlpoly::{
-  EqPolynomial, PolyCommitment, PolyCommitmentGens, 
-};
+use crate::dense_mlpoly::{EqPolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::errors::ProofVerifyError;
 use crate::math::Math;
+use crate::product_tree::GeneralizedScalarProduct;
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::derefs::{DerefsCommitment};
-use crate::sparse_mlpoly::memory_checking::{MemoryCheckingProof};
-use crate::timer::Timer;
+use crate::sparse_mlpoly::derefs::DerefsCommitment;
+use crate::sparse_mlpoly::memory_checking::MemoryCheckingProof;
+use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
-use ark_ff::{PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::*;
 
 use merlin::Transcript;
@@ -197,7 +196,8 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const c: usize> {
   comm_derefs: DerefsCommitment<G>,
-  poly_eval_network_proof: MemoryCheckingProof<G, c>,
+  primary_sumcheck_proof: SumcheckInstanceProof<G::ScalarField>,
+  memory_check: MemoryCheckingProof<G, c>,
 }
 
 impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
@@ -239,45 +239,65 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
     // assert_eq!(derefs.len(), dense.s);
 
     // commit to non-deterministic choices of the prover
-    let timer_commit = Timer::new("commit_nondet_witness");
     let comm_derefs = {
       let comm = derefs.commit(&gens.gens_derefs);
       comm.append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
       comm
     };
-    timer_commit.stop();
 
-    let poly_eval_network_proof = {
+    // TODO(moodlezoup): Move scalar product stuff into separate prove/verify
+    // prepare scalar product
+    let mut scalar_product_operands = derefs.eq_evals.clone();
+    scalar_product_operands.push(dense.val.clone());
+    let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
+    let eval_scalar_product = scalar_product.evaluate();
+
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_eval_scalar_product",
+      &eval_scalar_product,
+    );
+
+    assert_eq!(eval_scalar_product, *eval);
+
+    let (primary_sumcheck_proof, _, primary_sumcheck_claims) =
+      SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
+        &eval_scalar_product,
+        scalar_product_operands[0].len().log_2(),
+        &mut scalar_product_operands,
+        |polys| -> G::ScalarField { polys.iter().product() },
+        transcript,
+      );
+
+    <Transcript as ProofTranscript<G>>::append_scalars(
+      transcript,
+      b"primary_sumcheck_claims",
+      &primary_sumcheck_claims,
+    );
+
+    let memory_check = {
       // produce a random element from the transcript for hash function
       let r_hash_params: Vec<G::ScalarField> =
         <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-      // build a network to evaluate the sparse polynomial
-      let timer_build_network = Timer::new("build_layered_network");
-
       let mut grand_products = dense.to_grand_products(&eqs, &(r_hash_params[0], r_hash_params[1]));
-      // let mut net: PolyEvalNetwork<G::ScalarField, c> =
-      //   PolyEvalNetwork::new(dense, &eqs, &(r_hash_params[0], r_hash_params[1]));
-      timer_build_network.stop();
 
-      let timer_eval_network = Timer::new("evalproof_layered_network");
       let poly_eval_network_proof = MemoryCheckingProof::prove(
-        // &mut net,
+        &mut grand_products,
         dense,
         &derefs,
-        eval,
         gens,
         transcript,
         random_tape,
       );
-      timer_eval_network.stop();
 
       poly_eval_network_proof
     };
 
     Self {
       comm_derefs,
-      poly_eval_network_proof,
+      primary_sumcheck_proof,
+      memory_check,
     }
   }
 
@@ -298,11 +318,14 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
       .comm_derefs
       .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
+    // TODO(moodlezoup): verify primary sumcheck
+    // self.primary_sumcheck_proof.verify(evaluation, num_rounds, degree_bound, transcript)
+
     // produce a random element from the transcript for hash function
     let r_mem_check =
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-    self.poly_eval_network_proof.verify(
+    self.memory_check.verify(
       commitment,
       &self.comm_derefs,
       evaluation,
