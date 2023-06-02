@@ -12,16 +12,16 @@ use crate::{
   transcript::{AppendToTranscript, ProofTranscript},
 };
 
-pub struct Derefs<F, const c: usize> {
-  pub eq_evals: [DensePolynomial<F>; c],
+pub struct Derefs<F, const C: usize> {
+  pub eq_evals: [DensePolynomial<F>; C],
   comb: DensePolynomial<F>,
 }
 
 /// Stores the non-sparse evaluations of \tilde{eq} for each of the 'c'-dimensions as DensePolynomials
-impl<F: PrimeField, const c: usize> Derefs<F, c> {
+impl<F: PrimeField, const C: usize> Derefs<F, C> {
   /// Create new Derefs
   /// - `eq_evals` non-sparse evaluations of \tilde{eq} for each of the 'c'-dimensions as DensePolynomials
-  pub fn new(eq_evals: [DensePolynomial<F>; c]) -> Self {
+  pub fn new(eq_evals: [DensePolynomial<F>; C]) -> Self {
     let derefs = {
       // combine all polynomials into a single polynomial (used below to produce a single commitment)
       let comb = DensePolynomial::merge(eq_evals.as_slice());
@@ -47,11 +47,11 @@ pub struct DerefsCommitment<G: CurveGroup> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct DerefsEvalProof<G: CurveGroup, const c: usize> {
+pub struct DerefsEvalProof<G: CurveGroup, const C: usize> {
   proof_derefs: PolyEvalProof<G>,
 }
 
-impl<G: CurveGroup, const c: usize> DerefsEvalProof<G, c> {
+impl<G: CurveGroup, const C: usize> DerefsEvalProof<G, C> {
   fn protocol_name() -> &'static [u8] {
     b"Derefs evaluation proof"
   }
@@ -111,7 +111,7 @@ impl<G: CurveGroup, const c: usize> DerefsEvalProof<G, c> {
 
   // evalues both polynomials at r and produces a joint proof of opening
   pub fn prove(
-    derefs: &Derefs<G::ScalarField, c>,
+    derefs: &Derefs<G::ScalarField, C>,
     eval_ops_val_vec: &Vec<G::ScalarField>,
     r: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
@@ -120,7 +120,7 @@ impl<G: CurveGroup, const c: usize> DerefsEvalProof<G, c> {
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      DerefsEvalProof::<G, c>::protocol_name(),
+      DerefsEvalProof::<G, C>::protocol_name(),
     );
 
     let evals = {
@@ -129,7 +129,7 @@ impl<G: CurveGroup, const c: usize> DerefsEvalProof<G, c> {
       evals.to_vec()
     };
     let proof_derefs =
-      DerefsEvalProof::<G, c>::prove_single(&derefs.comb, r, evals, gens, transcript, random_tape);
+      DerefsEvalProof::<G, C>::prove_single(&derefs.comb, r, evals, gens, transcript, random_tape);
 
     DerefsEvalProof { proof_derefs }
   }
@@ -181,12 +181,12 @@ impl<G: CurveGroup, const c: usize> DerefsEvalProof<G, c> {
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      DerefsEvalProof::<G, c>::protocol_name(),
+      DerefsEvalProof::<G, C>::protocol_name(),
     );
     let mut evals = evals.to_owned();
     evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
-    DerefsEvalProof::<G, c>::verify_single(
+    DerefsEvalProof::<G, C>::verify_single(
       &self.proof_derefs,
       &comm.comm_ops_val,
       r,

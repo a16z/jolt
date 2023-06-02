@@ -8,11 +8,11 @@ use super::{
   sparse_mlpoly::{SparseMatPolyCommitmentGens, SparseMatPolynomial, SparsePolynomialCommitment},
 };
 
-pub struct DensifiedRepresentation<F: PrimeField, const c: usize> {
+pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub dim_usize: Vec<Vec<usize>>, // c-dimensional
-  pub dim: [DensePolynomial<F>; c],
-  pub read: [DensePolynomial<F>; c],
-  pub r#final: [DensePolynomial<F>; c],
+  pub dim: [DensePolynomial<F>; C],
+  pub read: [DensePolynomial<F>; C],
+  pub r#final: [DensePolynomial<F>; C],
   pub val: DensePolynomial<F>,
   pub combined_l_variate_polys: DensePolynomial<F>,
   pub combined_log_m_variate_polys: DensePolynomial<F>,
@@ -21,14 +21,14 @@ pub struct DensifiedRepresentation<F: PrimeField, const c: usize> {
   pub m: usize, // TODO: big integer
 }
 
-impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
+impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
   ) -> (
     SparseMatPolyCommitmentGens<G>,
     SparsePolynomialCommitment<G>,
   ) {
-    let gens = SparseMatPolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, self.s, self.log_m);
+    let gens = SparseMatPolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, self.s, self.log_m);
     let (l_variate_polys_commitment, _) = self
       .combined_l_variate_polys
       .commit(&gens.gens_combined_l_variate, None);
@@ -53,10 +53,10 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
   /// - `eqs`: c-dimensional vector containing an M-sized vector for each dimension with evaulations of
   /// \tilde{eq}(i_0, r_0), ..., \tilde{eq}(i_c, r_c) where i_0, ..., i_c \in {0,1}^{logM} (for the non-sparse indices in each dimension)
   /// and r_0, ... r_c are the randomly selected evaluation points by the verifier.
-  pub fn deref(&self, eqs: &Vec<Vec<F>>) -> Derefs<F, c> {
+  pub fn deref(&self, eqs: &Vec<Vec<F>>) -> Derefs<F, C> {
     // TODO(moodlezoup) std::array::from_fn
     // Iterate over each of the 'c' dimensions and their corresponding audit timestamps / counters
-    let mut derefs: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
+    let mut derefs: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
     for (c_index, dim_i) in self.dim_usize.iter().enumerate() {
       let mut dim_deref: Vec<F> = Vec::with_capacity(self.s);
       for sparsity_index in 0..self.s {
@@ -69,17 +69,17 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
   }
 }
 
-impl<F: PrimeField, const c: usize> From<SparseMatPolynomial<F, c>>
-  for DensifiedRepresentation<F, c>
+impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
+  for DensifiedRepresentation<F, C>
 {
-  fn from(sparse_poly: SparseMatPolynomial<F, c>) -> Self {
+  fn from(sparse_poly: SparseMatPolynomial<F, C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
-    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(c);
-    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
-    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
-    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
+    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
+    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
 
-    for i in 0..c {
+    for i in 0..C {
       let mut access_sequence = sparse_poly
         .nonzero_entries
         .iter()

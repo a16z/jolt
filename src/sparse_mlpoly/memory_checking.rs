@@ -126,12 +126,12 @@ impl<F: PrimeField> GrandProducts<F> {
   }
 }
 
-impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
+impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   pub fn to_grand_products(
     &self,
     mems: &Vec<Vec<F>>,
     r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; c] {
+  ) -> [GrandProducts<F>; C] {
     std::array::from_fn(|i| {
       GrandProducts::new(
         &mems[i],
@@ -145,26 +145,26 @@ impl<F: PrimeField, const c: usize> DensifiedRepresentation<F, c> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const c: usize> {
-  eval_dim: [G::ScalarField; c],
-  eval_read: [G::ScalarField; c],
-  eval_final: [G::ScalarField; c],
+struct HashLayerProof<G: CurveGroup, const C: usize> {
+  eval_dim: [G::ScalarField; C],
+  eval_read: [G::ScalarField; C],
+  eval_final: [G::ScalarField; C],
   eval_val: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
-  proof_derefs: DerefsEvalProof<G, c>,
+  proof_derefs: DerefsEvalProof<G, C>,
 }
 
-impl<G: CurveGroup, const c: usize> HashLayerProof<G, c> {
+impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial hash layer proof"
   }
 
   fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    dense: &DensifiedRepresentation<G::ScalarField, c>,
-    derefs: &Derefs<G::ScalarField, c>,
+    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    derefs: &Derefs<G::ScalarField, C>,
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -191,11 +191,11 @@ impl<G: CurveGroup, const c: usize> HashLayerProof<G, c> {
     // form a single decommitment using comm_comb_ops
     let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
 
-    let eval_dim: [G::ScalarField; c] =
+    let eval_dim: [G::ScalarField; C] =
       std::array::from_fn(|i| dense.dim[i].evaluate::<G>(rand_ops));
-    let eval_read: [G::ScalarField; c] =
+    let eval_read: [G::ScalarField; C] =
       std::array::from_fn(|i| dense.read[i].evaluate::<G>(rand_ops));
-    let eval_final: [G::ScalarField; c] =
+    let eval_final: [G::ScalarField; C] =
       std::array::from_fn(|i| dense.r#final[i].evaluate::<G>(rand_mem));
     let eval_val = dense.val.evaluate::<G>(rand_ops);
 
@@ -352,7 +352,7 @@ impl<G: CurveGroup, const c: usize> HashLayerProof<G, c> {
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); c],
+    ); C],
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparseMatPolyCommitmentGens<G>,
     comm_derefs: &DerefsCommitment<G>,
@@ -471,19 +471,19 @@ impl<G: CurveGroup, const c: usize> HashLayerProof<G, c> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField, const c: usize> {
-  grand_product_evals: [(F, F, F, F); c],
+struct ProductLayerProof<F: PrimeField, const C: usize> {
+  grand_product_evals: [(F, F, F, F); C],
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
 }
 
-impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
+impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial product layer proof"
   }
 
   pub fn prove<G>(
-    grand_products: &mut [GrandProducts<F>; c],
+    grand_products: &mut [GrandProducts<F>; C],
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
@@ -491,7 +491,7 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let grand_product_evals: [(F, F, F, F); c] = std::array::from_fn(|i| {
+    let grand_product_evals: [(F, F, F, F); C] = std::array::from_fn(|i| {
       let hash_init = grand_products[i].init.evaluate();
       let hash_read = grand_products[i].read.evaluate();
       let hash_write = grand_products[i].write.evaluate();
@@ -607,20 +607,20 @@ impl<F: PrimeField, const c: usize> ProductLayerProof<F, c> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, const c: usize> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField, c>,
-  proof_hash_layer: HashLayerProof<G, c>,
+pub struct MemoryCheckingProof<G: CurveGroup, const C: usize> {
+  proof_prod_layer: ProductLayerProof<G::ScalarField, C>,
+  proof_hash_layer: HashLayerProof<G, C>,
 }
 
-impl<G: CurveGroup, const c: usize> MemoryCheckingProof<G, c> {
+impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial evaluation proof"
   }
 
   pub fn prove(
-    grand_products: &mut [GrandProducts<G::ScalarField>; c],
-    dense: &DensifiedRepresentation<G::ScalarField, c>,
-    derefs: &Derefs<G::ScalarField, c>,
+    grand_products: &mut [GrandProducts<G::ScalarField>; C],
+    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    derefs: &Derefs<G::ScalarField, C>,
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,

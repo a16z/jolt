@@ -19,13 +19,13 @@ use ark_serialize::*;
 use merlin::Transcript;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatEntry<F: PrimeField, const c: usize> {
-  pub indices: [usize; c],
+pub struct SparseMatEntry<F: PrimeField, const C: usize> {
+  pub indices: [usize; C],
   pub val: F, // TODO(moodlezoup) always 1 for Lasso; delete?
 }
 
-impl<F: PrimeField, const c: usize> SparseMatEntry<F, c> {
-  pub fn new(indices: [usize; c], val: F) -> Self {
+impl<F: PrimeField, const C: usize> SparseMatEntry<F, C> {
+  pub fn new(indices: [usize; C], val: F) -> Self {
     SparseMatEntry { indices, val }
   }
 }
@@ -88,15 +88,15 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolynomial<F: PrimeField, const c: usize> {
-  pub nonzero_entries: Vec<SparseMatEntry<F, c>>,
+pub struct SparseMatPolynomial<F: PrimeField, const C: usize> {
+  pub nonzero_entries: Vec<SparseMatEntry<F, C>>,
   pub s: usize, // sparsity
   pub log_m: usize,
   pub m: usize, // TODO: big integer
 }
 
-impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
-  pub fn new(nonzero_entries: Vec<SparseMatEntry<F, c>>, log_m: usize) -> Self {
+impl<F: PrimeField, const C: usize> SparseMatPolynomial<F, C> {
+  pub fn new(nonzero_entries: Vec<SparseMatEntry<F, C>>, log_m: usize) -> Self {
     let s = nonzero_entries.len().next_power_of_two();
     // TODO(moodlezoup):
     // nonzero_entries.resize(s, F::zero());
@@ -110,7 +110,7 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
   }
 
   pub fn evaluate(&self, r: &Vec<F>) -> F {
-    assert_eq!(c * self.log_m, r.len());
+    assert_eq!(C * self.log_m, r.len());
 
     // \tilde{M}(r) = \sum_k [val(k) * \prod_i E_i(k)]
     // where E_i(k) = \tilde{eq}(to-bits(dim_i(k)), r_i)
@@ -130,14 +130,14 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
       .sum()
   }
 
-  fn to_densified(&self) -> DensifiedRepresentation<F, c> {
+  fn to_densified(&self) -> DensifiedRepresentation<F, C> {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
-    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(c);
-    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
-    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
-    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(c);
+    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
+    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
 
-    for i in 0..c {
+    for i in 0..C {
       let mut access_sequence = self
         .nonzero_entries
         .iter()
@@ -194,13 +194,13 @@ impl<F: PrimeField, const c: usize> SparseMatPolynomial<F, c> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const c: usize> {
+pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const C: usize> {
   comm_derefs: DerefsCommitment<G>,
   primary_sumcheck_proof: SumcheckInstanceProof<G::ScalarField>,
-  memory_check: MemoryCheckingProof<G, c>,
+  memory_check: MemoryCheckingProof<G, C>,
 }
 
-impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
+impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
   fn protocol_name() -> &'static [u8] {
     b"Sparse polynomial evaluation proof"
   }
@@ -210,8 +210,8 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
   pub fn prove(
-    dense: &DensifiedRepresentation<G::ScalarField, c>,
-    r: &[Vec<G::ScalarField>; c], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
+    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
     eval: &G::ScalarField,        // a evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
@@ -311,7 +311,7 @@ impl<G: CurveGroup, const c: usize> SparsePolynomialEvaluationProof<G, c> {
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    assert_eq!(r.len(), c * commitment.log_m);
+    assert_eq!(r.len(), C * commitment.log_m);
 
     // add claims to transcript and obtain challenges for randomized mem-check circuit
     self
