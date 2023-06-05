@@ -304,14 +304,14 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
   pub fn verify(
     &self,
     commitment: &SparsePolynomialCommitment<G>,
-    r: &Vec<G::ScalarField>,     // point at which the polynomial is evaluated
-    evaluation: &G::ScalarField, // evaluation of \widetilde{M}(r = (rx,ry))
+    r: &[Vec<G::ScalarField>; C], // point at which the polynomial is evaluated
+    evaluation: &G::ScalarField,  // evaluation of \widetilde{M}(r = (rx,ry))
     gens: &SparseMatPolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    assert_eq!(r.len(), C * commitment.log_m);
+    assert_eq!(r[0].len(), commitment.log_m);
 
     // add claims to transcript and obtain challenges for randomized mem-check circuit
     self
@@ -341,7 +341,6 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
     self.memory_check.verify(
       commitment,
       &self.comm_derefs,
-      evaluation,
       gens,
       r,
       &(r_mem_check[0], r_mem_check[1]),

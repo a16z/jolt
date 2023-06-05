@@ -356,7 +356,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparseMatPolyCommitmentGens<G>,
     comm_derefs: &DerefsCommitment<G>,
-    r: &Vec<G::ScalarField>,
+    r: &[Vec<G::ScalarField>; C],
     r_hash: &G::ScalarField,
     r_multiset_check: &G::ScalarField,
     transcript: &mut Transcript,
@@ -446,12 +446,13 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     )?;
 
     // verify the claims from the product layer
-    for (claims, eval_deref, eval_dim, eval_read, eval_final) in izip!(
+    for (claims, eval_deref, eval_dim, eval_read, eval_final, r_i) in izip!(
       claims_dim,
       &self.eval_derefs,
       &self.eval_dim,
       &self.eval_read,
-      &self.eval_final
+      &self.eval_final,
+      r
     ) {
       Self::check_reed_solomon_fingerprints(
         rand_mem,
@@ -460,7 +461,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
         &eval_dim,
         &eval_read,
         &eval_final,
-        r,
+        r_i,
         r_hash,
         r_multiset_check,
       )?;
@@ -552,7 +553,6 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
     &self,
     num_ops: usize,
     num_cells: usize,
-    eval: &F,
     transcript: &mut Transcript,
   ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
   where
@@ -650,52 +650,49 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     &self,
     comm: &SparsePolynomialCommitment<G>,
     comm_derefs: &DerefsCommitment<G>,
-    eval: &G::ScalarField,
     gens: &SparseMatPolyCommitmentGens<G>,
-    r: &Vec<G::ScalarField>,
+    r: &[Vec<G::ScalarField>; C],
     r_mem_check: &(G::ScalarField, G::ScalarField),
     s: usize,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
-    // <Transcript as ProofTranscript<G>>::append_protocol_name(
-    //   transcript,
-    //   Self::protocol_name(),
-    // );
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    // let (r_hash, r_multiset_check) = r_mem_check;
+    let (r_hash, r_multiset_check) = r_mem_check;
 
-    // let num_ops = s.next_power_of_two();
-    // let num_cells = rx.len().pow2();
-    // assert_eq!(rx.len(), ry.len());
+    let num_ops = s.next_power_of_two();
+    let num_cells = r[0].len().pow2();
 
-    // let (claims_mem, rand_mem, mut claims_ops, rand_ops) = self
-    //   .proof_prod_layer
-    //   .verify::<G>(num_ops, num_cells, eval, transcript)?;
-    // // TODO(moodlezoup)
-    // // assert_eq!(claims_mem.len(), 2 * c);
-    // // assert_eq!(claims_ops.len(), 2 * c);
+    let (claims_mem, rand_mem, claims_ops, rand_ops) = self
+      .proof_prod_layer
+      .verify::<G>(num_ops, num_cells, transcript)?;
 
-    // let (claims_ops_row, claims_ops_col) = claims_ops.split_at_mut(2 * num_instances);
-    // let (claims_ops_row_read, claims_ops_row_write) = claims_ops_row.split_at_mut(num_instances);
-    // let (claims_ops_col_read, claims_ops_col_write) = claims_ops_col.split_at_mut(num_instances);
+    let claims: [(
+      G::ScalarField,
+      G::ScalarField,
+      G::ScalarField,
+      G::ScalarField,
+    ); C] = std::array::from_fn(|i| {
+      (
+        claims_mem[2 * i],     // init
+        claims_ops[2 * i],     // read
+        claims_ops[2 * i + 1], // write
+        claims_mem[2 * i + 1], // final
+      )
+    });
 
-    // // verify the proof of hash layer
-    // self.proof_hash_layer.verify(
-    //   (&rand_mem, &rand_ops),
-    //   &(
-    //     claims_mem[0],
-    //     claims_ops_row_read.to_vec(),
-    //     claims_ops_row_write.to_vec(),
-    //     claims_mem[1],
-    //   ),
-    //   comm,
-    //   gens,
-    //   comm_derefs,
-    //   r,
-    //   r_hash,
-    //   r_multiset_check,
-    //   transcript,
-    // )?;
+    // verify the proof of hash layer
+    self.proof_hash_layer.verify(
+      (&rand_mem, &rand_ops),
+      &claims,
+      comm,
+      gens,
+      comm_derefs,
+      r,
+      r_hash,
+      r_multiset_check,
+      transcript,
+    )?;
 
     Ok(())
   }

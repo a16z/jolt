@@ -19,8 +19,6 @@ mod errors;
 mod math;
 mod nizk;
 mod product_tree;
-// mod r1csinstance;
-// mod r1csproof;
 mod random;
 mod sparse_mlpoly;
 mod sumcheck;
@@ -35,10 +33,6 @@ use ark_serialize::*;
 use core::cmp::max;
 use errors::{ProofVerifyError};
 use merlin::Transcript;
-// use r1csinstance::{
-//   R1CSCommitment, R1CSCommitmentGens, R1CSDecommitment, R1CSEvalProof, R1CSInstance,
-// };
-// use r1csproof::{R1CSGens, R1CSProof};
 use random::RandomTape;
 use timer::Timer;
 use transcript::{AppendToTranscript, ProofTranscript};
