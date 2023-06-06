@@ -74,6 +74,7 @@ impl<F: PrimeField> GeneralizedScalarProduct<F> {
     GeneralizedScalarProduct { operands }
   }
 
+  /// Evaluate operand polynomials over boolean hypercube, summing products of all evaluations.
   pub fn evaluate(&self) -> F {
     (0..self.operands[0].len())
       .map(|i| {
@@ -86,7 +87,8 @@ impl<F: PrimeField> GeneralizedScalarProduct<F> {
       .sum()
   }
 
-  pub fn split(&mut self) -> (GeneralizedScalarProduct<F>, GeneralizedScalarProduct<F>) {
+  /// Split this GeneralizedScalarProduct into two by splitting each of the multi-linear polynomials to half the length.
+  pub fn split(self) -> (GeneralizedScalarProduct<F>, GeneralizedScalarProduct<F>) {
     let idx = self.operands[0].len() / 2;
     assert_eq!(idx * 2, self.operands[0].len());
     let (left, right): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = self
@@ -98,6 +100,54 @@ impl<F: PrimeField> GeneralizedScalarProduct<F> {
       GeneralizedScalarProduct { operands: left },
       GeneralizedScalarProduct { operands: right },
     )
+  }
+}
+
+#[cfg(test)]
+mod generalized_scalar_product_tests {
+  use ark_bls12_381::{Fr};
+  use super::*;
+  use crate::utils::index_to_field_bitvector;
+
+  #[test]
+  fn evaluate() {
+    // Create three dense polynomials, evaluate each over every point on the boolean hypercube and sum the products of each term
+    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
+    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
+    let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
+
+    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
+
+    // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
+    let mut manual_eval = Fr::from(0u64);
+    for i in 0..4 {
+      let a = A.evaluate(&index_to_field_bitvector(i, 2));
+      let b = B.evaluate(&index_to_field_bitvector(i, 2));
+      let c = C.evaluate(&index_to_field_bitvector(i, 2));
+
+      manual_eval += a * b * c;
+    }
+
+    assert_eq!(gsp.evaluate(), manual_eval);
+  }
+
+  #[test]
+  fn split() {
+    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
+    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(7), Fr::from(7)]);
+    let C = DensePolynomial::new(vec![Fr::from(9), Fr::from(9), Fr::from(9), Fr::from(9)]);
+
+    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
+
+    let (left, right) = gsp.split();
+
+    assert_eq!(left.operands.len(), 3);
+    assert_eq!(right.operands.len(), 3);
+    assert_eq!(left.operands[0].len(), 2);
+    assert_eq!(right.operands[0].len(), 2);
+
+    assert_eq!(left.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(5));
+    assert_eq!(right.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(7));
   }
 }
 
