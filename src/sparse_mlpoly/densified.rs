@@ -1,10 +1,10 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use crate::dense_mlpoly::DensePolynomial;
+use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  derefs::Derefs,
+  subtable_evaluations::SubtableEvaluations,
   sparse_mlpoly::{SparseMatPolyCommitmentGens, SparseMatPolynomial, SparsePolynomialCommitment},
 };
 
@@ -19,6 +19,9 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub s: usize, // sparsity
   pub log_m: usize,
   pub m: usize, // TODO: big integer
+
+  /// Table evaluations T[k] \forall k \in [0, ... M]  -- (over c dimensions)
+  pub table_evals: Vec<Vec<F>>,
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
@@ -48,24 +51,38 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
     )
   }
 
+  /// Materialize the table of M evaluations in each of the C dimensions in O(M) time.
+  /// Note: Not all tables are dependent on r.
+  pub fn materialize_table(&mut self, r: &[Vec<F>; C]) {
+    // TODO: Not all tables need 'c' materializations
+    self.table_evals = r
+      .iter()
+      .map(|r_dim| {
+        let eq_evals = EqPolynomial::new(r_dim.clone()).evals();
+        assert_eq!(eq_evals.len(), self.m);
+        eq_evals
+      })
+      .collect();
+  }
+
   /// Dereference memory. Create 'c' Dense(multi-linear)Polynomials with 's' evaluations of \tilde{eq}(i_dim, r_dim) corresponding to the non-zero indicies of M along the 'c'-th dimension.
   /// Where r is the randomly selected point by the verifier and r \in F^{log(M)} and i \in {0,1}^{log(M)} for all non-sparse indices along the 'c'-th dimension.
   /// - `eqs`: c-dimensional vector containing an M-sized vector for each dimension with evaulations of
   /// \tilde{eq}(i_0, r_0), ..., \tilde{eq}(i_c, r_c) where i_0, ..., i_c \in {0,1}^{logM} (for the non-sparse indices in each dimension)
   /// and r_0, ... r_c are the randomly selected evaluation points by the verifier.
-  pub fn deref(&self, eqs: &Vec<Vec<F>>) -> Derefs<F, C> {
+  pub fn combine_subtable_evaluations(&self) -> SubtableEvaluations<F, C> {
     // TODO(moodlezoup) std::array::from_fn
     // Iterate over each of the 'c' dimensions and their corresponding audit timestamps / counters
-    let mut derefs: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut combined_subtable_evaluations: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
     for (c_index, dim_i) in self.dim_usize.iter().enumerate() {
       let mut dim_deref: Vec<F> = Vec::with_capacity(self.s);
       for sparsity_index in 0..self.s {
-        dim_deref.push(eqs[c_index][dim_i[sparsity_index]]);
+        dim_deref.push(self.table_evals[c_index][dim_i[sparsity_index]]);
       }
-      derefs.push(DensePolynomial::new(dim_deref));
+      combined_subtable_evaluations.push(DensePolynomial::new(dim_deref));
     }
 
-    Derefs::new(derefs.try_into().unwrap())
+    SubtableEvaluations::new(combined_subtable_evaluations.try_into().unwrap())
   }
 }
 
@@ -135,6 +152,7 @@ impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
       s: sparse_poly.s,
       log_m: sparse_poly.log_m,
       m: sparse_poly.m,
+      table_evals: vec![]
     }
   }
 }

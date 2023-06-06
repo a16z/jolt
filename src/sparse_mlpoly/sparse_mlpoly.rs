@@ -8,7 +8,7 @@ use crate::math::Math;
 use crate::product_tree::GeneralizedScalarProduct;
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::derefs::DerefsCommitment;
+use crate::sparse_mlpoly::subtable_evaluations::CombinedTableCommitment;
 use crate::sparse_mlpoly::memory_checking::MemoryCheckingProof;
 use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
@@ -189,13 +189,14 @@ impl<F: PrimeField, const C: usize> SparseMatPolynomial<F, C> {
       s: self.s,
       log_m: self.log_m,
       m: self.m,
+      table_evals: vec![]
     }
   }
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const C: usize> {
-  comm_derefs: DerefsCommitment<G>,
+  comm_derefs: CombinedTableCommitment<G>,
   primary_sumcheck_proof: SumcheckInstanceProof<G::ScalarField>,
   memory_check: MemoryCheckingProof<G, C>,
 }
@@ -210,7 +211,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
   pub fn prove(
-    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    dense: &mut DensifiedRepresentation<G::ScalarField, C>,
     r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
     eval: &G::ScalarField,        // a evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
     gens: &SparseMatPolyCommitmentGens<G>,
@@ -221,33 +222,26 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
 
     r.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
 
-    // Create an \widetilde{eq}(r) polynomial for each dimension, which we will memory check
-    let eqs: Vec<Vec<G::ScalarField>> = r
-      .iter()
-      .map(|r_dim| {
-        let eq_evals = EqPolynomial::new(r_dim.clone()).evals();
-        assert_eq!(eq_evals.len(), dense.m);
-        eq_evals
-      })
-      .collect();
 
     // eqs are the evaluations of eq(i_1, r_1) , ... , eq(i_c, r_c)
     // Where i_1, ... i_c are all \in {0, 1}^logM for the non-sparse indices (s)-sized
     // And r_1, ... r_c are all \in F^logM
     // Derefs converts each eqs into E_{r_i}
-    let derefs = dense.deref(&eqs);
-    // assert_eq!(derefs.len(), dense.s);
+    dense.materialize_table(r);
+
+    // Combine subtable evaluations to allow commitment
+    let combined_subtable_evaluations = dense.combine_subtable_evaluations();
 
     // commit to non-deterministic choices of the prover
     let comm_derefs = {
-      let comm = derefs.commit(&gens.gens_derefs);
+      let comm = combined_subtable_evaluations.commit(&gens.gens_derefs);
       comm.append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
       comm
     };
 
     // TODO(moodlezoup): Move scalar product stuff into separate prove/verify
     // prepare scalar product
-    let mut scalar_product_operands = derefs.eq_evals.clone().to_vec();
+    let mut scalar_product_operands = combined_subtable_evaluations.subtable_evals.clone().to_vec();
     scalar_product_operands.push(dense.val.clone());
     let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
     let eval_scalar_product = scalar_product.evaluate();
@@ -280,12 +274,12 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
       let r_hash_params: Vec<G::ScalarField> =
         <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-      let mut grand_products = dense.to_grand_products(&eqs, &(r_hash_params[0], r_hash_params[1]));
+      let mut grand_products = dense.to_grand_products(&(r_hash_params[0], r_hash_params[1]));
 
       let poly_eval_network_proof = MemoryCheckingProof::prove(
         &mut grand_products,
         dense,
-        &derefs,
+        &combined_subtable_evaluations,
         gens,
         transcript,
         random_tape,
@@ -602,7 +596,7 @@ mod tests {
     let (_, s, m, log_m, sparse_poly) = construct_2d_small::<G1Projective>();
 
     // Commit
-    let dense: DensifiedRepresentation<Fr, c> = sparse_poly.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, c> = sparse_poly.to_densified();
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
@@ -619,7 +613,7 @@ mod tests {
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
     let proof = SparsePolynomialEvaluationProof::<G1Projective, c>::prove(
-      &dense,
+      &mut dense,
       &r,
       &eval,
       &gens,
