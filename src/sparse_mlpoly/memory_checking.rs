@@ -176,7 +176,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let eval_derefs: Vec<G::ScalarField> = subtable_evaluations
       .subtable_evals
       .iter()
-      .map(|eq| eq.evaluate::<G>(rand_ops))
+      .map(|eq| eq.evaluate(rand_ops))
       .collect();
     let proof_derefs = CombinedTableEvalProof::prove(
       subtable_evaluations,
@@ -191,12 +191,12 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
 
     let eval_dim: [G::ScalarField; C] =
-      std::array::from_fn(|i| dense.dim[i].evaluate::<G>(rand_ops));
+      std::array::from_fn(|i| dense.dim[i].evaluate(rand_ops));
     let eval_read: [G::ScalarField; C] =
-      std::array::from_fn(|i| dense.read[i].evaluate::<G>(rand_ops));
+      std::array::from_fn(|i| dense.read[i].evaluate(rand_ops));
     let eval_final: [G::ScalarField; C] =
-      std::array::from_fn(|i| dense.r#final[i].evaluate::<G>(rand_mem));
-    let eval_val = dense.val.evaluate::<G>(rand_ops);
+      std::array::from_fn(|i| dense.r#final[i].evaluate(rand_mem));
+    let eval_val = dense.val.evaluate(rand_ops);
 
     evals_ops.extend(eval_dim);
     evals_ops.extend(eval_read);
@@ -222,7 +222,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     r_joint_ops.extend(rand_ops);
     // TODO(moodlezoup) remove debug asserts
     debug_assert_eq!(
-      dense.combined_l_variate_polys.evaluate::<G>(&r_joint_ops),
+      dense.combined_l_variate_polys.evaluate(&r_joint_ops),
       joint_claim_eval_ops
     );
 
@@ -262,7 +262,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     debug_assert_eq!(
       dense
         .combined_log_m_variate_polys
-        .evaluate::<G>(&r_joint_mem),
+        .evaluate(&r_joint_mem),
       joint_claim_eval_mem
     );
 

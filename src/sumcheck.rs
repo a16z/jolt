@@ -485,9 +485,9 @@ mod test {
     for i in 0..num_evals {
       use crate::utils::index_to_field_bitvector;
 
-      claim += A.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
-        * B.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
-        * C.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars));
+      claim += A.evaluate(&index_to_field_bitvector(i, num_vars))
+        * B.evaluate(&index_to_field_bitvector(i, num_vars))
+        * C.evaluate(&index_to_field_bitvector(i, num_vars));
     }
 
     let comb_func_prod = |poly_A_comp: &Fr, poly_B_comp: &Fr, poly_C_comp: &Fr| -> Fr {
@@ -517,9 +517,9 @@ mod test {
     assert_eq!(prove_randomness, r);
 
     // Consider this the opening proof to a(r) * b(r) * c(r)
-    let a = A.evaluate::<G1Projective>(prove_randomness.as_slice());
-    let b = B.evaluate::<G1Projective>(prove_randomness.as_slice());
-    let c = C.evaluate::<G1Projective>(prove_randomness.as_slice());
+    let a = A.evaluate(prove_randomness.as_slice());
+    let b = B.evaluate(prove_randomness.as_slice());
+    let c = C.evaluate(prove_randomness.as_slice());
 
     let oracle_query = a * b * c;
     assert_eq!(verify_evaluation, oracle_query);
@@ -543,9 +543,9 @@ mod test {
     for i in 0..num_evals {
       use crate::utils::index_to_field_bitvector;
 
-      claim += A.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
-        * B.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars))
-        * C.evaluate::<G1Projective>(&index_to_field_bitvector(i, num_vars));
+      claim += A.evaluate(&index_to_field_bitvector(i, num_vars))
+        * B.evaluate(&index_to_field_bitvector(i, num_vars))
+        * C.evaluate(&index_to_field_bitvector(i, num_vars));
     }
     let mut polys = vec![A.clone(), B.clone(), C.clone()];
 
@@ -573,9 +573,9 @@ mod test {
     assert_eq!(prove_randomness, r);
 
     // Consider this the opening proof to a(r) * b(r) * c(r)
-    let a = A.evaluate::<G1Projective>(prove_randomness.as_slice());
-    let b = B.evaluate::<G1Projective>(prove_randomness.as_slice());
-    let c = C.evaluate::<G1Projective>(prove_randomness.as_slice());
+    let a = A.evaluate(prove_randomness.as_slice());
+    let b = B.evaluate(prove_randomness.as_slice());
+    let c = C.evaluate(prove_randomness.as_slice());
 
     let oracle_query = a * b * c;
     assert_eq!(verify_evaluation, oracle_query);

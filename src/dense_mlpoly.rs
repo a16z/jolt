@@ -1,4 +1,6 @@
 #![allow(clippy::too_many_arguments)]
+use crate::utils::compute_dotproduct;
+
 use super::commitments::{Commitments, MultiCommitGens};
 use super::errors::ProofVerifyError;
 use super::math::Math;
@@ -242,15 +244,12 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   // returns Z(r) in O(n) time
-  pub fn evaluate<G>(&self, r: &[F]) -> F
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
+  pub fn evaluate(&self, r: &[F]) -> F {
     // r must have a value for each variable
     assert_eq!(r.len(), self.get_num_vars());
     let chis = EqPolynomial::new(r.to_vec()).evals();
     assert_eq!(chis.len(), self.Z.len());
-    DotProductProofLog::<G>::compute_dotproduct(&self.Z, &chis)
+    compute_dotproduct(&self.Z, &chis)
   }
 
   fn vec(&self) -> &Vec<F> {
@@ -469,7 +468,7 @@ mod tests {
     let eval_with_LR = evaluate_with_LR::<G>(&Z, &r);
     let poly = DensePolynomial::new(Z);
 
-    let eval = poly.evaluate::<G>(&r);
+    let eval = poly.evaluate(&r);
     assert_eq!(eval, G::ScalarField::from(28u64));
     assert_eq!(eval_with_LR, eval);
   }
@@ -615,7 +614,7 @@ mod tests {
 
     // r = [4,3]
     let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
-    let eval = poly.evaluate::<G>(&r);
+    let eval = poly.evaluate(&r);
     assert_eq!(eval, G::ScalarField::from(28u64));
 
     let gens = PolyCommitmentGens::<G>::new(poly.get_num_vars(), b"test-two");
@@ -659,7 +658,7 @@ mod tests {
     // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
     // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
     assert_eq!(
-      dense_poly.evaluate::<G1Projective>(vec![Fr::from(3), Fr::from(4)].as_slice()),
+      dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
       Fr::from(8)
     );
   }

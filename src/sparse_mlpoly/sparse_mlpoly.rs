@@ -242,7 +242,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
     // TODO(moodlezoup): Move scalar product stuff into separate prove/verify
     // prepare scalar product
     let mut scalar_product_operands = combined_subtable_evaluations.subtable_evals.clone().to_vec();
-    scalar_product_operands.push(dense.val.clone());
+    scalar_product_operands.push(dense.val.clone()); // TODO: Are these always 1??
     let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
     let eval_scalar_product = scalar_product.evaluate();
 

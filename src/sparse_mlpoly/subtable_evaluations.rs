@@ -89,7 +89,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       let mut r_joint = challenges;
       r_joint.extend(r);
 
-      debug_assert_eq!(joint_poly.evaluate::<G>(&r_joint), joint_claim_eval);
+      debug_assert_eq!(joint_poly.evaluate(&r_joint), joint_claim_eval);
       (r_joint, joint_claim_eval)
     };
     // decommit the joint polynomial at r_joint
@@ -245,7 +245,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(0, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(0, eq_index_bits)),
       Fr::from(6)
     );
 
@@ -253,7 +253,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(1, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(1, eq_index_bits)),
       Fr::from(-8)
     );
 
@@ -261,7 +261,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(2, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(2, eq_index_bits)),
       Fr::from(-9)
     );
 
@@ -269,7 +269,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(3, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(3, eq_index_bits)),
       Fr::from(12)
     );
 
@@ -278,7 +278,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(4, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(4, eq_index_bits)),
       Fr::from(20)
     );
 
@@ -286,7 +286,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(5, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(5, eq_index_bits)),
       Fr::from(-24)
     );
 
@@ -294,7 +294,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(6, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(6, eq_index_bits)),
       Fr::from(-25)
     );
 
@@ -302,7 +302,7 @@ mod test {
     assert_eq!(
       subtable_evals
         .comb
-        .evaluate::<G1Projective>(&index_to_field_bitvector(7, eq_index_bits)),
+        .evaluate(&index_to_field_bitvector(7, eq_index_bits)),
       Fr::from(30)
     );
   }
