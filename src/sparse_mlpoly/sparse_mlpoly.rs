@@ -8,8 +8,8 @@ use crate::math::Math;
 use crate::product_tree::GeneralizedScalarProduct;
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::subtable_evaluations::CombinedTableCommitment;
 use crate::sparse_mlpoly::memory_checking::MemoryCheckingProof;
+use crate::sparse_mlpoly::subtable_evaluations::{CombinedTableCommitment, CombinedTableEvalProof};
 use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
@@ -179,7 +179,7 @@ impl<F: PrimeField, const C: usize> SparseMatPolynomial<F, C> {
     let combined_log_m_variate_polys = DensePolynomial::merge(&r#final);
 
     DensifiedRepresentation {
-      dim_usize,
+      dim_usize: dim_usize.try_into().unwrap(),
       dim: dim.try_into().unwrap(),
       read: read.try_into().unwrap(),
       r#final: r#final.try_into().unwrap(),
@@ -189,15 +189,22 @@ impl<F: PrimeField, const C: usize> SparseMatPolynomial<F, C> {
       s: self.s,
       log_m: self.log_m,
       m: self.m,
-      table_evals: vec![]
+      table_evals: vec![],
     }
   }
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+struct PrimarySumcheck<G: CurveGroup, const C: usize> {
+  proof: SumcheckInstanceProof<G::ScalarField>,
+  eval_derefs: [G::ScalarField; C],
+  proof_derefs: CombinedTableEvalProof<G, C>,
+}
+
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const C: usize> {
   comm_derefs: CombinedTableCommitment<G>,
-  primary_sumcheck_proof: SumcheckInstanceProof<G::ScalarField>,
+  primary_sumcheck: PrimarySumcheck<G, C>,
   memory_check: MemoryCheckingProof<G, C>,
 }
 
@@ -222,7 +229,6 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
 
     r.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
 
-
     // eqs are the evaluations of eq(i_1, r_1) , ... , eq(i_c, r_c)
     // Where i_1, ... i_c are all \in {0, 1}^logM for the non-sparse indices (s)-sized
     // And r_1, ... r_c are all \in F^logM
@@ -239,9 +245,10 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
       comm
     };
 
-    // TODO(moodlezoup): Move scalar product stuff into separate prove/verify
-    // prepare scalar product
-    let mut scalar_product_operands = combined_subtable_evaluations.subtable_evals.clone().to_vec();
+    let mut scalar_product_operands = combined_subtable_evaluations
+      .subtable_evals
+      .clone()
+      .to_vec();
     scalar_product_operands.push(dense.val.clone()); // TODO: Are these always 1??
     let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
     let eval_scalar_product = scalar_product.evaluate();
@@ -254,7 +261,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
 
     assert_eq!(eval_scalar_product, *eval);
 
-    let (primary_sumcheck_proof, _, primary_sumcheck_claims) =
+    let (primary_sumcheck_proof, r_z, _) =
       SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
         &eval_scalar_product,
         scalar_product_operands[0].len().log_2(),
@@ -263,10 +270,16 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
         transcript,
       );
 
-    <Transcript as ProofTranscript<G>>::append_scalars(
+    // Combined eval proof for E_i(r_z)
+    let eval_derefs: [G::ScalarField; C] =
+      std::array::from_fn(|i| combined_subtable_evaluations.subtable_evals[i].evaluate(&r_z));
+    let proof_derefs = CombinedTableEvalProof::prove(
+      &combined_subtable_evaluations,
+      &eval_derefs.to_vec(),
+      &r_z,
+      &gens.gens_derefs,
       transcript,
-      b"primary_sumcheck_claims",
-      &primary_sumcheck_claims,
+      random_tape,
     );
 
     let memory_check = {
@@ -276,7 +289,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
 
       let mut grand_products = dense.to_grand_products(&(r_hash_params[0], r_hash_params[1]));
 
-      let poly_eval_network_proof = MemoryCheckingProof::prove(
+      let memory_checking_proof = MemoryCheckingProof::prove(
         &mut grand_products,
         dense,
         &combined_subtable_evaluations,
@@ -285,12 +298,16 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
         random_tape,
       );
 
-      poly_eval_network_proof
+      memory_checking_proof
     };
 
     Self {
       comm_derefs,
-      primary_sumcheck_proof,
+      primary_sumcheck: PrimarySumcheck {
+        proof: primary_sumcheck_proof,
+        eval_derefs,
+        proof_derefs,
+      },
       memory_check,
     }
   }
@@ -305,28 +322,44 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    assert_eq!(r[0].len(), commitment.log_m);
+    r.iter()
+      .for_each(|r_i| assert_eq!(r_i.len(), commitment.log_m));
 
     // add claims to transcript and obtain challenges for randomized mem-check circuit
     self
       .comm_derefs
       .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
-    // // TODO(moodlezoup): verify primary sumcheck
-    // self.primary_sumcheck_proof.verify(evaluation, num_rounds, degree_bound, transcript)
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_eval_scalar_product",
+      &evaluation,
+    );
 
-    // // TODO(moodlezoup): verify the decommitments used in primary sum-check
-    // let eval_val_vec = &self.eval_val;
-    // assert_eq!(claims_dotp.len(), 3 * eval_row_ops_val.len());
-    // for i in 0..claims_dotp.len() / 3 {
-    //   let claim_row_ops_val = claims_dotp[3 * i];
-    //   let claim_col_ops_val = claims_dotp[3 * i + 1];
-    //   let claim_val = claims_dotp[3 * i + 2];
+    let (claim_last, r_z) = self.primary_sumcheck.proof.verify::<G, Transcript>(
+      *evaluation,
+      commitment.log_m,
+      C + 1,
+      transcript,
+    )?;
 
-    //   assert_eq!(claim_row_ops_val, eval_row_ops_val[i]);
-    //   assert_eq!(claim_col_ops_val, eval_col_ops_val[i]);
-    //   assert_eq!(claim_val, eval_val_vec[i]);
-    // }
+    self.primary_sumcheck.proof_derefs.verify(
+      &r_z,
+      &self.primary_sumcheck.eval_derefs,
+      &gens.gens_derefs,
+      &self.comm_derefs,
+      transcript,
+    )?;
+
+    // Verify that E_1(r_z) * ... * E_c(r_z) = claim_last
+    assert_eq!(
+      self
+        .primary_sumcheck
+        .eval_derefs
+        .iter()
+        .product::<G::ScalarField>(),
+      claim_last
+    );
 
     // produce a random element from the transcript for hash function
     let r_mem_check =

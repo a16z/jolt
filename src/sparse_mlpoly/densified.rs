@@ -9,7 +9,7 @@ use super::{
 };
 
 pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
-  pub dim_usize: Vec<Vec<usize>>, // c-dimensional
+  pub dim_usize: [Vec<usize>; C],
   pub dim: [DensePolynomial<F>; C],
   pub read: [DensePolynomial<F>; C],
   pub r#final: [DensePolynomial<F>; C],
@@ -71,7 +71,6 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   /// \tilde{eq}(i_0, r_0), ..., \tilde{eq}(i_c, r_c) where i_0, ..., i_c \in {0,1}^{logM} (for the non-sparse indices in each dimension)
   /// and r_0, ... r_c are the randomly selected evaluation points by the verifier.
   pub fn combine_subtable_evaluations(&self) -> SubtableEvaluations<F, C> {
-    // TODO(moodlezoup) std::array::from_fn
     // Iterate over each of the 'c' dimensions and their corresponding audit timestamps / counters
     let mut combined_subtable_evaluations: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
     for (c_index, dim_i) in self.dim_usize.iter().enumerate() {
@@ -142,7 +141,7 @@ impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
     let combined_log_m_variate_polys = DensePolynomial::merge(&r#final);
 
     DensifiedRepresentation {
-      dim_usize,
+      dim_usize: dim_usize.try_into().unwrap(),
       dim: dim.try_into().unwrap(),
       read: read.try_into().unwrap(),
       r#final: r#final.try_into().unwrap(),

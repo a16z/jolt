@@ -4,9 +4,11 @@ use crate::math::Math;
 use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::subtable_evaluations::{SubtableEvaluations, CombinedTableCommitment, CombinedTableEvalProof};
 use crate::sparse_mlpoly::sparse_mlpoly::{
   SparseMatPolyCommitmentGens, SparsePolynomialCommitment,
+};
+use crate::sparse_mlpoly::subtable_evaluations::{
+  CombinedTableCommitment, CombinedTableEvalProof, SubtableEvaluations,
 };
 use crate::transcript::ProofTranscript;
 
@@ -150,10 +152,7 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
-  pub fn to_grand_products(
-    &self,
-    r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; C] {
+  pub fn to_grand_products(&self, r_mem_check: &(F, F)) -> [GrandProducts<F>; C] {
     std::array::from_fn(|i| {
       GrandProducts::new(
         &self.table_evals[i],
@@ -173,7 +172,7 @@ struct HashLayerProof<G: CurveGroup, const C: usize> {
   eval_read: [G::ScalarField; C],
   eval_final: [G::ScalarField; C],
   eval_val: G::ScalarField,
-  eval_derefs: Vec<G::ScalarField>,
+  eval_derefs: [G::ScalarField; C],
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
   proof_derefs: CombinedTableEvalProof<G, C>,
@@ -197,14 +196,11 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: Vec<G::ScalarField> = subtable_evaluations
-      .subtable_evals
-      .iter()
-      .map(|eq| eq.evaluate(rand_ops))
-      .collect();
+    let eval_derefs: [G::ScalarField; C] =
+      std::array::from_fn(|i| subtable_evaluations.subtable_evals[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
       subtable_evaluations,
-      &eval_derefs,
+      &eval_derefs.to_vec(),
       rand_ops,
       &gens.gens_derefs,
       transcript,
@@ -214,10 +210,8 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     // form a single decommitment using comm_comb_ops
     let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
 
-    let eval_dim: [G::ScalarField; C] =
-      std::array::from_fn(|i| dense.dim[i].evaluate(rand_ops));
-    let eval_read: [G::ScalarField; C] =
-      std::array::from_fn(|i| dense.read[i].evaluate(rand_ops));
+    let eval_dim: [G::ScalarField; C] = std::array::from_fn(|i| dense.dim[i].evaluate(rand_ops));
+    let eval_read: [G::ScalarField; C] = std::array::from_fn(|i| dense.read[i].evaluate(rand_ops));
     let eval_final: [G::ScalarField; C] =
       std::array::from_fn(|i| dense.r#final[i].evaluate(rand_mem));
     let eval_val = dense.val.evaluate(rand_ops);
@@ -284,9 +278,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let mut r_joint_mem = challenges_mem;
     r_joint_mem.extend(rand_mem);
     debug_assert_eq!(
-      dense
-        .combined_log_m_variate_polys
-        .evaluate(&r_joint_mem),
+      dense.combined_log_m_variate_polys.evaluate(&r_joint_mem),
       joint_claim_eval_mem
     );
 
@@ -389,6 +381,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let (rand_mem, rand_ops) = rand;
 
     // verify derefs at rand_ops
+    // E_i(r_i''') ≟ v_{E_i}
     self.proof_derefs.verify(
       rand_ops,
       &self.eval_derefs,
@@ -426,6 +419,9 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       &joint_claim_eval_ops,
     );
 
+    // dim_i(r_i''') ≟ v_i
+    // read_i(r_i''') ≟ v_{read_i}
+    // val(r_i''') ≟ v_val
     self.proof_ops.verify_plain(
       &gens.gens_combined_l_variate,
       transcript,
@@ -460,6 +456,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       &joint_claim_eval_mem,
     );
 
+    // final_i(r_i'') ≟ v_{final_i}
     self.proof_mem.verify_plain(
       &gens.gens_combined_log_m_variate,
       transcript,
