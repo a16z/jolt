@@ -295,10 +295,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// Verify this sumcheck proof.
   /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
   /// as the oracle is not passed in. Expected that the caller will implement.
+  /// 
+  /// Params
   /// - `claim`: Claimed evaluation
   /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
   /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
   /// - `transcript`: Fiat-shamir transcript
+  /// 
+  /// Returns (e, r)
+  /// - `e`: Claimed evaluation at random point
+  /// - `r`: Evaluation point
   pub fn verify<G, T: ProofTranscript<G>>(
     &self,
     claim: F,
