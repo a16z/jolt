@@ -103,54 +103,6 @@ impl<F: PrimeField> GeneralizedScalarProduct<F> {
   }
 }
 
-#[cfg(test)]
-mod generalized_scalar_product_tests {
-  use ark_bls12_381::{Fr};
-  use super::*;
-  use crate::utils::index_to_field_bitvector;
-
-  #[test]
-  fn evaluate() {
-    // Create three dense polynomials, evaluate each over every point on the boolean hypercube and sum the products of each term
-    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
-    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
-    let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
-
-    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
-
-    // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
-    let mut manual_eval = Fr::from(0u64);
-    for i in 0..4 {
-      let a = A.evaluate(&index_to_field_bitvector(i, 2));
-      let b = B.evaluate(&index_to_field_bitvector(i, 2));
-      let c = C.evaluate(&index_to_field_bitvector(i, 2));
-
-      manual_eval += a * b * c;
-    }
-
-    assert_eq!(gsp.evaluate(), manual_eval);
-  }
-
-  #[test]
-  fn split() {
-    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
-    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(7), Fr::from(7)]);
-    let C = DensePolynomial::new(vec![Fr::from(9), Fr::from(9), Fr::from(9), Fr::from(9)]);
-
-    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
-
-    let (left, right) = gsp.split();
-
-    assert_eq!(left.operands.len(), 3);
-    assert_eq!(right.operands.len(), 3);
-    assert_eq!(left.operands[0].len(), 2);
-    assert_eq!(right.operands[0].len(), 2);
-
-    assert_eq!(left.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(5));
-    assert_eq!(right.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(7));
-  }
-}
-
 #[allow(dead_code)]
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct LayerProof<F: PrimeField> {
@@ -233,7 +185,7 @@ impl<F: PrimeField> GrandProductArgument<F> {
       let comb_func_prod = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F| -> F {
         *poly_A_comp * *poly_B_comp * *poly_C_comp
       };
-      let (proof_prod, rand_prod, claims_prod) = SumcheckInstanceProof::<F>::prove_cubic::<_, G, T>(
+      let (proof_prod, r_eval_point, claimed_prod_eval) = SumcheckInstanceProof::<F>::prove_cubic::<_, G, T>(
         &claim,
         num_rounds_prod,
         &mut circuit.left_vec[layer_id],
@@ -242,21 +194,21 @@ impl<F: PrimeField> GrandProductArgument<F> {
         comb_func_prod,
         transcript,
       );
-      transcript.append_scalar(b"claim_prod_left", &claims_prod[0]);
-      transcript.append_scalar(b"claim_prod_right", &claims_prod[1]);
+      transcript.append_scalar(b"claim_prod_left", &claimed_prod_eval[0]);
+      transcript.append_scalar(b"claim_prod_right", &claimed_prod_eval[1]);
 
       // produce a random challenge
       let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
 
-      claim = claims_prod[0] + r_layer * (claims_prod[1] - claims_prod[0]);
+      claim = claimed_prod_eval[0] + r_layer * (claimed_prod_eval[1] - claimed_prod_eval[0]);
 
       let mut ext = vec![r_layer];
-      ext.extend(rand_prod);
+      ext.extend(r_eval_point);
       rand = ext;
 
       proof.push(LayerProof {
         proof: proof_prod,
-        claims: claims_prod[0..claims_prod.len() - 1].to_vec(),
+        claims: claimed_prod_eval[0..claimed_prod_eval.len() - 1].to_vec(),
       });
     }
 
@@ -278,24 +230,25 @@ impl<F: PrimeField> GrandProductArgument<F> {
     assert_eq!(self.proof.len(), num_layers);
 
     for (num_rounds, i) in (0..num_layers).enumerate() {
-      let (claim_last, rand_prod) = self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
+      let (claimed_eval_last, r_eval_point) = self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
 
       let claims_prod = &self.proof[i].claims;
       transcript.append_scalar(b"claim_prod_left", &claims_prod[0]);
       transcript.append_scalar(b"claim_prod_right", &claims_prod[1]);
 
-      assert_eq!(rand.len(), rand_prod.len());
+      assert_eq!(rand.len(), r_eval_point.len());
       let eq: F = (0..rand.len())
-        .map(|i| rand[i] * rand_prod[i] + (F::one() - rand[i]) * (F::one() - rand_prod[i]))
+        .map(|i| rand[i] * r_eval_point[i] + (F::one() - rand[i]) * (F::one() - r_eval_point[i]))
         .product();
-      assert_eq!(claims_prod[0] * claims_prod[1] * eq, claim_last);
+
+      assert_eq!(claims_prod[0] * claims_prod[1] * eq, claimed_eval_last);
 
       // produce a random challenge
       let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
 
       claim = (F::one() - r_layer) * claims_prod[0] + r_layer * claims_prod[1];
       let mut ext = vec![r_layer];
-      ext.extend(rand_prod);
+      ext.extend(r_eval_point);
       rand = ext;
     }
 
@@ -351,7 +304,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       );
 
       // produce a fresh set of coeffs and a joint claim
-      let coeff_vec = <Transcript as ProofTranscript<G>>::challenge_vector(
+      let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(
         transcript,
         b"rand_coeffs_next_layer",
         claims_to_verify.len(),
@@ -470,5 +423,75 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       rand = ext;
     }
     (claims_to_verify, rand)
+  }
+}
+
+#[cfg(test)]
+mod grand_product_circuit_tests {
+  use super::*;
+  use ark_bls12_381::{Fr, G1Projective};
+
+  #[test]
+  fn prove_verify() {
+    let factorial = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+    let mut factorial_circuit = GrandProductCircuit::new(&factorial);
+
+    assert_eq!(factorial_circuit.evaluate(), Fr::from(24));
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (gpa, claimed_eval, claimed_eval_point) = GrandProductArgument::prove::<G1Projective, _>(&mut factorial_circuit, &mut transcript);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (eval, eval_point) = gpa.verify::<G1Projective, _>(Fr::from(24), 4, &mut transcript);
+    assert_eq!(claimed_eval_point, eval_point);
+    assert_eq!(claimed_eval, eval);
+  }
+}
+
+#[cfg(test)]
+mod generalized_scalar_product_tests {
+  use ark_bls12_381::{Fr};
+  use super::*;
+  use crate::utils::index_to_field_bitvector;
+
+  #[test]
+  fn evaluate() {
+    // Create three dense polynomials, evaluate each over every point on the boolean hypercube and sum the products of each term
+    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
+    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
+    let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
+
+    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
+
+    // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
+    let mut manual_eval = Fr::from(0u64);
+    for i in 0..4 {
+      let a = A.evaluate(&index_to_field_bitvector(i, 2));
+      let b = B.evaluate(&index_to_field_bitvector(i, 2));
+      let c = C.evaluate(&index_to_field_bitvector(i, 2));
+
+      manual_eval += a * b * c;
+    }
+
+    assert_eq!(gsp.evaluate(), manual_eval);
+  }
+
+  #[test]
+  fn split() {
+    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
+    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(7), Fr::from(7)]);
+    let C = DensePolynomial::new(vec![Fr::from(9), Fr::from(9), Fr::from(9), Fr::from(9)]);
+
+    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
+
+    let (left, right) = gsp.split();
+
+    assert_eq!(left.operands.len(), 3);
+    assert_eq!(right.operands.len(), 3);
+    assert_eq!(left.operands[0].len(), 2);
+    assert_eq!(right.operands[0].len(), 2);
+
+    assert_eq!(left.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(5));
+    assert_eq!(right.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(7));
   }
 }
