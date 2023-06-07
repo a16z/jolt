@@ -11,13 +11,16 @@ use crate::sparse_mlpoly::sparse_mlpoly::{
 use crate::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
+use ark_ff::{Field, PrimeField, BigInt};
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use itertools::izip;
 use merlin::Transcript;
 
+use super::subtable_evaluations;
+
 // TODO(moodlezoup): Combine init and write, read and final
+/// Holder for circuits to evaluate multi-set checks on memories.
 #[derive(Debug)]
 pub struct GrandProducts<F> {
   init: GrandProductCircuit<F>,
@@ -27,9 +30,23 @@ pub struct GrandProducts<F> {
 }
 
 impl<F: PrimeField> GrandProducts<F> {
+  /// Takes memory counter polynomials and encodes a multilinear polynomial evaluating to the reed solomon finger print
+  /// for each item in the set.
+  /// 
+  /// Params
+  /// - `eval_table`: Memory-sized list of table entries
+  /// - `dim_i`: Num-operations-sized polynomial evaluating to the corresponding table index for each operation
+  /// - `dim_i_usize`: Num-operations-sized polynomial evaluating to the corresponding table index for each operation, represented as usize
+  /// - `read_i`: Memory read counter
+  /// - `final_i` Final memory counter
+  /// - `r_mem_check`: (gamma, tau) – Parameters for multi-set hash / fingerprinting.
+  /// 
+  /// Returns
+  /// - (init, read, write, final) = (WS, RS, WS', S)
   fn build_grand_product_inputs(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
+    dim_i_usize: &Vec<usize>,
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -44,7 +61,9 @@ impl<F: PrimeField> GrandProducts<F> {
     // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
     let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 
-    // hash init and audit
+    // memory sized lists
+
+    // init 
     assert_eq!(eval_table.len(), final_i.len());
     let num_mem_cells = eval_table.len();
     let grand_product_input_init = DensePolynomial::new(
@@ -55,6 +74,7 @@ impl<F: PrimeField> GrandProducts<F> {
         })
         .collect::<Vec<F>>(),
     );
+    // final
     let grand_product_input_final = DensePolynomial::new(
       (0..num_mem_cells)
         .map(|i| {
@@ -64,23 +84,25 @@ impl<F: PrimeField> GrandProducts<F> {
         .collect::<Vec<F>>(),
     );
 
-    // hash read and write
+    // sparsity sized lists
+
+    // read
     assert_eq!(dim_i.len(), read_i.len());
     let num_ops = dim_i.len();
     let grand_product_input_read = DensePolynomial::new(
       (0..num_ops)
         .map(|i| {
           // at read time, addr is given by dim_i, value is given by derefs, and ts is given by read_ts
-          hash_func(&dim_i[i], &eval_table[i], &read_i[i])
+          hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])
         })
         .collect::<Vec<F>>(),
     );
-
+    // write
     let grand_product_input_write = DensePolynomial::new(
       (0..num_ops)
         .map(|i| {
           // at write time, addr is given by dim_i, value is given by derefs, and ts is given by write_ts = read_ts + 1
-          hash_func(&dim_i[i], &eval_table[i], &(read_i[i] + F::one()))
+          hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &(read_i[i] + F::one()))
         })
         .collect::<Vec<F>>(),
     );
@@ -96,6 +118,7 @@ impl<F: PrimeField> GrandProducts<F> {
   pub fn new(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
+    dim_i_usize: &Vec<usize>,
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -105,7 +128,7 @@ impl<F: PrimeField> GrandProducts<F> {
       grand_product_input_read,
       grand_product_input_write,
       grand_product_input_final,
-    ) = GrandProducts::build_grand_product_inputs(eval_table, dim_i, read_i, final_i, r_mem_check);
+    ) = GrandProducts::build_grand_product_inputs(eval_table, dim_i, dim_i_usize, read_i, final_i, r_mem_check);
 
     let prod_init = GrandProductCircuit::new(&grand_product_input_init);
     let prod_read = GrandProductCircuit::new(&grand_product_input_read);
@@ -135,6 +158,7 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
       GrandProducts::new(
         &self.table_evals[i],
         &self.dim[i],
+        &self.dim_usize[i],
         &self.read[i],
         &self.r#final[i],
         r_mem_check,
@@ -694,5 +718,32 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     )?;
 
     Ok(())
+  }
+}
+
+
+#[cfg(test)]
+mod test {
+  use ark_bls12_381::Fr;
+
+use super::*;
+
+  #[test]
+  fn test() {
+    // Eval_table: E_rx over all memory
+    // dim_i: Relevant table lookups
+    // Read_i 
+
+
+    // Memory size: 8
+    // Sparsity (num-ops): 4
+    let eval_table = vec![Fr::from(10), Fr::from(11), Fr::from(12), Fr::from(13), Fr::from(14), Fr::from(15), Fr::from(16), Fr::from(17)];
+    let dim_i = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(1), Fr::from(5)]);
+    let dim_i_usize = vec![1usize, 2, 1, 5];
+    let read_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0), Fr::from(1), Fr::from(0)]);
+    let final_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(2), Fr::from(1), Fr::from(0), Fr::from(0), Fr::from(1), Fr::from(0), Fr::from(0)]);
+    let r_mem_check = (Fr::from(100), Fr::from(200));
+
+    let gp = GrandProducts::new(&eval_table, &dim_i, &dim_i_usize, &read_i, &final_i, &r_mem_check);
   }
 }
