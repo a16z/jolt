@@ -137,10 +137,9 @@ impl<F: PrimeField> GrandProducts<F> {
     let prod_write = GrandProductCircuit::new(&grand_product_input_write);
     let prod_final = GrandProductCircuit::new(&grand_product_input_final);
 
-    // TODO(moodlezoup): delete?
     let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
     let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
-    assert_eq!(hashed_read_set, hashed_write_set);
+    debug_assert_eq!(hashed_read_set, hashed_write_set);
 
     GrandProducts {
       init: prod_init,
@@ -238,7 +237,6 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let joint_claim_eval_ops = poly_evals_ops[0];
     let mut r_joint_ops = challenges_ops;
     r_joint_ops.extend(rand_ops);
-    // TODO(moodlezoup) remove debug asserts
     debug_assert_eq!(
       dense.combined_l_variate_polys.evaluate(&r_joint_ops),
       joint_claim_eval_ops

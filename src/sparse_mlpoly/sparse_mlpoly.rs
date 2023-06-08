@@ -43,14 +43,15 @@ impl<G: CurveGroup> SparseMatPolyCommitmentGens<G> {
     s: usize,
     log_m: usize,
   ) -> SparseMatPolyCommitmentGens<G> {
-    // dim + read + val
+    // dim_1, ... dim_c, read_1, ..., read_c, val
     // log_2(cs + cs + s) = log_2(2cs + s)
     let num_vars_combined_l_variate = (2 * c * s + s).next_power_of_two().log_2();
     // final
-    // log_2(c * m) = log_2(c) + log_2(m)
+    // log_2(cm) = log_2(c) + log_2(m)
     let num_vars_combined_log_m_variate = c.next_power_of_two().log_2() + log_m;
-    // TODO(moodlezoup): idk if this is the right number
-    let num_vars_derefs = s.next_power_of_two().log_2() as usize + 1;
+    // E_1, ..., E_c
+    // log_2(cs)
+    let num_vars_derefs = (c * s).next_power_of_two().log_2();
 
     let gens_combined_l_variate = PolyCommitmentGens::new(num_vars_combined_l_variate, label);
     let gens_combined_log_m_variate =
@@ -270,6 +271,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
         transcript,
       );
 
+    // TODO(moodlezoup): Is it safe to reuse gens_derefs here?
     // Combined eval proof for E_i(r_z)
     let eval_derefs: [G::ScalarField; C] =
       std::array::from_fn(|i| combined_subtable_evaluations.subtable_evals[i].evaluate(&r_z));
@@ -573,7 +575,8 @@ mod tests {
     let m = 4usize;
     let log_m = 2usize;
 
-    let M: Vec<usize> = vec![0, 0, 0, 0, 2, 0, 4, 0, 0, 8, 0, 9, 0, 0, 0, 0];
+    // let M: Vec<usize> = vec![0, 0, 0, 0, 2, 0, 4, 0, 0, 8, 0, 9, 0, 0, 0, 0];
+    let M: Vec<usize> = vec![0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0];
     (
       c,
       s,
@@ -653,5 +656,10 @@ mod tests {
       &mut prover_transcript,
       &mut random_tape,
     );
+
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(proof
+      .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+      .is_ok());
   }
 }
