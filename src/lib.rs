@@ -26,6 +26,7 @@ mod timer;
 mod transcript;
 mod unipoly;
 mod utils;
+mod gaussian_elimination;
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
