@@ -191,11 +191,17 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   }
 
   /// Create a sumcheck proof of an arbitrary number of polynomials.
+  /// 
+  /// Params
   /// - `claim`: Claimed sumcheck evaluation (note: currently unused)
   /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
   /// - `polys`: Dense polynomials to combine and sumcheck
   /// - `comb_func`: Function used to combine each polynomial evaluation
   /// - `transcript`: Fiat-shamir transcript
+  /// 
+  /// Returns (SumcheckInstanceProof, r_eval_point, final_evals)
+  /// - `r_eval_point`: Final random point of evaluation
+  /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
   pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>>(
     claim: &F,
     num_rounds: usize,
