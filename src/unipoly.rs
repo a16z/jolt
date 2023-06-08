@@ -46,7 +46,6 @@ impl<F: PrimeField> UniPoly<F> {
       row.push(evals[i]);
       vandermonde.push(row);
     }
-    println!("Constructed vandermonde {:?}", vandermonde);
 
     gaussian_elimination(&mut vandermonde)
   }
