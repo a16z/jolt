@@ -19,6 +19,7 @@ pub trait ProofTranscript<G: CurveGroup> {
 
 impl<G: CurveGroup> ProofTranscript<G> for Transcript {
   fn append_message(&mut self, label: &'static [u8], msg: &'static [u8]) {
+    println!("Transcript.append_messgae: {:?}", std::str::from_utf8(msg));
     self.append_message(label, msg);
   }
 
@@ -74,25 +75,3 @@ impl<G: CurveGroup> ProofTranscript<G> for Transcript {
 pub trait AppendToTranscript<G: CurveGroup> {
   fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T);
 }
-
-// // impl<G:CurveGroup> AppendToTranscript<G> for G::ScalarField {
-// //   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
-// //     transcript.append_scalar(label, self);
-// //   }
-// // }
-
-// impl<G:CurveGroup> AppendToTranscript<G> for [G::ScalarField] {
-//   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
-//     transcript.append_message(label, b"begin_append_vector");
-//     for item in self {
-//       transcript.append_scalar(label, item);
-//     }
-//     transcript.append_message(label, b"end_append_vector");
-//   }
-// }
-
-// impl<G:CurveGroup> AppendToTranscript<G> for G {
-//   fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
-//     transcript.append_point(label, self);
-//   }
-// }
