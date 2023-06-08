@@ -1,13 +1,15 @@
 use super::commitments::{Commitments, MultiCommitGens};
 use super::transcript::{AppendToTranscript, ProofTranscript};
+use crate::gaussian_elimination::gaussian_elimination;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use merlin::Transcript;
 
+
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UniPoly<F> {
   coeffs: Vec<F>,
 }
@@ -20,37 +22,33 @@ pub struct CompressedUniPoly<F: PrimeField> {
 }
 
 impl<F: PrimeField> UniPoly<F> {
-  pub fn from_evals(evals: &[F]) -> Self {
-    // we only support degree-2 or degree-3 univariate polynomials
-    assert!(evals.len() == 3 || evals.len() == 4);
-    let coeffs = if evals.len() == 3 {
-      // ax^2 + bx + c
-      let two_inv = F::from(2u64).inverse().unwrap();
-
-      let c = evals[0];
-      let a = two_inv * (evals[2] - evals[1] - evals[1] + c);
-      let b = evals[1] - c - a;
-      vec![c, b, a]
-    } else {
-      // ax^3 + bx^2 + cx + d
-      let two_inv = F::from(2u64).inverse().unwrap();
-      let six_inv = F::from(6u64).inverse().unwrap();
-
-      let d = evals[0];
-      let a = six_inv
-        * (evals[3] - evals[2] - evals[2] - evals[2] + evals[1] + evals[1] + evals[1] - evals[0]);
-      let b = two_inv
-        * (evals[0] + evals[0] - evals[1] - evals[1] - evals[1] - evals[1] - evals[1]
-          + evals[2]
-          + evals[2]
-          + evals[2]
-          + evals[2]
-          - evals[3]);
-      let c = evals[1] - d - a - b;
-      vec![d, c, b, a]
-    };
-
+  pub fn from_coeff(coeffs: Vec<F>) -> Self {
     UniPoly { coeffs }
+  }
+
+  pub fn from_evals(evals: &[F]) -> Self {
+    UniPoly { coeffs: Self::vandermonde_interpolation(evals) }
+  }
+
+  fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
+    let n = evals.len();
+    let xs: Vec<F> = (0..n).map(|x| F::from(x as u64)).collect();
+
+    let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
+    for i in 0..n {
+      let mut row = Vec::with_capacity(n);
+      let x = xs[i];
+      row.push(F::one());
+      row.push(x);
+      for j in 2..n {
+        row.push(row[j-1] * x);
+      }
+      row.push(evals[i]);
+      vandermonde.push(row);
+    }
+    println!("Constructed vandermonde {:?}", vandermonde);
+
+    gaussian_elimination(&mut vandermonde)
   }
 
   pub fn degree(&self) -> usize {
