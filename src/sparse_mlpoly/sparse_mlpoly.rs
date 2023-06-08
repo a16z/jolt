@@ -384,8 +384,7 @@ mod tests {
   use super::*;
   use ark_bls12_381::{Fr, G1Projective};
   use ark_std::rand::RngCore;
-  use ark_std::test_rng;
-  use ark_std::UniformRand;
+  use ark_std::{test_rng, One, UniformRand};
 
   use crate::utils::{ff_bitvector_dbg, index_to_field_bitvector};
 
@@ -465,11 +464,8 @@ mod tests {
     //   .is_ok());
   }
 
-  // #[test]
-  fn check_sparse_polyeval_proof() {
-    check_sparse_polyeval_proof_helper::<G1Projective>()
-  }
-  fn check_sparse_polyeval_proof_helper<G: CurveGroup>() {
+  #[test]
+  fn prove_4d() {
     let mut prng = test_rng();
 
     // parameters
@@ -480,7 +476,7 @@ mod tests {
     let m: usize = log_m.pow2(); // 2 ^ 4 = 16
 
     // generate sparse polynomial
-    let mut nonzero_entries: Vec<SparseMatEntry<G::ScalarField, c>> = Vec::new();
+    let mut nonzero_entries: Vec<SparseMatEntry<Fr, c>> = Vec::new();
     for _ in 0..s {
       let indices = [
         (prng.next_u64() as usize) % m,
@@ -488,37 +484,41 @@ mod tests {
         (prng.next_u64() as usize) % m,
         (prng.next_u64() as usize) % m,
       ];
-      let entry = SparseMatEntry::new(indices, G::ScalarField::rand(&mut prng));
+      let entry = SparseMatEntry::new(indices, Fr::one());
       nonzero_entries.push(entry);
     }
 
     let sparse_poly = SparseMatPolynomial::new(nonzero_entries, log_m);
 
-    // evaluation
-    let r: Vec<G::ScalarField> = (0..c * log_m)
-      .map(|_| G::ScalarField::rand(&mut prng))
-      .collect();
-    let eval = sparse_poly.evaluate(&r);
+    let mut dense: DensifiedRepresentation<Fr, c> = sparse_poly.to_densified();
+    let (gens, commitment) = dense.commit();
 
-    // commitment
-    let dense: DensifiedRepresentation<G::ScalarField, c> = sparse_poly.into();
-    let (gens, commitment) = dense.commit::<G>();
+    let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
+      let mut r_i: Vec<Fr> = Vec::with_capacity(log_m);
+      for _ in 0..log_m {
+        r_i.push(Fr::rand(&mut prng));
+      }
+      r_i
+    });
+    let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
+    let eval = sparse_poly.evaluate(&flat_r);
 
-    // let mut random_tape = RandomTape::new(b"proof");
-    // let mut prover_transcript = Transcript::new(b"example");
-    // let proof = SparseMatPolyEvalProof::prove(
-    //   &dense,
-    //   &r,
-    //   &evals,
-    //   &gens,
-    //   &mut prover_transcript,
-    //   &mut random_tape,
-    // );
+    // Prove
+    let mut random_tape = RandomTape::new(b"proof");
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, c>::prove(
+      &mut dense,
+      &r,
+      &eval,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
 
-    // let mut verifier_transcript = Transcript::new(b"example");
-    // assert!(proof
-    //   .verify(&commitment, &r, &evals, &gens, &mut verifier_transcript)
-    //   .is_ok());
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(proof
+      .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+      .is_ok());
   }
 
   /// Construct a 2d sparse integer matrix like the following:
