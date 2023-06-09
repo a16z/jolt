@@ -21,7 +21,6 @@ mod product_tree;
 pub mod random;
 pub mod sparse_mlpoly;
 mod sumcheck;
-mod timer;
 mod transcript;
 mod unipoly;
 mod utils;
@@ -34,7 +33,6 @@ use core::cmp::max;
 use errors::{ProofVerifyError};
 use merlin::Transcript;
 use random::RandomTape;
-use timer::Timer;
 use transcript::{AppendToTranscript, ProofTranscript};
 
 // /// `ComputationCommitment` holds a public preprocessed NP statement (e.g., R1CS)

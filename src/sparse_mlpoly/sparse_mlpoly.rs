@@ -102,16 +102,15 @@ impl<const C: usize> SparseLookupMatrix<C> {
 
     // \tilde{M}(r) = \sum_k [val(k) * \prod_i E_i(k)]
     // where E_i(k) = \tilde{eq}(to-bits(dim_i(k)), r_i)
-    let evals: Vec<Vec<F>> = r.chunks_exact(self.log_m).map(|r_i| {
-      EqPolynomial::new(r_i.to_vec()).evals()
-    }).collect();
+    let evals: Vec<Vec<F>> = r
+      .chunks_exact(self.log_m)
+      .map(|r_i| EqPolynomial::new(r_i.to_vec()).evals())
+      .collect();
 
     self
       .nz
       .iter()
-      .map(|indices| {
-        (0..C).map(|i| evals[i][indices[i]]).product::<F>()
-      })
+      .map(|indices| (0..C).map(|i| evals[i][indices[i]]).product::<F>())
       .sum()
   }
 

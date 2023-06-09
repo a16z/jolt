@@ -15,79 +15,6 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 
 impl<F: PrimeField> SumcheckInstanceProof<F> {
-  pub fn prove_cubic<Func, G, T: ProofTranscript<G>>(
-    claim: &F,
-    num_rounds: usize,
-    poly_A: &mut DensePolynomial<F>,
-    poly_B: &mut DensePolynomial<F>,
-    poly_C: &mut DensePolynomial<F>,
-    comb_func: Func,
-    transcript: &mut T,
-  ) -> (Self, Vec<F>, Vec<F>)
-  where
-    Func: Fn(&F, &F, &F) -> F,
-    G: CurveGroup<ScalarField = F>,
-  {
-    let mut e = *claim;
-    let mut r: Vec<F> = Vec::new();
-    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-    for _j in 0..num_rounds {
-      let mut eval_point_0 = F::zero();
-      let mut eval_point_2 = F::zero();
-      let mut eval_point_3 = F::zero();
-
-      let len = poly_A.len() / 2;
-      for i in 0..len {
-        // eval 0: bound_func is A(low)
-        eval_point_0 += comb_func(&poly_A[i], &poly_B[i], &poly_C[i]);
-
-        // eval 2: bound_func is -A(low) + 2*A(high)
-        let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-        let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-        let poly_C_bound_point = poly_C[len + i] + poly_C[len + i] - poly_C[i];
-        eval_point_2 += comb_func(
-          &poly_A_bound_point,
-          &poly_B_bound_point,
-          &poly_C_bound_point,
-        );
-
-        // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-        let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
-        let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
-        let poly_C_bound_point = poly_C_bound_point + poly_C[len + i] - poly_C[i];
-
-        eval_point_3 += comb_func(
-          &poly_A_bound_point,
-          &poly_B_bound_point,
-          &poly_C_bound_point,
-        );
-      }
-
-      let evals = vec![eval_point_0, e - eval_point_0, eval_point_2, eval_point_3];
-      let poly = UniPoly::from_evals(&evals);
-
-      // append the prover's message to the transcript
-      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
-
-      //derive the verifier's challenge for the next round
-      let r_j = transcript.challenge_scalar(b"challenge_nextround");
-
-      r.push(r_j);
-      // bound all tables to the verifier's challenege
-      poly_A.bound_poly_var_top(&r_j);
-      poly_B.bound_poly_var_top(&r_j);
-      poly_C.bound_poly_var_top(&r_j);
-      e = poly.evaluate(&r_j);
-      cubic_polys.push(poly.compress());
-    }
-
-    (
-      SumcheckInstanceProof::new(cubic_polys),
-      r,
-      vec![poly_A[0], poly_B[0], poly_C[0]],
-    )
-  }
-
   pub fn prove_cubic_batched<Func, G>(
     claim: &F,
     num_rounds: usize,
@@ -190,15 +117,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
   }
 
-  /// Create a sumcheck proof of an arbitrary number of polynomials.
-  /// 
+  /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
+  ///
   /// Params
   /// - `claim`: Claimed sumcheck evaluation (note: currently unused)
   /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
   /// - `polys`: Dense polynomials to combine and sumcheck
   /// - `comb_func`: Function used to combine each polynomial evaluation
   /// - `transcript`: Fiat-shamir transcript
-  /// 
+  ///
   /// Returns (SumcheckInstanceProof, r_eval_point, final_evals)
   /// - `r_eval_point`: Final random point of evaluation
   /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
@@ -301,13 +228,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// Verify this sumcheck proof.
   /// Note: Verification does not execute the final check of sumcheck protocol: g_v(r_v) = oracle_g(r),
   /// as the oracle is not passed in. Expected that the caller will implement.
-  /// 
+  ///
   /// Params
   /// - `claim`: Claimed evaluation
   /// - `num_rounds`: Number of rounds of sumcheck, or number of variables to bind
   /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
   /// - `transcript`: Fiat-shamir transcript
-  /// 
+  ///
   /// Returns (e, r)
   /// - `e`: Claimed evaluation at random point
   /// - `r`: Evaluation point
@@ -350,7 +277,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     Ok((e, r))
   }
 }
-
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct ZKSumcheckInstanceProof<G: CurveGroup> {
@@ -470,72 +396,12 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
   }
 }
 
-
-
 #[cfg(test)]
 mod test {
   use super::*;
   use crate::math::Math;
   use crate::utils::test::TestTranscript;
   use ark_bls12_381::{Fr, G1Projective};
-
-  #[test]
-  fn sumcheck_cubic() {
-    // Create three dense polynomials (all the same)
-    let num_vars = 3;
-    let num_evals = num_vars.pow2();
-    let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
-    for i in 0..num_evals {
-      evals.push(Fr::from(8 + i as u64));
-    }
-
-    let A: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-    let B: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-    let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-
-    let mut claim = Fr::zero();
-    for i in 0..num_evals {
-      use crate::utils::index_to_field_bitvector;
-
-      claim += A.evaluate(&index_to_field_bitvector(i, num_vars))
-        * B.evaluate(&index_to_field_bitvector(i, num_vars))
-        * C.evaluate(&index_to_field_bitvector(i, num_vars));
-    }
-
-    let comb_func_prod = |poly_A_comp: &Fr, poly_B_comp: &Fr, poly_C_comp: &Fr| -> Fr {
-      *poly_A_comp * *poly_B_comp * *poly_C_comp
-    };
-
-    let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
-
-    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
-    let (proof, prove_randomness, _final_poly_evals) =
-      SumcheckInstanceProof::<Fr>::prove_cubic::<_, G1Projective, _>(
-        &claim,
-        num_vars,
-        &mut A.clone(),
-        &mut B.clone(),
-        &mut C.clone(),
-        comb_func_prod,
-        &mut transcript,
-      );
-
-    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
-    let verify_result = proof.verify::<G1Projective, _>(claim, num_vars, 3, &mut transcript);
-    assert!(verify_result.is_ok());
-
-    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
-    assert_eq!(prove_randomness, verify_randomness);
-    assert_eq!(prove_randomness, r);
-
-    // Consider this the opening proof to a(r) * b(r) * c(r)
-    let a = A.evaluate(prove_randomness.as_slice());
-    let b = B.evaluate(prove_randomness.as_slice());
-    let c = C.evaluate(prove_randomness.as_slice());
-
-    let oracle_query = a * b * c;
-    assert_eq!(verify_evaluation, oracle_query);
-  }
 
   #[test]
   fn sumcheck_arbitrary_cubic() {

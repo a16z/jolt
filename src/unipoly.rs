@@ -6,7 +6,6 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use merlin::Transcript;
 
-
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
 #[derive(Debug, Clone)]
@@ -27,7 +26,9 @@ impl<F: PrimeField> UniPoly<F> {
   }
 
   pub fn from_evals(evals: &[F]) -> Self {
-    UniPoly { coeffs: Self::vandermonde_interpolation(evals) }
+    UniPoly {
+      coeffs: Self::vandermonde_interpolation(evals),
+    }
   }
 
   fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
@@ -41,7 +42,7 @@ impl<F: PrimeField> UniPoly<F> {
       row.push(F::one());
       row.push(x);
       for j in 2..n {
-        row.push(row[j-1] * x);
+        row.push(row[j - 1] * x);
       }
       row.push(evals[i]);
       vandermonde.push(row);

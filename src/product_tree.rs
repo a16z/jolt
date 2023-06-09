@@ -86,21 +86,6 @@ impl<F: PrimeField> GeneralizedScalarProduct<F> {
       })
       .sum()
   }
-
-  /// Split this GeneralizedScalarProduct into two by splitting each of the multi-linear polynomials to half the length.
-  pub fn split(self) -> (GeneralizedScalarProduct<F>, GeneralizedScalarProduct<F>) {
-    let idx = self.operands[0].len() / 2;
-    assert_eq!(idx * 2, self.operands[0].len());
-    let (left, right): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = self
-      .operands
-      .iter()
-      .map(|polynomial| polynomial.split(idx))
-      .unzip();
-    (
-      GeneralizedScalarProduct { operands: left },
-      GeneralizedScalarProduct { operands: right },
-    )
-  }
 }
 
 #[allow(dead_code)]
@@ -187,15 +172,14 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         .map(|i| claims_to_verify[i] * coeff_vec[i])
         .sum();
 
-      let (proof, rand_prod, claims_prod) =
-        SumcheckInstanceProof::<F>::prove_cubic_batched::<_, G>(
-          &claim,
-          num_rounds_prod,
-          poly_vec_par,
-          &coeff_vec,
-          comb_func_prod,
-          transcript,
-        );
+      let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::<F>::prove_cubic_batched::<_, G>(
+        &claim,
+        num_rounds_prod,
+        poly_vec_par,
+        &coeff_vec,
+        comb_func_prod,
+        transcript,
+      );
 
       let (claims_prod_left, claims_prod_right, _claims_eq) = claims_prod;
       for i in 0..grand_product_circuits.len() {
@@ -314,7 +298,8 @@ mod grand_product_circuit_tests {
 
     let mut transcript = Transcript::new(b"test_transcript");
     let mut circuits_vec = vec![&mut factorial_circuit];
-    let (proof, _) = BatchedGrandProductArgument::prove::<G1Projective>(&mut circuits_vec, &mut transcript);
+    let (proof, _) =
+      BatchedGrandProductArgument::prove::<G1Projective>(&mut circuits_vec, &mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
     proof.verify::<G1Projective, _>(&expected_eval, 4, &mut transcript);
@@ -323,9 +308,9 @@ mod grand_product_circuit_tests {
 
 #[cfg(test)]
 mod generalized_scalar_product_tests {
-  use ark_bls12_381::{Fr};
   use super::*;
   use crate::utils::index_to_field_bitvector;
+  use ark_bls12_381::Fr;
 
   #[test]
   fn evaluate() {
@@ -347,24 +332,5 @@ mod generalized_scalar_product_tests {
     }
 
     assert_eq!(gsp.evaluate(), manual_eval);
-  }
-
-  #[test]
-  fn split() {
-    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
-    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(7), Fr::from(7)]);
-    let C = DensePolynomial::new(vec![Fr::from(9), Fr::from(9), Fr::from(9), Fr::from(9)]);
-
-    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
-
-    let (left, right) = gsp.split();
-
-    assert_eq!(left.operands.len(), 3);
-    assert_eq!(right.operands.len(), 3);
-    assert_eq!(left.operands[0].len(), 2);
-    assert_eq!(right.operands[0].len(), 2);
-
-    assert_eq!(left.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(5));
-    assert_eq!(right.operands[1].evaluate(&index_to_field_bitvector(1, 1)), Fr::from(7));
   }
 }

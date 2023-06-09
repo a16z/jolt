@@ -19,14 +19,17 @@ pub struct SubtableEvaluations<F, const C: usize> {
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
 impl<F: PrimeField, const C: usize> SubtableEvaluations<F, C> {
-  /// Create new SubtableEvaluations 
+  /// Create new SubtableEvaluations
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
   pub fn new(evaluations: [DensePolynomial<F>; C]) -> Self {
     let combined_subtable_evaluations = {
       // combine all polynomials into a single polynomial (used below to produce a single commitment)
       let comb = DensePolynomial::merge(evaluations.as_slice());
 
-      SubtableEvaluations { subtable_evals: evaluations, comb }
+      SubtableEvaluations {
+        subtable_evals: evaluations,
+        comb,
+      }
     };
 
     combined_subtable_evaluations
@@ -128,8 +131,14 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
       evals.to_vec()
     };
-    let proof_table_eval=
-      CombinedTableEvalProof::<G, C>::prove_single(&subtable_evals.comb, r, evals, gens, transcript, random_tape);
+    let proof_table_eval = CombinedTableEvalProof::<G, C>::prove_single(
+      &subtable_evals.comb,
+      r,
+      evals,
+      gens,
+      transcript,
+      random_tape,
+    );
 
     CombinedTableEvalProof { proof_table_eval }
   }
@@ -199,9 +208,15 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
 
 impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
   fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
-    transcript.append_message(b"subtable_evals_commitment", b"begin_subtable_evals_commitment");
+    transcript.append_message(
+      b"subtable_evals_commitment",
+      b"begin_subtable_evals_commitment",
+    );
     self.comm_ops_val.append_to_transcript(label, transcript);
-    transcript.append_message(b"subtable_evals_commitment", b"end_subtable_evals_commitment");
+    transcript.append_message(
+      b"subtable_evals_commitment",
+      b"end_subtable_evals_commitment",
+    );
   }
 }
 
@@ -211,7 +226,7 @@ mod test {
 
   use crate::dense_mlpoly::EqPolynomial;
   use crate::utils::index_to_field_bitvector;
-  use ark_bls12_381::{Fr, G1Projective};
+  use ark_bls12_381::Fr;
 
   #[test]
   fn forms_valid_merged_dense_poly() {
@@ -241,7 +256,8 @@ mod test {
     // eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (5)(-5) = -25
     // eq(1, 1, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (5)(6) = 30
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -249,7 +265,8 @@ mod test {
       Fr::from(6)
     );
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -257,7 +274,8 @@ mod test {
       Fr::from(-8)
     );
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -265,7 +283,8 @@ mod test {
       Fr::from(-9)
     );
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -274,7 +293,8 @@ mod test {
     );
 
     // second poly
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -282,7 +302,8 @@ mod test {
       Fr::from(20)
     );
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -290,7 +311,8 @@ mod test {
       Fr::from(-24)
     );
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
@@ -298,7 +320,8 @@ mod test {
       Fr::from(-25)
     );
 
-    let subtable_evals: SubtableEvaluations<Fr, c> = SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
+    let subtable_evals: SubtableEvaluations<Fr, c> =
+      SubtableEvaluations::new([eq_evals_x_poly.clone(), eq_evals_y_poly.clone()]);
     assert_eq!(
       subtable_evals
         .comb
