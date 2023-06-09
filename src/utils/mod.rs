@@ -53,3 +53,8 @@ pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
   assert_eq!(a.len(), b.len());
   (0..a.len()).map(|i| a[i] * b[i]).sum()
 }
+
+/// Checks if `num` is a power of 2.
+pub fn is_power_of_two(num: usize) -> bool {
+  num != 0 && (num & (num - 1)) == 0
+}

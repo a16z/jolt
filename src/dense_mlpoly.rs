@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-use crate::utils::compute_dotproduct;
+use crate::utils::{compute_dotproduct, self};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use super::errors::ProofVerifyError;
@@ -121,10 +121,26 @@ impl IdentityPolynomial {
 
 impl<F: PrimeField> DensePolynomial<F> {
   pub fn new(Z: Vec<F>) -> Self {
+    assert!(utils::is_power_of_two(Z.len()), "Dense multi-linear polynomials must be made from a power of 2");
+
     DensePolynomial {
       num_vars: Z.len().log_2() as usize,
       len: Z.len(),
       Z,
+    }
+  }
+
+  pub fn new_padded(evals: Vec<F>) -> Self {
+    // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
+    let mut poly_evals = evals;
+    while !(utils::is_power_of_two(poly_evals.len())) {
+      poly_evals.push(F::zero());
+    }
+
+    DensePolynomial {
+      num_vars: poly_evals.len().log_2() as usize,
+      len: poly_evals.len(),
+      Z: poly_evals,
     }
   }
 

@@ -11,6 +11,7 @@ use crate::sparse_mlpoly::subtable_evaluations::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableEvaluations,
 };
 use crate::transcript::ProofTranscript;
+use crate::utils;
 
 use ark_ec::CurveGroup;
 use ark_ff::{BigInt, Field, PrimeField};
@@ -274,7 +275,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       eval_final.len().log_2() as usize,
     );
 
-    let mut poly_evals_mem = DensePolynomial::new(eval_final.to_vec());
+    let mut poly_evals_mem = DensePolynomial::new_padded(eval_final.to_vec());
     for i in (0..challenges_mem.len()).rev() {
       poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
     }
@@ -444,7 +445,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       self.eval_final.len().log_2() as usize,
     );
 
-    let mut poly_evals_mem = DensePolynomial::new(self.eval_final.to_vec());
+    let mut poly_evals_mem = DensePolynomial::new_padded(self.eval_final.to_vec());
     for i in (0..challenges_mem.len()).rev() {
       poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
     }
