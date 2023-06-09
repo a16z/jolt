@@ -5,15 +5,18 @@ use libspartan::{random::RandomTape, sparse_mlpoly::{sparse_mlpoly::{SparsePolyn
 use merlin::Transcript;
 use num_integer::Roots;
 use rand_chacha::rand_core::RngCore;
-use ark_bls12_381::{Fr, G1Projective};
+// use ark_bls12_381::{Fr, G1Projective};
+use ark_curve25519::{Fr, EdwardsProjective};
 
 fn main() {
     let mut rng = test_rng();
 
-    const N: usize = 1 << 48;
-    const C: usize = 4;
-    let s = 1 << 18;
-    let M = N.nth_root(C as u32);
+    // const N: usize = 1 << 48;
+    // let M = N.nth_root(C as u32);
+
+    const C: usize = 8;
+    let s = 1 << 20;
+    let M = 1 << 16;
 
     let log_M = log2(M) as usize;
 
@@ -32,7 +35,7 @@ fn main() {
     let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
     println!("Dense.commit()");
     let before_commitment = Instant::now();
-    let (gens, commitment) = dense.commit::<G1Projective>();
+    let (gens, commitment) = dense.commit::<EdwardsProjective>();
 
     let before_randomness = Instant::now();
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -52,7 +55,7 @@ fn main() {
     let mut prover_transcript = Transcript::new(b"example");
     println!("SparsePolynomialEvaluationProof.prove()");
     let before_prove = Instant::now();
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, C>::prove(
+    let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C>::prove(
         &mut dense,
         &r,
         &eval,
@@ -61,9 +64,10 @@ fn main() {
         &mut random_tape);
     let after_prove = Instant::now();
 
-    println!("Densification: {}ms", (before_commitment - before_densification).as_millis());
-    println!("Commitment : {}ms", (before_randomness - before_commitment).as_millis());
-    println!("Randomness : {}ms", (before_mle_eval - before_randomness).as_millis());
-    println!("MLE Eval: {}ms", (before_prove - before_mle_eval).as_millis());
-    println!("Prove: {}ms", (after_prove - before_prove).as_millis());
+    println!("Timings for N = 2^{}, C = {}, M = 2^{}, S = {}", log_M * C, C, log_M, s);
+    println!("- Densification: {}ms", (before_commitment - before_densification).as_millis());
+    println!("- Commitment: {}ms", (before_randomness - before_commitment).as_millis());
+    println!("- Randomness: {}ms", (before_mle_eval - before_randomness).as_millis());
+    println!("- MLE Eval: {}ms", (before_prove - before_mle_eval).as_millis());
+    println!("- Prove: {}ms", (after_prove - before_prove).as_millis());
 }

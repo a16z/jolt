@@ -1,4 +1,4 @@
-use ark_bls12_381::{Fr, G1Projective};
+use ark_curve25519::{Fr, EdwardsProjective};
 use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -41,7 +41,7 @@ fn bench(c: &mut Criterion) {
               let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_M);
 
               let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
-              let (gens, commitment) = dense.commit::<G1Projective>();
+              let (gens, commitment) = dense.commit::<EdwardsProjective>();
 
               let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
               let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
@@ -55,7 +55,7 @@ fn bench(c: &mut Criterion) {
 
               let mut random_tape = RandomTape::new(b"proof");
               let mut prover_transcript = Transcript::new(b"example");
-              let proof = SparsePolynomialEvaluationProof::<G1Projective, C>::prove(
+              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C>::prove(
               &mut dense,
               &r,
               &eval,
