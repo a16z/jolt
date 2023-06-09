@@ -401,7 +401,7 @@ mod tests {
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
-    let dense: DensifiedRepresentation<G::ScalarField, c> = lookup_matrix.into();
+    let dense: DensifiedRepresentation<G::ScalarField, c> = lookup_matrix.to_densified();
     // for i in 0..c {
     //   println!("i: {:?}", i);
     //   println!("dim: {:?}", dense.dim[i]);
@@ -521,32 +521,31 @@ mod tests {
     let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
     let (gens, commitment) = dense.commit::<G1Projective>();
 
-    // let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
-    //   let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
-    //   for _ in 0..log_M {
-    //     r_i.push(Fr::rand(&mut prng));
-    //   }
-    //   r_i
-    // });
-    // let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-    // let eval = lookup_matrix.evaluate_mle(&flat_r);
+    let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
+      let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
+      for _ in 0..log_M {
+        r_i.push(Fr::rand(&mut prng));
+      }
+      r_i
+    });
+    let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
+    let eval = lookup_matrix.evaluate_mle(&flat_r);
 
-    // Prove
-    // let mut random_tape = RandomTape::new(b"proof");
-    // let mut prover_transcript = Transcript::new(b"example");
-    // let proof = SparsePolynomialEvaluationProof::<G1Projective, C>::prove(
-    //   &mut dense,
-    //   &r,
-    //   &eval,
-    //   &gens,
-    //   &mut prover_transcript,
-    //   &mut random_tape,
-    // );
+    let mut random_tape = RandomTape::new(b"proof");
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C>::prove(
+      &mut dense,
+      &r,
+      &eval,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
 
-    // let mut verifier_transcript = Transcript::new(b"example");
-    // assert!(proof
-    //   .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
-    //   .is_ok());
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(proof
+      .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+      .is_ok());
   }
 
   /// Construct a 2d sparse integer matrix like the following:
