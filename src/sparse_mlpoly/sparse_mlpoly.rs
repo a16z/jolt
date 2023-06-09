@@ -18,19 +18,19 @@ use ark_serialize::*;
 
 use merlin::Transcript;
 
-pub struct SparseMatPolyCommitmentGens<G> {
+pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
   pub gens_combined_log_m_variate: PolyCommitmentGens<G>,
   pub gens_derefs: PolyCommitmentGens<G>,
 }
 
-impl<G: CurveGroup> SparseMatPolyCommitmentGens<G> {
+impl<G: CurveGroup> SparsePolyCommitmentGens<G> {
   pub fn new(
     label: &'static [u8],
     c: usize,
     s: usize,
     log_m: usize,
-  ) -> SparseMatPolyCommitmentGens<G> {
+  ) -> SparsePolyCommitmentGens<G> {
     // dim_1, ... dim_c, read_1, ..., read_c
     // log_2(cs + cs)
     let num_vars_combined_l_variate = (2 * c * s).next_power_of_two().log_2();
@@ -45,7 +45,7 @@ impl<G: CurveGroup> SparseMatPolyCommitmentGens<G> {
     let gens_combined_log_m_variate =
       PolyCommitmentGens::new(num_vars_combined_log_m_variate, label);
     let gens_derefs = PolyCommitmentGens::new(num_vars_derefs, label);
-    SparseMatPolyCommitmentGens {
+    SparsePolyCommitmentGens {
       gens_combined_l_variate: gens_combined_l_variate,
       gens_combined_log_m_variate: gens_combined_log_m_variate,
       gens_derefs,
@@ -77,19 +77,19 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseMatPolynomial<const C: usize> {
+pub struct SparseLookupMatrix<const C: usize> {
   pub nz: Vec<[usize; C]>, // non-zero indices nz_1(i), ..., nz_c(i)
   pub s: usize,            // sparsity
   pub log_m: usize,
   pub m: usize, // TODO: big integer
 }
 
-impl<const C: usize> SparseMatPolynomial<C> {
+impl<const C: usize> SparseLookupMatrix<C> {
   pub fn new(nonzero_indices: Vec<[usize; C]>, log_m: usize) -> Self {
     let s = nonzero_indices.len().next_power_of_two();
     // TODO(moodlezoup): nonzero_indices.resize?
 
-    SparseMatPolynomial {
+    SparseLookupMatrix {
       nz: nonzero_indices,
       s,
       log_m,
@@ -97,7 +97,7 @@ impl<const C: usize> SparseMatPolynomial<C> {
     }
   }
 
-  pub fn evaluate<F: PrimeField>(&self, r: &Vec<F>) -> F {
+  pub fn evaluate_mle<F: PrimeField>(&self, r: &Vec<F>) -> F {
     assert_eq!(C * self.log_m, r.len());
 
     // \tilde{M}(r) = \sum_k [val(k) * \prod_i E_i(k)]
@@ -200,7 +200,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
     r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
     eval: &G::ScalarField,        // a evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
-    gens: &SparseMatPolyCommitmentGens<G>,
+    gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
@@ -296,7 +296,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
     commitment: &SparsePolynomialCommitment<G>,
     r: &[Vec<G::ScalarField>; C], // point at which the polynomial is evaluated
     evaluation: &G::ScalarField,  // evaluation of \widetilde{M}(r = (rx,ry))
-    gens: &SparseMatPolyCommitmentGens<G>,
+    gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
@@ -389,18 +389,18 @@ mod tests {
       nz.push(indices);
     }
 
-    let sparse_poly = SparseMatPolynomial::new(nz, log_m);
-    let gens = SparseMatPolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, log_m);
+    let lookup_matrix = SparseLookupMatrix::new(nz, log_m);
+    let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, log_m);
 
     // evaluation
     let r: Vec<G::ScalarField> = (0..c * log_m)
       .map(|_| G::ScalarField::rand(&mut prng))
       .collect();
-    let evaluation = sparse_poly.evaluate(&r);
+    let evaluation = lookup_matrix.evaluate_mle(&r);
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
-    let dense: DensifiedRepresentation<G::ScalarField, c> = sparse_poly.into();
+    let dense: DensifiedRepresentation<G::ScalarField, c> = lookup_matrix.into();
     // for i in 0..c {
     //   println!("i: {:?}", i);
     //   println!("dim: {:?}", dense.dim[i]);
@@ -462,9 +462,9 @@ mod tests {
       nz.push(indices);
     }
 
-    let sparse_poly = SparseMatPolynomial::new(nz, log_m);
+    let lookup_matrix = SparseLookupMatrix::new(nz, log_m);
 
-    let mut dense: DensifiedRepresentation<Fr, c> = sparse_poly.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, c> = lookup_matrix.to_densified();
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
@@ -475,7 +475,7 @@ mod tests {
       r_i
     });
     let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-    let eval = sparse_poly.evaluate(&flat_r);
+    let eval = lookup_matrix.evaluate_mle(&flat_r);
 
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
@@ -508,7 +508,7 @@ mod tests {
     entries: Vec<bool>,
     m: usize,
     log_m: usize,
-  ) -> SparseMatPolynomial<2> {
+  ) -> SparseLookupMatrix<2> {
     assert_eq!(m, log_m.pow2());
     let mut row_index = 0usize;
     let mut column_index = 0usize;
@@ -525,11 +525,11 @@ mod tests {
       }
     }
 
-    SparseMatPolynomial::<2>::new(nz, log_m)
+    SparseLookupMatrix::<2>::new(nz, log_m)
   }
 
   /// Returns a tuple of (c, s, m, log_m, SparsePoly)
-  fn construct_2d_small<G: CurveGroup>() -> (usize, usize, usize, usize, SparseMatPolynomial<2>) {
+  fn construct_2d_small<G: CurveGroup>() -> (usize, usize, usize, usize, SparseLookupMatrix<2>) {
     let c = 2usize;
     let s = 4usize;
     let m = 4usize;
@@ -551,7 +551,7 @@ mod tests {
   #[test]
   fn evaluate_over_known_indices() {
     // Create SparseMLE and then evaluate over known indices and confirm correct evaluations
-    let (c, s, m, log_m, sparse_poly) = construct_2d_small::<G1Projective>();
+    let (c, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
     // Evaluations
     // poly[row, col] = eval
@@ -565,25 +565,25 @@ mod tests {
     let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
     let col: Vec<Fr> = index_to_field_bitvector(0, log_m);
     let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(1));
+    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
 
     // poly[1, 2] = 4
     let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
     let col: Vec<Fr> = index_to_field_bitvector(2, log_m);
     let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(1));
+    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
 
     // poly[2, 1] = 8
     let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
     let col: Vec<Fr> = index_to_field_bitvector(1, log_m);
     let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(1));
+    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
 
     // poly[2, 3] = 9
     let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
     let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
     let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(sparse_poly.evaluate(&combined_index), Fr::from(1));
+    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
   }
 
   #[test]
@@ -591,10 +591,10 @@ mod tests {
     let mut prng = test_rng();
     const c: usize = 2;
 
-    let (_, s, m, log_m, sparse_poly) = construct_2d_small::<G1Projective>();
+    let (_, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
     // Commit
-    let mut dense: DensifiedRepresentation<Fr, c> = sparse_poly.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, c> = lookup_matrix.to_densified();
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
@@ -605,7 +605,7 @@ mod tests {
       r_i
     });
     let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-    let eval = sparse_poly.evaluate(&flat_r);
+    let eval = lookup_matrix.evaluate_mle(&flat_r);
 
     // Prove
     let mut random_tape = RandomTape::new(b"proof");

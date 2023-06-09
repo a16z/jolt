@@ -5,7 +5,7 @@ use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
 use crate::sparse_mlpoly::sparse_mlpoly::{
-  SparseMatPolyCommitmentGens, SparsePolynomialCommitment,
+  SparsePolyCommitmentGens, SparsePolynomialCommitment,
 };
 use crate::sparse_mlpoly::subtable_evaluations::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableEvaluations,
@@ -196,7 +196,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
-    gens: &SparseMatPolyCommitmentGens<G>,
+    gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
@@ -374,7 +374,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       G::ScalarField,
     ); C],
     comm: &SparsePolynomialCommitment<G>,
-    gens: &SparseMatPolyCommitmentGens<G>,
+    gens: &SparsePolyCommitmentGens<G>,
     table_eval_commitment: &CombinedTableCommitment<G>,
     r: &[Vec<G::ScalarField>; C],
     r_hash: &G::ScalarField,
@@ -644,7 +644,7 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     grand_products: &mut [GrandProducts<G::ScalarField>; C],
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     derefs: &SubtableEvaluations<G::ScalarField, C>,
-    gens: &SparseMatPolyCommitmentGens<G>,
+    gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
@@ -673,7 +673,7 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     &self,
     comm: &SparsePolynomialCommitment<G>,
     comm_derefs: &CombinedTableCommitment<G>,
-    gens: &SparseMatPolyCommitmentGens<G>,
+    gens: &SparsePolyCommitmentGens<G>,
     r: &[Vec<G::ScalarField>; C],
     r_mem_check: &(G::ScalarField, G::ScalarField),
     s: usize,

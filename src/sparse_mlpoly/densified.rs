@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  sparse_mlpoly::{SparseMatPolyCommitmentGens, SparseMatPolynomial, SparsePolynomialCommitment},
+  sparse_mlpoly::{SparsePolyCommitmentGens, SparseLookupMatrix, SparsePolynomialCommitment},
   subtable_evaluations::SubtableEvaluations,
 };
 
@@ -27,10 +27,10 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
   ) -> (
-    SparseMatPolyCommitmentGens<G>,
+    SparsePolyCommitmentGens<G>,
     SparsePolynomialCommitment<G>,
   ) {
-    let gens = SparseMatPolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, self.s, self.log_m);
+    let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, self.s, self.log_m);
     let (l_variate_polys_commitment, _) = self
       .combined_l_variate_polys
       .commit(&gens.gens_combined_l_variate, None);
@@ -84,8 +84,8 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   }
 }
 
-impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<C>> for DensifiedRepresentation<F, C> {
-  fn from(sparse_poly: SparseMatPolynomial<C>) -> Self {
+impl<F: PrimeField, const C: usize> From<SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
+  fn from(sparse_poly: SparseLookupMatrix<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
