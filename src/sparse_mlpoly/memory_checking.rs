@@ -4,9 +4,7 @@ use crate::math::Math;
 use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::sparse_mlpoly::{
-  SparsePolyCommitmentGens, SparsePolynomialCommitment,
-};
+use crate::sparse_mlpoly::sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::sparse_mlpoly::subtable_evaluations::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableEvaluations,
 };
@@ -20,7 +18,9 @@ use itertools::izip;
 use merlin::Transcript;
 
 // TODO(moodlezoup): Combine init and write, read and final
-/// Holder for circuits to evaluate multi-set checks on memories.
+/// Contains grand product circuits to evaluate multi-set checks on memories.
+/// Evaluating each circuit is equivalent to computing the hash/fingerprint
+/// H_{\tau, \gamma} of the corresponding set.
 #[derive(Debug)]
 pub struct GrandProducts<F> {
   init: GrandProductCircuit<F>,
@@ -30,19 +30,23 @@ pub struct GrandProducts<F> {
 }
 
 impl<F: PrimeField> GrandProducts<F> {
-  /// Takes memory counter polynomials and encodes a multilinear polynomial evaluating to the reed solomon finger print
-  /// for each item in the set.
+  /// Builds the multilinear polynomials that will serve as the inputs to the grand product circuits
+  /// used for memory checking. Specifically, this function computes the hash (Reed-Solomon fingerprint)
+  /// for each tuple in the "init", "read", "write", and "final" sets (named "Init", "WS", "RS", "Audit"
+  /// in the Spartan paper).
   ///
   /// Params
-  /// - `eval_table`: Memory-sized list of table entries
-  /// - `dim_i`: Num-operations-sized polynomial evaluating to the corresponding table index for each operation
-  /// - `dim_i_usize`: Num-operations-sized polynomial evaluating to the corresponding table index for each operation, represented as usize
-  /// - `read_i`: Memory read counter
-  /// - `final_i` Final memory counter
-  /// - `r_mem_check`: (gamma, tau) – Parameters for multi-set hash / fingerprinting.
+  /// - `eval_table`: M-sized list of table entries
+  /// - `dim_i`: log(s)-variate polynomial evaluating to the table index corresponding to each access.
+  /// - `dim_i_usize`: Vector of table indices accessed, as `usize`s.
+  /// - `read_i`: "Counter polynomial" for memory reads.
+  /// - `final_i` "Counter polynomial" for the final memory state.
+  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
   ///
   /// Returns
-  /// - (init, read, write, final) = (WS, RS, WS', S)
+  /// - `(init, read, write, final)`: These are the memory polynomials as described in the Spartan paper.
+  /// Note that the Lasso describes using `RS`, `WS`, and `S` (using fewer grand products for efficiency),
+  /// but that they serve the same purpose: to prove/verify memory consistency.
   fn build_grand_product_inputs(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
@@ -61,47 +65,43 @@ impl<F: PrimeField> GrandProducts<F> {
     // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
     let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 
-    // memory sized lists
-
-    // init
+    // init: M hash evaluations => log(M)-variate polynomial
     assert_eq!(eval_table.len(), final_i.len());
     let num_mem_cells = eval_table.len();
     let grand_product_input_init = DensePolynomial::new(
       (0..num_mem_cells)
         .map(|i| {
-          // at init time, addr is given by i, init value is given by eval_table, and ts = 0
+          // addr is given by i, init value is given by eval_table, and ts = 0
           hash_func(&F::from(i as u64), &eval_table[i], &F::zero())
         })
         .collect::<Vec<F>>(),
     );
-    // final
+    // final: M hash evaluations => log(M)-variate polynomial
     let grand_product_input_final = DensePolynomial::new(
       (0..num_mem_cells)
         .map(|i| {
-          // at audit time, addr is given by i, value is given by eval_table, and ts is given by audit_ts
+          // addr is given by i, value is given by eval_table, and ts is given by audit_ts
           hash_func(&F::from(i as u64), &eval_table[i], &final_i[i])
         })
         .collect::<Vec<F>>(),
     );
 
-    // sparsity sized lists
-
-    // read
+    // read: s hash evaluations => log(s)-variate polynomial
     assert_eq!(dim_i.len(), read_i.len());
     let num_ops = dim_i.len();
     let grand_product_input_read = DensePolynomial::new(
       (0..num_ops)
         .map(|i| {
-          // at read time, addr is given by dim_i, value is given by derefs, and ts is given by read_ts
+          // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
           hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])
         })
         .collect::<Vec<F>>(),
     );
-    // write
+    // write: s hash evaluation => log(s)-variate polynomial
     let grand_product_input_write = DensePolynomial::new(
       (0..num_ops)
         .map(|i| {
-          // at write time, addr is given by dim_i, value is given by derefs, and ts is given by write_ts = read_ts + 1
+          // addr is given by dim_i, value is given by eval_table, and ts is given by write_ts = read_ts + 1
           hash_func(
             &dim_i[i],
             &eval_table[dim_i_usize[i]],
@@ -119,6 +119,14 @@ impl<F: PrimeField> GrandProducts<F> {
     )
   }
 
+  /// Creates the grand product circuits used for memory checking.
+  ///
+  /// - `eval_table`: M-sized list of table entries
+  /// - `dim_i`: log(s)-variate polynomial evaluating to the table index corresponding to each access.
+  /// - `dim_i_usize`: Vector of table indices accessed, as `usize`s.
+  /// - `read_i`: "Counter polynomial" for memory reads.
+  /// - `final_i` "Counter polynomial" for the final memory state.
+  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
   pub fn new(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
@@ -148,6 +156,8 @@ impl<F: PrimeField> GrandProducts<F> {
 
     let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
     let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
+    // H(Init) * H(WS) ?= H(RS) * H(Audit)
+    // analogous to H(WS) = H(RS) * H(S) in the Lasso paper
     debug_assert_eq!(hashed_read_set, hashed_write_set);
 
     GrandProducts {
@@ -160,6 +170,7 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
+  /// Sets up the memory-check grand products for the given densified multilinear polynomial.
   pub fn to_grand_products(&self, r_mem_check: &(F, F)) -> [GrandProducts<F>; C] {
     std::array::from_fn(|i| {
       GrandProducts::new(
@@ -187,7 +198,7 @@ struct HashLayerProof<G: CurveGroup, const C: usize> {
 
 impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
   fn protocol_name() -> &'static [u8] {
-    b"Sparse polynomial hash layer proof"
+    b"Surge HashLayerProof"
   }
 
   fn prove(
@@ -334,30 +345,31 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
                      v: &G::ScalarField,
                      t: &G::ScalarField|
      -> G::ScalarField { *t * gamma.square() + *v * *gamma + *a - tau };
-    // moodlezoup: (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
+    // TODO(moodlezoup): this differs from the Lasso paper a little:
+    // (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
 
     let (claim_init, claim_read, claim_write, claim_final) = claims;
 
     // init
     let eval_init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem); // [0, 1, ..., m-1]
     let eval_init_val = EqPolynomial::new(r.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
-    let hash_init = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero()); // verify the claim_last of init chunk
-    assert_eq!(&hash_init, claim_init);
+    let hash_init = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero());
+    assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
     // read
-    let hash_read = hash_func(&eval_dim, &eval_deref, &eval_read); // verify the claim_last of init chunk
-    assert_eq!(hash_read, *claim_read);
+    let hash_read = hash_func(&eval_dim, &eval_deref, &eval_read);
+    assert_eq!(hash_read, *claim_read); // verify the last claim of the `read` grand product sumcheck
 
-    // write: shares addr, val component
+    // write: shares addr, val with read
     let eval_write = *eval_read + G::ScalarField::one();
-    let hash_write = hash_func(&eval_dim, &eval_deref, &eval_write); // verify the claim_last of init chunk
-    assert_eq!(hash_write, *claim_write);
+    let hash_write = hash_func(&eval_dim, &eval_deref, &eval_write);
+    assert_eq!(hash_write, *claim_write); // verify the last claim of the `write` grand product sumcheck
 
     // final: shares addr and val with init
     let eval_final_addr = eval_init_addr;
     let eval_final_val = eval_init_val;
     let hash_final = hash_func(&eval_final_addr, &eval_final_val, eval_final);
-    assert_eq!(hash_final, *claim_final); // verify the last step of the sum-check for audit
+    assert_eq!(hash_final, *claim_final); // verify the last claim of the `final` grand product sumcheck
 
     Ok(())
   }
@@ -501,7 +513,7 @@ struct ProductLayerProof<F: PrimeField, const C: usize> {
 
 impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
   fn protocol_name() -> &'static [u8] {
-    b"Sparse polynomial product layer proof"
+    b"Surge ProductLayerProof"
   }
 
   pub fn prove<G>(
@@ -635,7 +647,7 @@ pub struct MemoryCheckingProof<G: CurveGroup, const C: usize> {
 
 impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
   fn protocol_name() -> &'static [u8] {
-    b"Sparse polynomial evaluation proof"
+    b"Surge MemoryCheckingProof"
   }
 
   pub fn prove(

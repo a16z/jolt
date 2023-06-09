@@ -189,7 +189,7 @@ pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const C: usize> {
 
 impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
   fn protocol_name() -> &'static [u8] {
-    b"Sparse polynomial evaluation proof"
+    b"Surge SparsePolynomialEvaluationProof"
   }
   /// Prove an opening of the Sparse Matrix Polynomial
   /// - `dense`: DensifiedRepresentation

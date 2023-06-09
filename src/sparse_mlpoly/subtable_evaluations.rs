@@ -53,7 +53,7 @@ pub struct CombinedTableEvalProof<G: CurveGroup, const C: usize> {
 
 impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   fn protocol_name() -> &'static [u8] {
-    b"subtable_evals evaluation proof"
+    b"Surge CombinedTableEvalProof"
   }
 
   fn prove_single(
