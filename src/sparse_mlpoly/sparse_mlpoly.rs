@@ -59,7 +59,7 @@ pub struct SparsePolynomialCommitment<G: CurveGroup> {
   pub log_m_variate_polys_commitment: PolyCommitment<G>,
   pub s: usize, // sparsity
   pub log_m: usize,
-  pub m: usize, // TODO: big integer
+  pub m: usize,
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
@@ -81,7 +81,7 @@ pub struct SparseLookupMatrix<const C: usize> {
   pub nz: Vec<[usize; C]>, // non-zero indices nz_1(i), ..., nz_c(i)
   pub s: usize,            // sparsity
   pub log_m: usize,
-  pub m: usize, // TODO: big integer
+  pub m: usize,
 }
 
 impl<const C: usize> SparseLookupMatrix<C> {

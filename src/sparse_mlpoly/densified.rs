@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  sparse_mlpoly::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment},
+  sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment},
   subtable_evaluations::SubtableEvaluations,
 };
 
@@ -17,7 +17,7 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub combined_log_m_variate_polys: DensePolynomial<F>,
   pub s: usize, // sparsity
   pub log_m: usize,
-  pub m: usize, // TODO: big integer
+  pub m: usize,
 
   /// Table evaluations T[k] \forall k \in [0, ... M]  -- (over c dimensions)
   pub table_evals: Vec<Vec<F>>,

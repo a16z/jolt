@@ -11,16 +11,13 @@ use crate::sparse_mlpoly::subtable_evaluations::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableEvaluations,
 };
 use crate::transcript::ProofTranscript;
-use crate::utils;
 
 use ark_ec::CurveGroup;
-use ark_ff::{BigInt, Field, PrimeField};
+use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use itertools::izip;
 use merlin::Transcript;
-
-use super::subtable_evaluations;
 
 // TODO(moodlezoup): Combine init and write, read and final
 /// Holder for circuits to evaluate multi-set checks on memories.
