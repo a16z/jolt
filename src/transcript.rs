@@ -19,7 +19,7 @@ pub trait ProofTranscript<G: CurveGroup> {
 
 impl<G: CurveGroup> ProofTranscript<G> for Transcript {
   fn append_message(&mut self, label: &'static [u8], msg: &'static [u8]) {
-    println!("Transcript.append_messgae: {:?}", std::str::from_utf8(msg));
+    // println!("Transcript.append_message: {:?}", std::str::from_utf8(msg));
     self.append_message(label, msg);
   }
 

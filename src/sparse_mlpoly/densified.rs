@@ -4,8 +4,8 @@ use ark_ff::PrimeField;
 use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  subtable_evaluations::SubtableEvaluations,
   sparse_mlpoly::{SparseMatPolyCommitmentGens, SparseMatPolynomial, SparsePolynomialCommitment},
+  subtable_evaluations::SubtableEvaluations,
 };
 
 pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
@@ -13,7 +13,6 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub dim: [DensePolynomial<F>; C],
   pub read: [DensePolynomial<F>; C],
   pub r#final: [DensePolynomial<F>; C],
-  pub val: DensePolynomial<F>,
   pub combined_l_variate_polys: DensePolynomial<F>,
   pub combined_log_m_variate_polys: DensePolynomial<F>,
   pub s: usize, // sparsity
@@ -85,10 +84,8 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   }
 }
 
-impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
-  for DensifiedRepresentation<F, C>
-{
-  fn from(sparse_poly: SparseMatPolynomial<F, C>) -> Self {
+impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<C>> for DensifiedRepresentation<F, C> {
+  fn from(sparse_poly: SparseMatPolynomial<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
@@ -97,9 +94,9 @@ impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
 
     for i in 0..C {
       let mut access_sequence = sparse_poly
-        .nonzero_entries
+        .nz
         .iter()
-        .map(|entry| entry.indices[i])
+        .map(|indices| indices[i])
         .collect::<Vec<usize>>();
       // TODO(moodlezoup) Is this resize necessary/in the right place?
       access_sequence.resize(sparse_poly.s, 0usize);
@@ -124,18 +121,7 @@ impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
       dim_usize.push(access_sequence);
     }
 
-    let mut values: Vec<F> = sparse_poly
-      .nonzero_entries
-      .iter()
-      .map(|entry| entry.val)
-      .collect();
-    // TODO(moodlezoup) Is this resize necessary/in the right place?
-    values.resize(sparse_poly.s, F::zero());
-
-    let val = DensePolynomial::new(values);
-
-    let mut l_variate_polys = [dim.as_slice(), read.as_slice()].concat();
-    l_variate_polys.push(val.clone());
+    let l_variate_polys = [dim.as_slice(), read.as_slice()].concat();
 
     let combined_l_variate_polys = DensePolynomial::merge(&l_variate_polys);
     let combined_log_m_variate_polys = DensePolynomial::merge(&r#final);
@@ -145,13 +131,12 @@ impl<F: PrimeField, const C: usize> From<SparseMatPolynomial<F, C>>
       dim: dim.try_into().unwrap(),
       read: read.try_into().unwrap(),
       r#final: r#final.try_into().unwrap(),
-      val,
       combined_l_variate_polys,
       combined_log_m_variate_polys,
       s: sparse_poly.s,
       log_m: sparse_poly.log_m,
       m: sparse_poly.m,
-      table_evals: vec![]
+      table_evals: vec![],
     }
   }
 }
