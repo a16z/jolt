@@ -105,32 +105,6 @@ impl<F: PrimeField> GeneralizedScalarProduct<F> {
 
 #[allow(dead_code)]
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct LayerProof<F: PrimeField> {
-  pub proof: SumcheckInstanceProof<F>,
-  pub claims: Vec<F>,
-}
-
-#[allow(dead_code)]
-impl<F: PrimeField> LayerProof<F> {
-  pub fn verify<G, T: ProofTranscript<G>>(
-    &self,
-    claim: F,
-    num_rounds: usize,
-    degree_bound: usize,
-    transcript: &mut T,
-  ) -> (F, Vec<F>)
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
-    self
-      .proof
-      .verify::<G, T>(claim, num_rounds, degree_bound, transcript)
-      .unwrap()
-  }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct LayerProofBatched<F: PrimeField> {
   pub proof: SumcheckInstanceProof<F>,
   pub claims_prod_left: Vec<F>,
@@ -153,106 +127,6 @@ impl<F: PrimeField> LayerProofBatched<F> {
       .proof
       .verify::<G, T>(claim, num_rounds, degree_bound, transcript)
       .unwrap()
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct GrandProductArgument<F: PrimeField> {
-  proof: Vec<LayerProof<F>>,
-}
-
-impl<F: PrimeField> GrandProductArgument<F> {
-  #![allow(dead_code)]
-  pub fn prove<G, T: ProofTranscript<G>>(
-    circuit: &mut GrandProductCircuit<F>,
-    transcript: &mut T,
-  ) -> (Self, F, Vec<F>)
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
-    let mut proof: Vec<LayerProof<F>> = Vec::new();
-    let num_layers = circuit.left_vec.len();
-
-    let mut claim = circuit.evaluate();
-    let mut rand = Vec::new();
-    for layer_id in (0..num_layers).rev() {
-      let len = circuit.left_vec[layer_id].len() + circuit.right_vec[layer_id].len();
-
-      let mut poly_C = DensePolynomial::new(EqPolynomial::new(rand.clone()).evals());
-      assert_eq!(poly_C.len(), len / 2);
-
-      let num_rounds_prod = poly_C.len().log_2() as usize;
-      let comb_func_prod = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F| -> F {
-        *poly_A_comp * *poly_B_comp * *poly_C_comp
-      };
-      let (proof_prod, r_eval_point, claimed_prod_eval) = SumcheckInstanceProof::<F>::prove_cubic::<_, G, T>(
-        &claim,
-        num_rounds_prod,
-        &mut circuit.left_vec[layer_id],
-        &mut circuit.right_vec[layer_id],
-        &mut poly_C,
-        comb_func_prod,
-        transcript,
-      );
-      transcript.append_scalar(b"claim_prod_left", &claimed_prod_eval[0]);
-      transcript.append_scalar(b"claim_prod_right", &claimed_prod_eval[1]);
-
-      // produce a random challenge
-      let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
-
-      claim = claimed_prod_eval[0] + r_layer * (claimed_prod_eval[1] - claimed_prod_eval[0]);
-
-      let mut ext = vec![r_layer];
-      ext.extend(r_eval_point);
-      rand = ext;
-
-      proof.push(LayerProof {
-        proof: proof_prod,
-        claims: claimed_prod_eval[0..claimed_prod_eval.len() - 1].to_vec(),
-      });
-    }
-
-    (GrandProductArgument { proof }, claim, rand)
-  }
-
-  pub fn verify<G, T: ProofTranscript<G>>(
-    &self,
-    eval: F,
-    len: usize,
-    transcript: &mut T,
-  ) -> (F, Vec<F>)
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
-    let num_layers = len.log_2() as usize;
-    let mut claim = eval;
-    let mut rand: Vec<F> = Vec::new();
-    assert_eq!(self.proof.len(), num_layers);
-
-    for (num_rounds, i) in (0..num_layers).enumerate() {
-      let (claimed_eval_last, r_eval_point) = self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
-
-      let claims_prod = &self.proof[i].claims;
-      transcript.append_scalar(b"claim_prod_left", &claims_prod[0]);
-      transcript.append_scalar(b"claim_prod_right", &claims_prod[1]);
-
-      assert_eq!(rand.len(), r_eval_point.len());
-      let eq: F = (0..rand.len())
-        .map(|i| rand[i] * r_eval_point[i] + (F::one() - rand[i]) * (F::one() - r_eval_point[i]))
-        .product();
-
-      assert_eq!(claims_prod[0] * claims_prod[1] * eq, claimed_eval_last);
-
-      // produce a random challenge
-      let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
-
-      claim = (F::one() - r_layer) * claims_prod[0] + r_layer * claims_prod[1];
-      let mut ext = vec![r_layer];
-      ext.extend(r_eval_point);
-      rand = ext;
-    }
-
-    (claim, rand)
   }
 }
 
@@ -435,16 +309,15 @@ mod grand_product_circuit_tests {
   fn prove_verify() {
     let factorial = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
     let mut factorial_circuit = GrandProductCircuit::new(&factorial);
-
+    let expected_eval = vec![Fr::from(24)];
     assert_eq!(factorial_circuit.evaluate(), Fr::from(24));
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let (gpa, claimed_eval, claimed_eval_point) = GrandProductArgument::prove::<G1Projective, _>(&mut factorial_circuit, &mut transcript);
+    let mut circuits_vec = vec![&mut factorial_circuit];
+    let (proof, _) = BatchedGrandProductArgument::prove::<G1Projective>(&mut circuits_vec, &mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let (eval, eval_point) = gpa.verify::<G1Projective, _>(Fr::from(24), 4, &mut transcript);
-    assert_eq!(claimed_eval_point, eval_point);
-    assert_eq!(claimed_eval, eval);
+    proof.verify::<G1Projective, _>(&expected_eval, 4, &mut transcript);
   }
 }
 

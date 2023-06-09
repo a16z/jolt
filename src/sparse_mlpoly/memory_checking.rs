@@ -739,10 +739,6 @@ mod test {
 
   #[test]
   fn test() {
-    // Eval_table: E_rx over all memory
-    // dim_i: Relevant table lookups
-    // Read_i
-
     // Memory size: 8
     // Sparsity (num-ops): 4
     let eval_table = vec![
