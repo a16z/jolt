@@ -117,7 +117,7 @@ impl<const C: usize> SparseLookupMatrix<C> {
       .sum()
   }
 
-  fn to_densified<F: PrimeField>(&self) -> DensifiedRepresentation<F, C> {
+  pub fn to_densified<F: PrimeField>(&self) -> DensifiedRepresentation<F, C> {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);

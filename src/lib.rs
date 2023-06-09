@@ -1,6 +1,5 @@
 #![allow(non_snake_case)]
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
 #![allow(clippy::assertions_on_result_states)]
 #![feature(extend_one)]
 
@@ -19,8 +18,8 @@ mod errors;
 mod math;
 mod nizk;
 mod product_tree;
-mod random;
-mod sparse_mlpoly;
+pub mod random;
+pub mod sparse_mlpoly;
 mod sumcheck;
 mod timer;
 mod transcript;
