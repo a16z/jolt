@@ -229,6 +229,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
       .clone()
       .to_vec();
     let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
+    // TODO(moodlezoup): \tilde{eq}(r,k)
     let eval_scalar_product = scalar_product.evaluate();
 
     <Transcript as ProofTranscript<G>>::append_scalar(
@@ -242,7 +243,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
     let (primary_sumcheck_proof, r_z, _) =
       SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
         &eval_scalar_product,
-        scalar_product_operands[0].len().log_2(),
+        dense.s.log_2(),
         &mut scalar_product_operands,
         |polys| -> G::ScalarField { polys.iter().product() }, // TODO(moodlezoup): replace with function parameter g
         transcript,
@@ -317,7 +318,7 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
 
     let (claim_last, r_z) = self.primary_sumcheck.proof.verify::<G, Transcript>(
       *evaluation,
-      commitment.log_m,
+      commitment.s.log_2(),
       C,
       transcript,
     )?;
@@ -440,36 +441,34 @@ mod tests {
   }
 
   #[test]
-  fn prove_4d() {
+  fn prove_3d() {
     let mut prng = test_rng();
 
     // parameters
-    let num_entries: usize = 256 * 256;
-    let s: usize = 256;
-    const c: usize = 4;
-    let log_m: usize = num_entries.log_2() / c; // 4
-    let m: usize = log_m.pow2(); // 2 ^ 4 = 16
+    const C: usize = 3;
+    const M: usize = 256;
+    let log_M: usize = M.log_2();
+    let s: usize = 16;
 
     // generate sparse polynomial
-    let mut nz: Vec<[usize; c]> = Vec::new();
+    let mut nz: Vec<[usize; C]> = Vec::new();
     for _ in 0..s {
       let indices = [
-        (prng.next_u64() as usize) % m,
-        (prng.next_u64() as usize) % m,
-        (prng.next_u64() as usize) % m,
-        (prng.next_u64() as usize) % m,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
       ];
       nz.push(indices);
     }
 
-    let lookup_matrix = SparseLookupMatrix::new(nz, log_m);
+    let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, c> = lookup_matrix.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
     let (gens, commitment) = dense.commit();
 
-    let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
-      let mut r_i: Vec<Fr> = Vec::with_capacity(log_m);
-      for _ in 0..log_m {
+    let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
+      let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
+      for _ in 0..log_M {
         r_i.push(Fr::rand(&mut prng));
       }
       r_i
@@ -480,7 +479,7 @@ mod tests {
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, c>::prove(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C>::prove(
       &mut dense,
       &r,
       &eval,
@@ -493,6 +492,61 @@ mod tests {
     assert!(proof
       .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
       .is_ok());
+  }
+
+  #[test]
+  fn prove_4d() {
+    let mut prng = test_rng();
+
+    // parameters
+    const C: usize = 4;
+    const M: usize = 256;
+    let log_M: usize = M.log_2();
+    let s: usize = 16;
+
+    // generate sparse polynomial
+    let mut nz: Vec<[usize; C]> = Vec::new();
+    for _ in 0..s {
+      let indices = [
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+      ];
+      nz.push(indices);
+    }
+
+    let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
+
+    let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
+    let (gens, commitment) = dense.commit::<G1Projective>();
+
+    // let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
+    //   let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
+    //   for _ in 0..log_M {
+    //     r_i.push(Fr::rand(&mut prng));
+    //   }
+    //   r_i
+    // });
+    // let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
+    // let eval = lookup_matrix.evaluate_mle(&flat_r);
+
+    // Prove
+    // let mut random_tape = RandomTape::new(b"proof");
+    // let mut prover_transcript = Transcript::new(b"example");
+    // let proof = SparsePolynomialEvaluationProof::<G1Projective, C>::prove(
+    //   &mut dense,
+    //   &r,
+    //   &eval,
+    //   &gens,
+    //   &mut prover_transcript,
+    //   &mut random_tape,
+    // );
+
+    // let mut verifier_transcript = Transcript::new(b"example");
+    // assert!(proof
+    //   .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+    //   .is_ok());
   }
 
   /// Construct a 2d sparse integer matrix like the following:
@@ -587,7 +641,7 @@ mod tests {
   }
 
   #[test]
-  fn prove() {
+  fn prove_2d() {
     let mut prng = test_rng();
     const c: usize = 2;
 

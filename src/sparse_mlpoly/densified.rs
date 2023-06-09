@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  sparse_mlpoly::{SparsePolyCommitmentGens, SparseLookupMatrix, SparsePolynomialCommitment},
+  sparse_mlpoly::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment},
   subtable_evaluations::SubtableEvaluations,
 };
 
@@ -26,10 +26,7 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
-  ) -> (
-    SparsePolyCommitmentGens<G>,
-    SparsePolynomialCommitment<G>,
-  ) {
+  ) -> (SparsePolyCommitmentGens<G>, SparsePolynomialCommitment<G>) {
     let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, self.s, self.log_m);
     let (l_variate_polys_commitment, _) = self
       .combined_l_variate_polys
