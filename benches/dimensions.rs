@@ -13,7 +13,7 @@ use merlin::Transcript;
 use num_integer::Roots;
 use rand_chacha::rand_core::RngCore;
 
-const NS: [usize; 2] = [1 << 32, 1 << 48];
+const NS: [usize; 2] = [1 << 16, 1 << 24];
 
 fn bench(c: &mut Criterion) {
   let mut group = c.benchmark_group("SparseLookupMatrix::prove()");
@@ -24,7 +24,7 @@ fn bench(c: &mut Criterion) {
     seq_macro::seq!(C in 2..=4  { // Macros to unroll due to generic constant C
       let M = N.nth_root(C as u32);
       let log_M = log2(M) as usize;
-      let s = 1 << 12; // TODO: Variable sparsity
+      let s = 1 << 10; // TODO: Variable sparsity
 
       // generate sparse polynomial
       let mut nz: Vec<[usize; C]> = Vec::new();
