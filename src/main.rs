@@ -8,16 +8,29 @@ use rand_chacha::rand_core::RngCore;
 // use ark_bls12_381::{Fr, G1Projective};
 use ark_curve25519::{Fr, EdwardsProjective};
 
+pub struct Workload {
+    /// Sparsity
+    S: usize,
+
+    /// Memory size
+    M: usize,
+}
+
 fn main() {
     let mut rng = test_rng();
 
-    // const N: usize = 1 << 48;
-    // let M = N.nth_root(C as u32);
+    const SM: Workload = Workload { S: 1 << 16, M: 1 << 20 }; // C = 2
+    const MD_LOW_SPARSE: Workload = Workload { S: 1 << 16, M: 1 << 16 }; // C = 4
+    const MD_HIGH_SPARSE: Workload = Workload { S: 1 << 24, M: 1 << 16 }; // C = 4
+    const LG_LOW_SPARSE: Workload = Workload { S: 1 << 16, M: 1 << 16 }; // C = 8
+    const LG_HIGH_SPARSE: Workload = Workload { S: 1 << 24, M: 1 << 16 }; // C = 8
 
+    // Select your fighter!
+    const WORKLOAD: Workload = LG_HIGH_SPARSE;
     const C: usize = 8;
-    let s = 1 << 20;
-    let M = 1 << 16;
 
+    let s = WORKLOAD.S;
+    let M = WORKLOAD.M;
     let log_M = log2(M) as usize;
 
     // generate sparse polynomial
