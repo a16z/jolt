@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment, SparseLookupMatrix},
+  sparse_mlpoly::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment},
   subtable_evaluations::SubtableEvaluations,
 };
 
@@ -23,8 +23,8 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub table_evals: Vec<Vec<F>>,
 }
 
-impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
-  pub fn from_sparse(sparse: &SparseLookupMatrix<C>) -> Self {
+impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
+  fn from(sparse: &SparseLookupMatrix<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
@@ -32,7 +32,7 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
     let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
 
     for i in 0..C {
-      let mut access_sequence = sparse 
+      let mut access_sequence = sparse
         .nz
         .iter()
         .map(|indices| indices[i])
@@ -78,7 +78,9 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
       table_evals: vec![],
     }
   }
+}
 
+impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
   ) -> (SparsePolyCommitmentGens<G>, SparsePolynomialCommitment<G>) {

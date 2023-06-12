@@ -113,8 +113,6 @@ impl<const C: usize> SparseLookupMatrix<C> {
       .map(|indices| (0..C).map(|i| evals[i][indices[i]]).product::<F>())
       .sum()
   }
-
-  
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -345,7 +343,8 @@ mod tests {
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
-    let dense: DensifiedRepresentation<G::ScalarField, c> = DensifiedRepresentation::from_sparse(&lookup_matrix);
+    let dense: DensifiedRepresentation<G::ScalarField, c> =
+      DensifiedRepresentation::from(&lookup_matrix);
     // for i in 0..c {
     //   println!("i: {:?}", i);
     //   println!("dim: {:?}", dense.dim[i]);
@@ -407,7 +406,7 @@ mod tests {
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from_sparse(&lookup_matrix);
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -462,7 +461,7 @@ mod tests {
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from_sparse(&lookup_matrix);
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
     let (gens, commitment) = dense.commit::<G1Projective>();
 
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -591,7 +590,7 @@ mod tests {
     let (_, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
     // Commit
-    let mut dense: DensifiedRepresentation<Fr, c> = DensifiedRepresentation::from_sparse(&lookup_matrix);
+    let mut dense: DensifiedRepresentation<Fr, c> = DensifiedRepresentation::from(&lookup_matrix);
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
