@@ -45,7 +45,7 @@ fn main() {
 
     println!("SparseLookupMatrix.to_densified()");
     let before_densification = Instant::now();
-    let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from_sparse(&lookup_matrix);
     println!("Dense.commit()");
     let before_commitment = Instant::now();
     let (gens, commitment) = dense.commit::<EdwardsProjective>();

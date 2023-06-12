@@ -114,60 +114,7 @@ impl<const C: usize> SparseLookupMatrix<C> {
       .sum()
   }
 
-  pub fn to_densified<F: PrimeField>(&self) -> DensifiedRepresentation<F, C> {
-    // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
-    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
-    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-
-    for i in 0..C {
-      let mut access_sequence = self
-        .nz
-        .iter()
-        .map(|indices| indices[i])
-        .collect::<Vec<usize>>();
-      // TODO(moodlezoup) Is this resize necessary/in the right place?
-      access_sequence.resize(self.s, 0usize);
-
-      let mut final_timestamps = vec![0usize; self.m];
-      let mut read_timestamps = vec![0usize; self.s];
-
-      // since read timestamps are trustworthy, we can simply increment the r-ts to obtain a w-ts
-      // this is sufficient to ensure that the write-set, consisting of (addr, val, ts) tuples, is a set
-      for i in 0..self.s {
-        let memory_address = access_sequence[i];
-        assert!(memory_address < self.m);
-        let ts = final_timestamps[memory_address];
-        read_timestamps[i] = ts;
-        let write_timestamp = ts + 1;
-        final_timestamps[memory_address] = write_timestamp;
-      }
-
-      dim.push(DensePolynomial::from_usize(&access_sequence));
-      read.push(DensePolynomial::from_usize(&read_timestamps));
-      r#final.push(DensePolynomial::from_usize(&final_timestamps));
-      dim_usize.push(access_sequence);
-    }
-
-    let l_variate_polys = [dim.as_slice(), read.as_slice()].concat();
-
-    let combined_l_variate_polys = DensePolynomial::merge(&l_variate_polys);
-    let combined_log_m_variate_polys = DensePolynomial::merge(&r#final);
-
-    DensifiedRepresentation {
-      dim_usize: dim_usize.try_into().unwrap(),
-      dim: dim.try_into().unwrap(),
-      read: read.try_into().unwrap(),
-      r#final: r#final.try_into().unwrap(),
-      combined_l_variate_polys,
-      combined_log_m_variate_polys,
-      s: self.s,
-      log_m: self.log_m,
-      m: self.m,
-      table_evals: vec![],
-    }
-  }
+  
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -398,7 +345,7 @@ mod tests {
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
-    let dense: DensifiedRepresentation<G::ScalarField, c> = lookup_matrix.to_densified();
+    let dense: DensifiedRepresentation<G::ScalarField, c> = DensifiedRepresentation::from_sparse(&lookup_matrix);
     // for i in 0..c {
     //   println!("i: {:?}", i);
     //   println!("dim: {:?}", dense.dim[i]);
@@ -460,7 +407,7 @@ mod tests {
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from_sparse(&lookup_matrix);
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -515,7 +462,7 @@ mod tests {
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from_sparse(&lookup_matrix);
     let (gens, commitment) = dense.commit::<G1Projective>();
 
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -644,7 +591,7 @@ mod tests {
     let (_, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
     // Commit
-    let mut dense: DensifiedRepresentation<Fr, c> = lookup_matrix.to_densified();
+    let mut dense: DensifiedRepresentation<Fr, c> = DensifiedRepresentation::from_sparse(&lookup_matrix);
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; c] = std::array::from_fn(|_| {

@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
-  sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment},
+  sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment, SparseLookupMatrix},
   subtable_evaluations::SubtableEvaluations,
 };
 
@@ -24,6 +24,61 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
+  pub fn from_sparse(sparse: &SparseLookupMatrix<C>) -> Self {
+    // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
+    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
+    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+
+    for i in 0..C {
+      let mut access_sequence = sparse 
+        .nz
+        .iter()
+        .map(|indices| indices[i])
+        .collect::<Vec<usize>>();
+      // TODO(moodlezoup) Is this resize necessary/in the right place?
+      access_sequence.resize(sparse.s, 0usize);
+
+      let mut final_timestamps = vec![0usize; sparse.m];
+      let mut read_timestamps = vec![0usize; sparse.s];
+
+      // since read timestamps are trustworthy, we can simply increment the r-ts to obtain a w-ts
+      // this is sufficient to ensure that the write-set, consisting of (addr, val, ts) tuples, is a set
+      for i in 0..sparse.s {
+        let memory_address = access_sequence[i];
+        assert!(memory_address < sparse.m);
+        let ts = final_timestamps[memory_address];
+        read_timestamps[i] = ts;
+        let write_timestamp = ts + 1;
+        final_timestamps[memory_address] = write_timestamp;
+      }
+
+      dim.push(DensePolynomial::from_usize(&access_sequence));
+      read.push(DensePolynomial::from_usize(&read_timestamps));
+      r#final.push(DensePolynomial::from_usize(&final_timestamps));
+      dim_usize.push(access_sequence);
+    }
+
+    let l_variate_polys = [dim.as_slice(), read.as_slice()].concat();
+
+    let combined_l_variate_polys = DensePolynomial::merge(&l_variate_polys);
+    let combined_log_m_variate_polys = DensePolynomial::merge(&r#final);
+
+    DensifiedRepresentation {
+      dim_usize: dim_usize.try_into().unwrap(),
+      dim: dim.try_into().unwrap(),
+      read: read.try_into().unwrap(),
+      r#final: r#final.try_into().unwrap(),
+      combined_l_variate_polys,
+      combined_log_m_variate_polys,
+      s: sparse.s,
+      log_m: sparse.log_m,
+      m: sparse.m,
+      table_evals: vec![],
+    }
+  }
+
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
   ) -> (SparsePolyCommitmentGens<G>, SparsePolynomialCommitment<G>) {
@@ -50,6 +105,7 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   /// Materialize the table of M evaluations in each of the C dimensions in O(M) time.
   /// Note: Not all tables are dependent on r.
   pub fn materialize_table(&mut self, r: &[Vec<F>; C]) {
+    // TODO: Do we really need c * alpha of these now?
     // TODO: Not all tables need 'c' materializations
     self.table_evals = r
       .iter()
