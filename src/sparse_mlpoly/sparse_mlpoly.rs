@@ -209,11 +209,9 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
       let r_hash_params: Vec<G::ScalarField> =
         <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-      let mut grand_products = dense.to_grand_products(&(r_hash_params[0], r_hash_params[1]));
-
       let memory_checking_proof = MemoryCheckingProof::prove(
-        &mut grand_products,
         dense,
+        &(r_hash_params[0], r_hash_params[1]),
         &combined_subtable_evaluations,
         gens,
         transcript,

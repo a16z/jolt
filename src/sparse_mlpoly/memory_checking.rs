@@ -23,9 +23,13 @@ use merlin::Transcript;
 /// H_{\tau, \gamma} of the corresponding set.
 #[derive(Debug)]
 pub struct GrandProducts<F> {
+  /// Corresponds to the Init_{row/col} hash in the Spartan paper.
   init: GrandProductCircuit<F>,
+  /// Corresponds to the RS_{row/col} hash in the Sparatan paper.
   read: GrandProductCircuit<F>,
+  /// Corresponds to the WS_{row/col} hash in the Spartan paper.
   write: GrandProductCircuit<F>,
+  /// Corresponds to the Audit_{row/col} hash in the Spartan paper.
   r#final: GrandProductCircuit<F>,
 }
 
@@ -121,12 +125,13 @@ impl<F: PrimeField> GrandProducts<F> {
 
   /// Creates the grand product circuits used for memory checking.
   ///
+  /// Params
   /// - `eval_table`: M-sized list of table entries
   /// - `dim_i`: log(s)-variate polynomial evaluating to the table index corresponding to each access.
   /// - `dim_i_usize`: Vector of table indices accessed, as `usize`s.
   /// - `read_i`: "Counter polynomial" for memory reads.
   /// - `final_i` "Counter polynomial" for the final memory state.
-  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
+  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting.
   pub fn new(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
@@ -171,6 +176,9 @@ impl<F: PrimeField> GrandProducts<F> {
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   /// Sets up the memory-check grand products for the given densified multilinear polynomial.
+  ///
+  /// Params
+  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting.
   pub fn to_grand_products(&self, r_mem_check: &(F, F)) -> [GrandProducts<F>; C] {
     std::array::from_fn(|i| {
       GrandProducts::new(
@@ -325,6 +333,21 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     }
   }
 
+  /// Checks that the Reed-Solomon fingerprints of init, read, write, and final multisets
+  /// are as claimed by the final sumchecks of their respective grand product arguments.
+  ///
+  /// Params
+  /// - `rand_mem`: The random value chosen by the verifier over the course of the sum-check
+  /// protocol for the init/final grand product argument, i.e. r_i''.
+  /// - `claims`: Fingerprint values of the init, read, write, and final multisets, as
+  /// as claimed by their respective grand product arguments.
+  /// - `eval_deref`: The evaluation E_i(r'''_i).
+  /// - `eval_dim`: The evaluation dim_i(r'''_i).
+  /// - `eval_read`: The evaluation read_i(r'''_i).
+  /// - `eval_final`: The evaluation final_i(r''_i).
+  /// - `r_i`: One chunk of the evaluation point at which the Surge commitment is being opened.
+  /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
+  /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
   fn check_reed_solomon_fingerprints(
     rand_mem: &Vec<G::ScalarField>,
     claims: &(
@@ -337,10 +360,11 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     eval_dim: &G::ScalarField,
     eval_read: &G::ScalarField,
     eval_final: &G::ScalarField,
-    r: &Vec<G::ScalarField>,
+    r_i: &Vec<G::ScalarField>,
     gamma: &G::ScalarField,
     tau: &G::ScalarField,
   ) -> Result<(), ProofVerifyError> {
+    // Computes the Reed-Solomon fingerprint of the tuple (a, v, t)
     let hash_func = |a: &G::ScalarField,
                      v: &G::ScalarField,
                      t: &G::ScalarField|
@@ -352,7 +376,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
 
     // init
     let eval_init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem); // [0, 1, ..., m-1]
-    let eval_init_val = EqPolynomial::new(r.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
+    let eval_init_val = EqPolynomial::new(r_i.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
     let hash_init = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero());
     assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
@@ -396,7 +420,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let (rand_mem, rand_ops) = rand;
 
     // verify derefs at rand_ops
-    // E_i(r_i''') ≟ v_{E_i}
+    // E_i(r_i''') ?= v_{E_i}
     self.proof_derefs.verify(
       rand_ops,
       &self.eval_derefs,
@@ -433,8 +457,8 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       &joint_claim_eval_ops,
     );
 
-    // dim_i(r_i''') ≟ v_i
-    // read_i(r_i''') ≟ v_{read_i}
+    // dim_i(r_i''') ?= v_i
+    // read_i(r_i''') ?= v_{read_i}
     self.proof_ops.verify_plain(
       &gens.gens_combined_l_variate,
       transcript,
@@ -469,7 +493,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
       &joint_claim_eval_mem,
     );
 
-    // final_i(r_i'') ≟ v_{final_i}
+    // final_i(r_i'') ?= v_{final_i}
     self.proof_mem.verify_plain(
       &gens.gens_combined_log_m_variate,
       transcript,
@@ -516,6 +540,12 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
     b"Surge ProductLayerProof"
   }
 
+  /// Performs grand product argument proofs required for memory-checking.
+  /// Batches everything into two instances of BatchedGrandProductArgument.
+  /// 
+  /// Params
+  /// - `grand_products`: The grand product circuits whose evaluations are proven.
+  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   pub fn prove<G>(
     grand_products: &mut [GrandProducts<F>; C],
     transcript: &mut Transcript,
@@ -573,11 +603,6 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
       proof_mem,
       proof_ops,
     };
-
-    let mut product_layer_proof_encoded = vec![];
-    product_layer_proof
-      .serialize_compressed(&mut product_layer_proof_encoded)
-      .unwrap();
 
     (product_layer_proof, rand_mem, rand_ops)
   }
@@ -650,24 +675,35 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     b"Surge MemoryCheckingProof"
   }
 
+  /// Proves that E_i polynomials are well-formed, i.e., that E_i(j) equals T_i[dim_i(j)] for all j ∈ {0, 1}^{log(m)},
+  /// using memory-checking techniques as described in Section 5 of the Lasso paper, or Section 7.2 of the Spartan paper.
+  ///
+  /// Params
+  /// - `dense`: The densified representation of the sparse multilinear polynomial.
+  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
+  /// - `subtable_evaluations`: The subtable values read, i.e. T_i[nz(i)].
+  /// - `gens`: Generates public parameters for polynomial commitments.
+  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
+  /// - `random_tape`: Randomness for dense polynomial commitments.
   pub fn prove(
-    grand_products: &mut [GrandProducts<G::ScalarField>; C],
     dense: &DensifiedRepresentation<G::ScalarField, C>,
-    derefs: &SubtableEvaluations<G::ScalarField, C>,
+    r_mem_check: &(G::ScalarField, G::ScalarField),
+    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
+    let mut grand_products = dense.to_grand_products(r_mem_check);
     let (proof_prod_layer, rand_mem, rand_ops) =
-      ProductLayerProof::prove::<G>(grand_products, transcript);
+      ProductLayerProof::prove::<G>(&mut grand_products, transcript);
 
     // proof of hash layer for row and col
     let proof_hash_layer = HashLayerProof::prove(
       (&rand_mem, &rand_ops),
       dense,
-      derefs,
+      subtable_evaluations,
       gens,
       transcript,
       random_tape,
@@ -679,6 +715,17 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     }
   }
 
+  /// Verifies that E_i polynomials are well-formed, i.e., that E_i(j) equals T_i[dim_i(j)] for all j ∈ {0, 1}^{log(m)},
+  /// using memory-checking techniques as described in Section 5 of the Lasso paper, or Section 7.2 of the Spartan paper.
+  ///
+  /// Params
+  /// - `dense`: The densified representation of the sparse multilinear polynomial.
+  /// - `subtable_evaluations`: The subtable values read, i.e. T_i[nz(i)].
+  /// - `gens`: Generates public parameters for polynomial commitments.
+  /// - `r`: The evaluation point at which the Surge commitment is being opened.
+  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
+  /// - `s`: Sparsity, i.e. the number of lookups.
+  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   pub fn verify(
     &self,
     comm: &SparsePolynomialCommitment<G>,
