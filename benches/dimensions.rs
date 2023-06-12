@@ -40,7 +40,7 @@ fn bench(c: &mut Criterion) {
           bencher.iter(|| {
               let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_M);
 
-              let mut dense: DensifiedRepresentation<Fr, C> = lookup_matrix.to_densified();
+              let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
               let (gens, commitment) = dense.commit::<EdwardsProjective>();
 
               let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
