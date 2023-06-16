@@ -134,6 +134,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     num_rounds: usize,
     polys: &mut Vec<DensePolynomial<F>>,
     comb_func: Func,
+    combined_degree: usize,
     transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
   where
@@ -144,13 +145,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     let mut r: Vec<F> = Vec::new();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-    // Assume this is also the degree of each unipoly
-    let num_polys = polys.len();
-
     for _round in 0..num_rounds {
       // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
       // for points {0, ..., |g(x)|}
-      let mut eval_points = vec![F::zero(); num_polys + 1];
+      let mut eval_points = vec![F::zero(); combined_degree + 1];
 
       let mle_half = polys[0].len() / 2;
       for poly_term_i in 0..mle_half {
@@ -177,7 +175,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
         // ...
         let mut existing_term: Vec<F> = eval_at_one;
-        for eval_i in 2..(num_polys + 1) {
+        for eval_i in 2..(combined_degree + 1) {
           let mut poly_evals = vec![F::zero(); polys.len()];
           for poly_i in 0..polys.len() {
             let poly = &polys[poly_i];
@@ -439,6 +437,7 @@ mod test {
         num_vars,
         &mut polys,
         comb_func_prod,
+        3,
         &mut transcript,
       );
 

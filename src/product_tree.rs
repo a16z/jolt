@@ -64,25 +64,34 @@ impl<F: PrimeField> GrandProductCircuit<F> {
   }
 }
 
-pub struct GeneralizedScalarProduct<F> {
-  operands: Vec<DensePolynomial<F>>,
+pub struct GeneralizedScalarProduct<F, const C: usize, const K: usize>
+where
+  [(); K * C]:,
+{
+  operands: [DensePolynomial<F>; K * C],
 }
 
-impl<F: PrimeField> GeneralizedScalarProduct<F> {
-  pub fn new(operands: Vec<DensePolynomial<F>>) -> Self {
+impl<F: PrimeField, const C: usize, const K: usize> GeneralizedScalarProduct<F, C, K>
+where
+  [(); K * C]:,
+{
+  pub fn new(operands: [DensePolynomial<F>; K * C]) -> Self {
     assert!(operands.iter().all(|poly| poly.len() == operands[0].len()));
     GeneralizedScalarProduct { operands }
   }
 
   /// Evaluate operand polynomials over boolean hypercube, summing products of all evaluations.
-  pub fn evaluate(&self) -> F {
-    (0..self.operands[0].len())
+  pub fn evaluate(&self, g: &dyn Fn([F; K * C]) -> F) -> F {
+    let hypercube_size = self.operands[0].len();
+    self
+      .operands
+      .iter()
+      .for_each(|operand| assert_eq!(operand.len(), hypercube_size));
+
+    (0..hypercube_size)
       .map(|i| {
-        self
-          .operands
-          .iter()
-          .map(|polynomial| polynomial[i])
-          .product::<F>()
+        let g_operands: [F; K * C] = std::array::from_fn(|j| self.operands[j][i]);
+        g(g_operands)
       })
       .sum()
   }
@@ -319,7 +328,8 @@ mod generalized_scalar_product_tests {
     let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
     let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
 
-    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
+    let gsp: GeneralizedScalarProduct<Fr, 3, 1> =
+      GeneralizedScalarProduct::new([A.clone(), B.clone(), C.clone()]);
 
     // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
     let mut manual_eval = Fr::from(0u64);
@@ -331,6 +341,7 @@ mod generalized_scalar_product_tests {
       manual_eval += a * b * c;
     }
 
-    assert_eq!(gsp.evaluate(), manual_eval);
+    let multiply_all = |vals: [Fr; 3]| vals.iter().product();
+    assert_eq!(gsp.evaluate(&multiply_all), manual_eval);
   }
 }

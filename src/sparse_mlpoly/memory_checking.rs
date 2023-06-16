@@ -179,14 +179,21 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   ///
   /// Params
   /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting.
-  pub fn to_grand_products(&self, r_mem_check: &(F, F)) -> [GrandProducts<F>; C] {
+  pub fn to_grand_products<const K: usize>(
+    &self,
+    r_mem_check: &(F, F),
+    subtable_evaluations: &SubtableEvaluations<F, C, K>,
+  ) -> [GrandProducts<F>; K * C]
+  where
+    [(); K * C]:,
+  {
     std::array::from_fn(|i| {
       GrandProducts::new(
-        &self.table_evals[i],
-        &self.dim[i],
-        &self.dim_usize[i],
-        &self.read[i],
-        &self.r#final[i],
+        &subtable_evaluations.subtables[i],
+        &self.dim[i / K],
+        &self.dim_usize[i / K],
+        &self.read[i / K],
+        &self.r#final[i / K],
         r_mem_check,
       )
     })
@@ -194,17 +201,21 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const C: usize> {
+struct HashLayerProof<G: CurveGroup, const C: usize, const K: usize> where
+  [(); K * C]:,{
   eval_dim: [G::ScalarField; C],
   eval_read: [G::ScalarField; C],
   eval_final: [G::ScalarField; C],
-  eval_derefs: [G::ScalarField; C],
+  eval_derefs: [G::ScalarField; K * C],
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G, C>,
+  proof_derefs: CombinedTableEvalProof<G, C, K>,
 }
 
-impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
+impl<G: CurveGroup, const C: usize, const K: usize> HashLayerProof<G, C, K>
+where
+  [(); K * C]:,
+{
   fn protocol_name() -> &'static [u8] {
     b"Surge HashLayerProof"
   }
@@ -212,7 +223,7 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
   fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
-    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
+    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C, K>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -222,8 +233,8 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: [G::ScalarField; C] =
-      std::array::from_fn(|i| subtable_evaluations.subtable_evals[i].evaluate(rand_ops));
+    let eval_derefs: [G::ScalarField; K * C] =
+      std::array::from_fn(|i| subtable_evaluations.subtable_lookup_polys[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
       subtable_evaluations,
       &eval_derefs.to_vec(),
@@ -529,25 +540,31 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField, const C: usize> {
-  grand_product_evals: [(F, F, F, F); C],
+struct ProductLayerProof<F: PrimeField, const C: usize, const K: usize>
+where
+  [(); K * C]:,
+{
+  grand_product_evals: [(F, F, F, F); K * C],
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
 }
 
-impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
+impl<F: PrimeField, const C: usize, const K: usize> ProductLayerProof<F, C, K>
+where
+  [(); K * C]:,
+{
   fn protocol_name() -> &'static [u8] {
     b"Surge ProductLayerProof"
   }
 
   /// Performs grand product argument proofs required for memory-checking.
   /// Batches everything into two instances of BatchedGrandProductArgument.
-  /// 
+  ///
   /// Params
   /// - `grand_products`: The grand product circuits whose evaluations are proven.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   pub fn prove<G>(
-    grand_products: &mut [GrandProducts<F>; C],
+    grand_products: &mut [GrandProducts<F>; K * C],
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
@@ -555,7 +572,7 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let grand_product_evals: [(F, F, F, F); C] = std::array::from_fn(|i| {
+    let grand_product_evals: [(F, F, F, F); K * C] = std::array::from_fn(|i| {
       let hash_init = grand_products[i].init.evaluate();
       let hash_read = grand_products[i].read.evaluate();
       let hash_write = grand_products[i].write.evaluate();
@@ -665,12 +682,18 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, const C: usize> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField, C>,
-  proof_hash_layer: HashLayerProof<G, C>,
+pub struct MemoryCheckingProof<G: CurveGroup, const C: usize, const K: usize>
+where
+  [(); K * C]:,
+{
+  proof_prod_layer: ProductLayerProof<G::ScalarField, C, K>,
+  proof_hash_layer: HashLayerProof<G, C, K>,
 }
 
-impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
+impl<G: CurveGroup, const C: usize, const K: usize> MemoryCheckingProof<G, C, K>
+where
+  [(); K * C]:,
+{
   fn protocol_name() -> &'static [u8] {
     b"Surge MemoryCheckingProof"
   }
@@ -688,14 +711,14 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
   pub fn prove(
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
-    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
+    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C, K>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let mut grand_products = dense.to_grand_products(r_mem_check);
+    let mut grand_products = dense.to_grand_products(r_mem_check, subtable_evaluations);
     let (proof_prod_layer, rand_mem, rand_ops) =
       ProductLayerProof::prove::<G>(&mut grand_products, transcript);
 
