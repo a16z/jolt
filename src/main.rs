@@ -5,7 +5,7 @@ use libspartan::{
   random::RandomTape,
   sparse_mlpoly::{
     densified::DensifiedRepresentation,
-    sparse_mlpoly::{SparseLookupMatrix, SparsePolynomialEvaluationProof},
+    sparse_mlpoly::{SparseLookupMatrix, SparsePolynomialEvaluationProof}, subtable_strategy::EqSubtableStrategy,
   },
 };
 use merlin::Transcript;
@@ -66,7 +66,7 @@ fn main() {
 
   println!("SparseLookupMatrix.to_densified()");
   let before_densification = Instant::now();
-  let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+  let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
   println!("Dense.commit()");
   let before_commitment = Instant::now();
   let (gens, commitment) = dense.commit::<EdwardsProjective>();

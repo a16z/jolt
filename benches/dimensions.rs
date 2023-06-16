@@ -2,6 +2,7 @@ use ark_curve25519::{Fr, EdwardsProjective};
 use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use libspartan::sparse_mlpoly::subtable_strategy::EqSubtableStrategy;
 use libspartan::{
   random::RandomTape,
   sparse_mlpoly::{
@@ -40,7 +41,7 @@ fn bench(c: &mut Criterion) {
           bencher.iter(|| {
               let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_M);
 
-              let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+              let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
               let (gens, commitment) = dense.commit::<EdwardsProjective>();
 
               let r: [Vec<Fr>; C] = std::array::from_fn(|_| {

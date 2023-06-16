@@ -17,6 +17,8 @@ use ark_std::{One, Zero};
 use itertools::izip;
 use merlin::Transcript;
 
+use super::subtable_strategy::SubtableStrategy;
+
 // TODO(moodlezoup): Combine init and write, read and final
 /// Contains grand product circuits to evaluate multi-set checks on memories.
 /// Evaluating each circuit is equivalent to computing the hash/fingerprint
@@ -174,7 +176,7 @@ impl<F: PrimeField> GrandProducts<F> {
   }
 }
 
-impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
+impl<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> DensifiedRepresentation<F, C, S> {
   /// Sets up the memory-check grand products for the given densified multilinear polynomial.
   ///
   /// Params
@@ -209,9 +211,9 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     b"Surge HashLayerProof"
   }
 
-  fn prove(
+  fn prove<S: SubtableStrategy<G::ScalarField, C>>(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    dense: &DensifiedRepresentation<G::ScalarField, C, S>,
     subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
@@ -685,8 +687,8 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
-  pub fn prove(
-    dense: &DensifiedRepresentation<G::ScalarField, C>,
+  pub fn prove<S: SubtableStrategy<G::ScalarField, C>>(
+    dense: &DensifiedRepresentation<G::ScalarField, C, S>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
     subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
     gens: &SparsePolyCommitmentGens<G>,

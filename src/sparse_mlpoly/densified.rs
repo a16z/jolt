@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
@@ -5,10 +7,10 @@ use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
 
 use super::{
   sparse_mlpoly::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment},
-  subtable_evaluations::SubtableEvaluations,
+  subtable_evaluations::SubtableEvaluations, subtable_strategy::SubtableStrategy,
 };
 
-pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
+pub struct DensifiedRepresentation<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> {
   pub dim_usize: [Vec<usize>; C],
   pub dim: [DensePolynomial<F>; C],
   pub read: [DensePolynomial<F>; C],
@@ -19,11 +21,13 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub log_m: usize,
   pub m: usize,
 
-  /// Table evaluations T[k] \forall k \in [0, ... M]  -- (over c dimensions)
+  /// Table evaluations T[k] \forall k \in [0, ... M]  -- (over c * k dimensions)
   pub table_evals: Vec<Vec<F>>,
+
+  _marker: PhantomData<S>
 }
 
-impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
+impl<F: PrimeField, const C: usize, S: SubtableStrategy<F, C>> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C, S> {
   fn from(sparse: &SparseLookupMatrix<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
@@ -76,11 +80,12 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
       log_m: sparse.log_m,
       m: sparse.m,
       table_evals: vec![],
+      _marker: PhantomData
     }
   }
 }
 
-impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
+impl<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> DensifiedRepresentation<F, C, S> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
   ) -> (SparsePolyCommitmentGens<G>, SparsePolynomialCommitment<G>) {
@@ -107,16 +112,8 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   /// Materialize the table of M evaluations in each of the C dimensions in O(M) time.
   /// Note: Not all tables are dependent on r.
   pub fn materialize_table(&mut self, r: &[Vec<F>; C]) {
-    // TODO: Do we really need c * alpha of these now?
     // TODO: Not all tables need 'c' materializations
-    self.table_evals = r
-      .iter()
-      .map(|r_dim| {
-        let eq_evals = EqPolynomial::new(r_dim.clone()).evals();
-        assert_eq!(eq_evals.len(), self.m);
-        eq_evals
-      })
-      .collect();
+    self.table_evals = S::materialize_subtables(self.m, r)
   }
 
   /// Dereference memory. Create 'c' Dense(multi-linear)Polynomials with 's' evaluations of \tilde{eq}(i_dim, r_dim) corresponding to the non-zero indicies of M along the 'c'-th dimension.
@@ -130,7 +127,9 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
     for (c_index, dim_i) in self.dim_usize.iter().enumerate() {
       let mut dim_deref: Vec<F> = Vec::with_capacity(self.s);
       for sparsity_index in 0..self.s {
-        dim_deref.push(self.table_evals[c_index][dim_i[sparsity_index]]);
+        for alpha_index in 1..=S::k() { // Generally 1, or rarely 2
+          dim_deref.push(self.table_evals[c_index * alpha_index][dim_i[sparsity_index]]);
+        }
       }
       combined_subtable_evaluations.push(DensePolynomial::new(dim_deref));
     }

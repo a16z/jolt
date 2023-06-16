@@ -1,6 +1,8 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
+use std::marker::PhantomData;
+
 use crate::dense_mlpoly::DensePolynomial;
 use crate::dense_mlpoly::{EqPolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::errors::ProofVerifyError;
@@ -17,6 +19,8 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 
 use merlin::Transcript;
+
+use super::subtable_strategy::SubtableStrategy;
 
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
@@ -100,6 +104,8 @@ impl<const C: usize> SparseLookupMatrix<C> {
   pub fn evaluate_mle<F: PrimeField>(&self, r: &Vec<F>) -> F {
     assert_eq!(C * self.log_m, r.len());
 
+    // TODO: Move to DenseRepresenation call
+
     // \tilde{M}(r) = \sum_k [val(k) * \prod_i E_i(k)]
     // where E_i(k) = \tilde{eq}(to-bits(dim_i(k)), r_i)
     let evals: Vec<Vec<F>> = r
@@ -138,8 +144,8 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
   /// - `r`: c log_m sized coordinates at which to prove the evaluation of the sparse polynomial
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
-  pub fn prove(
-    dense: &mut DensifiedRepresentation<G::ScalarField, C>,
+  pub fn prove<S: SubtableStrategy<G::ScalarField, C>>(
+    dense: &mut DensifiedRepresentation<G::ScalarField, C, S>,
     r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
     eval: &G::ScalarField,        // a evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
     gens: &SparsePolyCommitmentGens<G>,
@@ -170,6 +176,9 @@ impl<G: CurveGroup, const C: usize> SparsePolynomialEvaluationProof<G, C> {
       .subtable_evals
       .clone()
       .to_vec();
+
+    // TODO: This formulation should come from Dense (which has the table configuration)
+
     let scalar_product = GeneralizedScalarProduct::new(scalar_product_operands.clone());
     // TODO(moodlezoup): \tilde{eq}(r,k)
     let eval_scalar_product = scalar_product.evaluate();
@@ -304,6 +313,7 @@ mod tests {
   use ark_std::rand::RngCore;
   use ark_std::{test_rng, One, UniformRand};
 
+  use crate::sparse_mlpoly::subtable_strategy::EqSubtableStrategy;
   use crate::utils::{ff_bitvector_dbg, index_to_field_bitvector};
 
   #[test]
@@ -341,7 +351,7 @@ mod tests {
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
-    let dense: DensifiedRepresentation<G::ScalarField, c> =
+    let dense: DensifiedRepresentation<G::ScalarField, c, EqSubtableStrategy> =
       DensifiedRepresentation::from(&lookup_matrix);
     // for i in 0..c {
     //   println!("i: {:?}", i);
@@ -404,7 +414,7 @@ mod tests {
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+    let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -459,7 +469,7 @@ mod tests {
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
 
-    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+    let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
     let (gens, commitment) = dense.commit::<G1Projective>();
 
     let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -588,7 +598,7 @@ mod tests {
     let (_, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
     // Commit
-    let mut dense: DensifiedRepresentation<Fr, c> = DensifiedRepresentation::from(&lookup_matrix);
+    let mut dense: DensifiedRepresentation<Fr, c, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
     let (gens, commitment) = dense.commit();
 
     let r: [Vec<Fr>; c] = std::array::from_fn(|_| {
