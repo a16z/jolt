@@ -53,10 +53,8 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {
 
 pub enum EqSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize, const ALPHA: usize> SubtableStrategy<F, C, ALPHA>
-  for EqSubtableStrategy
-{
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; ALPHA] {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for EqSubtableStrategy {
+  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; C] {
     std::array::from_fn(|i| {
       let eq_evals = EqPolynomial::new(r[i].clone()).evals();
       assert_eq!(eq_evals.len(), m);
@@ -65,10 +63,10 @@ impl<F: PrimeField, const C: usize, const ALPHA: usize> SubtableStrategy<F, C, A
   }
 
   fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; ALPHA],
+    subtable_entries: &[Vec<F>; C],
     nz: &[Vec<usize>; C],
     s: usize,
-  ) -> [DensePolynomial<F>; ALPHA] {
+  ) -> [DensePolynomial<F>; C] {
     std::array::from_fn(|i| {
       let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
       for j in 0..s {
@@ -79,10 +77,10 @@ impl<F: PrimeField, const C: usize, const ALPHA: usize> SubtableStrategy<F, C, A
   }
 
   fn to_grand_products(
-    subtable_entries: &[Vec<F>; ALPHA],
+    subtable_entries: &[Vec<F>; C],
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; ALPHA] {
+  ) -> [GrandProducts<F>; C] {
     std::array::from_fn(|i| {
       GrandProducts::new(
         &subtable_entries[i],
@@ -95,12 +93,12 @@ impl<F: PrimeField, const C: usize, const ALPHA: usize> SubtableStrategy<F, C, A
     })
   }
 
-  fn combine_lookups(vals: &[F; ALPHA]) -> F {
+  fn combine_lookups(vals: &[F; C]) -> F {
     vals.iter().product()
   }
 
   fn sumcheck_poly_degree() -> usize {
-    ALPHA // TODO(moodlezoup) +1 for \tilde{eq} poly?
+    C
   }
 }
 
@@ -124,8 +122,7 @@ where
   pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], m: usize, s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
     let subtable_entries: [Vec<F>; ALPHA] = S::materialize_subtables(m, r);
-    let lookup_polys: [DensePolynomial<F>; ALPHA] =
-      S::to_lookup_polys(&subtable_entries, nz, s);
+    let lookup_polys: [DensePolynomial<F>; ALPHA] = S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);
 
     Subtables {
