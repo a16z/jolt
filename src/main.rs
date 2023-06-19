@@ -5,7 +5,10 @@ use libspartan::{
   random::RandomTape,
   sparse_mlpoly::{
     densified::DensifiedRepresentation,
-    sparse_mlpoly::{SparseLookupMatrix, SparsePolynomialEvaluationProof}, subtable_strategy::EqSubtableStrategy,
+    sparse_mlpoly::{
+      SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof,
+    },
+    subtables::EqSubtableStrategy,
   },
 };
 use merlin::Transcript;
@@ -66,10 +69,12 @@ fn main() {
 
   println!("SparseLookupMatrix.to_densified()");
   let before_densification = Instant::now();
-  let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
+  let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
   println!("Dense.commit()");
   let before_commitment = Instant::now();
-  let (gens, commitment) = dense.commit::<EdwardsProjective>();
+  let gens =
+    SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, s, C, log_M);
+  let commitment = dense.commit::<EdwardsProjective>(&gens);
 
   let before_randomness = Instant::now();
   let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -89,7 +94,7 @@ fn main() {
   let mut prover_transcript = Transcript::new(b"example");
   println!("SparsePolynomialEvaluationProof.prove()");
   let before_prove = Instant::now();
-  let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C>::prove(
+  let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
     &mut dense,
     &r,
     &eval,

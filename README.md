@@ -14,7 +14,7 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 ## Current usage
 ```rust
   let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_M);
-  let mut dense: DensifiedRepresentation<Fr, C EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
+  let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
   let (gens, commitment) = dense.commit::<EdwardsProjective>();
   let eval = lookup_matrix.evaluate_mle(&flat_r);
 

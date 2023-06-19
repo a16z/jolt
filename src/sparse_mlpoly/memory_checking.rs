@@ -5,8 +5,8 @@ use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
 use crate::sparse_mlpoly::sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
-use crate::sparse_mlpoly::subtable_evaluations::{
-  CombinedTableCommitment, CombinedTableEvalProof, SubtableEvaluations,
+use crate::sparse_mlpoly::subtables::{
+  CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
 use crate::transcript::ProofTranscript;
 
@@ -16,8 +16,6 @@ use ark_serialize::*;
 use ark_std::{One, Zero};
 use itertools::izip;
 use merlin::Transcript;
-
-use super::subtable_strategy::SubtableStrategy;
 
 // TODO(moodlezoup): Combine init and write, read and final
 /// Contains grand product circuits to evaluate multi-set checks on memories.
@@ -176,45 +174,26 @@ impl<F: PrimeField> GrandProducts<F> {
   }
 }
 
-impl<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> DensifiedRepresentation<F, C, S> {
-  /// Sets up the memory-check grand products for the given densified multilinear polynomial.
-  ///
-  /// Params
-  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting.
-  pub fn to_grand_products(&self, r_mem_check: &(F, F)) -> [GrandProducts<F>; C] {
-    std::array::from_fn(|i| {
-      GrandProducts::new(
-        &self.table_evals[i],
-        &self.dim[i],
-        &self.dim_usize[i],
-        &self.read[i],
-        &self.r#final[i],
-        r_mem_check,
-      )
-    })
-  }
-}
-
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const C: usize> {
+struct HashLayerProof<G: CurveGroup, const C: usize, const ALPHA: usize> {
   eval_dim: [G::ScalarField; C],
   eval_read: [G::ScalarField; C],
   eval_final: [G::ScalarField; C],
-  eval_derefs: [G::ScalarField; C],
+  eval_derefs: [G::ScalarField; ALPHA],
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G, C>,
+  proof_derefs: CombinedTableEvalProof<G, ALPHA>,
 }
 
-impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
+impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALPHA> {
   fn protocol_name() -> &'static [u8] {
     b"Surge HashLayerProof"
   }
 
-  fn prove<S: SubtableStrategy<G::ScalarField, C>>(
+  fn prove<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    dense: &DensifiedRepresentation<G::ScalarField, C, S>,
-    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
+    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    subtables: &Subtables<G::ScalarField, C, ALPHA, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -224,10 +203,10 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: [G::ScalarField; C] =
-      std::array::from_fn(|i| subtable_evaluations.subtable_evals[i].evaluate(rand_ops));
+    let eval_derefs: [G::ScalarField; ALPHA] =
+      std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
-      subtable_evaluations,
+      &subtables.combined_poly,
       &eval_derefs.to_vec(),
       rand_ops,
       &gens.gens_derefs,
@@ -531,25 +510,25 @@ impl<G: CurveGroup, const C: usize> HashLayerProof<G, C> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField, const C: usize> {
-  grand_product_evals: [(F, F, F, F); C],
+struct ProductLayerProof<F: PrimeField, const ALPHA: usize> {
+  grand_product_evals: [(F, F, F, F); ALPHA],
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
 }
 
-impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
+impl<F: PrimeField, const ALPHA: usize> ProductLayerProof<F, ALPHA> {
   fn protocol_name() -> &'static [u8] {
     b"Surge ProductLayerProof"
   }
 
   /// Performs grand product argument proofs required for memory-checking.
   /// Batches everything into two instances of BatchedGrandProductArgument.
-  /// 
+  ///
   /// Params
   /// - `grand_products`: The grand product circuits whose evaluations are proven.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   pub fn prove<G>(
-    grand_products: &mut [GrandProducts<F>; C],
+    grand_products: &mut [GrandProducts<F>; ALPHA],
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
@@ -557,7 +536,7 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let grand_product_evals: [(F, F, F, F); C] = std::array::from_fn(|i| {
+    let grand_product_evals: [(F, F, F, F); ALPHA] = std::array::from_fn(|i| {
       let hash_init = grand_products[i].init.evaluate();
       let hash_read = grand_products[i].read.evaluate();
       let hash_write = grand_products[i].write.evaluate();
@@ -667,12 +646,12 @@ impl<F: PrimeField, const C: usize> ProductLayerProof<F, C> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, const C: usize> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField, C>,
-  proof_hash_layer: HashLayerProof<G, C>,
+pub struct MemoryCheckingProof<G: CurveGroup, const C: usize, const ALPHA: usize> {
+  proof_prod_layer: ProductLayerProof<G::ScalarField, ALPHA>,
+  proof_hash_layer: HashLayerProof<G, C, ALPHA>,
 }
 
-impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
+impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C, ALPHA> {
   fn protocol_name() -> &'static [u8] {
     b"Surge MemoryCheckingProof"
   }
@@ -687,17 +666,17 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
-  pub fn prove<S: SubtableStrategy<G::ScalarField, C>>(
-    dense: &DensifiedRepresentation<G::ScalarField, C, S>,
+  pub fn prove<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
+    dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
-    subtable_evaluations: &SubtableEvaluations<G::ScalarField, C>,
+    subtables: &Subtables<G::ScalarField, C, ALPHA, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let mut grand_products = dense.to_grand_products(r_mem_check);
+    let mut grand_products = S::to_grand_products(&subtables.subtable_entries, dense, r_mem_check);
     let (proof_prod_layer, rand_mem, rand_ops) =
       ProductLayerProof::prove::<G>(&mut grand_products, transcript);
 
@@ -705,7 +684,7 @@ impl<G: CurveGroup, const C: usize> MemoryCheckingProof<G, C> {
     let proof_hash_layer = HashLayerProof::prove(
       (&rand_mem, &rand_ops),
       dense,
-      subtable_evaluations,
+      subtables,
       gens,
       transcript,
       random_tape,

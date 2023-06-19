@@ -1,8 +1,9 @@
-use ark_curve25519::{Fr, EdwardsProjective};
+use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use libspartan::sparse_mlpoly::subtable_strategy::EqSubtableStrategy;
+use libspartan::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
+use libspartan::sparse_mlpoly::subtables::EqSubtableStrategy;
 use libspartan::{
   random::RandomTape,
   sparse_mlpoly::{
@@ -41,8 +42,9 @@ fn bench(c: &mut Criterion) {
           bencher.iter(|| {
               let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_M);
 
-              let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
-              let (gens, commitment) = dense.commit::<EdwardsProjective>();
+              let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+              let gens = SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, s, C, log_M);
+              let commitment = dense.commit::<EdwardsProjective>(&gens);
 
               let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
               let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
@@ -56,7 +58,7 @@ fn bench(c: &mut Criterion) {
 
               let mut random_tape = RandomTape::new(b"proof");
               let mut prover_transcript = Transcript::new(b"example");
-              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C>::prove(
+              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
               &mut dense,
               &r,
               &eval,

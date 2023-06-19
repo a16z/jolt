@@ -129,28 +129,26 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// Returns (SumcheckInstanceProof, r_eval_point, final_evals)
   /// - `r_eval_point`: Final random point of evaluation
   /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
-  pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>>(
+  pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>, const ALPHA: usize>(
     claim: &F,
     num_rounds: usize,
-    polys: &mut Vec<DensePolynomial<F>>,
+    polys: &mut [DensePolynomial<F>; ALPHA],
     comb_func: Func,
+    combined_degree: usize,
     transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
   where
-    Func: Fn(&Vec<F>) -> F,
+    Func: Fn(&[F; ALPHA]) -> F,
     G: CurveGroup<ScalarField = F>,
   {
     let mut e = *claim; // TODO: Currently unused but could make poly evals marginally more efficient
     let mut r: Vec<F> = Vec::new();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-    // Assume this is also the degree of each unipoly
-    let num_polys = polys.len();
-
     for _round in 0..num_rounds {
       // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
       // for points {0, ..., |g(x)|}
-      let mut eval_points = vec![F::zero(); num_polys + 1];
+      let mut eval_points = vec![F::zero(); combined_degree + 1];
 
       let mle_half = polys[0].len() / 2;
       for poly_term_i in 0..mle_half {
@@ -161,13 +159,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
 
         // eval 0: bound_func is A(low)
-        eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+        // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+        eval_points[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
 
         // TODO: Note can be computed from prev_round_claim - eval_point_0
-        let eval_at_one: Vec<F> = polys
-          .iter()
-          .map(|poly| poly[mle_half + poly_term_i])
-          .collect();
+        let eval_at_one: [F; ALPHA] = std::array::from_fn(|j| polys[j][mle_half + poly_term_i]);
         eval_points[1] += comb_func(&eval_at_one);
 
         // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
@@ -176,9 +172,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
         // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
         // ...
-        let mut existing_term: Vec<F> = eval_at_one;
-        for eval_i in 2..(num_polys + 1) {
-          let mut poly_evals = vec![F::zero(); polys.len()];
+        let mut existing_term = eval_at_one;
+        for eval_i in 2..(combined_degree + 1) {
+          let mut poly_evals = [F::zero(); ALPHA];
           for poly_i in 0..polys.len() {
             let poly = &polys[poly_i];
             poly_evals[poly_i] =
@@ -425,20 +421,21 @@ mod test {
         * B.evaluate(&index_to_field_bitvector(i, num_vars))
         * C.evaluate(&index_to_field_bitvector(i, num_vars));
     }
-    let mut polys = vec![A.clone(), B.clone(), C.clone()];
+    let mut polys = [A.clone(), B.clone(), C.clone()];
 
     let comb_func_prod =
-      |polys: &Vec<Fr>| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
+      |polys: &[Fr; 3]| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
 
     let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
 
     let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
     let (proof, prove_randomness, _final_poly_evals) =
-      SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _>(
+      SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _, 3>(
         &claim,
         num_vars,
         &mut polys,
         comb_func_prod,
+        3,
         &mut transcript,
       );
 

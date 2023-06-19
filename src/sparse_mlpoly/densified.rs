@@ -1,16 +1,13 @@
-use std::marker::PhantomData;
-
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use crate::dense_mlpoly::{DensePolynomial, EqPolynomial};
+use crate::dense_mlpoly::DensePolynomial;
 
-use super::{
-  sparse_mlpoly::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment},
-  subtable_evaluations::SubtableEvaluations, subtable_strategy::SubtableStrategy,
+use super::sparse_mlpoly::{
+  SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment,
 };
 
-pub struct DensifiedRepresentation<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> {
+pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub dim_usize: [Vec<usize>; C],
   pub dim: [DensePolynomial<F>; C],
   pub read: [DensePolynomial<F>; C],
@@ -20,14 +17,9 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize, S: SubtableStr
   pub s: usize, // sparsity
   pub log_m: usize,
   pub m: usize,
-
-  /// Table evaluations T[k] \forall k \in [0, ... M]  -- (over c * k dimensions)
-  pub table_evals: Vec<Vec<F>>,
-
-  _marker: PhantomData<S>
 }
 
-impl<F: PrimeField, const C: usize, S: SubtableStrategy<F, C>> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C, S> {
+impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
   fn from(sparse: &SparseLookupMatrix<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
@@ -79,17 +71,15 @@ impl<F: PrimeField, const C: usize, S: SubtableStrategy<F, C>> From<&SparseLooku
       s: sparse.s,
       log_m: sparse.log_m,
       m: sparse.m,
-      table_evals: vec![],
-      _marker: PhantomData
     }
   }
 }
 
-impl<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> DensifiedRepresentation<F, C, S> {
+impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
-  ) -> (SparsePolyCommitmentGens<G>, SparsePolynomialCommitment<G>) {
-    let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, self.s, self.log_m);
+    gens: &SparsePolyCommitmentGens<G>,
+  ) -> SparsePolynomialCommitment<G> {
     let (l_variate_polys_commitment, _) = self
       .combined_l_variate_polys
       .commit(&gens.gens_combined_l_variate, None);
@@ -97,43 +87,12 @@ impl<F: PrimeField, const C: usize, S: SubtableStrategy<F,C>> DensifiedRepresent
       .combined_log_m_variate_polys
       .commit(&gens.gens_combined_log_m_variate, None);
 
-    (
-      gens,
-      SparsePolynomialCommitment {
-        l_variate_polys_commitment,
-        log_m_variate_polys_commitment,
-        s: self.s,
-        log_m: self.log_m,
-        m: self.m,
-      },
-    )
-  }
-
-  /// Materialize the table of M evaluations in each of the C dimensions in O(M) time.
-  /// Note: Not all tables are dependent on r.
-  pub fn materialize_table(&mut self, r: &[Vec<F>; C]) {
-    // TODO: Not all tables need 'c' materializations
-    self.table_evals = S::materialize_subtables(self.m, r)
-  }
-
-  /// Dereference memory. Create 'c' Dense(multi-linear)Polynomials with 's' evaluations of \tilde{eq}(i_dim, r_dim) corresponding to the non-zero indicies of M along the 'c'-th dimension.
-  /// Where r is the randomly selected point by the verifier and r \in F^{log(M)} and i \in {0,1}^{log(M)} for all non-sparse indices along the 'c'-th dimension.
-  /// - `eqs`: c-dimensional vector containing an M-sized vector for each dimension with evaulations of
-  /// \tilde{eq}(i_0, r_0), ..., \tilde{eq}(i_c, r_c) where i_0, ..., i_c \in {0,1}^{logM} (for the non-sparse indices in each dimension)
-  /// and r_0, ... r_c are the randomly selected evaluation points by the verifier.
-  pub fn combine_subtable_evaluations(&self) -> SubtableEvaluations<F, C> {
-    // Iterate over each of the 'c' dimensions and their corresponding audit timestamps / counters
-    let mut combined_subtable_evaluations: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    for (c_index, dim_i) in self.dim_usize.iter().enumerate() {
-      let mut dim_deref: Vec<F> = Vec::with_capacity(self.s);
-      for sparsity_index in 0..self.s {
-        for alpha_index in 1..=S::k() { // Generally 1, or rarely 2
-          dim_deref.push(self.table_evals[c_index * alpha_index][dim_i[sparsity_index]]);
-        }
-      }
-      combined_subtable_evaluations.push(DensePolynomial::new(dim_deref));
+    SparsePolynomialCommitment {
+      l_variate_polys_commitment,
+      log_m_variate_polys_commitment,
+      s: self.s,
+      log_m: self.log_m,
+      m: self.m,
     }
-
-    SubtableEvaluations::new(combined_subtable_evaluations.try_into().unwrap())
   }
 }

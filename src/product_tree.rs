@@ -64,30 +64,6 @@ impl<F: PrimeField> GrandProductCircuit<F> {
   }
 }
 
-pub struct GeneralizedScalarProduct<F> {
-  operands: Vec<DensePolynomial<F>>,
-}
-
-impl<F: PrimeField> GeneralizedScalarProduct<F> {
-  pub fn new(operands: Vec<DensePolynomial<F>>) -> Self {
-    assert!(operands.iter().all(|poly| poly.len() == operands[0].len()));
-    GeneralizedScalarProduct { operands }
-  }
-
-  /// Evaluate operand polynomials over boolean hypercube, summing products of all evaluations.
-  pub fn evaluate(&self) -> F {
-    (0..self.operands[0].len())
-      .map(|i| {
-        self
-          .operands
-          .iter()
-          .map(|polynomial| polynomial[i])
-          .product::<F>()
-      })
-      .sum()
-  }
-}
-
 #[allow(dead_code)]
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct LayerProofBatched<F: PrimeField> {
@@ -306,31 +282,32 @@ mod grand_product_circuit_tests {
   }
 }
 
-#[cfg(test)]
-mod generalized_scalar_product_tests {
-  use super::*;
-  use crate::utils::index_to_field_bitvector;
-  use ark_bls12_381::Fr;
+// #[cfg(test)]
+// mod generalized_scalar_product_tests {
+//   use super::*;
+//   use crate::utils::index_to_field_bitvector;
+//   use ark_bls12_381::Fr;
 
-  #[test]
-  fn evaluate() {
-    // Create three dense polynomials, evaluate each over every point on the boolean hypercube and sum the products of each term
-    let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
-    let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
-    let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
+//   #[test]
+//   fn evaluate() {
+//     // Create three dense polynomials, evaluate each over every point on the boolean hypercube and sum the products of each term
+//     let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
+//     let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
+//     let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
 
-    let gsp = GeneralizedScalarProduct::new(vec![A.clone(), B.clone(), C.clone()]);
+//     let gsp = GeneralizedScalarProduct::new([A.clone(), B.clone(), C.clone()]);
 
-    // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
-    let mut manual_eval = Fr::from(0u64);
-    for i in 0..4 {
-      let a = A.evaluate(&index_to_field_bitvector(i, 2));
-      let b = B.evaluate(&index_to_field_bitvector(i, 2));
-      let c = C.evaluate(&index_to_field_bitvector(i, 2));
+//     // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
+//     let mut manual_eval = Fr::from(0u64);
+//     for i in 0..4 {
+//       let a = A.evaluate(&index_to_field_bitvector(i, 2));
+//       let b = B.evaluate(&index_to_field_bitvector(i, 2));
+//       let c = C.evaluate(&index_to_field_bitvector(i, 2));
 
-      manual_eval += a * b * c;
-    }
+//       manual_eval += a * b * c;
+//     }
 
-    assert_eq!(gsp.evaluate(), manual_eval);
-  }
-}
+//     let multiply_all = |vals: [Fr; 3]| vals.iter().product();
+//     assert_eq!(gsp.evaluate(&multiply_all), manual_eval);
+//   }
+// }
