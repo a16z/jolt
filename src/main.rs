@@ -88,7 +88,6 @@ fn main() {
 
   println!("SparseLookupMatrix.evaluate_mle()");
   let before_mle_eval = Instant::now();
-  let eval = lookup_matrix.evaluate_mle(&flat_r);
 
   let mut random_tape = RandomTape::new(b"proof");
   let mut prover_transcript = Transcript::new(b"example");
@@ -97,7 +96,6 @@ fn main() {
   let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
     &mut dense,
     &r,
-    &eval,
     &gens,
     &mut prover_transcript,
     &mut random_tape,

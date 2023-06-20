@@ -98,31 +98,12 @@ impl<const C: usize> SparseLookupMatrix<C> {
       m: log_m.pow2(),
     }
   }
-
-  // TODO(moodlezoup): r: &[Vec<F>; C]
-  pub fn evaluate_mle<F: PrimeField>(&self, r: &Vec<F>) -> F {
-    assert_eq!(C * self.log_m, r.len());
-
-    // TODO: Move to DenseRepresenation call
-
-    // \tilde{M}(r) = \sum_k [val(k) * \prod_i E_i(k)]
-    // where E_i(k) = \tilde{eq}(to-bits(dim_i(k)), r_i)
-    let evals: Vec<Vec<F>> = r
-      .chunks_exact(self.log_m)
-      .map(|r_i| EqPolynomial::new(r_i.to_vec()).evals())
-      .collect();
-
-    self
-      .nz
-      .iter()
-      .map(|indices| (0..C).map(|i| evals[i][indices[i]]).product::<F>())
-      .sum()
-  }
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
   proof: SumcheckInstanceProof<G::ScalarField>,
+  claimed_evaluation: G::ScalarField,
   eval_derefs: [G::ScalarField; ALPHA],
   proof_derefs: CombinedTableEvalProof<G, ALPHA>,
 }
@@ -148,7 +129,6 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
   pub fn prove<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
     r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
-    eval: &G::ScalarField,        // a evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -173,8 +153,6 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
       b"claim_eval_scalar_product",
       &claimed_eval,
     );
-
-    assert_eq!(claimed_eval, *eval);
 
     let (primary_sumcheck_proof, r_z, _) =
       SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript, ALPHA>(
@@ -220,6 +198,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
       comm_derefs,
       primary_sumcheck: PrimarySumcheck {
         proof: primary_sumcheck_proof,
+        claimed_evaluation: claimed_eval,
         eval_derefs,
         proof_derefs,
       },
@@ -231,7 +210,6 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
     &self,
     commitment: &SparsePolynomialCommitment<G>,
     r: &[Vec<G::ScalarField>; C], // point at which the polynomial is evaluated
-    evaluation: &G::ScalarField,  // evaluation of \widetilde{M}(r = (rx,ry))
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
@@ -248,11 +226,11 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
       b"claim_eval_scalar_product",
-      &evaluation,
+      &self.primary_sumcheck.claimed_evaluation,
     );
 
     let (claim_last, r_z) = self.primary_sumcheck.proof.verify::<G, Transcript>(
-      *evaluation,
+      self.primary_sumcheck.claimed_evaluation,
       commitment.s.log_2(),
       C,
       transcript,
@@ -333,7 +311,7 @@ mod tests {
     let r: Vec<G::ScalarField> = (0..c * log_m)
       .map(|_| G::ScalarField::rand(&mut prng))
       .collect();
-    let evaluation = lookup_matrix.evaluate_mle(&r);
+    // let evaluation = lookup_matrix.evaluate_mle(&r);
     // println!("r: {:?}", r);
     // println!("eval: {}", eval);
 
@@ -412,8 +390,6 @@ mod tests {
       }
       r_i
     });
-    let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-    let eval = lookup_matrix.evaluate_mle(&flat_r);
 
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
@@ -421,7 +397,6 @@ mod tests {
     let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<EqSubtableStrategy>(
       &mut dense,
       &r,
-      &eval,
       &gens,
       &mut prover_transcript,
       &mut random_tape,
@@ -429,7 +404,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -468,15 +443,12 @@ mod tests {
       }
       r_i
     });
-    let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-    let eval = lookup_matrix.evaluate_mle(&flat_r);
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
     let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<EqSubtableStrategy>(
       &mut dense,
       &r,
-      &eval,
       &gens,
       &mut prover_transcript,
       &mut random_tape,
@@ -484,7 +456,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -541,43 +513,44 @@ mod tests {
     )
   }
 
-  #[test]
-  fn evaluate_over_known_indices() {
-    // Create SparseMLE and then evaluate over known indices and confirm correct evaluations
-    let (c, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
+  // TODO: Move to subtables.rs
+  // #[test]
+  // fn evaluate_over_known_indices() {
+  //   // Create SparseMLE and then evaluate over known indices and confirm correct evaluations
+  //   let (c, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
-    // Evaluations
-    // poly[row, col] = eval
-    // poly[1, 0] = 2
-    // poly[1, 2] = 4
-    // poly[2, 1] = 8
-    // poly[2, 3] = 9
-    // Check each and a few others over the boolean hypercube to be 0
+  //   // Evaluations
+  //   // poly[row, col] = eval
+  //   // poly[1, 0] = 2
+  //   // poly[1, 2] = 4
+  //   // poly[2, 1] = 8
+  //   // poly[2, 3] = 9
+  //   // Check each and a few others over the boolean hypercube to be 0
 
-    // poly[1, 0] = 2
-    let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
-    let col: Vec<Fr> = index_to_field_bitvector(0, log_m);
-    let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
+  //   // poly[1, 0] = 2
+  //   let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
+  //   let col: Vec<Fr> = index_to_field_bitvector(0, log_m);
+  //   let combined_index: Vec<Fr> = vec![row, col].concat();
+  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
 
-    // poly[1, 2] = 4
-    let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
-    let col: Vec<Fr> = index_to_field_bitvector(2, log_m);
-    let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
+  //   // poly[1, 2] = 4
+  //   let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
+  //   let col: Vec<Fr> = index_to_field_bitvector(2, log_m);
+  //   let combined_index: Vec<Fr> = vec![row, col].concat();
+  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
 
-    // poly[2, 1] = 8
-    let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
-    let col: Vec<Fr> = index_to_field_bitvector(1, log_m);
-    let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
+  //   // poly[2, 1] = 8
+  //   let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
+  //   let col: Vec<Fr> = index_to_field_bitvector(1, log_m);
+  //   let combined_index: Vec<Fr> = vec![row, col].concat();
+  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
 
-    // poly[2, 3] = 9
-    let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
-    let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
-    let combined_index: Vec<Fr> = vec![row, col].concat();
-    assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
-  }
+  //   // poly[2, 3] = 9
+  //   let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
+  //   let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
+  //   let combined_index: Vec<Fr> = vec![row, col].concat();
+  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
+  // }
 
   #[test]
   fn prove_2d() {
@@ -598,8 +571,6 @@ mod tests {
       }
       r_i
     });
-    let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-    let eval = lookup_matrix.evaluate_mle(&flat_r);
 
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
@@ -607,7 +578,6 @@ mod tests {
     let proof = SparsePolynomialEvaluationProof::<G1Projective, c, c>::prove::<EqSubtableStrategy>(
       &mut dense,
       &r,
-      &eval,
       &gens,
       &mut prover_transcript,
       &mut random_tape,
@@ -615,7 +585,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify(&commitment, &r, &eval, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 }

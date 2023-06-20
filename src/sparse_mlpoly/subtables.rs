@@ -70,6 +70,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for EqSubtableStra
     std::array::from_fn(|i| {
       let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
       for j in 0..s {
+        println!("looking up (i,j) ({}, {})", i, j);
         subtable_lookups.push(subtable_entries[i][nz[i][j]]);
       }
       DensePolynomial::new(subtable_lookups)
@@ -334,6 +335,8 @@ impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
   }
 }
 
+// TODO: Fix merged_dense_poly test
+// TODO: combined_sumcheck_claim test
 // #[cfg(test)]
 // mod test {
 //   use super::*;
@@ -346,7 +349,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
 //   fn forms_valid_merged_dense_poly() {
 //     // Pass in the eq evaluations over log_m boolean variables and log_m fixed variables r
 //     let log_m = 2;
-//     const c: usize = 2;
+//     const C: usize = 2;
 
 //     let r_x: Vec<Fr> = vec![Fr::from(3), Fr::from(4)];
 //     let r_y: Vec<Fr> = vec![Fr::from(5), Fr::from(6)];
@@ -370,8 +373,9 @@ impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
 //     // eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (5)(-5) = -25
 //     // eq(1, 1, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (5)(6) = 30
 
-//     let subtable_evals: Subtables<Fr, c, c, EqSubtableStrategy> =
-//       Subtables::new([eq_evals_x_poly, eq_evals_y_poly], &[r_x, r_y], 1 << log_m, );
+//     let subtable_evals: Subtables<Fr, C, C, EqSubtableStrategy> =
+//       // Subtables::new(&[eq_evals_x_poly, eq_evals_y_poly], &[r_x, r_y], 1 << log_m, 8);
+//       Subtables::new(&[vec![3,4], vec![5,6]], &[r_x, r_y], 1 << log_m, 2);
 
 //     for (x, eval) in vec![
 //       (0, 6),
