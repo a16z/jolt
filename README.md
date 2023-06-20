@@ -29,6 +29,14 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
   );
 ```
 
+## Cmds
+- `cargo build --release`
+- `sudo cargo flamegraph`: Run `main.rs` and generate `flamegraph.svg`
+- `cargo bench`
+- `cargo clippy --fix`
+
+*Note on benching / flamegraphing: Turn off the parallel feature in Cargo.toml to make flamegraph more interpretable"
+
 ## Notes
 Densified::from_sparse
 - sparse.nz – already split into nz_1, nz_2, ... nz_c

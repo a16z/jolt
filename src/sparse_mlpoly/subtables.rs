@@ -70,7 +70,6 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for EqSubtableStra
     std::array::from_fn(|i| {
       let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
       for j in 0..s {
-        println!("looking up (i,j) ({}, {})", i, j);
         subtable_lookups.push(subtable_entries[i][nz[i][j]]);
       }
       DensePolynomial::new(subtable_lookups)

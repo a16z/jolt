@@ -50,7 +50,7 @@ fn main() {
   }; // C = 8
 
   // Select your fighter!
-  const WORKLOAD: Workload = LG_HIGH_SPARSE;
+  const WORKLOAD: Workload = LG_LOW_SPARSE;
   const C: usize = 8;
 
   let s = WORKLOAD.S;
