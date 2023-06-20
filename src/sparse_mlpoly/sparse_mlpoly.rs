@@ -277,7 +277,7 @@ mod tests {
   use ark_std::rand::RngCore;
   use ark_std::{test_rng, UniformRand};
 
-  use crate::sparse_mlpoly::subtables::EqSubtableStrategy;
+  use crate::sparse_mlpoly::subtables::eq::EqSubtableStrategy;
   
 
   #[test]

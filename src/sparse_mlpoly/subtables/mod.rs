@@ -18,6 +18,9 @@ use crate::{
 
 use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
 
+pub mod eq;
+pub mod and;
+
 pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {
   /// Materialize subtables indexed [1, ..., \alpha]
   /// Note: Some materializations will not use the parameter r.
@@ -49,57 +52,6 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {
   /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
   /// Determines the number of evaluation points in each sumcheck round.
   fn sumcheck_poly_degree() -> usize;
-}
-
-pub enum EqSubtableStrategy {}
-
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for EqSubtableStrategy {
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; C] {
-    std::array::from_fn(|i| {
-      let eq_evals = EqPolynomial::new(r[i].clone()).evals();
-      assert_eq!(eq_evals.len(), m);
-      eq_evals
-    })
-  }
-
-  fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; C],
-    nz: &[Vec<usize>; C],
-    s: usize,
-  ) -> [DensePolynomial<F>; C] {
-    std::array::from_fn(|i| {
-      let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
-      for j in 0..s {
-        subtable_lookups.push(subtable_entries[i][nz[i][j]]);
-      }
-      DensePolynomial::new(subtable_lookups)
-    })
-  }
-
-  fn to_grand_products(
-    subtable_entries: &[Vec<F>; C],
-    dense: &DensifiedRepresentation<F, C>,
-    r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; C] {
-    std::array::from_fn(|i| {
-      GrandProducts::new(
-        &subtable_entries[i],
-        &dense.dim[i],
-        &dense.dim_usize[i],
-        &dense.read[i],
-        &dense.r#final[i],
-        r_mem_check,
-      )
-    })
-  }
-
-  fn combine_lookups(vals: &[F; C]) -> F {
-    vals.iter().product()
-  }
-
-  fn sumcheck_poly_degree() -> usize {
-    C
-  }
 }
 
 pub struct Subtables<F: PrimeField, const C: usize, const ALPHA: usize, S>
@@ -333,65 +285,3 @@ impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
     );
   }
 }
-
-// TODO: Fix merged_dense_poly test
-// TODO: combined_sumcheck_claim test
-// #[cfg(test)]
-// mod test {
-//   use super::*;
-
-//   use crate::dense_mlpoly::EqPolynomial;
-//   use crate::utils::index_to_field_bitvector;
-//   use ark_bls12_381::Fr;
-
-//   #[test]
-//   fn forms_valid_merged_dense_poly() {
-//     // Pass in the eq evaluations over log_m boolean variables and log_m fixed variables r
-//     let log_m = 2;
-//     const C: usize = 2;
-
-//     let r_x: Vec<Fr> = vec![Fr::from(3), Fr::from(4)];
-//     let r_y: Vec<Fr> = vec![Fr::from(5), Fr::from(6)];
-//     let eq_evals_x: Vec<Fr> = EqPolynomial::new(r_x.clone()).evals();
-//     let eq_evals_y: Vec<Fr> = EqPolynomial::new(r_y.clone()).evals();
-//     assert_eq!(eq_evals_x.len(), log_m.pow2());
-//     assert_eq!(eq_evals_y.len(), log_m.pow2());
-
-//     let eq_evals_x_poly: DensePolynomial<Fr> = DensePolynomial::new(eq_evals_x);
-//     let eq_evals_y_poly: DensePolynomial<Fr> = DensePolynomial::new(eq_evals_y);
-
-//     // You can think of the concatenation as adding a log(c) bits to eq to specify the dimension
-//     let eq_index_bits = 3;
-//     // eq(x,y) = prod{x_i * y_i + (1-x_i) * (1-y_i)}
-//     // eq(0, 0, 3, 4) = (0 * 3 + (1-0) * (1-3)) * (0 * 4 + (1-0) * (1-4)) = (-2)(-3) = 6
-//     // eq(0, 1, 3, 4) = (0 * 3 + (1-0) * (1-3)) * (1 * 4 + (1-1) * (1-4)) = (-2)(4) = -8
-//     // eq(1, 0, 3, 4) = (1 * 3 + (1-1) * (1-3)) * (0 * 4 + (1-0) * (1-4)) = (3)(-3) = -9
-//     // eq(1, 1, 3, 4) = (1 * 3 + (1-1) * (1-3)) * (1 * 4 + (1-1) * (1-4)) = (3)(4) = 12
-//     // eq(0, 0, 5, 6) = (0 * 5 + (1-0) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (-4)(-5) = 20
-//     // eq(0, 1, 5, 6) = (0 * 5 + (1-0) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (-4)(6) = -24
-//     // eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) + (1-6)) = (5)(-5) = -25
-//     // eq(1, 1, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (1 * 6 + (1-1) + (1-6)) = (5)(6) = 30
-
-//     let subtable_evals: Subtables<Fr, C, C, EqSubtableStrategy> =
-//       // Subtables::new(&[eq_evals_x_poly, eq_evals_y_poly], &[r_x, r_y], 1 << log_m, 8);
-//       Subtables::new(&[vec![3,4], vec![5,6]], &[r_x, r_y], 1 << log_m, 2);
-
-//     for (x, eval) in vec![
-//       (0, 6),
-//       (1, -8),
-//       (2, -9),
-//       (3, 12),
-//       (4, 20),
-//       (5, -24),
-//       (6, -25),
-//       (7, 30),
-//     ] {
-//       assert_eq!(
-//         subtable_evals
-//           .combined_poly
-//           .evaluate(&index_to_field_bitvector(x, eq_index_bits)),
-//         Fr::from(eval)
-//       );
-//     }
-//   }
-// }

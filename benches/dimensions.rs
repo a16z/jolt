@@ -3,7 +3,7 @@ use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use libspartan::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
-use libspartan::sparse_mlpoly::subtables::EqSubtableStrategy;
+use libspartan::sparse_mlpoly::subtables::eq::EqSubtableStrategy;
 use libspartan::{
   random::RandomTape,
   sparse_mlpoly::{

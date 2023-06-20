@@ -8,7 +8,7 @@ use libspartan::{
     sparse_mlpoly::{
       SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof,
     },
-    subtables::EqSubtableStrategy,
+    subtables::eq::EqSubtableStrategy
   },
 };
 use merlin::Transcript;
