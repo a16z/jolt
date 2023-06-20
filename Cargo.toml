@@ -12,7 +12,6 @@ authors = [
 edition = "2021"
 description = "Spartan ZKP system over arkworks"
 documentation = "https://docs.rs/spartan/"
-readme = "README.md"
 repository = "https://github.com/zhenfeizhang/ark-spartan"
 license-file = "LICENSE"
 keywords = ["zkSNARKs", "cryptography", "proofs"]

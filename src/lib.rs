@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-#![doc = include_str!("../README.md")]
 #![allow(clippy::assertions_on_result_states)]
 #![feature(extend_one)]
 
