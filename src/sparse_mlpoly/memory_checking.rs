@@ -362,12 +362,12 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
     // read
-    let hash_read = hash_func(&eval_dim, &eval_deref, &eval_read);
+    let hash_read = hash_func(eval_dim, eval_deref, eval_read);
     assert_eq!(hash_read, *claim_read); // verify the last claim of the `read` grand product sumcheck
 
     // write: shares addr, val with read
     let eval_write = *eval_read + G::ScalarField::one();
-    let hash_write = hash_func(&eval_dim, &eval_deref, &eval_write);
+    let hash_write = hash_func(eval_dim, eval_deref, &eval_write);
     assert_eq!(hash_write, *claim_write); // verify the last claim of the `write` grand product sumcheck
 
     // final: shares addr and val with init
@@ -495,10 +495,10 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
       Self::check_reed_solomon_fingerprints(
         rand_mem,
         claims,
-        &eval_deref,
-        &eval_dim,
-        &eval_read,
-        &eval_final,
+        eval_deref,
+        eval_dim,
+        eval_read,
+        eval_final,
         r_i,
         r_hash,
         r_multiset_check,
@@ -562,8 +562,7 @@ impl<F: PrimeField, const ALPHA: usize> ProductLayerProof<F, ALPHA> {
 
     let mut read_write_grand_products: Vec<&mut GrandProductCircuit<F>> = grand_products
       .iter_mut()
-      .map(|grand_product| [&mut grand_product.read, &mut grand_product.write])
-      .flatten()
+      .flat_map(|grand_product| [&mut grand_product.read, &mut grand_product.write])
       .collect();
 
     let (proof_ops, rand_ops) =
@@ -571,8 +570,7 @@ impl<F: PrimeField, const ALPHA: usize> ProductLayerProof<F, ALPHA> {
 
     let mut init_final_grand_products: Vec<&mut GrandProductCircuit<F>> = grand_products
       .iter_mut()
-      .map(|grand_product| [&mut grand_product.init, &mut grand_product.r#final])
-      .flatten()
+      .flat_map(|grand_product| [&mut grand_product.init, &mut grand_product.r#final])
       .collect();
 
     // produce a batched proof of memory-related product circuits
@@ -620,8 +618,7 @@ impl<F: PrimeField, const ALPHA: usize> ProductLayerProof<F, ALPHA> {
     let read_write_claims: Vec<F> = self
       .grand_product_evals
       .iter()
-      .map(|(_, hash_read, hash_write, _)| [*hash_read, *hash_write])
-      .flatten()
+      .flat_map(|(_, hash_read, hash_write, _)| [*hash_read, *hash_write])
       .collect();
 
     let (claims_ops, rand_ops) =
@@ -632,8 +629,7 @@ impl<F: PrimeField, const ALPHA: usize> ProductLayerProof<F, ALPHA> {
     let init_final_claims: Vec<F> = self
       .grand_product_evals
       .iter()
-      .map(|(hash_init, _, _, hash_final)| [*hash_init, *hash_final])
-      .flatten()
+      .flat_map(|(hash_init, _, _, hash_final)| [*hash_init, *hash_final])
       .collect();
 
     let (claims_mem, rand_mem) =
@@ -794,7 +790,7 @@ mod test {
     ]);
     let r_mem_check = (Fr::from(100), Fr::from(200));
 
-    let gp = GrandProducts::new(
+    let _gp = GrandProducts::new(
       &eval_table,
       &dim_i,
       &dim_i_usize,

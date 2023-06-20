@@ -12,7 +12,7 @@ use libspartan::{
   },
 };
 use merlin::Transcript;
-use num_integer::Roots;
+
 use rand_chacha::rand_core::RngCore;
 // use ark_bls12_381::{Fr, G1Projective};
 use ark_curve25519::{EdwardsProjective, Fr};
@@ -74,7 +74,7 @@ fn main() {
   let before_commitment = Instant::now();
   let gens =
     SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, s, C, log_M);
-  let commitment = dense.commit::<EdwardsProjective>(&gens);
+  let _commitment = dense.commit::<EdwardsProjective>(&gens);
 
   let before_randomness = Instant::now();
   let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
@@ -84,7 +84,7 @@ fn main() {
     }
     r_i
   });
-  let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
+  let _flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
 
   println!("SparseLookupMatrix.evaluate_mle()");
   let before_mle_eval = Instant::now();
@@ -93,7 +93,7 @@ fn main() {
   let mut prover_transcript = Transcript::new(b"example");
   println!("SparsePolynomialEvaluationProof.prove()");
   let before_prove = Instant::now();
-  let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
+  let _proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
     &mut dense,
     &r,
     &gens,

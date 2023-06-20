@@ -39,11 +39,11 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
   let mut result = "".to_owned();
   for bit in f {
     if *bit == F::one() {
-      result.push_str("1");
+      result.push('1');
     } else if *bit == F::zero() {
-      result.push_str("0");
+      result.push('0');
     } else {
-      result.push_str("?");
+      result.push('?');
     }
   }
   result

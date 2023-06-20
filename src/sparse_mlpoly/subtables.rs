@@ -247,7 +247,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       evals.to_vec()
     };
     let proof_table_eval = CombinedTableEvalProof::<G, C>::prove_single(
-      &combined_poly,
+      combined_poly,
       r,
       evals,
       gens,

@@ -25,14 +25,14 @@ mod unipoly;
 mod utils;
 mod gaussian_elimination;
 
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
-use ark_serialize::*;
-use core::cmp::max;
-use errors::{ProofVerifyError};
-use merlin::Transcript;
-use random::RandomTape;
-use transcript::{AppendToTranscript, ProofTranscript};
+
+
+
+
+
+
+
+
 
 // /// `ComputationCommitment` holds a public preprocessed NP statement (e.g., R1CS)
 // pub struct ComputationCommitment<G: CurveGroup> {

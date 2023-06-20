@@ -165,7 +165,7 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   #[cfg(feature = "multicore")]
-  fn commit_inner(&self, blinds: &[F], gens: &MultiCommitGens) -> PolyCommitment {
+  fn commit_inner(&self, blinds: &[F], gens: &MultiCommitGens<G>) -> PolyCommitment<G> {
     let L_size = blinds.len();
     let R_size = self.Z.len() / L_size;
     assert_eq!(L_size * R_size, self.Z.len());

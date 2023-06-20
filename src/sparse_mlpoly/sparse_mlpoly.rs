@@ -2,19 +2,19 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
-use crate::dense_mlpoly::{EqPolynomial, PolyCommitment, PolyCommitmentGens};
+use crate::dense_mlpoly::{PolyCommitment, PolyCommitmentGens};
 use crate::errors::ProofVerifyError;
 use crate::math::Math;
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
 use crate::sparse_mlpoly::memory_checking::MemoryCheckingProof;
 use crate::sparse_mlpoly::subtables::{
-  CombinedTableCommitment, CombinedTableEvalProof, EqSubtableStrategy, SubtableStrategy, Subtables,
+  CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
 use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+
 use ark_serialize::*;
 
 use merlin::Transcript;
@@ -48,8 +48,8 @@ impl<G: CurveGroup> SparsePolyCommitmentGens<G> {
       PolyCommitmentGens::new(num_vars_combined_log_m_variate, label);
     let gens_derefs = PolyCommitmentGens::new(num_vars_derefs, label);
     SparsePolyCommitmentGens {
-      gens_combined_l_variate: gens_combined_l_variate,
-      gens_combined_log_m_variate: gens_combined_log_m_variate,
+      gens_combined_l_variate,
+      gens_combined_log_m_variate,
       gens_derefs,
     }
   }
@@ -159,7 +159,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
         &claimed_eval,
         dense.s.log_2(),
         &mut subtables.lookup_polys.clone(),
-        &S::combine_lookups,
+        S::combine_lookups,
         S::sumcheck_poly_degree(),
         transcript,
       );
@@ -182,16 +182,16 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
       let r_hash_params: Vec<G::ScalarField> =
         <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-      let memory_checking_proof = MemoryCheckingProof::prove(
+      
+
+      MemoryCheckingProof::prove(
         dense,
         &(r_hash_params[0], r_hash_params[1]),
         &subtables,
         gens,
         transcript,
         random_tape,
-      );
-
-      memory_checking_proof
+      )
     };
 
     Self {
@@ -275,10 +275,10 @@ mod tests {
   use super::*;
   use ark_bls12_381::{Fr, G1Projective};
   use ark_std::rand::RngCore;
-  use ark_std::{test_rng, One, UniformRand};
+  use ark_std::{test_rng, UniformRand};
 
   use crate::sparse_mlpoly::subtables::EqSubtableStrategy;
-  use crate::utils::{ff_bitvector_dbg, index_to_field_bitvector};
+  
 
   #[test]
   fn check_evaluation() {
@@ -305,10 +305,10 @@ mod tests {
     }
 
     let lookup_matrix = SparseLookupMatrix::new(nz, log_m);
-    let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, c, log_m);
+    let _gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, c, log_m);
 
     // evaluation
-    let r: Vec<G::ScalarField> = (0..c * log_m)
+    let _r: Vec<G::ScalarField> = (0..c * log_m)
       .map(|_| G::ScalarField::rand(&mut prng))
       .collect();
     // let evaluation = lookup_matrix.evaluate_mle(&r);
@@ -337,10 +337,10 @@ mod tests {
     // );
 
     let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, c, log_m);
-    let commitment = dense.commit::<G>(&gens);
+    let _commitment = dense.commit::<G>(&gens);
 
-    let mut random_tape = RandomTape::<G>::new(b"proof");
-    let mut prover_transcript = Transcript::new(b"example");
+    let _random_tape = RandomTape::<G>::new(b"proof");
+    let _prover_transcript = Transcript::new(b"example");
     // let proof = SparsePolynomialEvaluationProof::prove(
     //   &dense,
     //   &r,
@@ -557,7 +557,7 @@ mod tests {
     let mut prng = test_rng();
     const c: usize = 2;
 
-    let (_, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
+    let (_, s, _m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
 
     // Commit
     let mut dense: DensifiedRepresentation<Fr, c> = DensifiedRepresentation::from(&lookup_matrix);

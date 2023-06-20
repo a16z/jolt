@@ -53,15 +53,12 @@ fn bench(c: &mut Criterion) {
               }
               r_i
               });
-              let flat_r: Vec<Fr> = r.clone().into_iter().flatten().collect();
-              let eval = lookup_matrix.evaluate_mle(&flat_r);
 
               let mut random_tape = RandomTape::new(b"proof");
               let mut prover_transcript = Transcript::new(b"example");
               let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
               &mut dense,
               &r,
-              &eval,
               &gens,
               &mut prover_transcript,
               &mut random_tape,

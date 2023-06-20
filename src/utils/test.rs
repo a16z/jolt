@@ -29,7 +29,7 @@ impl<F: PrimeField> TestTranscript<F> {
 }
 
 impl<G: CurveGroup> ProofTranscript<G> for TestTranscript<G::ScalarField> {
-  fn challenge_scalar(&mut self, label: &'static [u8]) -> G::ScalarField {
+  fn challenge_scalar(&mut self, _label: &'static [u8]) -> G::ScalarField {
     assert!(self.scalar_index < self.scalars.len());
 
     let res = self.scalars[self.scalar_index];
@@ -37,7 +37,7 @@ impl<G: CurveGroup> ProofTranscript<G> for TestTranscript<G::ScalarField> {
     res
   }
 
-  fn challenge_vector(&mut self, label: &'static [u8], len: usize) -> Vec<G::ScalarField> {
+  fn challenge_vector(&mut self, _label: &'static [u8], len: usize) -> Vec<G::ScalarField> {
     assert!(self.vec_index < self.vecs.len());
 
     let res = self.vecs[self.vec_index].clone();
