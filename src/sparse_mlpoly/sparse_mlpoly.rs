@@ -206,7 +206,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
     }
   }
 
-  pub fn verify(
+  pub fn verify<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
     &self,
     commitment: &SparsePolynomialCommitment<G>,
     r: &[Vec<G::ScalarField>; C], // point at which the polynomial is evaluated
@@ -232,9 +232,15 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
     let (claim_last, r_z) = self.primary_sumcheck.proof.verify::<G, Transcript>(
       self.primary_sumcheck.claimed_evaluation,
       commitment.s.log_2(),
-      C,
+      S::sumcheck_poly_degree(),
       transcript,
     )?;
+
+    // Verify that E_1(r_z) * ... * E_c(r_z) = claim_last
+    assert_eq!(
+      S::combine_lookups(&self.primary_sumcheck.eval_derefs),
+      claim_last
+    );
 
     self.primary_sumcheck.proof_derefs.verify(
       &r_z,
@@ -243,16 +249,6 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
       &self.comm_derefs,
       transcript,
     )?;
-
-    // Verify that E_1(r_z) * ... * E_c(r_z) = claim_last
-    assert_eq!(
-      self
-        .primary_sumcheck
-        .eval_derefs
-        .iter()
-        .product::<G::ScalarField>(),
-      claim_last
-    );
 
     // produce a random element from the transcript for hash function
     let r_mem_check =
@@ -277,6 +273,7 @@ mod tests {
   use ark_std::rand::RngCore;
   use ark_std::{test_rng, UniformRand};
 
+  use crate::sparse_mlpoly::subtables::and::AndSubtableStrategy;
   use crate::sparse_mlpoly::subtables::eq::EqSubtableStrategy;
   
 
@@ -404,7 +401,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify::<EqSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -456,7 +453,59 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify::<EqSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .is_ok());
+  }
+
+  #[test]
+  fn prove_4d_and() {
+    let mut prng = test_rng();
+
+    // parameters
+    const C: usize = 4;
+    const M: usize = 16;
+    let log_M: usize = M.log_2();
+    let s: usize = 16;
+
+    // generate sparse polynomial
+    let mut nz: Vec<[usize; C]> = Vec::new();
+    for _ in 0..s {
+      let indices = [
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+      ];
+      nz.push(indices);
+    }
+
+    let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
+
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+    let gens = SparsePolyCommitmentGens::<G1Projective>::new(b"gens_sparse_poly", C, s, C, log_M);
+    let commitment = dense.commit::<G1Projective>(&gens);
+
+    let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
+      let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
+      for _ in 0..log_M {
+        r_i.push(Fr::rand(&mut prng));
+      }
+      r_i
+    });
+
+    let mut random_tape = RandomTape::new(b"proof");
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<AndSubtableStrategy>(
+      &mut dense,
+      &r,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
+
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(proof
+      .verify::<AndSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -585,7 +634,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify::<EqSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 }

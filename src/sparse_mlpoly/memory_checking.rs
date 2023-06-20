@@ -356,6 +356,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     let (claim_init, claim_read, claim_write, claim_final) = claims;
 
     // init
+    // TODO: Need to generalize to subtable strategy
     let eval_init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem); // [0, 1, ..., m-1]
     let eval_init_val = EqPolynomial::new(r_i.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
     let hash_init = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero());
