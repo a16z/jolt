@@ -8,7 +8,7 @@ use merlin::Transcript;
 
 use crate::{
   dense_mlpoly::{
-    DensePolynomial, EqPolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof,
+    DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof,
   },
   errors::ProofVerifyError,
   math::Math,

@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, BigInteger};
 
 #[cfg(test)]
 pub mod test;
@@ -57,4 +57,48 @@ pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
 /// Checks if `num` is a power of 2.
 pub fn is_power_of_two(num: usize) -> bool {
   num != 0 && (num & (num - 1)) == 0
+}
+
+/// Splits `item` into two chunks of `num_bits` size where each is less than 2^num_bits.
+/// Ex: split_bits(0b101_000, 3) -> (101, 000)
+pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
+    let max_value = (1 << num_bits) - 1; // Calculate the maximum value that can be represented with num_bits
+
+    let low_chunk = item & max_value; // Extract the lower bits
+    let high_chunk = (item >> num_bits) & max_value; // Shift the item to the right and extract the next set of bits
+
+    (high_chunk, low_chunk)
+}
+
+/// Packs params x,y,z into a field element in order xyz allocating `b` bits for each element
+/// field = x | y | z where x represents the most significant bits.
+pub fn pack_field_xyz<F: PrimeField>(x: usize, y: usize, z: usize, b: usize) -> F {
+  let mut bits: Vec<bool> = Vec::with_capacity(3 * b);
+  for i in 0..b {
+      bits.push((z >> i) & 1 == 1);
+  }
+  for i in 0..b {
+      bits.push((y >> i) & 1 == 1);
+  }
+  for i in 0..b {
+      bits.push((x >> i) & 1 == 1);
+  }
+  F::from(F::BigInt::from_bits_le(&bits))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use ark_curve25519::Fr;
+
+  #[test]
+  fn split() {
+    assert_eq!(split_bits(0b00_01, 2), (0, 1));
+    assert_eq!(split_bits(0b10_01, 2), (2, 1));
+  }
+
+  #[test]
+  fn pack() {
+    assert_eq!(pack_field_xyz::<Fr>(1, 0, 0, 2), Fr::from(16));
+  }
 }

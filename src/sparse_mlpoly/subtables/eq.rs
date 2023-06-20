@@ -60,11 +60,9 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for EqSubtableStra
 mod test {
   use super::*;
 
-  use crate::dense_mlpoly::EqPolynomial;
   use crate::sparse_mlpoly::subtables::Subtables;
   use crate::utils::index_to_field_bitvector;
   use ark_bls12_381::Fr;
-  use crate::math::Math;
 
   #[test]
   fn forms_valid_merged_dense_poly() {

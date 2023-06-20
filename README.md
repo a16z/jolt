@@ -11,6 +11,7 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 - [ ] Investigate multiple dense PCS (notably IPA)
 - [ ] Investigate MSM speedups ([paper](https://eprint.iacr.org/2022/1400.pdf), [arkworks](https://github.com/arkworks-rs/algebra/blob/c015ea331674368461ff466bc7cbc69806f61628/ec/src/scalar_mul/variable_base/mod.rs#L112-L122))
 - [ ] Clippy / Cargo fmt
+- [ ] SubtableStrategy: move M to generic param
 
 ## Current usage
 ```rust
