@@ -1,7 +1,11 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use crate::{dense_mlpoly::DensePolynomial, sparse_mlpoly::{densified::DensifiedRepresentation, memory_checking::GrandProducts}, utils::{split_bits, pack_field_xyz}};
+use crate::{
+  dense_mlpoly::DensePolynomial,
+  sparse_mlpoly::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
+  utils::{pack_field_xyz, split_bits},
+};
 
 use super::SubtableStrategy;
 
@@ -22,9 +26,21 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStr
       materialized.push(row);
     }
 
-    std::array::from_fn(|i| {
-      materialized.clone()
-    })
+    std::array::from_fn(|i| materialized.clone())
+  }
+
+  fn evalute_subtable_mle(_: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+    debug_assert!(point.len() % 2 == 0);
+    let b = point.len() / 2;
+    let (x, y) = point.split_at(b);
+
+    let mut result = F::zero();
+    for i in 0..b {
+      result += F::from(1u64 << (i)) * x[b - i - 1] * y[b - i - 1];
+      result += F::from(1u64 << (b + i)) * y[b - i - 1];
+      result += F::from(1u64 << (2 * b + i)) * x[b - i - 1];
+    }
+    result
   }
 
   fn to_lookup_polys(
@@ -73,21 +89,21 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStr
   }
 }
 
-
 #[cfg(test)]
 mod test {
   use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector};
 
   use super::*;
-  use ark_ff::Zero;
   use ark_curve25519::Fr;
+  use ark_ff::Zero;
 
   #[test]
   fn table_materialization() {
     const C: usize = 4;
     const M: usize = 1 << 4;
 
-    let materialized: [Vec<Fr>; C] = AndSubtableStrategy::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
+    let materialized: [Vec<Fr>; C] =
+      AndSubtableStrategy::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
     assert_eq!(materialized.len(), C);
     assert_eq!(materialized[0].len(), M);
 
@@ -104,18 +120,30 @@ mod test {
     assert_eq!(table[9], Fr::from(0b10_01_00));
     assert_eq!(table[10], Fr::from(0b10_10_10));
     // ...
+  }
 
+  #[test]
+  fn evaluate_mle() {
+    let x = vec![Fr::from(0), Fr::from(1), Fr::from(1), Fr::from(0)];
+    let y = vec![Fr::from(1), Fr::from(0), Fr::from(1), Fr::from(1)];
+    let x_and_y = AndSubtableStrategy::evalute_subtable_mle(0, &[], &[x, y].concat());
+    assert_eq!(x_and_y, Fr::from(0b0110_1011_0010));
   }
 
   #[test]
   fn combine() {
-    let combined: Fr = AndSubtableStrategy::combine_lookups(&[Fr::from(100), Fr::from(200), Fr::from(300), Fr::from(400)]);
+    let combined: Fr = AndSubtableStrategy::combine_lookups(&[
+      Fr::from(100),
+      Fr::from(200),
+      Fr::from(300),
+      Fr::from(400),
+    ]);
 
     // 2^0 * 100 + 2^16 * 200 + 2^32 * 300 + 2^48 * 400
-    let expected= (1u64 * 100u64) 
-                        + ((1u64 << 16u64) * 200u64) 
-                        + ((1u64 << 32u64) * 300u64) 
-                        + ((1u64 << 48u64) * 400u64);
+    let expected = (1u64 * 100u64)
+      + ((1u64 << 16u64) * 200u64)
+      + ((1u64 << 32u64) * 300u64)
+      + ((1u64 << 48u64) * 400u64);
     assert_eq!(combined, Fr::from(expected));
   }
 
@@ -138,20 +166,16 @@ mod test {
     let combined_table_index_bits = 2;
 
     for (x, expected) in vec![
-      (0, 0b00_00_00),  // and(0) -> 00 & 00 = 00 -> 00_00_00
-      (1, 0b00_10_00),  // and(2) -> 00 & 10 = 00 -> 00_10_00
-      (2, 0b01_01_01),  // and(5) -> 01 & 01 = 01 -> 01_01_01
-      (3, 0b10_01_00),  // and(9)  -> 10 & 01 = 00 -> 10_01_00
+      (0, 0b00_00_00), // and(0) -> 00 & 00 = 00 -> 00_00_00
+      (1, 0b00_10_00), // and(2) -> 00 & 10 = 00 -> 00_10_00
+      (2, 0b01_01_01), // and(5) -> 01 & 01 = 01 -> 01_01_01
+      (3, 0b10_01_00), // and(9)  -> 10 & 01 = 00 -> 10_01_00
     ] {
       println!("Looping {x}");
       let calculated = subtable_evals
         .combined_poly
         .evaluate(&index_to_field_bitvector(x, combined_table_index_bits));
-      assert_eq!(
-        calculated,
-        Fr::from(expected)
-      );
+      assert_eq!(calculated, Fr::from(expected));
     }
-
   }
 }

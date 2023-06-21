@@ -254,7 +254,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize>
     let r_mem_check =
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-    self.memory_check.verify(
+    self.memory_check.verify::<S>(
       commitment,
       &self.comm_derefs,
       gens,

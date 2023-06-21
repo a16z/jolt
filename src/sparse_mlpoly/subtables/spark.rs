@@ -1,6 +1,9 @@
 use ark_ff::PrimeField;
 
-use crate::{dense_mlpoly::{EqPolynomial, DensePolynomial}, sparse_mlpoly::{densified::DensifiedRepresentation, memory_checking::GrandProducts}};
+use crate::{
+  dense_mlpoly::{DensePolynomial, EqPolynomial},
+  sparse_mlpoly::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
+};
 
 use super::SubtableStrategy;
 
@@ -13,6 +16,10 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for SparkSubtableS
       assert_eq!(eq_evals.len(), m);
       eq_evals
     })
+  }
+
+  fn evalute_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F {
+    EqPolynomial::new(r[subtable_index].clone()).evaluate(point)
   }
 
   fn to_lookup_polys(
@@ -55,7 +62,6 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for SparkSubtableS
   }
 }
 
-
 #[cfg(test)]
 mod test {
   use super::*;
@@ -82,21 +88,13 @@ mod test {
     // eq(2) = eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) * (1-6)) = (5)(-5) = -25
 
     let subtable_evals: Subtables<Fr, C, C, SparkSubtableStrategy> =
-      Subtables::new(&[vec![0,2], vec![2,2]], &[r_x, r_y], 1 << log_m, 2);
+      Subtables::new(&[vec![0, 2], vec![2, 2]], &[r_x, r_y], 1 << log_m, 2);
 
-    for (x, expected) in vec![
-      (0, 6),
-      (1, -9),
-      (2, -25),
-      (3, -25),
-    ] {
+    for (x, expected) in vec![(0, 6), (1, -9), (2, -25), (3, -25)] {
       let calculated = subtable_evals
         .combined_poly
         .evaluate(&index_to_field_bitvector(x, eq_index_bits));
-      assert_eq!(
-        calculated,
-        Fr::from(expected)
-      );
+      assert_eq!(calculated, Fr::from(expected));
     }
   }
 }

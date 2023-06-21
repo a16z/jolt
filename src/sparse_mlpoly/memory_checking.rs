@@ -1,4 +1,4 @@
-use crate::dense_mlpoly::{DensePolynomial, EqPolynomial, IdentityPolynomial, PolyEvalProof};
+use crate::dense_mlpoly::{DensePolynomial, IdentityPolynomial, PolyEvalProof};
 use crate::errors::ProofVerifyError;
 use crate::math::Math;
 use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
@@ -14,7 +14,6 @@ use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::{One, Zero};
-use itertools::izip;
 use merlin::Transcript;
 
 // TODO(moodlezoup): Combine init and write, read and final
@@ -318,19 +317,18 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
   /// are as claimed by the final sumchecks of their respective grand product arguments.
   ///
   /// Params
-  /// - `rand_mem`: The random value chosen by the verifier over the course of the sum-check
-  /// protocol for the init/final grand product argument, i.e. r_i''.
   /// - `claims`: Fingerprint values of the init, read, write, and final multisets, as
   /// as claimed by their respective grand product arguments.
   /// - `eval_deref`: The evaluation E_i(r'''_i).
   /// - `eval_dim`: The evaluation dim_i(r'''_i).
   /// - `eval_read`: The evaluation read_i(r'''_i).
   /// - `eval_final`: The evaluation final_i(r''_i).
+  /// - `init_addr`: The MLE of the initial memory values, evaluated at r''_i.
+  /// - `init_addr`: The MLE of the memory addresses, evaluated at r''_i.
   /// - `r_i`: One chunk of the evaluation point at which the Surge commitment is being opened.
   /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
   /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
   fn check_reed_solomon_fingerprints(
-    rand_mem: &Vec<G::ScalarField>,
     claims: &(
       G::ScalarField,
       G::ScalarField,
@@ -341,7 +339,8 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     eval_dim: &G::ScalarField,
     eval_read: &G::ScalarField,
     eval_final: &G::ScalarField,
-    r_i: &Vec<G::ScalarField>,
+    init_addr: &G::ScalarField,
+    init_memory: &G::ScalarField,
     gamma: &G::ScalarField,
     tau: &G::ScalarField,
   ) -> Result<(), ProofVerifyError> {
@@ -356,10 +355,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     let (claim_init, claim_read, claim_write, claim_final) = claims;
 
     // init
-    // TODO: Need to generalize to subtable strategy
-    let eval_init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem); // [0, 1, ..., m-1]
-    let eval_init_val = EqPolynomial::new(r_i.to_vec()).evaluate(rand_mem); // [\tilde{eq}(0, r_x), \tilde{eq}(1, r_x), ..., \tilde{eq}(m-1, r_x)]
-    let hash_init = hash_func(&eval_init_addr, &eval_init_val, &G::ScalarField::zero());
+    let hash_init = hash_func(&init_addr, &init_memory, &G::ScalarField::zero());
     assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
     // read
@@ -372,15 +368,15 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     assert_eq!(hash_write, *claim_write); // verify the last claim of the `write` grand product sumcheck
 
     // final: shares addr and val with init
-    let eval_final_addr = eval_init_addr;
-    let eval_final_val = eval_init_val;
+    let eval_final_addr = init_addr;
+    let eval_final_val = init_memory;
     let hash_final = hash_func(&eval_final_addr, &eval_final_val, eval_final);
     assert_eq!(hash_final, *claim_final); // verify the last claim of the `final` grand product sumcheck
 
     Ok(())
   }
 
-  fn verify(
+  fn verify<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
     &self,
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     claims_dim: &[(
@@ -485,22 +481,16 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     )?;
 
     // verify the claims from the product layer
-    for (claims, eval_deref, eval_dim, eval_read, eval_final, r_i) in izip!(
-      claims_dim,
-      &self.eval_derefs,
-      &self.eval_dim,
-      &self.eval_read,
-      &self.eval_final,
-      r
-    ) {
+    let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
+    for i in 0..C {
       Self::check_reed_solomon_fingerprints(
-        rand_mem,
-        claims,
-        eval_deref,
-        eval_dim,
-        eval_read,
-        eval_final,
-        r_i,
+        &claims_dim[i],
+        &self.eval_derefs[i],
+        &self.eval_dim[i],
+        &self.eval_read[i],
+        &self.eval_final[i],
+        &init_addr,
+        &S::evalute_subtable_mle(i, r, rand_mem),
         r_hash,
         r_multiset_check,
       )?;
@@ -697,14 +687,14 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C
   /// using memory-checking techniques as described in Section 5 of the Lasso paper, or Section 7.2 of the Spartan paper.
   ///
   /// Params
-  /// - `dense`: The densified representation of the sparse multilinear polynomial.
-  /// - `subtable_evaluations`: The subtable values read, i.e. T_i[nz(i)].
+  /// - `comm`: The sparse polynomial commitment.
+  /// - `comm_derefs`: The commitment to the E_i polynomials.
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `r`: The evaluation point at which the Surge commitment is being opened.
   /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
   /// - `s`: Sparsity, i.e. the number of lookups.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  pub fn verify(
+  pub fn verify<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
     &self,
     comm: &SparsePolynomialCommitment<G>,
     comm_derefs: &CombinedTableCommitment<G>,
@@ -740,7 +730,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C
     });
 
     // verify the proof of hash layer
-    self.proof_hash_layer.verify(
+    self.proof_hash_layer.verify::<S>(
       (&rand_mem, &rand_ops),
       &claims,
       comm,

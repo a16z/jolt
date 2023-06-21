@@ -7,9 +7,7 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-  dense_mlpoly::{
-    DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof,
-  },
+  dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
   errors::ProofVerifyError,
   math::Math,
   random::RandomTape,
@@ -18,17 +16,26 @@ use crate::{
 
 use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
 
-pub mod spark;
 pub mod and;
+pub mod spark;
 
 pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {
   /// Materialize subtables indexed [1, ..., \alpha]
-  /// Note: Some materializations will not use the parameter r.
+  /// Note: Only SparkSubtableStrategy uses the parameter `r`.
   ///
   /// Params
   /// - `m`: size of subtable / number of evaluations to materialize
   /// - `r`: point at which to materialize the table (potentially unused)
   fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; ALPHA];
+
+  /// Evaluates the MLE of a subtable at the given point. Used by the verifier in memory-checking.
+  /// Note: Only SparkSubtableStrategy uses the parameter `r`
+  /// 
+  /// Params
+  /// - `subtable_index`: Which subtable to evaluate the MLE of. Ranges 0..ALPHA
+  /// - `r`: point at which to materialize the table (potentially unused)
+  /// - `point`: Point at which to evaluate the MLE
+  fn evalute_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
   /// Converts subtables T_1, ..., T_{\alpha} and lookup indices nz_1, ..., nz_c
   /// into log(m)-variate "lookup polynomials" E_1, ..., E_{\alpha}.
