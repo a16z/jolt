@@ -4,9 +4,9 @@ use crate::{dense_mlpoly::{EqPolynomial, DensePolynomial}, sparse_mlpoly::{densi
 
 use super::SubtableStrategy;
 
-pub enum EqSubtableStrategy {}
+pub enum SparkSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for EqSubtableStrategy {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for SparkSubtableStrategy {
   fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; C] {
     std::array::from_fn(|i| {
       let eq_evals = EqPolynomial::new(r[i].clone()).evals();
@@ -81,7 +81,7 @@ mod test {
     // eq(2) = eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) * (1-6)) = (5)(-5) = -25
     // eq(2) = eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) * (1-6)) = (5)(-5) = -25
 
-    let subtable_evals: Subtables<Fr, C, C, EqSubtableStrategy> =
+    let subtable_evals: Subtables<Fr, C, C, SparkSubtableStrategy> =
       Subtables::new(&[vec![0,2], vec![2,2]], &[r_x, r_y], 1 << log_m, 2);
 
     for (x, expected) in vec![

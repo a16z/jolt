@@ -18,7 +18,7 @@ use crate::{
 
 use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
 
-pub mod eq;
+pub mod spark;
 pub mod and;
 
 pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {

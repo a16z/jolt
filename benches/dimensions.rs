@@ -3,7 +3,7 @@ use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use libspartan::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
-use libspartan::sparse_mlpoly::subtables::eq::EqSubtableStrategy;
+use libspartan::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
 use libspartan::{
   random::RandomTape,
   sparse_mlpoly::{
@@ -56,7 +56,7 @@ fn bench(c: &mut Criterion) {
 
               let mut random_tape = RandomTape::new(b"proof");
               let mut prover_transcript = Transcript::new(b"example");
-              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<EqSubtableStrategy>(
+              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<SparkSubtableStrategy>(
               &mut dense,
               &r,
               &gens,

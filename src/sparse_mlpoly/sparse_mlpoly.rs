@@ -274,7 +274,7 @@ mod tests {
   use ark_std::{test_rng, UniformRand};
 
   use crate::sparse_mlpoly::subtables::and::AndSubtableStrategy;
-  use crate::sparse_mlpoly::subtables::eq::EqSubtableStrategy;
+  use crate::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
   
 
   #[test]
@@ -391,7 +391,7 @@ mod tests {
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<EqSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<SparkSubtableStrategy>(
       &mut dense,
       &r,
       &gens,
@@ -401,7 +401,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<EqSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify::<SparkSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -443,7 +443,7 @@ mod tests {
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<EqSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<SparkSubtableStrategy>(
       &mut dense,
       &r,
       &gens,
@@ -453,7 +453,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<EqSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify::<SparkSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -624,7 +624,7 @@ mod tests {
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, c, c>::prove::<EqSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, c, c>::prove::<SparkSubtableStrategy>(
       &mut dense,
       &r,
       &gens,
@@ -634,7 +634,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<EqSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify::<SparkSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 }
