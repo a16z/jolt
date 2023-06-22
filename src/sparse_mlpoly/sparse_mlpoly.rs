@@ -274,6 +274,7 @@ mod tests {
   use ark_std::{test_rng, UniformRand};
 
   use crate::sparse_mlpoly::subtables::and::AndSubtableStrategy;
+  use crate::sparse_mlpoly::subtables::lt::LTSubtableStrategy;
   use crate::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
   
 
@@ -506,6 +507,58 @@ mod tests {
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
       .verify::<AndSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .is_ok());
+  }
+
+  #[test]
+  fn prove_4d_lt() {
+    let mut prng = test_rng();
+
+    // parameters
+    const C: usize = 4;
+    const M: usize = 16;
+    let log_M: usize = M.log_2();
+    let s: usize = 16;
+
+    // generate sparse polynomial
+    let mut nz: Vec<[usize; C]> = Vec::new();
+    for _ in 0..s {
+      let indices = [
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+        (prng.next_u64() as usize) % M,
+      ];
+      nz.push(indices);
+    }
+
+    let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
+
+    let mut dense: DensifiedRepresentation<Fr, C> = DensifiedRepresentation::from(&lookup_matrix);
+    let gens = SparsePolyCommitmentGens::<G1Projective>::new(b"gens_sparse_poly", C, s, C * 2, log_M);
+    let commitment = dense.commit::<G1Projective>(&gens);
+
+    let r: [Vec<Fr>; C] = std::array::from_fn(|_| {
+      let mut r_i: Vec<Fr> = Vec::with_capacity(log_M);
+      for _ in 0..log_M {
+        r_i.push(Fr::rand(&mut prng));
+      }
+      r_i
+    });
+
+    let mut random_tape = RandomTape::new(b"proof");
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, { C * 2 }>::prove::<LTSubtableStrategy>(
+      &mut dense,
+      &r,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
+
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(proof
+      .verify::<LTSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
