@@ -74,6 +74,10 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStr
     })
   }
 
+  /// Combine AND table subtable evaluations
+  /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
+  /// T'[3] | T'[2] | T'[1] | T'[0]
+  /// x3 | y3 | z3 | x2 | y2 | z2 | x1 | y1 | z1 | x0 | y0 | z0 | 
   fn combine_lookups(vals: &[F; C]) -> F {
     let increment = 64 / C; // TODO: Generalize 64 to M
     let mut sum = F::zero();
