@@ -175,7 +175,6 @@ mod test {
       (2, 0b01_01_01), // and(5) -> 01 & 01 = 01 -> 01_01_01
       (3, 0b10_01_00), // and(9)  -> 10 & 01 = 00 -> 10_01_00
     ] {
-      println!("Looping {x}");
       let calculated = subtable_evals
         .combined_poly
         .evaluate(&index_to_field_bitvector(x, combined_table_index_bits));
