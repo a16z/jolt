@@ -384,7 +384,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); C],
+    ); ALPHA],
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparsePolyCommitmentGens<G>,
     table_eval_commitment: &CombinedTableCommitment<G>,
@@ -482,13 +482,16 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for i in 0..C {
+    let k = ALPHA / C;
+    for i in 0..ALPHA {
+      // Check ALPHA memories / lookup polys / grand products
+      // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
       Self::check_reed_solomon_fingerprints(
         &claims_dim[i],
         &self.eval_derefs[i],
-        &self.eval_dim[i],
-        &self.eval_read[i],
-        &self.eval_final[i],
+        &self.eval_dim[i/k],
+        &self.eval_read[i/k],
+        &self.eval_final[i/k],
         &init_addr,
         &S::evalute_subtable_mle(i, r, rand_mem),
         r_hash,
@@ -720,7 +723,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); C] = std::array::from_fn(|i| {
+    ); ALPHA] = std::array::from_fn(|i| {
       (
         claims_mem[2 * i],     // init
         claims_ops[2 * i],     // read

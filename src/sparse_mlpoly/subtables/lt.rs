@@ -42,26 +42,42 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, { C * 2 }> for LTSubt
     // TODO: Hack until alpha is removed
     std::array::from_fn(|i| 
         if i % 2 == 0 {
-            materialized_lt.clone()
+          materialized_lt.clone()
         } else {
-            materialized_eq.clone()
+          materialized_eq.clone()
         }
     )
   }
 
   /// LT = (1-x_i)* y_i * eq(x_{>i}, y_{>i})
-  fn evalute_subtable_mle(_: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evalute_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
 
-    let mut result = F::zero();
-    let mut eq_term = F::one();
-    for i in 0..b {
-      result += (F::one()-x[i]) * y[i] * eq_term;
-      eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
+    // TODO: Improve
+    if subtable_index % 2 == 0 { // LT subtable
+      let mut bitpacked = F::zero();
+      let mut result = F::zero();
+      let mut eq_term = F::one();
+      for i in 0..b {
+        bitpacked += F::from(1u64 << (2 * b + i)) * x[b - i - 1];
+        bitpacked += F::from(1u64 << (b + i)) * y[b - i - 1];
+
+        result += (F::one() - x[i]) * y[i] * eq_term;
+        eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
+      }
+      bitpacked + result
+    } else { // EQ subtable
+      let mut bitpacked = F::zero();
+      let mut eq_term = F::one();
+      for i in 0..b {
+        bitpacked += F::from(1u64 << (2 * b + i)) * x[b - i - 1];
+        bitpacked += F::from(1u64 << (b + i)) * y[b - i - 1];
+        eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
+      }
+      bitpacked + eq_term
     }
-    result
   }
 
   fn to_lookup_polys(
@@ -125,16 +141,16 @@ mod test {
     fn mle() {
       let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
       let eval = LTSubtableStrategy::evalute_subtable_mle(0, &[vec![]], &point);
-      assert_eq!(eval, Fr::one());
+      assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
 
       let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
       let eval = LTSubtableStrategy::evalute_subtable_mle(0, &[vec![]], &point);
-      assert_eq!(eval, Fr::zero());
+      assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
 
       // Eq
       let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
       let eval = LTSubtableStrategy::evalute_subtable_mle(0, &[vec![]], &point);
-      assert_eq!(eval, Fr::zero());
+      assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
     }
 
     #[test]
@@ -148,7 +164,7 @@ mod test {
         Fr::from(30u64), // LT[2]
         Fr::one(),       // EQ[2]
         Fr::from(40u64), // LT[3]
-        Fr::one(),      // EQ[3]
+        Fr::one(),       // EQ[3]
       ];
 
       // LT = LT[0] 
@@ -162,5 +178,49 @@ mod test {
 
       let combined = <LTSubtableStrategy as SubtableStrategy<_, C, { C * 2 }>>::combine_lookups(&vals);
       assert_eq!(combined, expected);
+    }
+
+    #[test]
+    fn table_materialization() {
+      const C: usize = 2;
+      let materialized: [Vec<Fr>; C * 2] = LTSubtableStrategy::materialize_subtables(16, &[vec![], vec![]]);
+      let lt = materialized[0].clone();
+      let eq = materialized[1].clone();
+
+      assert_eq!(lt[0], Fr::from(0b00_00_00));
+      assert_eq!(lt[1], Fr::from(0b00_01_01));
+      assert_eq!(lt[2], Fr::from(0b00_10_01));
+      assert_eq!(lt[3], Fr::from(0b00_11_01));
+      assert_eq!(lt[4], Fr::from(0b01_00_00));
+      assert_eq!(lt[5], Fr::from(0b01_01_00));
+      assert_eq!(lt[6], Fr::from(0b01_10_01));
+      // ...
+
+      assert_eq!(lt[0], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_00, 4)));
+      assert_eq!(lt[1], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_01, 4)));
+      assert_eq!(lt[2], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_10, 4)));
+      assert_eq!(lt[3], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_11, 4)));
+      assert_eq!(lt[4], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b01_00, 4)));
+      assert_eq!(lt[5], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b01_01, 4)));
+      assert_eq!(lt[6], LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b01_10, 4)));
+      // ...
+
+      assert_eq!(eq[0], Fr::from(0b00_00_01));
+      assert_eq!(eq[1], Fr::from(0b00_01_00));
+      assert_eq!(eq[2], Fr::from(0b00_10_00));
+      assert_eq!(eq[3], Fr::from(0b00_11_00));
+      assert_eq!(eq[4], Fr::from(0b01_00_00));
+      assert_eq!(eq[5], Fr::from(0b01_01_01));
+      assert_eq!(eq[6], Fr::from(0b01_10_00));
+      // ...
+
+      assert_eq!(eq[0], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_00, 4)));
+      assert_eq!(eq[1], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_01, 4)));
+      assert_eq!(eq[2], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_10, 4)));
+      assert_eq!(eq[3], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_11, 4)));
+      assert_eq!(eq[4], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b01_00, 4)));
+      assert_eq!(eq[5], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b01_01, 4)));
+      assert_eq!(eq[6], LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b01_10, 4)));
+      // ...
     }
 }
