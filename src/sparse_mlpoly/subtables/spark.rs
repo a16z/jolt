@@ -1,16 +1,13 @@
 use ark_ff::PrimeField;
 
-use crate::{
-  dense_mlpoly::{DensePolynomial, EqPolynomial},
-  sparse_mlpoly::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
-};
+use crate::dense_mlpoly::EqPolynomial;
 
 use super::SubtableStrategy;
 
 pub enum SparkSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for SparkSubtableStrategy {
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; C] {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 1> for SparkSubtableStrategy {
+  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; 1 * C] {
     std::array::from_fn(|i| {
       let eq_evals = EqPolynomial::new(r[i].clone()).evals();
       assert_eq!(eq_evals.len(), m);
@@ -22,38 +19,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for SparkSubtableS
     EqPolynomial::new(r[subtable_index].clone()).evaluate(point)
   }
 
-  fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; C],
-    nz: &[Vec<usize>; C],
-    s: usize,
-  ) -> [DensePolynomial<F>; C] {
-    std::array::from_fn(|i| {
-      let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
-      for j in 0..s {
-        subtable_lookups.push(subtable_entries[i][nz[i][j]]);
-      }
-      DensePolynomial::new(subtable_lookups)
-    })
-  }
-
-  fn to_grand_products(
-    subtable_entries: &[Vec<F>; C],
-    dense: &DensifiedRepresentation<F, C>,
-    r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; C] {
-    std::array::from_fn(|i| {
-      GrandProducts::new(
-        &subtable_entries[i],
-        &dense.dim[i],
-        &dense.dim_usize[i],
-        &dense.read[i],
-        &dense.r#final[i],
-        r_mem_check,
-      )
-    })
-  }
-
-  fn combine_lookups(vals: &[F; C]) -> F {
+  fn combine_lookups(vals: &[F; 1 * C]) -> F {
     vals.iter().product()
   }
 
@@ -87,7 +53,7 @@ mod test {
     // eq(2) = eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) * (1-6)) = (5)(-5) = -25
     // eq(2) = eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) * (1-6)) = (5)(-5) = -25
 
-    let subtable_evals: Subtables<Fr, C, C, SparkSubtableStrategy> =
+    let subtable_evals: Subtables<Fr, C, 1, SparkSubtableStrategy> =
       Subtables::new(&[vec![0, 2], vec![2, 2]], &[r_x, r_y], 1 << log_m, 2);
 
     for (x, expected) in vec![(0, 6), (1, -9), (2, -25), (3, -25)] {

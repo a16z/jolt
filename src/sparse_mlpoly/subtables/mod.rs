@@ -20,18 +20,18 @@ pub mod and;
 pub mod lt;
 pub mod spark;
 
-pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {
+pub trait SubtableStrategy<F: PrimeField, const C: usize, const K: usize> {
   /// Materialize subtables indexed [1, ..., \alpha]
   /// Note: Only SparkSubtableStrategy uses the parameter `r`.
   ///
   /// Params
   /// - `m`: size of subtable / number of evaluations to materialize
   /// - `r`: point at which to materialize the table (potentially unused)
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; ALPHA];
+  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; K * C];
 
   /// Evaluates the MLE of a subtable at the given point. Used by the verifier in memory-checking.
   /// Note: Only SparkSubtableStrategy uses the parameter `r`
-  /// 
+  ///
   /// Params
   /// - `subtable_index`: Which subtable to evaluate the MLE of. Ranges 0..ALPHA
   /// - `r`: point at which to materialize the table (potentially unused)
@@ -41,48 +41,69 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const ALPHA: usize> {
   /// Converts subtables T_1, ..., T_{\alpha} and lookup indices nz_1, ..., nz_c
   /// into log(m)-variate "lookup polynomials" E_1, ..., E_{\alpha}.
   fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; ALPHA],
+    subtable_entries: &[Vec<F>; K * C],
     nz: &[Vec<usize>; C],
     s: usize,
-  ) -> [DensePolynomial<F>; ALPHA];
+  ) -> [DensePolynomial<F>; K * C] {
+    std::array::from_fn(|i| {
+      let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
+      for j in 0..s {
+        subtable_lookups.push(subtable_entries[i][nz[i / K][j]]);
+      }
+      DensePolynomial::new(subtable_lookups)
+    })
+  }
 
   /// Converts subtables T_1, ..., T_{\alpha} and densified multilinear polynomial
   /// into grand products for memory-checking.
   fn to_grand_products(
-    subtable_entries: &[Vec<F>; ALPHA],
+    subtable_entries: &[Vec<F>; K * C],
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; ALPHA];
+  ) -> [GrandProducts<F>; K * C] {
+    std::array::from_fn(|i| {
+      GrandProducts::new(
+        &subtable_entries[i],
+        &dense.dim[i / K],
+        &dense.dim_usize[i / K],
+        &dense.read[i / K],
+        &dense.r#final[i / K],
+        r_mem_check,
+      )
+    })
+  }
 
   /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-  fn combine_lookups(vals: &[F; ALPHA]) -> F;
+  fn combine_lookups(vals: &[F; K * C]) -> F;
 
   /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
   /// Determines the number of evaluation points in each sumcheck round.
   fn sumcheck_poly_degree() -> usize;
 }
 
-pub struct Subtables<F: PrimeField, const C: usize, const ALPHA: usize, S>
+pub struct Subtables<F: PrimeField, const C: usize, const K: usize, S>
 where
-  S: SubtableStrategy<F, C, ALPHA>,
+  S: SubtableStrategy<F, C, K>,
+  [(); K * C]:,
 {
-  pub subtable_entries: [Vec<F>; ALPHA],
-  pub lookup_polys: [DensePolynomial<F>; ALPHA],
+  pub subtable_entries: [Vec<F>; K * C],
+  pub lookup_polys: [DensePolynomial<F>; K * C],
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
-impl<F: PrimeField, const C: usize, const ALPHA: usize, S> Subtables<F, C, ALPHA, S>
+impl<F: PrimeField, const C: usize, const K: usize, S> Subtables<F, C, K, S>
 where
-  S: SubtableStrategy<F, C, ALPHA>,
+  S: SubtableStrategy<F, C, K>,
+  [(); K * C]:,
 {
   /// Create new SubtableEvaluations
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
   pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], m: usize, s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
-    let subtable_entries: [Vec<F>; ALPHA] = S::materialize_subtables(m, r);
-    let lookup_polys: [DensePolynomial<F>; ALPHA] = S::to_lookup_polys(&subtable_entries, nz, s);
+    let subtable_entries: [Vec<F>; K * C] = S::materialize_subtables(m, r);
+    let lookup_polys: [DensePolynomial<F>; K * C] = S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);
 
     Subtables {
@@ -110,7 +131,7 @@ where
 
     (0..hypercube_size)
       .map(|k| {
-        let g_operands: [F; ALPHA] = std::array::from_fn(|j| g_operands[j][k]);
+        let g_operands: [F; K * C] = std::array::from_fn(|j| g_operands[j][k]);
         S::combine_lookups(&g_operands)
         // TODO(moodlezoup): \tilde{eq}(r, k)
       })

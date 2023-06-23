@@ -8,7 +8,7 @@ use libspartan::{
     sparse_mlpoly::{
       SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof,
     },
-    subtables::spark::SparkSubtableStrategy
+    subtables::spark::SparkSubtableStrategy,
   },
 };
 use merlin::Transcript;
@@ -93,13 +93,14 @@ fn main() {
   let mut prover_transcript = Transcript::new(b"example");
   println!("SparsePolynomialEvaluationProof.prove()");
   let before_prove = Instant::now();
-  let _proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<SparkSubtableStrategy>(
-    &mut dense,
-    &r,
-    &gens,
-    &mut prover_transcript,
-    &mut random_tape,
-  );
+  let _proof =
+    SparsePolynomialEvaluationProof::<EdwardsProjective, C, 1>::prove::<SparkSubtableStrategy>(
+      &mut dense,
+      &r,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
   let after_prove = Instant::now();
 
   println!(

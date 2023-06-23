@@ -174,25 +174,31 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const C: usize, const ALPHA: usize> {
+struct HashLayerProof<G: CurveGroup, const C: usize, const K: usize>
+where
+  [(); K * C]:,
+{
   eval_dim: [G::ScalarField; C],
   eval_read: [G::ScalarField; C],
   eval_final: [G::ScalarField; C],
-  eval_derefs: [G::ScalarField; ALPHA],
+  eval_derefs: [G::ScalarField; K * C],
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G, ALPHA>,
+  proof_derefs: CombinedTableEvalProof<G, C>,
 }
 
-impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALPHA> {
+impl<G: CurveGroup, const C: usize, const K: usize> HashLayerProof<G, C, K>
+where
+  [(); K * C]:,
+{
   fn protocol_name() -> &'static [u8] {
     b"Surge HashLayerProof"
   }
 
-  fn prove<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
+  fn prove<S: SubtableStrategy<G::ScalarField, C, K>>(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
-    subtables: &Subtables<G::ScalarField, C, ALPHA, S>,
+    subtables: &Subtables<G::ScalarField, C, K, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -202,7 +208,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: [G::ScalarField; ALPHA] =
+    let eval_derefs: [G::ScalarField; K * C] =
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
@@ -376,15 +382,15 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
     Ok(())
   }
 
-  fn verify<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
+  fn verify<S: SubtableStrategy<G::ScalarField, C, K>>(
     &self,
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    claims_dim: &[(
+    grand_product_claims: &[(
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); ALPHA],
+    ); K * C],
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparsePolyCommitmentGens<G>,
     table_eval_commitment: &CombinedTableCommitment<G>,
@@ -482,16 +488,15 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> HashLayerProof<G, C, ALP
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    let k = ALPHA / C;
-    for i in 0..ALPHA {
+    for i in 0..(K * C) {
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
       Self::check_reed_solomon_fingerprints(
-        &claims_dim[i],
+        &grand_product_claims[i],
         &self.eval_derefs[i],
-        &self.eval_dim[i/k],
-        &self.eval_read[i/k],
-        &self.eval_final[i/k],
+        &self.eval_dim[i / K],
+        &self.eval_read[i / K],
+        &self.eval_final[i / K],
         &init_addr,
         &S::evalute_subtable_mle(i, r, rand_mem),
         r_hash,
@@ -636,12 +641,18 @@ impl<F: PrimeField, const ALPHA: usize> ProductLayerProof<F, ALPHA> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, const C: usize, const ALPHA: usize> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField, ALPHA>,
-  proof_hash_layer: HashLayerProof<G, C, ALPHA>,
+pub struct MemoryCheckingProof<G: CurveGroup, const C: usize, const K: usize>
+where
+  [(); K * C]:,
+{
+  proof_prod_layer: ProductLayerProof<G::ScalarField, { K * C }>,
+  proof_hash_layer: HashLayerProof<G, C, K>,
 }
 
-impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C, ALPHA> {
+impl<G: CurveGroup, const C: usize, const K: usize> MemoryCheckingProof<G, C, K>
+where
+  [(); K * C]:,
+{
   fn protocol_name() -> &'static [u8] {
     b"Surge MemoryCheckingProof"
   }
@@ -656,10 +667,10 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
-  pub fn prove<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
+  pub fn prove<S: SubtableStrategy<G::ScalarField, C, K>>(
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
-    subtables: &Subtables<G::ScalarField, C, ALPHA, S>,
+    subtables: &Subtables<G::ScalarField, C, K, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -697,7 +708,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C
   /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
   /// - `s`: Sparsity, i.e. the number of lookups.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  pub fn verify<S: SubtableStrategy<G::ScalarField, C, ALPHA>>(
+  pub fn verify<S: SubtableStrategy<G::ScalarField, C, K>>(
     &self,
     comm: &SparsePolynomialCommitment<G>,
     comm_derefs: &CombinedTableCommitment<G>,
@@ -723,7 +734,7 @@ impl<G: CurveGroup, const C: usize, const ALPHA: usize> MemoryCheckingProof<G, C
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); ALPHA] = std::array::from_fn(|i| {
+    ); K * C] = std::array::from_fn(|i| {
       (
         claims_mem[2 * i],     // init
         claims_ops[2 * i],     // read

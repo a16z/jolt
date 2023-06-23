@@ -1,18 +1,14 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use crate::{
-  dense_mlpoly::DensePolynomial,
-  sparse_mlpoly::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
-  utils::{pack_field_xyz, split_bits},
-};
+use crate::utils::{pack_field_xyz, split_bits};
 
 use super::SubtableStrategy;
 
 pub enum AndSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStrategy {
-  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; C] {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 1> for AndSubtableStrategy {
+  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; 1 * C] {
     let mut materialized: Vec<F> = Vec::with_capacity(m);
     let bits_per_operand = (log2(m) / 2) as usize;
 
@@ -43,42 +39,11 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStr
     result
   }
 
-  fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; C],
-    nz: &[Vec<usize>; C],
-    s: usize,
-  ) -> [DensePolynomial<F>; C] {
-    std::array::from_fn(|i| {
-      let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
-      for j in 0..s {
-        subtable_lookups.push(subtable_entries[i][nz[i][j]]);
-      }
-      DensePolynomial::new(subtable_lookups)
-    })
-  }
-
-  fn to_grand_products(
-    subtable_entries: &[Vec<F>; C],
-    dense: &DensifiedRepresentation<F, C>,
-    r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; C] {
-    std::array::from_fn(|i| {
-      GrandProducts::new(
-        &subtable_entries[i],
-        &dense.dim[i],
-        &dense.dim_usize[i],
-        &dense.read[i],
-        &dense.r#final[i],
-        r_mem_check,
-      )
-    })
-  }
-
   /// Combine AND table subtable evaluations
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
-  /// x3 | y3 | z3 | x2 | y2 | z2 | x1 | y1 | z1 | x0 | y0 | z0 | 
-  fn combine_lookups(vals: &[F; C]) -> F {
+  /// x3 | y3 | z3 | x2 | y2 | z2 | x1 | y1 | z1 | x0 | y0 | z0 |
+  fn combine_lookups(vals: &[F; 1 * C]) -> F {
     let increment = 64 / C; // TODO: Generalize 64 to M
     let mut sum = F::zero();
     for i in 0..C {
@@ -136,7 +101,7 @@ mod test {
 
   #[test]
   fn combine() {
-    let combined: Fr = AndSubtableStrategy::combine_lookups(&[
+    let combined: Fr = <AndSubtableStrategy as SubtableStrategy<Fr, 4, 1>>::combine_lookups(&[
       Fr::from(100),
       Fr::from(200),
       Fr::from(300),
@@ -163,7 +128,7 @@ mod test {
     let r_x: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
     let r_y: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
 
-    let subtable_evals: Subtables<Fr, C, C, AndSubtableStrategy> =
+    let subtable_evals: Subtables<Fr, C, 1, AndSubtableStrategy> =
       Subtables::new(&[x_indices, y_indices], &[r_x, r_y], 1 << log_m, 2);
 
     // Real equation here is log2(sparsity) + log2(C)
