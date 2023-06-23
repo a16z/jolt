@@ -94,7 +94,7 @@ fn main() {
   println!("SparsePolynomialEvaluationProof.prove()");
   let before_prove = Instant::now();
   let _proof =
-    SparsePolynomialEvaluationProof::<EdwardsProjective, C, 1>::prove::<SparkSubtableStrategy>(
+    SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<SparkSubtableStrategy>(
       &mut dense,
       &r,
       &gens,

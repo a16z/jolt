@@ -20,14 +20,16 @@ pub mod and;
 pub mod lt;
 pub mod spark;
 
-pub trait SubtableStrategy<F: PrimeField, const C: usize, const K: usize> {
+pub trait SubtableStrategy<F: PrimeField, const C: usize, const NUM_MEMORIES: usize> {
+  const NUM_SUBTABLES: usize;
+
   /// Materialize subtables indexed [1, ..., \alpha]
   /// Note: Only SparkSubtableStrategy uses the parameter `r`.
   ///
   /// Params
   /// - `m`: size of subtable / number of evaluations to materialize
   /// - `r`: point at which to materialize the table (potentially unused)
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; K * C];
+  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
 
   /// Evaluates the MLE of a subtable at the given point. Used by the verifier in memory-checking.
   /// Note: Only SparkSubtableStrategy uses the parameter `r`
@@ -38,72 +40,68 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const K: usize> {
   /// - `point`: Point at which to evaluate the MLE
   fn evalute_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
+  fn memory_to_subtable_index(memory_index: usize) -> usize {
+    assert_eq!(Self::NUM_SUBTABLES * C, NUM_MEMORIES);
+    assert!(memory_index < NUM_MEMORIES);
+    memory_index % Self::NUM_SUBTABLES
+  }
+
+  fn memory_to_dimension_index(memory_index: usize) -> usize {
+    assert_eq!(Self::NUM_SUBTABLES * C, NUM_MEMORIES);
+    assert!(memory_index < NUM_MEMORIES);
+    memory_index / Self::NUM_SUBTABLES
+  }
+
   /// Converts subtables T_1, ..., T_{\alpha} and lookup indices nz_1, ..., nz_c
   /// into log(m)-variate "lookup polynomials" E_1, ..., E_{\alpha}.
   fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; K * C],
+    subtable_entries: &[Vec<F>; Self::NUM_SUBTABLES],
     nz: &[Vec<usize>; C],
     s: usize,
-  ) -> [DensePolynomial<F>; K * C] {
+  ) -> [DensePolynomial<F>; NUM_MEMORIES] {
     std::array::from_fn(|i| {
       let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
       for j in 0..s {
-        subtable_lookups.push(subtable_entries[i][nz[i / K][j]]);
+        let subtable = &subtable_entries[Self::memory_to_subtable_index(i)];
+        let nz = nz[Self::memory_to_dimension_index(i)][j];
+        subtable_lookups.push(subtable[nz]);
       }
       DensePolynomial::new(subtable_lookups)
     })
   }
 
-  /// Converts subtables T_1, ..., T_{\alpha} and densified multilinear polynomial
-  /// into grand products for memory-checking.
-  fn to_grand_products(
-    subtable_entries: &[Vec<F>; K * C],
-    dense: &DensifiedRepresentation<F, C>,
-    r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; K * C] {
-    std::array::from_fn(|i| {
-      GrandProducts::new(
-        &subtable_entries[i],
-        &dense.dim[i / K],
-        &dense.dim_usize[i / K],
-        &dense.read[i / K],
-        &dense.r#final[i / K],
-        r_mem_check,
-      )
-    })
-  }
-
   /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-  fn combine_lookups(vals: &[F; K * C]) -> F;
+  fn combine_lookups(vals: &[F; NUM_MEMORIES]) -> F;
 
   /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
   /// Determines the number of evaluation points in each sumcheck round.
   fn sumcheck_poly_degree() -> usize;
 }
 
-pub struct Subtables<F: PrimeField, const C: usize, const K: usize, S>
+pub struct Subtables<F: PrimeField, const C: usize, const NUM_MEMORIES: usize, S>
 where
-  S: SubtableStrategy<F, C, K>,
-  [(); K * C]:,
+  S: SubtableStrategy<F, C, NUM_MEMORIES>,
+  [(); S::NUM_SUBTABLES]: Sized,
 {
-  pub subtable_entries: [Vec<F>; K * C],
-  pub lookup_polys: [DensePolynomial<F>; K * C],
+  subtable_entries: [Vec<F>; S::NUM_SUBTABLES],
+  pub lookup_polys: [DensePolynomial<F>; NUM_MEMORIES],
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
-impl<F: PrimeField, const C: usize, const K: usize, S> Subtables<F, C, K, S>
+impl<F: PrimeField, const C: usize, const NUM_MEMORIES: usize, S> Subtables<F, C, NUM_MEMORIES, S>
 where
-  S: SubtableStrategy<F, C, K>,
-  [(); K * C]:,
+  S: SubtableStrategy<F, C, NUM_MEMORIES>,
+  [(); S::NUM_SUBTABLES]: Sized,
 {
   /// Create new SubtableEvaluations
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
   pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], m: usize, s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
-    let subtable_entries: [Vec<F>; K * C] = S::materialize_subtables(m, r);
-    let lookup_polys: [DensePolynomial<F>; K * C] = S::to_lookup_polys(&subtable_entries, nz, s);
+    let subtable_entries = S::materialize_subtables(m, r);
+    let lookup_polys: [DensePolynomial<F>; NUM_MEMORIES] =
+      S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);
 
     Subtables {
@@ -112,6 +110,27 @@ where
       combined_poly,
       strategy: PhantomData,
     }
+  }
+
+  /// Converts subtables T_1, ..., T_{\alpha} and densified multilinear polynomial
+  /// into grand products for memory-checking.
+  pub fn to_grand_products(
+    &self,
+    dense: &DensifiedRepresentation<F, C>,
+    r_mem_check: &(F, F),
+  ) -> [GrandProducts<F>; NUM_MEMORIES] {
+    std::array::from_fn(|i| {
+      let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
+      let j = S::memory_to_dimension_index(i);
+      GrandProducts::new(
+        subtable,
+        &dense.dim[j],
+        &dense.dim_usize[j],
+        &dense.read[j],
+        &dense.r#final[j],
+        r_mem_check,
+      )
+    })
   }
 
   pub fn commit<G: CurveGroup<ScalarField = F>>(
@@ -131,7 +150,7 @@ where
 
     (0..hypercube_size)
       .map(|k| {
-        let g_operands: [F; K * C] = std::array::from_fn(|j| g_operands[j][k]);
+        let g_operands: [F; NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
         S::combine_lookups(&g_operands)
         // TODO(moodlezoup): \tilde{eq}(r, k)
       })

@@ -7,8 +7,10 @@ use super::SubtableStrategy;
 
 pub enum AndSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 1> for AndSubtableStrategy {
-  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; 1 * C] {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStrategy {
+  const NUM_SUBTABLES: usize = 1;
+
+  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; 1] {
     let mut materialized: Vec<F> = Vec::with_capacity(m);
     let bits_per_operand = (log2(m) / 2) as usize;
 
@@ -22,7 +24,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 1> for AndSubtableStr
       materialized.push(row);
     }
 
-    std::array::from_fn(|i| materialized.clone())
+    [materialized]
   }
 
   fn evalute_subtable_mle(_: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
@@ -43,7 +45,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 1> for AndSubtableStr
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
   /// x3 | y3 | z3 | x2 | y2 | z2 | x1 | y1 | z1 | x0 | y0 | z0 |
-  fn combine_lookups(vals: &[F; 1 * C]) -> F {
+  fn combine_lookups(vals: &[F; C]) -> F {
     let increment = 64 / C; // TODO: Generalize 64 to M
     let mut sum = F::zero();
     for i in 0..C {
@@ -71,9 +73,9 @@ mod test {
     const C: usize = 4;
     const M: usize = 1 << 4;
 
-    let materialized: [Vec<Fr>; C] =
+    let materialized: [Vec<Fr>; 1] =
       AndSubtableStrategy::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
-    assert_eq!(materialized.len(), C);
+    assert_eq!(materialized.len(), 1);
     assert_eq!(materialized[0].len(), M);
 
     let table: Vec<Fr> = materialized[0].clone();
@@ -101,7 +103,7 @@ mod test {
 
   #[test]
   fn combine() {
-    let combined: Fr = <AndSubtableStrategy as SubtableStrategy<Fr, 4, 1>>::combine_lookups(&[
+    let combined: Fr = <AndSubtableStrategy as SubtableStrategy<Fr, 4, 4>>::combine_lookups(&[
       Fr::from(100),
       Fr::from(200),
       Fr::from(300),
@@ -128,7 +130,7 @@ mod test {
     let r_x: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
     let r_y: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
 
-    let subtable_evals: Subtables<Fr, C, 1, AndSubtableStrategy> =
+    let subtable_evals: Subtables<Fr, C, C, AndSubtableStrategy> =
       Subtables::new(&[x_indices, y_indices], &[r_x, r_y], 1 << log_m, 2);
 
     // Real equation here is log2(sparsity) + log2(C)
