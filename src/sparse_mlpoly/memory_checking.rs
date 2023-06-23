@@ -174,38 +174,42 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize> {
+struct HashLayerProof<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>>
+where
+  [(); S::NUM_MEMORIES]: Sized,
+{
   eval_dim: [G::ScalarField; C],
   eval_read: [G::ScalarField; C],
   eval_final: [G::ScalarField; C],
-  eval_derefs: [G::ScalarField; NUM_MEMORIES],
+  eval_derefs: [G::ScalarField; S::NUM_MEMORIES],
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
   proof_derefs: CombinedTableEvalProof<G, C>,
 }
 
-impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize> HashLayerProof<G, C, NUM_MEMORIES> {
+impl<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>> HashLayerProof<G, C, S>
+where
+  [(); S::NUM_SUBTABLES]: Sized,
+  [(); S::NUM_MEMORIES]: Sized,
+{
   fn protocol_name() -> &'static [u8] {
     b"Surge HashLayerProof"
   }
 
-  fn prove<S: SubtableStrategy<G::ScalarField, C, NUM_MEMORIES>>(
+  fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
-    subtables: &Subtables<G::ScalarField, C, NUM_MEMORIES, S>,
+    subtables: &Subtables<G::ScalarField, C, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> Self
-  where
-    [(); S::NUM_SUBTABLES]: Sized,
-  {
+  ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: [G::ScalarField; NUM_MEMORIES] =
+    let eval_derefs: [G::ScalarField; S::NUM_MEMORIES] =
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
@@ -379,7 +383,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize> HashLayerProof<G,
     Ok(())
   }
 
-  fn verify<S: SubtableStrategy<G::ScalarField, C, NUM_MEMORIES>>(
+  fn verify(
     &self,
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     grand_product_claims: &[(
@@ -387,7 +391,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize> HashLayerProof<G,
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); NUM_MEMORIES],
+    ); S::NUM_MEMORIES],
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparsePolyCommitmentGens<G>,
     table_eval_commitment: &CombinedTableCommitment<G>,
@@ -485,7 +489,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize> HashLayerProof<G,
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for i in 0..NUM_MEMORIES {
+    for i in 0..S::NUM_MEMORIES {
       let j = S::memory_to_dimension_index(i);
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
@@ -639,13 +643,22 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField, NUM_MEMORIES>,
-  proof_hash_layer: HashLayerProof<G, C, NUM_MEMORIES>,
+pub struct MemoryCheckingProof<
+  G: CurveGroup,
+  const C: usize,
+  S: SubtableStrategy<G::ScalarField, C>,
+> where
+  [(); S::NUM_MEMORIES]: Sized,
+{
+  proof_prod_layer: ProductLayerProof<G::ScalarField, { S::NUM_MEMORIES }>,
+  proof_hash_layer: HashLayerProof<G, C, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
-  MemoryCheckingProof<G, C, NUM_MEMORIES>
+impl<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>>
+  MemoryCheckingProof<G, C, S>
+where
+  [(); S::NUM_SUBTABLES]: Sized,
+  [(); S::NUM_MEMORIES]: Sized,
 {
   fn protocol_name() -> &'static [u8] {
     b"Surge MemoryCheckingProof"
@@ -661,17 +674,14 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
-  pub fn prove<S: SubtableStrategy<G::ScalarField, C, NUM_MEMORIES>>(
+  pub fn prove(
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
-    subtables: &Subtables<G::ScalarField, C, NUM_MEMORIES, S>,
+    subtables: &Subtables<G::ScalarField, C, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> Self
-  where
-    [(); S::NUM_SUBTABLES]: Sized,
-  {
+  ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     let mut grand_products = subtables.to_grand_products(dense, r_mem_check);
@@ -705,7 +715,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
   /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
   /// - `s`: Sparsity, i.e. the number of lookups.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  pub fn verify<S: SubtableStrategy<G::ScalarField, C, NUM_MEMORIES>>(
+  pub fn verify(
     &self,
     comm: &SparsePolynomialCommitment<G>,
     comm_derefs: &CombinedTableCommitment<G>,
@@ -731,7 +741,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); NUM_MEMORIES] = std::array::from_fn(|i| {
+    ); S::NUM_MEMORIES] = std::array::from_fn(|i| {
       (
         claims_mem[2 * i],     // init
         claims_ops[2 * i],     // read
@@ -741,7 +751,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
     });
 
     // verify the proof of hash layer
-    self.proof_hash_layer.verify::<S>(
+    self.proof_hash_layer.verify(
       (&rand_mem, &rand_ops),
       &claims,
       comm,

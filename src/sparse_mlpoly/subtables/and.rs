@@ -7,10 +7,14 @@ use super::SubtableStrategy;
 
 pub enum AndSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStrategy {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for AndSubtableStrategy {
   const NUM_SUBTABLES: usize = 1;
+  const NUM_MEMORIES: usize = C;
 
-  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; 1] {
+  fn materialize_subtables(
+    m: usize,
+    _r: &[Vec<F>; C],
+  ) -> [Vec<F>; <Self as SubtableStrategy<F, C>>::NUM_SUBTABLES] {
     let mut materialized: Vec<F> = Vec::with_capacity(m);
     let bits_per_operand = (log2(m) / 2) as usize;
 
@@ -45,7 +49,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, C> for AndSubtableStr
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
   /// x3 | y3 | z3 | x2 | y2 | z2 | x1 | y1 | z1 | x0 | y0 | z0 |
-  fn combine_lookups(vals: &[F; C]) -> F {
+  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C>>::NUM_MEMORIES]) -> F {
     let increment = 64 / C; // TODO: Generalize 64 to M
     let mut sum = F::zero();
     for i in 0..C {
@@ -103,7 +107,7 @@ mod test {
 
   #[test]
   fn combine() {
-    let combined: Fr = <AndSubtableStrategy as SubtableStrategy<Fr, 4, 4>>::combine_lookups(&[
+    let combined: Fr = <AndSubtableStrategy as SubtableStrategy<Fr, 4>>::combine_lookups(&[
       Fr::from(100),
       Fr::from(200),
       Fr::from(300),
@@ -130,7 +134,7 @@ mod test {
     let r_x: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
     let r_y: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
 
-    let subtable_evals: Subtables<Fr, C, C, AndSubtableStrategy> =
+    let subtable_evals: Subtables<Fr, C, AndSubtableStrategy> =
       Subtables::new(&[x_indices, y_indices], &[r_x, r_y], 1 << log_m, 2);
 
     // Real equation here is log2(sparsity) + log2(C)

@@ -7,10 +7,14 @@ use super::SubtableStrategy;
 
 pub enum LTSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, { 2 * C }> for LTSubtableStrategy {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrategy {
   const NUM_SUBTABLES: usize = 2;
+  const NUM_MEMORIES: usize = 2 * C;
 
-  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; 2] {
+  fn materialize_subtables(
+    m: usize,
+    _r: &[Vec<F>; C],
+  ) -> [Vec<F>; <Self as SubtableStrategy<F, C>>::NUM_SUBTABLES] {
     let bits_per_operand = (log2(m) / 2) as usize;
 
     let mut materialized_lt: Vec<F> = Vec::with_capacity(m);
@@ -74,7 +78,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, { 2 * C }> for LTSubt
 
   /// Combines lookups into the LT subtables.
   /// Assumes ALPHA lookups are ordered: LT[0], EQ[0], ... LT[C], EQ[C]
-  fn combine_lookups(vals: &[F; 2 * C]) -> F {
+  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C>>::NUM_MEMORIES]) -> F {
     let mut sum = F::zero();
     let mut eq_prod = F::one();
 
@@ -137,8 +141,7 @@ mod test {
       + Fr::from(30u64) * Fr::one() * Fr::zero()
       + Fr::from(40u64) * Fr::one() * Fr::zero() * Fr::one();
 
-    let combined =
-      <LTSubtableStrategy as SubtableStrategy<_, C, { 2 * C }>>::combine_lookups(&vals);
+    let combined = <LTSubtableStrategy as SubtableStrategy<_, C>>::combine_lookups(&vals);
     assert_eq!(combined, expected);
   }
 

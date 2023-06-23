@@ -109,15 +109,23 @@ struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparsePolynomialEvaluationProof<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
+pub struct SparsePolynomialEvaluationProof<
+  G: CurveGroup,
+  const C: usize,
+  S: SubtableStrategy<G::ScalarField, C>,
+> where
+  [(); S::NUM_MEMORIES]: Sized,
 {
   comm_derefs: CombinedTableCommitment<G>,
-  primary_sumcheck: PrimarySumcheck<G, NUM_MEMORIES>,
-  memory_check: MemoryCheckingProof<G, C, NUM_MEMORIES>,
+  primary_sumcheck: PrimarySumcheck<G, { S::NUM_MEMORIES }>,
+  memory_check: MemoryCheckingProof<G, C, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
-  SparsePolynomialEvaluationProof<G, C, NUM_MEMORIES>
+impl<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>>
+  SparsePolynomialEvaluationProof<G, C, S>
+where
+  [(); S::NUM_SUBTABLES]: Sized,
+  [(); S::NUM_MEMORIES]: Sized,
 {
   fn protocol_name() -> &'static [u8] {
     b"Surge SparsePolynomialEvaluationProof"
@@ -127,7 +135,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
   /// - `r`: c log_m sized coordinates at which to prove the evaluation of the sparse polynomial
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
-  pub fn prove<S: SubtableStrategy<G::ScalarField, C, NUM_MEMORIES>>(
+  pub fn prove(
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
     r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
     gens: &SparsePolyCommitmentGens<G>,
@@ -141,7 +149,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
 
     r.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
 
-    let subtables = Subtables::<_, C, NUM_MEMORIES, S>::new(&dense.dim_usize, r, dense.m, dense.s);
+    let subtables = Subtables::<_, C, S>::new(&dense.dim_usize, r, dense.m, dense.s);
 
     // commit to non-deterministic choices of the prover
     let comm_derefs = {
@@ -158,19 +166,23 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
       &claimed_eval,
     );
 
-    let (primary_sumcheck_proof, r_z, _) =
-      SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript, NUM_MEMORIES>(
-        &claimed_eval,
-        dense.s.log_2(),
-        &mut subtables.lookup_polys.clone(),
-        S::combine_lookups,
-        S::sumcheck_poly_degree(),
-        transcript,
-      );
+    let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<
+      _,
+      G,
+      Transcript,
+      { S::NUM_MEMORIES },
+    >(
+      &claimed_eval,
+      dense.s.log_2(),
+      &mut subtables.lookup_polys.clone(),
+      S::combine_lookups,
+      S::sumcheck_poly_degree(),
+      transcript,
+    );
 
     // TODO(moodlezoup): Is it safe to reuse gens_derefs here?
     // Combined eval proof for E_i(r_z)
-    let eval_derefs: [G::ScalarField; NUM_MEMORIES] =
+    let eval_derefs: [G::ScalarField; S::NUM_MEMORIES] =
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(&r_z));
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
@@ -208,7 +220,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
     }
   }
 
-  pub fn verify<S: SubtableStrategy<G::ScalarField, C, NUM_MEMORIES>>(
+  pub fn verify(
     &self,
     commitment: &SparsePolynomialCommitment<G>,
     r: &[Vec<G::ScalarField>; C], // point at which the polynomial is evaluated
@@ -256,7 +268,7 @@ impl<G: CurveGroup, const C: usize, const NUM_MEMORIES: usize>
     let r_mem_check =
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-    self.memory_check.verify::<S>(
+    self.memory_check.verify(
       commitment,
       &self.comm_derefs,
       gens,
@@ -393,7 +405,7 @@ mod tests {
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<SparkSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, SparkSubtableStrategy>::prove(
       &mut dense,
       &r,
       &gens,
@@ -403,7 +415,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<SparkSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -445,7 +457,7 @@ mod tests {
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<SparkSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, SparkSubtableStrategy>::prove(
       &mut dense,
       &r,
       &gens,
@@ -455,7 +467,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<SparkSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -497,7 +509,7 @@ mod tests {
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, C>::prove::<AndSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, AndSubtableStrategy>::prove(
       &mut dense,
       &r,
       &gens,
@@ -507,7 +519,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<AndSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -550,18 +562,17 @@ mod tests {
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof =
-      SparsePolynomialEvaluationProof::<G1Projective, C, { 2 * C }>::prove::<LTSubtableStrategy>(
-        &mut dense,
-        &r,
-        &gens,
-        &mut prover_transcript,
-        &mut random_tape,
-      );
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, C, LTSubtableStrategy>::prove(
+      &mut dense,
+      &r,
+      &gens,
+      &mut prover_transcript,
+      &mut random_tape,
+    );
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<LTSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 
@@ -680,7 +691,7 @@ mod tests {
     // Prove
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = SparsePolynomialEvaluationProof::<G1Projective, c, c>::prove::<SparkSubtableStrategy>(
+    let proof = SparsePolynomialEvaluationProof::<G1Projective, c, SparkSubtableStrategy>::prove(
       &mut dense,
       &r,
       &gens,
@@ -690,7 +701,7 @@ mod tests {
 
     let mut verifier_transcript = Transcript::new(b"example");
     assert!(proof
-      .verify::<SparkSubtableStrategy>(&commitment, &r, &gens, &mut verifier_transcript)
+      .verify(&commitment, &r, &gens, &mut verifier_transcript)
       .is_ok());
   }
 }

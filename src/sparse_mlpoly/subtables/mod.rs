@@ -20,8 +20,9 @@ pub mod and;
 pub mod lt;
 pub mod spark;
 
-pub trait SubtableStrategy<F: PrimeField, const C: usize, const NUM_MEMORIES: usize> {
+pub trait SubtableStrategy<F: PrimeField, const C: usize> {
   const NUM_SUBTABLES: usize;
+  const NUM_MEMORIES: usize;
 
   /// Materialize subtables indexed [1, ..., \alpha]
   /// Note: Only SparkSubtableStrategy uses the parameter `r`.
@@ -41,14 +42,14 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const NUM_MEMORIES: us
   fn evalute_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
   fn memory_to_subtable_index(memory_index: usize) -> usize {
-    assert_eq!(Self::NUM_SUBTABLES * C, NUM_MEMORIES);
-    assert!(memory_index < NUM_MEMORIES);
+    assert_eq!(Self::NUM_SUBTABLES * C, Self::NUM_MEMORIES);
+    assert!(memory_index < Self::NUM_MEMORIES);
     memory_index % Self::NUM_SUBTABLES
   }
 
   fn memory_to_dimension_index(memory_index: usize) -> usize {
-    assert_eq!(Self::NUM_SUBTABLES * C, NUM_MEMORIES);
-    assert!(memory_index < NUM_MEMORIES);
+    assert_eq!(Self::NUM_SUBTABLES * C, Self::NUM_MEMORIES);
+    assert!(memory_index < Self::NUM_MEMORIES);
     memory_index / Self::NUM_SUBTABLES
   }
 
@@ -58,7 +59,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const NUM_MEMORIES: us
     subtable_entries: &[Vec<F>; Self::NUM_SUBTABLES],
     nz: &[Vec<usize>; C],
     s: usize,
-  ) -> [DensePolynomial<F>; NUM_MEMORIES] {
+  ) -> [DensePolynomial<F>; Self::NUM_MEMORIES] {
     std::array::from_fn(|i| {
       let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
       for j in 0..s {
@@ -71,36 +72,38 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const NUM_MEMORIES: us
   }
 
   /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-  fn combine_lookups(vals: &[F; NUM_MEMORIES]) -> F;
+  fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
 
   /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
   /// Determines the number of evaluation points in each sumcheck round.
   fn sumcheck_poly_degree() -> usize;
 }
 
-pub struct Subtables<F: PrimeField, const C: usize, const NUM_MEMORIES: usize, S>
+pub struct Subtables<F: PrimeField, const C: usize, S>
 where
-  S: SubtableStrategy<F, C, NUM_MEMORIES>,
+  S: SubtableStrategy<F, C>,
   [(); S::NUM_SUBTABLES]: Sized,
+  [(); S::NUM_MEMORIES]: Sized,
 {
   subtable_entries: [Vec<F>; S::NUM_SUBTABLES],
-  pub lookup_polys: [DensePolynomial<F>; NUM_MEMORIES],
+  pub lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES],
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
-impl<F: PrimeField, const C: usize, const NUM_MEMORIES: usize, S> Subtables<F, C, NUM_MEMORIES, S>
+impl<F: PrimeField, const C: usize, S> Subtables<F, C, S>
 where
-  S: SubtableStrategy<F, C, NUM_MEMORIES>,
+  S: SubtableStrategy<F, C>,
   [(); S::NUM_SUBTABLES]: Sized,
+  [(); S::NUM_MEMORIES]: Sized,
 {
   /// Create new SubtableEvaluations
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
   pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], m: usize, s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
     let subtable_entries = S::materialize_subtables(m, r);
-    let lookup_polys: [DensePolynomial<F>; NUM_MEMORIES] =
+    let lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES] =
       S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);
 
@@ -118,7 +121,7 @@ where
     &self,
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; NUM_MEMORIES] {
+  ) -> [GrandProducts<F>; S::NUM_MEMORIES] {
     std::array::from_fn(|i| {
       let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
       let j = S::memory_to_dimension_index(i);
@@ -150,7 +153,7 @@ where
 
     (0..hypercube_size)
       .map(|k| {
-        let g_operands: [F; NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
+        let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
         S::combine_lookups(&g_operands)
         // TODO(moodlezoup): \tilde{eq}(r, k)
       })
