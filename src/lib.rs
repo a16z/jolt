@@ -2,6 +2,7 @@
 #![allow(clippy::assertions_on_result_states)]
 #![feature(extend_one)]
 #![feature(generic_const_exprs)]
+#![feature(associated_type_defaults)]
 
 extern crate core;
 extern crate digest;
