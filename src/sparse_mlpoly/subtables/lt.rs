@@ -7,8 +7,14 @@ use super::SubtableStrategy;
 
 pub enum LTSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 2> for LTSubtableStrategy {
-  fn materialize_subtables(m: usize, _r: &[Vec<F>; C]) -> [Vec<F>; 2 * C] {
+impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrategy {
+  const NUM_SUBTABLES: usize = 2;
+  const NUM_MEMORIES: usize = 2 * C;
+
+  fn materialize_subtables(
+    m: usize,
+    _r: &[Vec<F>; C],
+  ) -> [Vec<F>; <Self as SubtableStrategy<F, C>>::NUM_SUBTABLES] {
     let bits_per_operand = (log2(m) / 2) as usize;
 
     let mut materialized_lt: Vec<F> = Vec::with_capacity(m);
@@ -34,13 +40,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 2> for LTSubtableStra
       materialized_eq.push(row_eq);
     }
 
-    std::array::from_fn(|i| {
-      if i % 2 == 0 {
-        materialized_lt.clone()
-      } else {
-        materialized_eq.clone()
-      }
-    })
+    [materialized_lt, materialized_eq]
   }
 
   /// LT = (1-x_i)* y_i * eq(x_{>i}, y_{>i})
@@ -78,7 +78,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C, 2> for LTSubtableStra
 
   /// Combines lookups into the LT subtables.
   /// Assumes ALPHA lookups are ordered: LT[0], EQ[0], ... LT[C], EQ[C]
-  fn combine_lookups(vals: &[F; 2 * C]) -> F {
+  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C>>::NUM_MEMORIES]) -> F {
     let mut sum = F::zero();
     let mut eq_prod = F::one();
 
@@ -141,14 +141,14 @@ mod test {
       + Fr::from(30u64) * Fr::one() * Fr::zero()
       + Fr::from(40u64) * Fr::one() * Fr::zero() * Fr::one();
 
-    let combined = <LTSubtableStrategy as SubtableStrategy<_, C, 2>>::combine_lookups(&vals);
+    let combined = <LTSubtableStrategy as SubtableStrategy<_, C>>::combine_lookups(&vals);
     assert_eq!(combined, expected);
   }
 
   #[test]
   fn table_materialization() {
     const C: usize = 2;
-    let materialized: [Vec<Fr>; C * 2] =
+    let materialized: [Vec<Fr>; 2] =
       LTSubtableStrategy::materialize_subtables(16, &[vec![], vec![]]);
     let lt = materialized[0].clone();
     let eq = materialized[1].clone();

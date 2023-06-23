@@ -56,7 +56,7 @@ fn bench(c: &mut Criterion) {
 
               let mut random_tape = RandomTape::new(b"proof");
               let mut prover_transcript = Transcript::new(b"example");
-              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, C>::prove::<SparkSubtableStrategy>(
+              let proof = SparsePolynomialEvaluationProof::<EdwardsProjective, C, SparkSubtableStrategy>::prove(
               &mut dense,
               &r,
               &gens,
