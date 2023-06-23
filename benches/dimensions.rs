@@ -31,7 +31,8 @@ macro_rules! bench_surge {
       let m = N.nth_root(C as u32);
       let log_m = log2(m) as usize;
 
-      let mut group = $criterion.benchmark_group(format!("Surge(Strategy={}, N=table_size={}, C=dimensions={}, S=sparsity={}, F=field={})", std::any::type_name::<SubtableStrategy>(), N, C, S, $field_name));
+      let short_strat_name = std::any::type_name::<SubtableStrategy>().split("::").last().unwrap();
+      let mut group = $criterion.benchmark_group(format!("Surge(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
       group.sample_size(10);
 
       let random_point = gen_random_point::<F, C>(log_m);
@@ -105,15 +106,15 @@ fn bench(criterion: &mut Criterion) {
   // bench_surge!(Fr, EdwardsProjective, AndSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
 
   // Plookup comparison
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 10, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 12, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 14, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 16, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 18, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 20, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 22, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 24, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 2, /* S= */ 1 << 26, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 10, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 12, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 14, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 16, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 18, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 24, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 26, criterion, "25519");
 }
 
 fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
