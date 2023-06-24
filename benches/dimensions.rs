@@ -80,7 +80,7 @@ macro_rules! bench_surge {
       );
       let _commitment = dense.commit::<$group>(&gens);
       group.bench_function(
-        "SparsePolynomiazlEvaluationProof::prove()",
+        "SparsePolynomialEvaluationProof::prove()",
         |bencher| {
           bencher.iter(|| {
             let mut random_tape = RandomTape::new(b"proof");
@@ -100,6 +100,27 @@ macro_rules! bench_surge {
   };
 }
 
+pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
+  let mut rng = test_rng();
+  let mut all_indices: Vec<[usize; C]> = Vec::new();
+  for _ in 0..sparsity {
+    let indices = [rng.next_u64() as usize % memory_size; C];
+    all_indices.push(indices);
+  }
+  all_indices
+}
+
+pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
+  let mut rng = test_rng();
+  std::array::from_fn(|_| {
+    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+    for _ in 0..memory_bits {
+      r_i.push(F::rand(&mut rng));
+    }
+    r_i
+  })
+}
+
 fn bench(criterion: &mut Criterion) {
   // bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
   // bench_surge!(Fr, EdwardsProjective, LTSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "255199");
@@ -117,26 +138,7 @@ fn bench(criterion: &mut Criterion) {
   bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 26, criterion, "25519");
 }
 
-fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
-  let mut rng = test_rng();
-  let mut all_indices: Vec<[usize; C]> = Vec::new();
-  for _ in 0..sparsity {
-    let indices = [rng.next_u64() as usize % memory_size; C];
-    all_indices.push(indices);
-  }
-  all_indices
-}
 
-fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
-  let mut rng = test_rng();
-  std::array::from_fn(|_| {
-    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-    for _ in 0..memory_bits {
-      r_i.push(F::rand(&mut rng));
-    }
-    r_i
-  })
-}
 
 criterion_group!(benches, bench);
 criterion_main!(benches);
