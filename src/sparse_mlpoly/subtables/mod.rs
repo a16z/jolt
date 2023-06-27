@@ -20,6 +20,9 @@ pub mod and;
 pub mod lt;
 pub mod spark;
 
+#[cfg(test)]
+pub mod test;
+
 pub trait SubtableStrategy<F: PrimeField, const C: usize> {
   const NUM_SUBTABLES: usize;
   const NUM_MEMORIES: usize;
@@ -39,7 +42,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize> {
   /// - `subtable_index`: Which subtable to evaluate the MLE of. Ranges 0..ALPHA
   /// - `r`: point at which to materialize the table (potentially unused)
   /// - `point`: Point at which to evaluate the MLE
-  fn evalute_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
+  fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
   fn memory_to_subtable_index(memory_index: usize) -> usize {
     assert_eq!(Self::NUM_SUBTABLES * C, Self::NUM_MEMORIES);

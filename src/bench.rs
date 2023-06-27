@@ -18,25 +18,25 @@ use num_integer::Roots;
 use rand_chacha::rand_core::RngCore;
 
 pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
-    let mut rng = test_rng();
-    let mut all_indices: Vec<[usize; C]> = Vec::new();
-    for _ in 0..sparsity {
-      let indices = [rng.next_u64() as usize % memory_size; C];
-      all_indices.push(indices);
+  let mut rng = test_rng();
+  let mut all_indices: Vec<[usize; C]> = Vec::new();
+  for _ in 0..sparsity {
+    let indices = [rng.next_u64() as usize % memory_size; C];
+    all_indices.push(indices);
+  }
+  all_indices
+}
+
+pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
+  let mut rng = test_rng();
+  std::array::from_fn(|_| {
+    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+    for _ in 0..memory_bits {
+      r_i.push(F::rand(&mut rng));
     }
-    all_indices
-  }
-  
-  pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
-    let mut rng = test_rng();
-    std::array::from_fn(|_| {
-      let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-      for _ in 0..memory_bits {
-        r_i.push(F::rand(&mut rng));
-      }
-      r_i
-    })
-  }
+    r_i
+  })
+}
 
 macro_rules! single_pass_surge {
     ($field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $sparsity:expr, $field_name:expr) => {

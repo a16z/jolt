@@ -44,7 +44,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrateg
   }
 
   /// LT = (1-x_i)* y_i * eq(x_{>i}, y_{>i})
-  fn evalute_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
@@ -97,24 +97,25 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrateg
 #[cfg(test)]
 mod test {
   use ark_curve25519::Fr;
+  use ark_std::test_rng;
 
-  use crate::utils::index_to_field_bitvector;
+  use crate::{utils::index_to_field_bitvector, materialization_mle_parity_test};
 
   use super::*;
 
   #[test]
   fn mle() {
     let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
-    let eval = LTSubtableStrategy::evalute_subtable_mle(0, &[vec![]], &point);
+    let eval = LTSubtableStrategy::evaluate_subtable_mle(0, &[vec![]], &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
 
     let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
-    let eval = LTSubtableStrategy::evalute_subtable_mle(0, &[vec![]], &point);
+    let eval = LTSubtableStrategy::evaluate_subtable_mle(0, &[vec![]], &point);
     assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
 
     // Eq
     let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
-    let eval = LTSubtableStrategy::evalute_subtable_mle(0, &[vec![]], &point);
+    let eval = LTSubtableStrategy::evaluate_subtable_mle(0, &[vec![]], &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
   }
 
@@ -146,7 +147,7 @@ mod test {
   }
 
   #[test]
-  fn table_materialization() {
+  fn table_materialization_hardcoded() {
     const C: usize = 2;
     let materialized: [Vec<Fr>; 2] =
       LTSubtableStrategy::materialize_subtables(16, &[vec![], vec![]]);
@@ -162,36 +163,6 @@ mod test {
     assert_eq!(lt[6], Fr::from(0b01_10_01));
     // ...
 
-    assert_eq!(
-      lt[0],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_00, 4))
-    );
-    assert_eq!(
-      lt[1],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_01, 4))
-    );
-    assert_eq!(
-      lt[2],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_10, 4))
-    );
-    assert_eq!(
-      lt[3],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b00_11, 4))
-    );
-    assert_eq!(
-      lt[4],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b01_00, 4))
-    );
-    assert_eq!(
-      lt[5],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b01_01, 4))
-    );
-    assert_eq!(
-      lt[6],
-      LTSubtableStrategy::evalute_subtable_mle(0, &[], &index_to_field_bitvector(0b01_10, 4))
-    );
-    // ...
-
     assert_eq!(eq[0], Fr::from(0b00_00_01));
     assert_eq!(eq[1], Fr::from(0b00_01_00));
     assert_eq!(eq[2], Fr::from(0b00_10_00));
@@ -200,35 +171,7 @@ mod test {
     assert_eq!(eq[5], Fr::from(0b01_01_01));
     assert_eq!(eq[6], Fr::from(0b01_10_00));
     // ...
-
-    assert_eq!(
-      eq[0],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_00, 4))
-    );
-    assert_eq!(
-      eq[1],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_01, 4))
-    );
-    assert_eq!(
-      eq[2],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_10, 4))
-    );
-    assert_eq!(
-      eq[3],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b00_11, 4))
-    );
-    assert_eq!(
-      eq[4],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b01_00, 4))
-    );
-    assert_eq!(
-      eq[5],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b01_01, 4))
-    );
-    assert_eq!(
-      eq[6],
-      LTSubtableStrategy::evalute_subtable_mle(1, &[], &index_to_field_bitvector(0b01_10, 4))
-    );
-    // ...
   }
+
+  materialization_mle_parity_test!(lt_materialization_parity_test, LTSubtableStrategy, Fr, /* m = */ 16, /* NUM_SUBTABLES = */ 2);
 }

@@ -500,7 +500,7 @@ where
         &self.eval_read[j],
         &self.eval_final[j],
         &init_addr,
-        &S::evalute_subtable_mle(i, r, rand_mem),
+        &S::evaluate_subtable_mle(i, r, rand_mem),
         r_hash,
         r_multiset_check,
       )?;

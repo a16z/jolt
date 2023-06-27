@@ -31,7 +31,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for AndSubtableStrate
     [materialized]
   }
 
-  fn evalute_subtable_mle(_: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(_: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
@@ -66,14 +66,14 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for AndSubtableStrate
 
 #[cfg(test)]
 mod test {
-  use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector};
+  use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector, materialization_mle_parity_test};
 
   use super::*;
   use ark_curve25519::Fr;
   use ark_ff::Zero;
 
   #[test]
-  fn table_materialization() {
+  fn table_materialization_hardcoded() {
     const C: usize = 4;
     const M: usize = 1 << 4;
 
@@ -101,7 +101,7 @@ mod test {
   fn evaluate_mle() {
     let x = vec![Fr::from(0), Fr::from(1), Fr::from(1), Fr::from(0)];
     let y = vec![Fr::from(1), Fr::from(0), Fr::from(1), Fr::from(1)];
-    let x_and_y = AndSubtableStrategy::evalute_subtable_mle(0, &[], &[x, y].concat());
+    let x_and_y = AndSubtableStrategy::evaluate_subtable_mle(0, &[], &[x, y].concat());
     assert_eq!(x_and_y, Fr::from(0b0110_1011_0010));
   }
 
@@ -152,4 +152,6 @@ mod test {
       assert_eq!(calculated, Fr::from(expected));
     }
   }
+
+  materialization_mle_parity_test!(materialization_parity, AndSubtableStrategy, Fr, 16, 1);
 }

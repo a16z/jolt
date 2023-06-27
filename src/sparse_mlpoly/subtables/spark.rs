@@ -29,7 +29,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for SparkSubtableStra
     memory_index
   }
 
-  fn evalute_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F {
     EqPolynomial::new(r[subtable_index].clone()).evaluate(point)
   }
 
@@ -46,7 +46,8 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for SparkSubtableStra
 mod test {
   use super::*;
 
-  use crate::sparse_mlpoly::subtables::Subtables;
+  use crate::materialization_mle_parity_test;
+use crate::sparse_mlpoly::subtables::Subtables;
   use crate::utils::index_to_field_bitvector;
   use ark_curve25519::Fr;
 
@@ -77,4 +78,6 @@ mod test {
       assert_eq!(calculated, Fr::from(expected));
     }
   }
+
+  materialization_mle_parity_test!(materialization_parity, SparkSubtableStrategy, Fr, 16, 1);
 }
