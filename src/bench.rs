@@ -4,6 +4,7 @@ use ark_curve25519::{EdwardsProjective, Fr};
 use ark_ff::PrimeField;
 use ark_std::{log2, test_rng};
 use crate::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
+use crate::sparse_mlpoly::subtables::and::AndSubtableStrategy;
 use crate::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
 use crate::{
   random::RandomTape,
@@ -111,19 +112,26 @@ macro_rules! single_pass_surge {
 
 pub fn run() {
     let mut timings: Vec<(usize, (Duration, Duration, Duration))> = Vec::new();
-    timings.push((1 << 10, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 10, "25519")));
-    timings.push((1 << 12, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 12, "25519")));
-    timings.push((1 << 14, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 14, "25519")));
-    timings.push((1 << 16, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 16, "25519")));
-    timings.push((1 << 18, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 18, "25519")));
-    timings.push((1 << 20, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, "25519")));
-    timings.push((1 << 22, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, "25519")));
-    timings.push((1 << 24, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 24, "25519")));
+    // timings.push((1 << 10, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 10, "25519")));
+    // timings.push((1 << 12, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 12, "25519")));
+    // timings.push((1 << 14, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 14, "25519")));
+    // timings.push((1 << 16, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 16, "25519")));
+    // timings.push((1 << 18, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 18, "25519")));
+    // timings.push((1 << 20, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, "25519")));
+    // timings.push((1 << 22, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, "25519")));
+
+    timings.push((1 << 10, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 10, "25519")));
+    timings.push((1 << 12, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 12, "25519")));
+    timings.push((1 << 14, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 14, "25519")));
+    timings.push((1 << 16, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 16, "25519")));
+    timings.push((1 << 18, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 18, "25519")));
+    timings.push((1 << 20, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, "25519")));
+    timings.push((1 << 22, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, "25519")));
 
     println!("");
     for row in timings {
         let (s, (proving, commit, densify)) = row;
-        println!("S={s}, SparkSubtableStrategy, Curve25519");
+        println!("S={s} (2^{}), AndSubtableStrategy, Curve25519", log2(s));
         println!("- Densify:     {}ms", densify.as_millis());
         println!("- Dens Commit: {}ms", commit.as_millis());
         println!("- Prove:       {}ms", proving.as_millis());

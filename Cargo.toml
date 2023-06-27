@@ -36,7 +36,7 @@ ark-ff = { version = "0.4.2", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
 ark-serialize =  { version = "0.4.2", default-features = false, features = [ "derive" ] }
 
-ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
+# ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
 criterion = { version = "0.3.1", features = ["html_reports"] }
 num-integer = "0.1.45"
 seq-macro = "0.3.3"
@@ -55,7 +55,7 @@ default = [
     "ark-ec/parallel",
     "ark-ff/parallel",
     "ark-std/parallel",    
-    # "ark-ff/asm"
+    "ark-ff/asm"
 ]
 multicore = ["rayon"]
 profile = []
@@ -66,3 +66,10 @@ harness = false
 
 [profile.release]
 debug = true
+codegen-units = 1
+lto = "fat"
+
+[patch.crates-io]
+ark-ec = { path = "../algebra/ec" }
+ark-ff = { path = "../algebra/ff" }
+ark-serialize = { path = "../algebra/serialize" }

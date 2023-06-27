@@ -598,7 +598,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::G1Projective;
+  use ark_curve25519::EdwardsProjective as G1Projective;
   use ark_std::test_rng;
   use ark_std::UniformRand;
 

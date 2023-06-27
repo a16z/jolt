@@ -104,7 +104,7 @@ impl<G: CurveGroup> ProofTranscript<G> for TestTranscript<G::ScalarField> {
 #[cfg(test)]
 mod test {
   use super::{ProofTranscript, TestTranscript};
-  use ark_bls12_381::{Fr, G1Projective};
+  use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
   use ark_ec::CurveGroup;
   use ark_ff::PrimeField;
 

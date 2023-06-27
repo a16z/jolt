@@ -121,7 +121,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for UniPoly<G::ScalarField> {
 mod tests {
 
   use super::*;
-  use ark_bls12_381::Fr;
+  use ark_curve25519::Fr;
 
   #[test]
   fn test_from_evals_quad() {

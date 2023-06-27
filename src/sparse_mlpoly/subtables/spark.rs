@@ -48,7 +48,7 @@ mod test {
 
   use crate::sparse_mlpoly::subtables::Subtables;
   use crate::utils::index_to_field_bitvector;
-  use ark_bls12_381::Fr;
+  use ark_curve25519::Fr;
 
   #[test]
   fn forms_valid_merged_dense_poly() {

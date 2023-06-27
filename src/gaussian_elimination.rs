@@ -64,7 +64,7 @@ fn eliminate<F: PrimeField>(matrix: &mut [Vec<F>], i: usize) {
 
 #[cfg(test)]
 mod tests {
-    use ark_bls12_381::Fr;
+    use ark_curve25519::Fr;
 
     use super::gaussian_elimination;
     use ark_std::{Zero, One};

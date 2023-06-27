@@ -769,7 +769,7 @@ where
 
 #[cfg(test)]
 mod test {
-  use ark_bls12_381::Fr;
+  use ark_curve25519::Fr;
 
   use super::*;
 

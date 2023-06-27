@@ -283,7 +283,7 @@ where
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::{Fr, G1Projective};
+  use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
   use ark_std::rand::RngCore;
   use ark_std::{test_rng, UniformRand};
 

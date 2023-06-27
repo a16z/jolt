@@ -397,7 +397,7 @@ mod test {
   use super::*;
   use crate::math::Math;
   use crate::utils::test::TestTranscript;
-  use ark_bls12_381::{Fr, G1Projective};
+  use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
 
   #[test]
   fn sumcheck_arbitrary_cubic() {
