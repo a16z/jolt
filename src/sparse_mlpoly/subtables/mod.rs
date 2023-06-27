@@ -19,6 +19,7 @@ use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
 pub mod and;
 pub mod lt;
 pub mod spark;
+pub mod range_check;
 
 #[cfg(test)]
 pub mod test;
