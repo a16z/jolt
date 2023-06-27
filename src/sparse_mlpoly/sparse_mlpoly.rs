@@ -292,82 +292,6 @@ mod tests {
   use crate::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
 
   #[test]
-  fn check_evaluation() {
-    check_evaluation_helper::<G1Projective>()
-  }
-  fn check_evaluation_helper<G: CurveGroup>() {
-    let mut prng = test_rng();
-
-    // parameters
-    let num_entries: usize = 64;
-    let s: usize = 8;
-    const c: usize = 3;
-    let log_m: usize = num_entries.log_2() / c; // 2
-    let m: usize = log_m.pow2(); // 2 ^ 2 = 4
-
-    let mut nz: Vec<[usize; c]> = Vec::new();
-    for _ in 0..s {
-      let indices = [
-        (prng.next_u64() as usize) % m,
-        (prng.next_u64() as usize) % m,
-        (prng.next_u64() as usize) % m,
-      ];
-      nz.push(indices);
-    }
-
-    let lookup_matrix = SparseLookupMatrix::new(nz, log_m);
-    let _gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, c, log_m);
-
-    // evaluation
-    let _r: Vec<G::ScalarField> = (0..c * log_m)
-      .map(|_| G::ScalarField::rand(&mut prng))
-      .collect();
-    // let evaluation = lookup_matrix.evaluate_mle(&r);
-    // println!("r: {:?}", r);
-    // println!("eval: {}", eval);
-
-    let dense: DensifiedRepresentation<G::ScalarField, c> =
-      DensifiedRepresentation::from(&lookup_matrix);
-    // for i in 0..c {
-    //   println!("i: {:?}", i);
-    //   println!("dim: {:?}", dense.dim[i]);
-    //   println!("read: {:?}", dense.read[i]);
-    //   println!("final: {:?}\n", dense.r#final[i]);
-    // }
-    // println!("val: {:?}", dense.val);
-
-    // // dim + read + val => log2((2c + 1) * s)
-    // println!(
-    //   "combined l-variate multilinear polynomial has {} variables",
-    //   dense.combined_l_variate_polys.get_num_vars()
-    // );
-    // // final => log2(c * m)
-    // println!(
-    //   "combined log(m)-variate multilinear polynomial has {} variables",
-    //   dense.combined_log_m_variate_polys.get_num_vars()
-    // );
-
-    let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", c, s, c, log_m);
-    let _commitment = dense.commit::<G>(&gens);
-
-    let _random_tape = RandomTape::<G>::new(b"proof");
-    let _prover_transcript = Transcript::new(b"example");
-    // let proof = SparsePolynomialEvaluationProof::prove(
-    //   &dense,
-    //   &r,
-    //   &evaluation,
-    //   &gens,
-    //   &mut prover_transcript,
-    //   &mut random_tape,
-    // );
-
-    // let mut verifier_transcript = Transcript::new(b"example");
-    // assert!(proof
-    //   .verify(&commitment, &r, &evals, &gens, &mut verifier_transcript)
-    //   .is_ok());
-  }
-
-  #[test]
   fn prove_3d() {
     let mut prng = test_rng();
 
@@ -628,45 +552,6 @@ mod tests {
       construct_2d_sparse_mat_polynomial_from_ints(M, m, log_m),
     )
   }
-
-  // TODO: Move to subtables.rs
-  // #[test]
-  // fn evaluate_over_known_indices() {
-  //   // Create SparseMLE and then evaluate over known indices and confirm correct evaluations
-  //   let (c, s, m, log_m, lookup_matrix) = construct_2d_small::<G1Projective>();
-
-  //   // Evaluations
-  //   // poly[row, col] = eval
-  //   // poly[1, 0] = 2
-  //   // poly[1, 2] = 4
-  //   // poly[2, 1] = 8
-  //   // poly[2, 3] = 9
-  //   // Check each and a few others over the boolean hypercube to be 0
-
-  //   // poly[1, 0] = 2
-  //   let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
-  //   let col: Vec<Fr> = index_to_field_bitvector(0, log_m);
-  //   let combined_index: Vec<Fr> = vec![row, col].concat();
-  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
-
-  //   // poly[1, 2] = 4
-  //   let row: Vec<Fr> = index_to_field_bitvector(1, log_m);
-  //   let col: Vec<Fr> = index_to_field_bitvector(2, log_m);
-  //   let combined_index: Vec<Fr> = vec![row, col].concat();
-  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
-
-  //   // poly[2, 1] = 8
-  //   let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
-  //   let col: Vec<Fr> = index_to_field_bitvector(1, log_m);
-  //   let combined_index: Vec<Fr> = vec![row, col].concat();
-  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
-
-  //   // poly[2, 3] = 9
-  //   let row: Vec<Fr> = index_to_field_bitvector(2, log_m);
-  //   let col: Vec<Fr> = index_to_field_bitvector(3, log_m);
-  //   let combined_index: Vec<Fr> = vec![row, col].concat();
-  //   assert_eq!(lookup_matrix.evaluate_mle(&combined_index), Fr::from(1));
-  // }
 
   #[test]
   fn prove_2d() {

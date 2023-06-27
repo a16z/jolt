@@ -11,3 +11,6 @@ Cargo.lock
 
 *.txt
 .DS_Store
+
+**/*.svg
+flamegraph.svg
