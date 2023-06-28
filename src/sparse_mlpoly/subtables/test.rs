@@ -15,12 +15,14 @@ std::array::from_fn(|_| {
 #[macro_export]
 macro_rules! materialization_mle_parity_test {
     ($test_name:ident, $table_type:ty, $F:ty, $M:expr, $NUM_SUBTABLES:expr) => {
-    use crate::sparse_mlpoly::subtables::test::gen_random_point;
-    use ark_std::log2;
     #[test]
     fn $test_name() {
+        use crate::sparse_mlpoly::subtables::test::gen_random_point;
+        use ark_std::log2;
+
         const C: usize = 4;
         const M: usize = $M;
+
         let operand_bits = log2($M) as usize;
         let r = gen_random_point::<$F, C>(operand_bits);
         let materialized: [Vec<$F>; { <$table_type as SubtableStrategy<$F, C, M>>::NUM_SUBTABLES }] =

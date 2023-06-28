@@ -147,4 +147,5 @@ mod test {
   }
 
   materialization_mle_parity_test!(materialization_parity, AndSubtableStrategy, Fr, 16, 1);
+  materialization_mle_parity_test!(materialization_parity_nonzero_c, AndSubtableStrategy, Fr, 16, 2);
 }
