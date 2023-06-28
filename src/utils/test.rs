@@ -1,9 +1,32 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
+use ark_std::test_rng;
 use merlin::Transcript;
+use rand_chacha::rand_core::RngCore;
 
 use crate::transcript::ProofTranscript;
+
+pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
+  let mut rng = test_rng();
+  std::array::from_fn(|_| {
+    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+    for _ in 0..memory_bits {
+      r_i.push(F::rand(&mut rng));
+    }
+    r_i
+  })
+}
+
+pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
+  let mut rng = test_rng();
+  let mut all_indices: Vec<[usize; C]> = Vec::new();
+  for _ in 0..sparsity {
+    let indices = [rng.next_u64() as usize % memory_size; C];
+    all_indices.push(indices);
+  }
+  all_indices
+}
 
 /// Wrapper around merlin_transcript that allows overriding
 pub struct TestTranscript<F> {
@@ -101,7 +124,6 @@ impl<G: CurveGroup> ProofTranscript<G> for TestTranscript<G::ScalarField> {
   }
 }
 
-#[cfg(test)]
 mod test {
   use super::{ProofTranscript, TestTranscript};
   use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
