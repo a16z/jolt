@@ -3,30 +3,26 @@
 This document explains how to fill out custom Subtable Strategies that implement the `SubtableStrategy` trait. The trait provides a set of methods and associated constants that need to be implemented to define a custom subtable strategy. The trait is defined as follows:
 
 ```rust
-#[cfg(test)]
-pub mod test;
-
 pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
-  const NUM_SUBTABLES: usize;
-  const NUM_MEMORIES: usize;
+    const NUM_SUBTABLES: usize;
+    const NUM_MEMORIES: usize;
 
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
+    fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
 
-  fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
+    fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
-  fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
+    fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
 
-  fn sumcheck_poly_degree() -> usize;
+    fn sumcheck_poly_degree() -> usize;
 
-  fn memory_to_subtable_index(memory_index: usize) -> usize;
-
-  fn memory_to_dimension_index(memory_index: usize) -> usize;
-
-  fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; Self::NUM_SUBTABLES],
-    nz: &[Vec<usize>; C],
-    s: usize,
-  ) -> [DensePolynomial<F>; Self::NUM_MEMORIES];
+    // Default impl
+    fn memory_to_subtable_index(memory_index: usize) -> usize;
+    fn memory_to_dimension_index(memory_index: usize) -> usize;
+    fn to_lookup_polys(
+        subtable_entries: &[Vec<F>; Self::NUM_SUBTABLES],
+        nz: &[Vec<usize>; C],
+        s: usize,
+    ) -> [DensePolynomial<F>; Self::NUM_MEMORIES];
 }
 ```
 
@@ -97,3 +93,25 @@ Replace the implementation with the desired value for the sumcheck polynomial de
 
 ### Remaining
 The remaining trait functions should be implemented by default.
+
+## Testing
+### `materialize_subtables` / `evaluate_subtable_mle`
+The parity between these tables can be tested with the `materialization_mle_parity_test`. This macro materializes the required subtables and evaluates the multilinear extension over the boolean hypercube to ensure consistency.
+
+```rust
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::materialization_mle_parity_test;
+    use ark_curve25519::Fr;
+
+      materialization_mle_parity_test!(lt_materialization_parity_test, LTSubtableStrategy, Fr, /* m= */ 16, /* NUM_SUBTABLES= */ 2);
+}
+```
+
+## End-to-End Testing
+To ensure the `SubtableStrategy` has been written correctly as a whole we can fall back to the end-to-end proof system of Surge. A test can be added in `e2e_test.rs` using the `e2e_test!` macro. 
+
+```rust
+    e2e_test!(prove_4d_lt, LTSubtableStrategy,  G1Projective, Fr, /* C= */ 4, /* M= */ 16, /* sparsity= */ 16);
+```
