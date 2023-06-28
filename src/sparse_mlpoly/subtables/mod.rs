@@ -45,6 +45,14 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   /// - `point`: Point at which to evaluate the MLE
   fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
+  /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
+  fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
+
+  /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
+  /// Determines the number of evaluation points in each sumcheck round.
+  fn sumcheck_poly_degree() -> usize;
+
+
   fn memory_to_subtable_index(memory_index: usize) -> usize {
     assert_eq!(Self::NUM_SUBTABLES * C, Self::NUM_MEMORIES);
     assert!(memory_index < Self::NUM_MEMORIES);
@@ -74,13 +82,6 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
       DensePolynomial::new(subtable_lookups)
     })
   }
-
-  /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-  fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
-
-  /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
-  /// Determines the number of evaluation points in each sumcheck round.
-  fn sumcheck_poly_degree() -> usize;
 }
 
 pub struct Subtables<F: PrimeField, const C: usize, const M: usize, S>

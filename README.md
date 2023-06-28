@@ -4,14 +4,14 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 
 # Todo
 - [x] Generalize `Densified.materialize_table()` beyond eq: Evaluate $T[k] \forall k \in [0, ... M]$ 
+- [x] `Subtables` / `memory_checking.rs`: Move 'K' / 'ALPHA' into `Subtables`. `memory_checking.rs` should not handle the `K` generic.
+- [x] SubtableStrategy: move M to generic param
+- [ ] SubtableStrategy: Consider removing M as generic param and moving onto `AndSubtableStrategy` exclusively. If not, remove `m` from params of `SubtableStrategy::materialize_subtable`.
 - [ ] Lazy version of `SubtableStrategy::materialize_subtables` which does not materialize all [M] copies up-front, rather it evaluates subT(k) in O(1) time.
 - [ ] Consider containing `DensifiedRepresentation` as a property of a mutable `SparseLookupMatrix` instead of requiring the implementer to hold them separately.
 - [ ] Investigate multiple dense PCS (notably IPA)
-- [ ] Investigate MSM speedups ([paper](https://eprint.iacr.org/2022/1400.pdf), [arkworks](https://github.com/arkworks-rs/algebra/blob/c015ea331674368461ff466bc7cbc69806f61628/ec/src/scalar_mul/variable_base/mod.rs#L112-L122))
+- [x] Investigate MSM speedups ([paper](https://eprint.iacr.org/2022/1400.pdf), [arkworks](https://github.com/arkworks-rs/algebra/blob/c015ea331674368461ff466bc7cbc69806f61628/ec/src/scalar_mul/variable_base/mod.rs#L112-L122))
 - [ ] Clippy / Cargo fmt
-- [x] SubtableStrategy: move M to generic param
-- [ ] SubtableStrategy: Consider removing M as generic param and moving onto `AndSubtableStrategy` exclusively
-- [x] `Subtables` / `memory_checking.rs`: Move 'K' / 'ALPHA' into `Subtables`. `memory_checking.rs` should not handle the `K` generic.
 - [ ] Consider killing const generics as a whole.
 
 ## Current usage
