@@ -45,7 +45,9 @@ const NUM_MEMORIES: usize = <desired_value>;
 
 ### 2. `materialize_subtables`
 
-This method materializes the subtables for a given size `m` and point `r`. Note that only the `SparkSubtableStrategy` uses the parameter `r`.
+This method materializes the subtables for a given size `m` and point `r`.
+
+*Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`).*
 
 ```rust
 fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES] {
@@ -60,6 +62,7 @@ Replace the implementation with your logic to generate and return the materializ
 This method evaluates the mutlilinear extension (MLE) of a subtable at the given `point`. The `subtable_index` parameter specifies which subtable to evaluate.
 
 *Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`).*
+
 
 ```rust
 fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F {
