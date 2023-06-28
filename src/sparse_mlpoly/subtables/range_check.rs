@@ -6,7 +6,7 @@ use super::SubtableStrategy;
 /// Used for lookups in the range [0, 2^LOG_R)
 pub enum RangeCheckSubtableStrategy<const LOG_R: usize> {}
 
-impl<F: PrimeField, const C: usize, const LOG_R: usize> SubtableStrategy<F, C>
+impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> SubtableStrategy<F, C, M>
   for RangeCheckSubtableStrategy<LOG_R>
 {
   const NUM_SUBTABLES: usize = 3;
@@ -15,7 +15,7 @@ impl<F: PrimeField, const C: usize, const LOG_R: usize> SubtableStrategy<F, C>
   fn materialize_subtables(
     m: usize,
     _r: &[Vec<F>; C],
-  ) -> [Vec<F>; <Self as SubtableStrategy<F, C>>::NUM_SUBTABLES] {
+  ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
     assert!(m.is_power_of_two());
 
     let full: Vec<F> = (0..m).map(|i| F::from(i as u64)).collect();
@@ -36,7 +36,7 @@ impl<F: PrimeField, const C: usize, const LOG_R: usize> SubtableStrategy<F, C>
     [full, remainder, zeros]
   }
 
-  fn evalute_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
     if subtable_index == 0 {
       let b = point.len();
       let mut result = F::zero();
@@ -80,7 +80,7 @@ impl<F: PrimeField, const C: usize, const LOG_R: usize> SubtableStrategy<F, C>
   /// Combine AND table subtable evaluations
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
-  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C>>::NUM_MEMORIES]) -> F {
+  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let log_m = 16; // TODO: Generalize
     let mut sum = F::zero();
     for i in 0..C {
@@ -97,7 +97,7 @@ impl<F: PrimeField, const C: usize, const LOG_R: usize> SubtableStrategy<F, C>
 
 #[cfg(test)]
 mod test {
-  use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector};
+  use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector, materialization_mle_parity_test};
 
   use super::*;
   use ark_curve25519::Fr;
@@ -107,7 +107,7 @@ mod test {
   fn table_materialization() {
     const M: usize = 1 << 16;
     let subtables: [Vec<Fr>; 3] =
-      RangeCheckSubtableStrategy::<40>::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
+      <RangeCheckSubtableStrategy::<40> as SubtableStrategy<Fr, 4, M>>::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
     assert_eq!(subtables.len(), 3);
 
     subtables
@@ -132,24 +132,5 @@ mod test {
       .for_each(|&entry| assert_eq!(entry, Fr::zero()));
   }
 
-  #[test]
-  fn evalute_subtable_mle_boolean_hypercube() {
-    const M: usize = 1 << 16;
-    let subtables: [Vec<Fr>; 3] =
-      RangeCheckSubtableStrategy::<40>::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
-    assert_eq!(subtables.len(), 3);
-
-    for subtable_index in 0..=2 {
-      for i in 0..M {
-        assert_eq!(
-          subtables[subtable_index][i],
-          RangeCheckSubtableStrategy::<40>::evalute_subtable_mle(
-            subtable_index,
-            &[vec![], vec![], vec![], vec![]],
-            &index_to_field_bitvector(i, 16)
-          )
-        )
-      }
-    }
-  }
+  materialization_mle_parity_test!(materialization_parity, RangeCheckSubtableStrategy::<40>, Fr, 1 << 16, 3);
 }
