@@ -97,7 +97,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
 
 #[cfg(test)]
 mod test {
-  use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector, materialization_mle_parity_test};
+  use crate::{utils::index_to_field_bitvector, materialization_mle_parity_test};
 
   use super::*;
   use ark_curve25519::Fr;
