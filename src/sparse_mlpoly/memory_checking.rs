@@ -174,7 +174,7 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>>
+struct HashLayerProof<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
 where
   [(); S::NUM_MEMORIES]: Sized,
 {
@@ -187,7 +187,7 @@ where
   proof_derefs: CombinedTableEvalProof<G, C>,
 }
 
-impl<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>> HashLayerProof<G, C, S>
+impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>> HashLayerProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
@@ -199,7 +199,7 @@ where
   fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
-    subtables: &Subtables<G::ScalarField, C, S>,
+    subtables: &Subtables<G::ScalarField, C, M, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -646,16 +646,17 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
 pub struct MemoryCheckingProof<
   G: CurveGroup,
   const C: usize,
-  S: SubtableStrategy<G::ScalarField, C>,
+  const M: usize,
+  S: SubtableStrategy<G::ScalarField, C, M>,
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
   proof_prod_layer: ProductLayerProof<G::ScalarField, { S::NUM_MEMORIES }>,
-  proof_hash_layer: HashLayerProof<G, C, S>,
+  proof_hash_layer: HashLayerProof<G, C, M, S>,
 }
 
-impl<G: CurveGroup, const C: usize, S: SubtableStrategy<G::ScalarField, C>>
-  MemoryCheckingProof<G, C, S>
+impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
+  MemoryCheckingProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
@@ -677,7 +678,7 @@ where
   pub fn prove(
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
-    subtables: &Subtables<G::ScalarField, C, S>,
+    subtables: &Subtables<G::ScalarField, C, M, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,

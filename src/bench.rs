@@ -39,24 +39,26 @@ pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [V
 }
 
 macro_rules! single_pass_surge {
-    ($field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $sparsity:expr, $field_name:expr) => {
+    ($field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $M:expr, $sparsity:expr, $field_name:expr) => {
       {
         const N: usize = $N;
         const C: usize = $C;
+        const M: usize = $M;
         const S: usize = $sparsity;
         type F = $field;
         type G = $group;
         type SubtableStrategy = $subtable_strategy;
   
-        let m = N.nth_root(C as u32);
-        let log_m = log2(m) as usize;
+        let m_computed = N.nth_root(C as u32);
+        assert_eq!(m_computed, M);
+        let log_m = log2(m_computed) as usize;
   
         let short_strat_name = std::any::type_name::<SubtableStrategy>().split("::").last().unwrap();
         println!("Running {}", format!("Surge(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
   
         let random_point = gen_random_point::<F, C>(log_m);
   
-        let nz = gen_indices::<C>(S, m);
+        let nz = gen_indices::<C>(S, M);
         let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_m);
   
         // Densified creation
@@ -95,7 +97,7 @@ macro_rules! single_pass_surge {
         let mut random_tape = RandomTape::new(b"proof");
         let mut prover_transcript = Transcript::new(b"example");
         let _proof =
-        SparsePolynomialEvaluationProof::<G, C, SubtableStrategy>::prove(
+        SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
             &mut dense,
             &random_point,
             &gens,
@@ -120,13 +122,13 @@ pub fn run() {
     // timings.push((1 << 20, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, "25519")));
     // timings.push((1 << 22, single_pass_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, "25519")));
 
-    timings.push((1 << 10, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 10, "25519")));
-    timings.push((1 << 12, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 12, "25519")));
-    timings.push((1 << 14, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 14, "25519")));
-    timings.push((1 << 16, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 16, "25519")));
-    timings.push((1 << 18, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 18, "25519")));
-    timings.push((1 << 20, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, "25519")));
-    timings.push((1 << 22, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, "25519")));
+    timings.push((1 << 10, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 10, "25519")));
+    timings.push((1 << 12, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 12, "25519")));
+    timings.push((1 << 14, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 14, "25519")));
+    timings.push((1 << 16, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 16, "25519")));
+    timings.push((1 << 18, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 18, "25519")));
+    timings.push((1 << 20, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 20, "25519")));
+    timings.push((1 << 22, single_pass_surge!(Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 22, "25519")));
 
     println!("");
     for row in timings {

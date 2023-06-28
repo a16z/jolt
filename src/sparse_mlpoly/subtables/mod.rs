@@ -24,7 +24,7 @@ pub mod range_check;
 #[cfg(test)]
 pub mod test;
 
-pub trait SubtableStrategy<F: PrimeField, const C: usize> {
+pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   const NUM_SUBTABLES: usize;
   const NUM_MEMORIES: usize;
 
@@ -83,9 +83,9 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize> {
   fn sumcheck_poly_degree() -> usize;
 }
 
-pub struct Subtables<F: PrimeField, const C: usize, S>
+pub struct Subtables<F: PrimeField, const C: usize, const M: usize, S>
 where
-  S: SubtableStrategy<F, C>,
+  S: SubtableStrategy<F, C, M>,
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {
@@ -96,9 +96,9 @@ where
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
-impl<F: PrimeField, const C: usize, S> Subtables<F, C, S>
+impl<F: PrimeField, const C: usize, const M: usize, S> Subtables<F, C, M, S>
 where
-  S: SubtableStrategy<F, C>,
+  S: SubtableStrategy<F, C, M>,
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {

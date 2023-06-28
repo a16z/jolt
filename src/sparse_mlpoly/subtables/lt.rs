@@ -7,14 +7,14 @@ use super::SubtableStrategy;
 
 pub enum LTSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrategy {
+impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> for LTSubtableStrategy {
   const NUM_SUBTABLES: usize = 2;
   const NUM_MEMORIES: usize = 2 * C;
 
   fn materialize_subtables(
     m: usize,
     _r: &[Vec<F>; C],
-  ) -> [Vec<F>; <Self as SubtableStrategy<F, C>>::NUM_SUBTABLES] {
+  ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
     let bits_per_operand = (log2(m) / 2) as usize;
 
     let mut materialized_lt: Vec<F> = Vec::with_capacity(m);
@@ -78,7 +78,7 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrateg
 
   /// Combines lookups into the LT subtables.
   /// Assumes ALPHA lookups are ordered: LT[0], EQ[0], ... LT[C], EQ[C]
-  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C>>::NUM_MEMORIES]) -> F {
+  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let mut sum = F::zero();
     let mut eq_prod = F::one();
 
@@ -97,7 +97,6 @@ impl<F: PrimeField, const C: usize> SubtableStrategy<F, C> for LTSubtableStrateg
 #[cfg(test)]
 mod test {
   use ark_curve25519::Fr;
-  use ark_std::test_rng;
 
   use crate::{utils::index_to_field_bitvector, materialization_mle_parity_test};
 
@@ -105,23 +104,26 @@ mod test {
 
   #[test]
   fn mle() {
+    const C: usize = 1;
+    const M: usize = 64;
     let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
-    let eval = LTSubtableStrategy::evaluate_subtable_mle(0, &[vec![]], &point);
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &[vec![]], &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
 
     let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
-    let eval = LTSubtableStrategy::evaluate_subtable_mle(0, &[vec![]], &point);
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &[vec![]], &point);
     assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
 
     // Eq
     let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
-    let eval = LTSubtableStrategy::evaluate_subtable_mle(0, &[vec![]], &point);
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &[vec![]], &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
   }
 
   #[test]
   fn combine() {
     const C: usize = 4;
+    const M: usize = 16;
     let vals: [Fr; C * 2] = [
       Fr::from(10u64), // LT[0]
       Fr::one(),       // EQ[0]
@@ -142,15 +144,16 @@ mod test {
       + Fr::from(30u64) * Fr::one() * Fr::zero()
       + Fr::from(40u64) * Fr::one() * Fr::zero() * Fr::one();
 
-    let combined = <LTSubtableStrategy as SubtableStrategy<_, C>>::combine_lookups(&vals);
+    let combined = <LTSubtableStrategy as SubtableStrategy<_, C, M>>::combine_lookups(&vals);
     assert_eq!(combined, expected);
   }
 
   #[test]
   fn table_materialization_hardcoded() {
     const C: usize = 2;
+    const M: usize = 16;
     let materialized: [Vec<Fr>; 2] =
-      LTSubtableStrategy::materialize_subtables(16, &[vec![], vec![]]);
+      <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(16, &[vec![], vec![]]);
     let lt = materialized[0].clone();
     let eq = materialized[1].clone();
 
