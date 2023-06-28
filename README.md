@@ -12,6 +12,7 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 - [x] SubtableStrategy: move M to generic param
 - [ ] SubtableStrategy: Consider removing M as generic param and moving onto `AndSubtableStrategy` exclusively
 - [x] `Subtables` / `memory_checking.rs`: Move 'K' / 'ALPHA' into `Subtables`. `memory_checking.rs` should not handle the `K` generic.
+- [ ] Consider killing const generics as a whole.
 
 ## Current usage
 ```rust
