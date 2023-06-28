@@ -81,7 +81,9 @@ Replace the implementation with your logic to combine the lookup values and retu
 
 ### 5. `sumcheck_poly_degree`
 
-This method specifies the total degree of the g function, considering combine_lookups as a log(m)-variate polynomial. The total degree determines the number of evaluation points in each sumcheck round.
+This method specifies the total degree of the g function. The total degree determines the number of evaluation points in each sumcheck round (N+1 points define a degree-N polynomial).
+
+To simplify: Each term in `combine_lookups` can be thought of as a univariate polynomial, what is the degree after applying the combination function `g`?
 
 ```rust
 fn sumcheck_poly_degree() -> usize {
