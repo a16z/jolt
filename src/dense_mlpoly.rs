@@ -1,4 +1,7 @@
 #![allow(clippy::too_many_arguments)]
+use crate::utils::{compute_dotproduct, self};
+use crate::utils::eq_poly::EqPolynomial;
+
 use super::commitments::{Commitments, MultiCommitGens};
 use super::errors::ProofVerifyError;
 use super::math::Math;
@@ -50,79 +53,28 @@ pub struct ConstPolyCommitment<G: CurveGroup> {
   C: G,
 }
 
-pub struct EqPolynomial<F> {
-  r: Vec<F>,
-}
-
-impl<F: PrimeField> EqPolynomial<F> {
-  pub fn new(r: Vec<F>) -> Self {
-    EqPolynomial { r }
-  }
-
-  pub fn evaluate(&self, rx: &[F]) -> F {
-    assert_eq!(self.r.len(), rx.len());
-    (0..rx.len())
-      .map(|i| self.r[i] * rx[i] + (F::one() - self.r[i]) * (F::one() - rx[i]))
-      .product()
-  }
-
-  pub fn evals(&self) -> Vec<F> {
-    let ell = self.r.len();
-
-    let mut evals: Vec<F> = vec![F::one(); ell.pow2()];
-    let mut size = 1;
-    for j in 0..ell {
-      // in each iteration, we double the size of chis
-      size *= 2;
-      for i in (0..size).rev().step_by(2) {
-        // copy each element from the prior iteration twice
-        let scalar = evals[i / 2];
-        evals[i] = scalar * self.r[j];
-        evals[i - 1] = scalar - evals[i];
-      }
-    }
-    evals
-  }
-
-  pub fn compute_factored_lens(ell: usize) -> (usize, usize) {
-    (ell / 2, ell - ell / 2)
-  }
-
-  pub fn compute_factored_evals(&self) -> (Vec<F>, Vec<F>) {
-    let ell = self.r.len();
-    let (left_num_vars, _right_num_vars) = Self::compute_factored_lens(ell);
-
-    let L = EqPolynomial::new(self.r[..left_num_vars].to_vec()).evals();
-    let R = EqPolynomial::new(self.r[left_num_vars..ell].to_vec()).evals();
-
-    (L, R)
-  }
-}
-
-pub struct IdentityPolynomial {
-  size_point: usize,
-}
-
-impl IdentityPolynomial {
-  pub fn new(size_point: usize) -> Self {
-    IdentityPolynomial { size_point }
-  }
-
-  pub fn evaluate<F: PrimeField>(&self, r: &[F]) -> F {
-    let len = r.len();
-    assert_eq!(len, self.size_point);
-    (0..len)
-      .map(|i| F::from((len - i - 1).pow2() as u64) * r[i])
-      .sum()
-  }
-}
-
 impl<F: PrimeField> DensePolynomial<F> {
   pub fn new(Z: Vec<F>) -> Self {
+    assert!(utils::is_power_of_two(Z.len()), "Dense multi-linear polynomials must be made from a power of 2");
+
     DensePolynomial {
       num_vars: Z.len().log_2() as usize,
       len: Z.len(),
       Z,
+    }
+  }
+
+  pub fn new_padded(evals: Vec<F>) -> Self {
+    // Pad non-power-2 evaluations to fill out the dense multilinear polynomial
+    let mut poly_evals = evals;
+    while !(utils::is_power_of_two(poly_evals.len())) {
+      poly_evals.push(F::zero());
+    }
+
+    DensePolynomial {
+      num_vars: poly_evals.len().log_2() as usize,
+      len: poly_evals.len(),
+      Z: poly_evals,
     }
   }
 
@@ -147,16 +99,18 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   #[cfg(feature = "multicore")]
-  fn commit_inner(&self, blinds: &[F], gens: &MultiCommitGens) -> PolyCommitment {
+  fn commit_inner<G: CurveGroup<ScalarField = F>>(&self, blinds: &[F], gens: &MultiCommitGens<G>) -> PolyCommitment<G> {
     let L_size = blinds.len();
     let R_size = self.Z.len() / L_size;
     assert_eq!(L_size * R_size, self.Z.len());
     let C = (0..L_size)
       .into_par_iter()
       .map(|i| {
-        self.Z[R_size * i..R_size * (i + 1)]
-          .commit(&blinds[i], gens)
-          .compress()
+        Commitments::batch_commit(
+          self.Z[R_size * i..R_size * (i + 1)].as_ref(),
+          &blinds[i],
+          gens,
+        )
       })
       .collect();
     PolyCommitment { C }
@@ -242,15 +196,12 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   // returns Z(r) in O(n) time
-  pub fn evaluate<G>(&self, r: &[F]) -> F
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
+  pub fn evaluate(&self, r: &[F]) -> F {
     // r must have a value for each variable
     assert_eq!(r.len(), self.get_num_vars());
     let chis = EqPolynomial::new(r.to_vec()).evals();
     assert_eq!(chis.len(), self.Z.len());
-    DotProductProofLog::<G>::compute_dotproduct(&self.Z, &chis)
+    compute_dotproduct(&self.Z, &chis)
   }
 
   fn vec(&self) -> &Vec<F> {
@@ -299,7 +250,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
-  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut Transcript) {
+  fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
     transcript.append_message(label, b"poly_commitment_begin");
     for i in 0..self.C.len() {
       transcript.append_point(b"poly_commitment_share", &self.C[i]);
@@ -422,8 +373,8 @@ impl<G: CurveGroup> PolyEvalProof<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_bls12_381::Fr;
-  use ark_bls12_381::G1Projective;
+  use ark_curve25519::Fr;
+  use ark_curve25519::EdwardsProjective as G1Projective;
   use ark_std::test_rng;
   use ark_std::One;
   use ark_std::UniformRand;
@@ -469,7 +420,7 @@ mod tests {
     let eval_with_LR = evaluate_with_LR::<G>(&Z, &r);
     let poly = DensePolynomial::new(Z);
 
-    let eval = poly.evaluate::<G>(&r);
+    let eval = poly.evaluate(&r);
     assert_eq!(eval, G::ScalarField::from(28u64));
     assert_eq!(eval_with_LR, eval);
   }
@@ -615,7 +566,7 @@ mod tests {
 
     // r = [4,3]
     let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
-    let eval = poly.evaluate::<G>(&r);
+    let eval = poly.evaluate(&r);
     assert_eq!(eval, G::ScalarField::from(28u64));
 
     let gens = PolyCommitmentGens::<G>::new(poly.get_num_vars(), b"test-two");
@@ -639,5 +590,28 @@ mod tests {
     assert!(proof
       .verify(&gens, &mut verifier_transcript, &r, &C_Zr, &poly_commitment)
       .is_ok());
+  }
+
+  #[test]
+  fn evaluation() {
+    let num_evals = 4;
+    let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+    for _ in 0..num_evals {
+      evals.push(Fr::from(8));
+    }
+    let dense_poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+    // Evaluate at 3:
+    // (0, 0) = 1
+    // (0, 1) = 1
+    // (1, 0) = 1
+    // (1, 1) = 1
+    // g(x_0,x_1) => c_0*(1 - x_0)(1 - x_1) + c_1*(1-x_0)(x_1) + c_2*(x_0)(1-x_1) + c_3*(x_0)(x_1)
+    // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
+    // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
+    assert_eq!(
+      dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
+      Fr::from(8)
+    );
   }
 }
