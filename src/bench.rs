@@ -27,15 +27,19 @@ pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[
   all_indices
 }
 
-pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
-  let mut rng = test_rng();
+pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
   std::array::from_fn(|_| {
-    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-    for _ in 0..memory_bits {
-      r_i.push(F::rand(&mut rng));
-    }
-    r_i
+    gen_random_point(memory_bits)
   })
+}
+
+pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+  let mut rng = test_rng();
+  let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+  for _ in 0..memory_bits {
+    r_i.push(F::rand(&mut rng));
+  }
+  r_i
 }
 
 macro_rules! single_pass_surge {
@@ -52,11 +56,13 @@ macro_rules! single_pass_surge {
         let m_computed = N.nth_root(C as u32);
         assert_eq!(m_computed, M);
         let log_m = log2(m_computed) as usize;
+        let log_s: usize = log2($sparsity) as usize;
   
         let short_strat_name = std::any::type_name::<SubtableStrategy>().split("::").last().unwrap();
         println!("Running {}", format!("Surge(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
   
-        let random_point = gen_random_point::<F, C>(log_m);
+        let spark_randomness = gen_random_points::<F, C>(log_m);
+        let eq_randomness: Vec<F> = gen_random_point::<F>(log_s);
   
         let nz = gen_indices::<C>(S, M);
         let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_m);
@@ -99,7 +105,8 @@ macro_rules! single_pass_surge {
         let _proof =
         SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
             &mut dense,
-            &random_point,
+            &spark_randomness,
+            &eq_randomness,
             &gens,
             &mut prover_transcript,
             &mut random_tape,

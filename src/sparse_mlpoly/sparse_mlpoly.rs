@@ -136,12 +136,15 @@ where
   }
   /// Prove an opening of the Sparse Matrix Polynomial
   /// - `dense`: DensifiedRepresentation
-  /// - `r`: c log_m sized coordinates at which to prove the evaluation of the sparse polynomial
+  /// - `spark_randomness`: c log(m) sized coordinates at which to prove the evaluation of the sparse polynomial
+  /// - `eq_randomness`: log(s) sized coordinates at which to prove the evaluation of eq in the primary sumcheck
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
   pub fn prove(
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
-    r: &[Vec<G::ScalarField>; C], // 'log-m' sized point at which the polynomial is evaluated across 'c' dimensions
+    // TODO: https://github.com/a16z/Surge/issues/4
+    spark_randomness: &[Vec<G::ScalarField>; C],
+    eq_randomness: &Vec<G::ScalarField>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -151,9 +154,10 @@ where
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    r.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
+    spark_randomness.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
+    assert_eq!(eq_randomness.len(), log2(dense.s) as usize);
 
-    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, r, dense.m, dense.s);
+    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, spark_randomness, dense.m, dense.s);
 
     // commit to non-deterministic choices of the prover
     let comm_derefs = {
@@ -162,9 +166,7 @@ where
       comm
     };
 
-    // TODO: https://github.com/a16z/Surge/issues/4
-    assert_eq!(r[0].len(), log2(dense.s) as usize);
-    let eq = EqPolynomial::new(r[0].clone());
+    let eq = EqPolynomial::new(eq_randomness.clone());
     let claimed_eval = subtables.compute_sumcheck_claim(&eq);
 
     <Transcript as ProofTranscript<G>>::append_scalar(
@@ -238,14 +240,16 @@ where
   pub fn verify(
     &self,
     commitment: &SparsePolynomialCommitment<G>,
-    r: &[Vec<G::ScalarField>; C], // point at which the polynomial is evaluated
+    spark_randomness: &[Vec<G::ScalarField>; C],
+    eq_randomness: &Vec<G::ScalarField>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    r.iter()
+    spark_randomness.iter()
       .for_each(|r_i| assert_eq!(r_i.len(), commitment.log_m));
+    debug_assert_eq!(eq_randomness.len(), log2(commitment.s) as usize);
 
     // add claims to transcript and obtain challenges for randomized mem-check circuit
     self
@@ -268,7 +272,7 @@ where
 
     // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
     // TODO: https://github.com/a16z/Surge/issues/4
-    let eq_eval = EqPolynomial::new(r[0].clone()).evaluate(&r_z);
+    let eq_eval = EqPolynomial::new(eq_randomness.clone()).evaluate(&r_z);
     assert_eq!(
       eq_eval * S::combine_lookups(&self.primary_sumcheck.eval_derefs),
       claim_last,
@@ -291,7 +295,7 @@ where
       commitment,
       &self.comm_derefs,
       gens,
-      r,
+      spark_randomness,
       &(r_mem_check[0], r_mem_check[1]),
       commitment.s,
       transcript,

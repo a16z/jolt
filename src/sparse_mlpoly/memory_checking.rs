@@ -91,7 +91,7 @@ where
     comm: &SparsePolynomialCommitment<G>,
     comm_derefs: &CombinedTableCommitment<G>,
     gens: &SparsePolyCommitmentGens<G>,
-    r: &[Vec<G::ScalarField>; C],
+    spark_randomness: &[Vec<G::ScalarField>; C],
     r_mem_check: &(G::ScalarField, G::ScalarField),
     s: usize,
     transcript: &mut Transcript,
@@ -101,7 +101,7 @@ where
     let (r_hash, r_multiset_check) = r_mem_check;
 
     let num_ops = s.next_power_of_two();
-    let num_cells = r[0].len().pow2();
+    let num_cells = comm.m;
 
     let (claims_mem, rand_mem, claims_ops, rand_ops) = self
       .proof_prod_layer
@@ -128,7 +128,7 @@ where
       comm,
       gens,
       comm_derefs,
-      r,
+      spark_randomness,
       r_hash,
       r_multiset_check,
       transcript,
@@ -519,7 +519,7 @@ where
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparsePolyCommitmentGens<G>,
     table_eval_commitment: &CombinedTableCommitment<G>,
-    r: &[Vec<G::ScalarField>; C],
+    spark_randomness: &[Vec<G::ScalarField>; C],
     r_hash: &G::ScalarField,
     r_multiset_check: &G::ScalarField,
     transcript: &mut Transcript,
@@ -624,7 +624,7 @@ where
         &self.eval_read[j],
         &self.eval_final[j],
         &init_addr,
-        &S::evaluate_subtable_mle(i, r, rand_mem),
+        &S::evaluate_subtable_mle(i, spark_randomness, rand_mem),
         r_hash,
         r_multiset_check,
       )?;

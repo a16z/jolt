@@ -7,15 +7,19 @@ use rand_chacha::rand_core::RngCore;
 
 use crate::transcript::ProofTranscript;
 
-pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
-  let mut rng = test_rng();
+pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
   std::array::from_fn(|_| {
-    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-    for _ in 0..memory_bits {
-      r_i.push(F::rand(&mut rng));
-    }
-    r_i
+    gen_random_point(memory_bits)
   })
+}
+
+pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+  let mut rng = test_rng();
+  let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+  for _ in 0..memory_bits {
+    r_i.push(F::rand(&mut rng));
+  }
+  r_i
 }
 
 pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
