@@ -15,10 +15,10 @@ $$
 $$
 ### 1. Prover commits to $2 \alpha$ $log(m)$-variate multilinear polynomials:
 - $E_1,...,E_\alpha$
-- $ \text{read_counts}_1, ..., \text{read_counts}_\alpha$
+- $`\text{read_counts}_1, ..., \text{read_counts}_\alpha`$
 
 And $\alpha$ different $log(N)/C$-variate multilinear polynomials:
-- $ \text{final_counts}_1, ..., \text{final_counts}_\alpha$
+- $\text{final_counts}_1, ..., \text{final_counts}_\alpha$
 
 *$E_i$ is purported to evaluate to each of the $m$ reads into the corresponding $i$-th subtable.*
 
@@ -30,7 +30,7 @@ To: $E_i(r_z) = v_{E_i}$ for $i=1,...,\alpha$ given $r_z \in \mathbb{F}^{log(s)}
 
 ### 4. Check $E_i = T'_i[dim_i(j)] \forall j \in \{0,1\}^{log(s)}$
 - Verifier provides $\tau, \gamma \in \mathbb{F}$
-- Prover and verifier run sumcheck protocol for grand products (Tha13) to reduce the check equality between mutliset hashes: $\mathcal{H}_{\tau, \gamma}(WS) = \mathcall{H}_{\tau, \gamma}(RS) \cdot \mathcal{H}_{\tau, \gamma}(S)$
+- Prover and verifier run sumcheck protocol for grand products (Tha13) to reduce the check equality between mutliset hashes: $\mathcal{H}_{\tau, \gamma}(WS) = \mathcal{H}_{\tau, \gamma}(RS) \cdot \mathcal{H}_{\tau, \gamma}(S)$
 - Sumcheck reduces the check to (for $r''_i \in \mathbb{F}^\ell; r'''_i \in \mathbb{F}^{log(s)}$):
     - $E_i(r'''_i) = v_{E_i}$
     - $dim_i(r'''_i) = v_i$
