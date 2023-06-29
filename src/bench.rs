@@ -135,7 +135,7 @@ pub fn run() {
         let (s, (proving, commit, densify)) = row;
         println!("S={s} (2^{}), AndSubtableStrategy, Curve25519", log2(s));
         println!("- Densify:     {}ms", densify.as_millis());
-        println!("- Dens Commit: {}ms", commit.as_millis());
+        println!("- Dense Commit: {}ms", commit.as_millis());
         println!("- Prove:       {}ms", proving.as_millis());
         println!("- Total:       {}ms", densify.as_millis() + commit.as_millis() + proving.as_millis());
         println!("");

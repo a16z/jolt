@@ -13,7 +13,8 @@ Params
 $$
 \sum_{i \in \{0,1\}^{log(s)}}{\tilde{eq}(i,r) \cdot T[\text{nz}[i]]}
 $$
-### 1. Prover commits to $2 \alpha$ $log(m)$-variate multilinear polynomials:
+### 1. Prover commits to $3 \alpha$ $log(m)$-variate multilinear polynomials:
+- $`\text{dim}_1, ... \text{dim}_c`$: Purported indicies of $T_{ik}$
 - $E_1,...,E_\alpha$
 - $`\text{read\_counts}_{1},...,\text{read\_counts}_{\alpha}`$
 
@@ -26,9 +27,10 @@ $E_i$ is purported to evaluate to each of the $m$ reads into the corresponding $
 Reduces the check $`v = \sum_{k \in \{0,1\}^{log(s)}}{g(E_{1}(k), ..., E_{\alpha}(k))}`$
 To: $`E_i(r_z) = v_{E_i}`$ for $`i=1,...,\alpha`$ given $`r_z \in \mathbb{F}^{log(s)}`$
 
-### 3. Verifier checks above equality with $v_{E_i}$ provided by sumcheck and $E_i$ provided by an oracle query to the initially committed polynomial.
+### 3. Verifier checks $v_{E_i}$ 
+$v_{E_i}$ is provided by sumcheck in step 2. $E_i$ provided by an oracle query to the initially committed polynomial.
 
-### 4. Check $E_i = T'_i[dim_i(j)] \forall j \in \{0,1\}^{log(s)}$
+### 4. Check $E_i = T_i[dim_i(j)] \forall j \in \{0,1\}^{log(s)}$
 - Verifier provides $\tau, \gamma \in \mathbb{F}$
 - Prover and verifier run sumcheck protocol for grand products (Tha13) to reduce the check equality between mutliset hashes: 
 $`
@@ -41,4 +43,49 @@ $`
     - $`\text{final\_counts}_{i}(r^{''}_{i}) = v_{\text{final\_counts}_{i}}`$
 
 ### 5. Check that the equations above hold with the RHS provided by sumcheck and the LHS provided by oracle queries to commitments in **Step 1**.
+
+## Code Tour
+### 1. Prover commits
+`SparseLookupMatrix` is created from a `C` sized vector of non-zero indices along each dimension.
+
+We convert the `SparseLookupMatrix` to a `DensifiedRepresentation` which handles the construction of: 
+- $`dim_i \forall i=0,...,C`$ 
+- $`E_i \forall i=0,...,C`$ 
+- $`\text{read\_counts}_i \forall i=0,...,C`$
+- $`\text{final\_counts}_i \forall i=0,...,C`$
+
+Each of these is stored as a dense mutlilinear polynomial with sequential evaluations over the boolean hypercube.
+
+Finally, we merge all $log(s)$-variate polynomials across all $C$ dimensions into a single dense multilinear polynomial, and merge all the $log(m)$-variate polynomials into a single polynomial for commitment / opening proof efficiency.
+
+Now we can commit these 2 merged dense multilinear polynomials via any dense multilinear polynomial commitment scheme. This code is handleed by `SparsePolynomialCommitment` -> `SparsePolyCommitmentGens` -> `PolyEvalProof` -> `DotProductProofLog` -> .... Initially we use Hyrax from [Spartan](https://github.com/microsoft/Spartan) as the dense PCS, but this could be swapped down the road for different performance characteristics.
+
+
+After inital commitment, `SparsePolynomialEvaluationProof::<_, _, _, SubtableStrategy>::prove(dense, ...)` is called. `SubtableStrategy` describes which table collation function `g` will be used and which set of subtables `T_i` to materialize.
+
+`Subtables::new()`: First we materialize the subtables and evaluate them at each of the non-sparse indices over each of the $C$ subtables. These make up the evaluations of the $E_i$ polynomials. We encode each multilinear $E_i$ polynomial and concatenate into a single dense multilinear polynomial before committing as in Step 1.
+
+### 2. Sumcheck table assembly
+First, `Subtables::compute_sumcheck_claim`: computes the combined evaluations of $E_i(k)$ over all $k \in \{0,1\}^{log(s)}$ . 
+
+Run a generic `SumcheckInstanceProof::prove_arbitrary` assuming the lookup polynomials $E_i(k)$ were formed honestly.
+
+### 3. Verifier checks $v_{E_{i}} == E_{i}(r_z)$
+`CombinedTableEvalProof::prove`: Create the combined opening proof from the dense PCS.
+
+### 4. Check $E_i = T_i[dim_i(j)] \forall j \in \{0,1\}^{log(s)}$
+The valid formation of $E_i$ is checked using memory checking techniques described in Section 5 of Lasso or Section 7.2. 
+
+This step gets a bit messy becuase we combine each dimension of the memory checking sumcheck into a single sumcheck via a random linear combination of the input polynomials.
+
+Idea is to use homomorphic multiset hashes to ensure set equality.
+
+`MemoryCheckingProof::prove()`
+- `Subtables::to_grand_products()`: Create the reed-solomon fingerprints from each set
+    - `GrandProducts::new()`
+    - `GrandProducts::build_grand_product_inputs()`
+- `ProductLayerProof::prove()`: Prove product (combination) of a set's reed-solomon evaluations
+    - `BatchedGrandProductArgument::prove()`
+- `HashLayerProof::prove()`: Prove reed-solomon evaluations directly
+
 

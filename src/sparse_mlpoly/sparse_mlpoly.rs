@@ -159,6 +159,7 @@ where
       comm
     };
 
+    // TODO: Update this computation with eq(r)
     let claimed_eval = subtables.compute_sumcheck_claim();
 
     <Transcript as ProofTranscript<G>>::append_scalar(
