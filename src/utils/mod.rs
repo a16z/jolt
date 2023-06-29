@@ -3,6 +3,9 @@ use ark_ff::{PrimeField, BigInteger};
 #[cfg(test)]
 pub mod test;
 
+pub mod eq_poly;
+pub mod identity_poly;
+
 /// Converts an integer value to a bitvector (all values {0,1}) of field elements.
 /// Note: ordering has the MSB in the highest index. All of the following represent the integer 1:
 /// - [1]
