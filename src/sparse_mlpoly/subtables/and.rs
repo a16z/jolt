@@ -59,7 +59,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> fo
     sum
   }
 
-  fn sumcheck_poly_degree() -> usize {
+  fn g_poly_degree() -> usize {
     1
   }
 }

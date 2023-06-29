@@ -1,4 +1,4 @@
-use crate::dense_mlpoly::{DensePolynomial, IdentityPolynomial, PolyEvalProof};
+use crate::dense_mlpoly::{DensePolynomial, PolyEvalProof};
 use crate::errors::ProofVerifyError;
 use crate::math::Math;
 use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
@@ -9,6 +9,7 @@ use crate::sparse_mlpoly::subtables::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
 use crate::transcript::ProofTranscript;
+use crate::utils::identity_poly::IdentityPolynomial;
 
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};

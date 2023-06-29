@@ -90,7 +90,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
     sum
   }
 
-  fn sumcheck_poly_degree() -> usize {
+  fn g_poly_degree() -> usize {
     1
   }
 }

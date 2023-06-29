@@ -12,7 +12,8 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 - [ ] Investigate multiple dense PCS (notably IPA)
 - [x] Investigate MSM speedups ([paper](https://eprint.iacr.org/2022/1400.pdf), [arkworks](https://github.com/arkworks-rs/algebra/blob/c015ea331674368461ff466bc7cbc69806f61628/ec/src/scalar_mul/variable_base/mod.rs#L112-L122))
 - [ ] Clippy / Cargo fmt
-- [ ] Consider killing const generics as a whole.
+- [ ] Consider killing const generics as a whole (in favor of vectors / slices and heavy sizing asserts)
+- [ ] Better naming for various `r` points
 
 ## Current usage
 ```rust

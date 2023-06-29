@@ -13,9 +13,11 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
 
     fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
 
-    fn sumcheck_poly_degree() -> usize;
+    fn g_poly_degree() -> usize;
 
     // Default impl
+    fn combine_lookups_eq(vals: &[F; Self::NUM_MEMORIES + 1]) -> F;
+    fn sumcheck_poly_degree() -> usize;
     fn memory_to_subtable_index(memory_index: usize) -> usize;
     fn memory_to_dimension_index(memory_index: usize) -> usize;
     fn to_lookup_polys(
@@ -43,7 +45,7 @@ const NUM_MEMORIES: usize = <desired_value>;
 
 This method materializes the subtables for a given size `m` and point `r`.
 
-*Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`).*
+*Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`). See [issue](https://github.com/a16z/Surge/issues/4).*
 
 ```rust
 fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES] {
@@ -57,7 +59,7 @@ Replace the implementation with your logic to generate and return the materializ
 
 This method evaluates the mutlilinear extension (MLE) of a subtable at the given `point`. The `subtable_index` parameter specifies which subtable to evaluate.
 
-*Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`).*
+*Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`). See [issue](https://github.com/a16z/Surge/issues/4).*
 
 
 ```rust
@@ -79,14 +81,14 @@ fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F {
 
 Replace the implementation with your logic to combine the lookup values and return the combined result.
 
-### 5. `sumcheck_poly_degree`
+### 5. `g_poly_degree`
 
 This method specifies the total degree of the g function. The total degree determines the number of evaluation points in each sumcheck round (N+1 points define a degree-N polynomial).
 
-To simplify: Each term in `combine_lookups` can be thought of as a univariate polynomial, what is the degree after applying the combination function `g`?
+To simplify: Each term in `combine_lookups` can be thought of as a univariate polynomial, what is the degree after applying the collation function `g`?
 
 ```rust
-fn sumcheck_poly_degree() -> usize {
+fn g_poly_degree() -> usize {
     // Specify the desired sumcheck polynomial degree
 }
 ```

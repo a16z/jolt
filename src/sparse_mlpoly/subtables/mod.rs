@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::Zero;
+use ark_std::{Zero, log2};
 use merlin::Transcript;
 
 use crate::{
@@ -11,7 +11,8 @@ use crate::{
   errors::ProofVerifyError,
   math::Math,
   random::RandomTape,
-  transcript::{AppendToTranscript, ProofTranscript},
+  transcript::{AppendToTranscript, ProofTranscript}, utils::index_to_field_bitvector,
+  utils::eq_poly::EqPolynomial
 };
 
 use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
@@ -50,8 +51,19 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
 
   /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
   /// Determines the number of evaluation points in each sumcheck round.
-  fn sumcheck_poly_degree() -> usize;
+  fn g_poly_degree() -> usize;
 
+  /// Computes eq * g(T_1[k], ..., T_\alpha[k]) assuming the eq evaluation is the last element in vals
+  fn combine_lookups_eq(vals: &[F; Self::NUM_MEMORIES + 1]) -> F {
+    let mut table_evals: [F; Self::NUM_MEMORIES] = [F::zero(); Self::NUM_MEMORIES];
+    table_evals.copy_from_slice(&vals[0..Self::NUM_MEMORIES]);
+    Self::combine_lookups(&table_evals) * vals[Self::NUM_MEMORIES]
+  }
+
+  /// Total degree of eq * g(T_1[k], ..., T_\alpha[k])
+  fn sumcheck_poly_degree() -> usize {
+    Self::g_poly_degree() + 1
+  }
 
   fn memory_to_subtable_index(memory_index: usize) -> usize {
     assert_eq!(Self::NUM_SUBTABLES * C, Self::NUM_MEMORIES);
@@ -94,6 +106,7 @@ where
   pub lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES],
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
+  sparsity: usize
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
@@ -117,6 +130,7 @@ where
       lookup_polys,
       combined_poly,
       strategy: PhantomData,
+      sparsity: nz[0].len()
     }
   }
 
@@ -149,7 +163,7 @@ where
     CombinedTableCommitment { comm_ops_val }
   }
 
-  pub fn compute_sumcheck_claim(&self) -> F {
+  pub fn compute_sumcheck_claim(&self, eq: &EqPolynomial<F>) -> F {
     let g_operands = self.lookup_polys.clone();
     let hypercube_size = g_operands[0].len();
     g_operands
@@ -159,8 +173,10 @@ where
     (0..hypercube_size)
       .map(|k| {
         let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
-        S::combine_lookups(&g_operands)
-        // TODO(moodlezoup): \tilde{eq}(r, k)
+        let eq_eval = eq.evaluate(&index_to_field_bitvector(k, log2(self.sparsity) as usize));
+
+        // eq * g(T_1[k], ..., T_\alpha[k])
+        eq_eval * S::combine_lookups(&g_operands) 
       })
       .sum()
   }

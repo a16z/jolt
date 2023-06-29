@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
-use crate::dense_mlpoly::{PolyCommitment, PolyCommitmentGens};
+use crate::dense_mlpoly::{PolyCommitment, PolyCommitmentGens, DensePolynomial};
 use crate::errors::ProofVerifyError;
 use crate::math::Math;
 use crate::random::RandomTape;
@@ -13,10 +13,12 @@ use crate::sparse_mlpoly::subtables::{
 };
 use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::eq_poly::EqPolynomial;
 use ark_ec::CurveGroup;
 
 use ark_serialize::*;
 
+use ark_std::log2;
 use merlin::Transcript;
 
 pub struct SparsePolyCommitmentGens<G> {
@@ -127,6 +129,7 @@ impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::Scala
 where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
+  [(); S::NUM_MEMORIES + 1]: Sized,
 {
   fn protocol_name() -> &'static [u8] {
     b"Surge SparsePolynomialEvaluationProof"
@@ -159,8 +162,10 @@ where
       comm
     };
 
-    // TODO: Update this computation with eq(r)
-    let claimed_eval = subtables.compute_sumcheck_claim();
+    // TODO: https://github.com/a16z/Surge/issues/4
+    assert_eq!(r[0].len(), log2(dense.s) as usize);
+    let eq = EqPolynomial::new(r[0].clone());
+    let claimed_eval = subtables.compute_sumcheck_claim(&eq);
 
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
@@ -168,16 +173,24 @@ where
       &claimed_eval,
     );
 
+    let mut combined_sumcheck_polys: [DensePolynomial<G::ScalarField>; S::NUM_MEMORIES + 1] = std::array::from_fn(|i| {
+      if i != S::NUM_MEMORIES {
+        subtables.lookup_polys[i].clone()
+      } else {
+        DensePolynomial::new(eq.evals())
+      }
+    });
+    
     let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<
       _,
       G,
       Transcript,
-      { S::NUM_MEMORIES },
+      { S::NUM_MEMORIES + 1 },
     >(
       &claimed_eval,
       dense.s.log_2(),
-      &mut subtables.lookup_polys.clone(),
-      S::combine_lookups,
+      &mut combined_sumcheck_polys,
+      S::combine_lookups_eq,
       S::sumcheck_poly_degree(),
       transcript,
     );
@@ -252,10 +265,14 @@ where
       transcript,
     )?;
 
-    // Verify that E_1(r_z) * ... * E_c(r_z) = claim_last
+
+    // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
+    // TODO: https://github.com/a16z/Surge/issues/4
+    let eq_eval = EqPolynomial::new(r[0].clone()).evaluate(&r_z);
     assert_eq!(
-      S::combine_lookups(&self.primary_sumcheck.eval_derefs),
-      claim_last
+      eq_eval * S::combine_lookups(&self.primary_sumcheck.eval_derefs),
+      claim_last,
+      "Primary sumcheck check failed."
     );
 
     self.primary_sumcheck.proof_derefs.verify(

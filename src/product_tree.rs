@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 use super::dense_mlpoly::DensePolynomial;
-use super::dense_mlpoly::EqPolynomial;
 use super::math::Math;
 use super::sumcheck::SumcheckInstanceProof;
 use super::transcript::ProofTranscript;
+use crate::utils::eq_poly::EqPolynomial;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;

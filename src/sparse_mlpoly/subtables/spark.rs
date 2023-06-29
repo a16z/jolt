@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 
-use crate::dense_mlpoly::EqPolynomial;
+use crate::utils::eq_poly::EqPolynomial;
 
 use super::SubtableStrategy;
 
@@ -37,7 +37,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> fo
     vals.iter().product()
   }
 
-  fn sumcheck_poly_degree() -> usize {
+  fn g_poly_degree() -> usize {
     C
   }
 }

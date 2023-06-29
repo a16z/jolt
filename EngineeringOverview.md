@@ -74,7 +74,7 @@ Run a generic `SumcheckInstanceProof::prove_arbitrary` assuming the lookup polyn
 `CombinedTableEvalProof::prove`: Create the combined opening proof from the dense PCS.
 
 ### 4. Check $E_i = T_i[dim_i(j)] \forall j \in \{0,1\}^{log(s)}$
-The valid formation of $E_i$ is checked using memory checking techniques described in Section 5 of Lasso or Section 7.2. 
+The valid formation of $E_i$ is checked using memory checking techniques described in Section 5 of Lasso or Section 7.2 of Spartan. 
 
 This step gets a bit messy becuase we combine each dimension of the memory checking sumcheck into a single sumcheck via a random linear combination of the input polynomials.
 
