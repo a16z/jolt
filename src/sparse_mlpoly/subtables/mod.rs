@@ -170,13 +170,13 @@ where
       .iter()
       .for_each(|operand| assert_eq!(operand.len(), hypercube_size));
 
+    let eq_evals = eq.evals();
     (0..hypercube_size)
       .map(|k| {
         let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
-        let eq_eval = eq.evaluate(&index_to_field_bitvector(k, log2(self.sparsity) as usize));
 
         // eq * g(T_1[k], ..., T_\alpha[k])
-        eq_eval * S::combine_lookups(&g_operands) 
+        eq_evals[k] * S::combine_lookups(&g_operands) 
       })
       .sum()
   }
