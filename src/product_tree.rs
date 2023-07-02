@@ -97,6 +97,7 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 }
 
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
+  #[tracing::instrument(skip_all, name="BatchedGrandProductArgument.prove")]
   pub fn prove<G>(
     grand_product_circuits: &mut Vec<&mut GrandProductCircuit<F>>,
     transcript: &mut Transcript,

@@ -41,6 +41,10 @@ criterion = { version = "0.3.1", features = ["html_reports"] }
 num-integer = "0.1.45"
 seq-macro = "0.3.3"
 ark-curve25519 = "0.4.0"
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
+tracing-texray = "0.2.0"
+clap = { version = "4.3.10", features = ["derive"] }
 
 [dev-dependencies]
 criterion = "0.3.1"
@@ -50,7 +54,6 @@ name = "libspartan"
 path = "src/lib.rs"
 
 [features]
-# default = ["curve25519-dalek/simd_backend"]
 default = [ 
     "ark-ec/parallel",
     "ark-ff/parallel",

@@ -10,11 +10,15 @@ use ark_ec::CurveGroup;
 use ark_ec::VariableBaseMSM;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::{One, Zero};
+use ark_std::One;
 
 use merlin::Transcript;
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 impl<F: PrimeField> SumcheckInstanceProof<F> {
+  #[tracing::instrument(skip_all, name="Sumcheck.prove_batched")]
   pub fn prove_cubic_batched<Func, G>(
     claim: &F,
     num_rounds: usize,
@@ -28,7 +32,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
   where
-    Func: Fn(&F, &F, &F) -> F,
+    Func: Fn(&F, &F, &F) -> F + std::marker::Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let (poly_A_vec_par, poly_B_vec_par, poly_C_par) = poly_vec_par;
@@ -38,9 +42,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _j in 0..num_rounds {
-      let mut evals: Vec<(F, F, F)> = Vec::new();
+      #[cfg(feature = "multicore")]
+      let iterator = poly_A_vec_par.par_iter().zip(poly_B_vec_par.par_iter());
 
-      for (poly_A, poly_B) in poly_A_vec_par.iter().zip(poly_B_vec_par.iter()) {
+      #[cfg(not(feature = "multicore"))]
+      let iterator = poly_A_vec_par.iter().zip(poly_B_vec_par.iter());
+
+      let evals: Vec<(F,F,F)> = iterator.map(|(poly_A, poly_B)| {
         let mut eval_point_0 = F::zero();
         let mut eval_point_2 = F::zero();
         let mut eval_point_3 = F::zero();
@@ -72,8 +80,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
           );
         }
 
-        evals.push((eval_point_0, eval_point_2, eval_point_3));
-      }
+        (eval_point_0, eval_point_2, eval_point_3)
+      }).collect();
 
       let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
       let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
@@ -129,6 +137,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// Returns (SumcheckInstanceProof, r_eval_point, final_evals)
   /// - `r_eval_point`: Final random point of evaluation
   /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
+  #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
   pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>, const ALPHA: usize>(
     claim: &F,
     num_rounds: usize,
@@ -398,6 +407,7 @@ mod test {
   use crate::math::Math;
   use crate::utils::test::TestTranscript;
   use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
+  use ark_ff::Zero;
 
   #[test]
   fn sumcheck_arbitrary_cubic() {

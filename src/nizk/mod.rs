@@ -459,6 +459,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     (0..a.len()).map(|i| a[i] * b[i]).sum()
   }
 
+  #[tracing::instrument(skip_all, name="DotProductProofLog.prove")]
   pub fn prove(
     gens: &DotProductProofGens<G>,
     transcript: &mut Transcript,

@@ -15,6 +15,7 @@ use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::eq_poly::EqPolynomial;
 use ark_ec::CurveGroup;
+use tracing::{Level, event, field::Empty};
 
 use ark_serialize::*;
 
@@ -131,15 +132,13 @@ where
   [(); S::NUM_MEMORIES]: Sized,
   [(); S::NUM_MEMORIES + 1]: Sized,
 {
-  fn protocol_name() -> &'static [u8] {
-    b"Surge SparsePolynomialEvaluationProof"
-  }
   /// Prove an opening of the Sparse Matrix Polynomial
   /// - `dense`: DensifiedRepresentation
   /// - `spark_randomness`: c log(m) sized coordinates at which to prove the evaluation of the sparse polynomial
   /// - `eq_randomness`: log(s) sized coordinates at which to prove the evaluation of eq in the primary sumcheck
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
+  #[tracing::instrument(skip_all, name="SparsePoly.prove")]
   pub fn prove(
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
     // TODO: https://github.com/a16z/Surge/issues/4
@@ -300,5 +299,9 @@ where
       commitment.s,
       transcript,
     )
+  }
+
+  fn protocol_name() -> &'static [u8] {
+    b"Surge SparsePolynomialEvaluationProof"
   }
 }

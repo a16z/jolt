@@ -20,6 +20,7 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
 }
 
 impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
+  #[tracing::instrument(skip_all, name="Densify")]
   fn from(sparse: &SparseLookupMatrix<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
@@ -76,6 +77,7 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
+  #[tracing::instrument(skip_all, name="Dense.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &SparsePolyCommitmentGens<G>,

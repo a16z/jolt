@@ -46,6 +46,7 @@ where
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
+  #[tracing::instrument(skip_all, name="MemoryChecking.prove")]
   pub fn prove(
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
@@ -320,6 +321,7 @@ where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {
+  #[tracing::instrument(skip_all, name="HashLayer.prove")]
   fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
@@ -655,6 +657,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   /// Params
   /// - `grand_products`: The grand product circuits whose evaluations are proven.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
+  #[tracing::instrument(skip_all, name="ProductLayer.prove")]
   pub fn prove<G>(
     grand_products: &mut [GrandProducts<F>; NUM_MEMORIES],
     transcript: &mut Transcript,

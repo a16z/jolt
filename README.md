@@ -25,8 +25,8 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 
 ## Cmds
 - `cargo build --release`
+- `cargo build --release -- --chart`
 - `sudo cargo flamegraph`
 - `cargo bench`
-- `cargo clippy --fix`
 
-*Note on benching / flamegraphing: Turn off the parallel feature in Cargo.toml (`multicore`) and `export RAYON_NUM_THREADS=1` to make flamegraph more interpretable.*
+*Note on benching / flamegraphing: Turn off the parallel feature in Cargo.toml (`multicore`) and / or `export RAYON_NUM_THREADS=1` to make flamegraph more interpretable. Turning off `multicore` and leaving `unset RAYON_NUM_THREADS` allows testing Arkworks MSM parallelism without Surge parallelism.*

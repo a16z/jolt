@@ -19,23 +19,26 @@ use num_integer::Roots;
 use rand_chacha::rand_core::RngCore;
 
 macro_rules! bench_surge {
-  ($field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $sparsity:expr, $criterion:expr, $field_name:expr) => {
+  ($field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $M:expr, $sparsity:expr, $criterion:expr, $field_name:expr) => {
     {
       const N: usize = $N;
       const C: usize = $C;
       const S: usize = $sparsity;
+      const M: usize = $M;
       type F = $field;
       type G = $group;
       type SubtableStrategy = $subtable_strategy;
 
       let m = N.nth_root(C as u32);
       let log_m = log2(m) as usize;
+      let log_s = log2(S) as usize;
 
       let short_strat_name = std::any::type_name::<SubtableStrategy>().split("::").last().unwrap();
       let mut group = $criterion.benchmark_group(format!("Surge(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
       group.sample_size(10);
 
-      let random_point = gen_random_point::<F, C>(log_m);
+      let spark_randomness = gen_random_points::<F, C>(log_m);
+      let eq_randomness: Vec<F> = gen_random_point::<F>(log_s);
 
       let nz = gen_indices::<C>(S, m);
       let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_m);
@@ -86,9 +89,10 @@ macro_rules! bench_surge {
             let mut random_tape = RandomTape::new(b"proof");
             let mut prover_transcript = Transcript::new(b"example");
             let _proof =
-              SparsePolynomialEvaluationProof::<G, C, SubtableStrategy>::prove(
+              SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
                 &mut dense,
-                &random_point,
+                &spark_randomness,
+                &eq_randomness,
                 &gens,
                 &mut prover_transcript,
                 &mut random_tape,
@@ -110,15 +114,19 @@ pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[
   all_indices
 }
 
-pub fn gen_random_point<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
-  let mut rng = test_rng();
+pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
   std::array::from_fn(|_| {
-    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-    for _ in 0..memory_bits {
-      r_i.push(F::rand(&mut rng));
-    }
-    r_i
+    gen_random_point(memory_bits)
   })
+}
+
+pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+  let mut rng = test_rng();
+  let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+  for _ in 0..memory_bits {
+    r_i.push(F::rand(&mut rng));
+  }
+  r_i
 }
 
 fn bench(criterion: &mut Criterion) {
@@ -127,15 +135,15 @@ fn bench(criterion: &mut Criterion) {
   // bench_surge!(Fr, EdwardsProjective, AndSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
 
   // Plookup comparison
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 10, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 12, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 14, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 16, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 18, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 20, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 22, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 24, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* S= */ 1 << 26, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 10, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 12, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 14, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 16, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 18, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 20, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 22, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 24, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 26, criterion, "25519");
 }
 
 

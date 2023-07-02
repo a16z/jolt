@@ -269,6 +269,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     b"polynomial evaluation proof"
   }
 
+  #[tracing::instrument(skip_all, name="DensePolyEval.prove")]
   pub fn prove(
     poly: &DensePolynomial<G::ScalarField>,
     blinds_opt: Option<&PolyCommitmentBlinds<G::ScalarField>>,

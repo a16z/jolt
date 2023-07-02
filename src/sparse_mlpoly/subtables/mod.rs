@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{Zero, log2};
+use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
   errors::ProofVerifyError,
   math::Math,
   random::RandomTape,
-  transcript::{AppendToTranscript, ProofTranscript}, utils::index_to_field_bitvector,
+  transcript::{AppendToTranscript, ProofTranscript},
   utils::eq_poly::EqPolynomial
 };
 
@@ -155,6 +155,7 @@ where
     })
   }
 
+  #[tracing::instrument(skip_all, name="Subtables.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &PolyCommitmentGens<G>,
@@ -163,6 +164,7 @@ where
     CombinedTableCommitment { comm_ops_val }
   }
 
+  #[tracing::instrument(skip_all, name="Subtables.compute_sumcheck_claim")]
   pub fn compute_sumcheck_claim(&self, eq: &EqPolynomial<F>) -> F {
     let g_operands = self.lookup_polys.clone();
     let hypercube_size = g_operands[0].len();
@@ -193,10 +195,6 @@ pub struct CombinedTableEvalProof<G: CurveGroup, const C: usize> {
 }
 
 impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
-  fn protocol_name() -> &'static [u8] {
-    b"Surge CombinedTableEvalProof"
-  }
-
   fn prove_single(
     joint_poly: &DensePolynomial<G::ScalarField>,
     r: &[G::ScalarField],
@@ -250,7 +248,8 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
     proof_table_eval
   }
 
-  // evalues both polynomials at r and produces a joint proof of opening
+  /// evalues both polynomials at r and produces a joint proof of opening
+  #[tracing::instrument(skip_all, name="CombinedEval.prove")]
   pub fn prove(
     combined_poly: &DensePolynomial<G::ScalarField>,
     eval_ops_val_vec: &Vec<G::ScalarField>,
@@ -341,6 +340,10 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       gens,
       transcript,
     )
+  }
+
+  fn protocol_name() -> &'static [u8] {
+    b"Surge CombinedTableEvalProof"
   }
 }
 
