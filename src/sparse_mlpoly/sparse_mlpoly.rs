@@ -156,7 +156,7 @@ where
     spark_randomness.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
     assert_eq!(eq_randomness.len(), log2(dense.s) as usize);
 
-    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, spark_randomness, dense.m, dense.s);
+    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, spark_randomness, dense.s);
 
     // commit to non-deterministic choices of the prover
     let comm_derefs = {

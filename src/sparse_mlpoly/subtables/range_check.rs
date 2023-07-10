@@ -13,15 +13,14 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
   const NUM_MEMORIES: usize = C;
 
   fn materialize_subtables(
-    m: usize,
     _r: &[Vec<F>; C],
   ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
-    assert!(m.is_power_of_two());
+    assert!(M.is_power_of_two());
 
-    let full: Vec<F> = (0..m).map(|i| F::from(i as u64)).collect();
+    let full: Vec<F> = (0..M).map(|i| F::from(i as u64)).collect();
 
-    let cutoff = 1 << (LOG_R % log2(m) as usize);
-    let remainder: Vec<F> = (0..m)
+    let cutoff = 1 << (LOG_R % log2(M) as usize);
+    let remainder: Vec<F> = (0..M)
       .map(|i| {
         if i < cutoff {
           F::from(i as u64)
@@ -31,7 +30,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
       })
       .collect();
 
-    let zeros: Vec<F> = vec![F::zero(); m];
+    let zeros: Vec<F> = vec![F::zero(); M];
 
     [full, remainder, zeros]
   }
@@ -46,7 +45,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
       result
     } else if subtable_index == 1 {
       let b = point.len();
-      let cutoff = LOG_R % 16; // TODO(moodlezoup): generalize
+      let cutoff = LOG_R % (log2(M) as usize);
       let mut result = F::zero();
       for i in 0..b {
         if i < cutoff {
@@ -63,7 +62,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
   }
 
   fn memory_to_subtable_index(memory_index: usize) -> usize {
-    let log_m = 16; // TODO(moodlezoup): generalize
+    let log_m = log2(M) as usize;
     if memory_index * log_m > LOG_R {
       2
     } else if (memory_index + 1) * log_m > LOG_R {
@@ -81,7 +80,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
-    let log_m = 16; // TODO: Generalize
+    let log_m = log2(M) as usize;
     let mut sum = F::zero();
     for i in 0..C {
       let weight: u64 = 1u64 << (i * log_m);
@@ -97,7 +96,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
 
 #[cfg(test)]
 mod test {
-  use crate::{utils::index_to_field_bitvector, materialization_mle_parity_test};
+  use crate::{materialization_mle_parity_test, utils::index_to_field_bitvector};
 
   use super::*;
   use ark_curve25519::Fr;
@@ -107,7 +106,12 @@ mod test {
   fn table_materialization() {
     const M: usize = 1 << 16;
     let subtables: [Vec<Fr>; 3] =
-      <RangeCheckSubtableStrategy::<40> as SubtableStrategy<Fr, 4, M>>::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
+      <RangeCheckSubtableStrategy<40> as SubtableStrategy<Fr, 4, M>>::materialize_subtables(&[
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+      ]);
     assert_eq!(subtables.len(), 3);
 
     subtables
@@ -132,5 +136,11 @@ mod test {
       .for_each(|&entry| assert_eq!(entry, Fr::zero()));
   }
 
-  materialization_mle_parity_test!(materialization_parity, RangeCheckSubtableStrategy::<40>, Fr, 1 << 16, 3);
+  materialization_mle_parity_test!(
+    materialization_parity,
+    RangeCheckSubtableStrategy::<40>,
+    Fr,
+    1 << 16,
+    3
+  );
 }

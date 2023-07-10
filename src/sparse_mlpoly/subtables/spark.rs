@@ -6,17 +6,18 @@ use super::SubtableStrategy;
 
 pub enum SparkSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> for SparkSubtableStrategy {
+impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
+  for SparkSubtableStrategy
+{
   const NUM_SUBTABLES: usize = C;
   const NUM_MEMORIES: usize = C;
 
   fn materialize_subtables(
-    m: usize,
     r: &[Vec<F>; C],
   ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
     std::array::from_fn(|i| {
       let eq_evals = EqPolynomial::new(r[i].clone()).evals();
-      assert_eq!(eq_evals.len(), m);
+      assert_eq!(eq_evals.len(), M);
       eq_evals
     })
   }
@@ -47,15 +48,14 @@ mod test {
   use super::*;
 
   use crate::materialization_mle_parity_test;
-use crate::sparse_mlpoly::subtables::Subtables;
+  use crate::sparse_mlpoly::subtables::Subtables;
   use crate::utils::index_to_field_bitvector;
   use ark_curve25519::Fr;
 
   #[test]
   fn forms_valid_merged_dense_poly() {
     // Pass in the eq evaluations over log_m boolean variables and log_m fixed variables r
-    const M: usize = 5;
-    let log_m = 2;
+    const M: usize = 4;
     const C: usize = 2;
 
     let r_x: Vec<Fr> = vec![Fr::from(3), Fr::from(4)];
@@ -70,7 +70,7 @@ use crate::sparse_mlpoly::subtables::Subtables;
     // eq(2) = eq(1, 0, 5, 6) = (1 * 5 + (1-1) * (1-5)) * (0 * 6 + (1-0) * (1-6)) = (5)(-5) = -25
 
     let subtable_evals: Subtables<Fr, C, M, SparkSubtableStrategy> =
-      Subtables::new(&[vec![0, 2], vec![2, 2]], &[r_x, r_y], 1 << log_m, 2);
+      Subtables::new(&[vec![0, 2], vec![2, 2]], &[r_x, r_y], 2);
 
     for (x, expected) in vec![(0, 6), (1, -9), (2, -25), (3, -25)] {
       let calculated = subtable_evals

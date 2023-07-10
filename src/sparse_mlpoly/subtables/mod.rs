@@ -33,9 +33,8 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   /// Note: Only SparkSubtableStrategy uses the parameter `r`.
   ///
   /// Params
-  /// - `m`: size of subtable / number of evaluations to materialize
   /// - `r`: point at which to materialize the table (potentially unused)
-  fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
+  fn materialize_subtables(r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
 
   /// Evaluates the MLE of a subtable at the given point. Used by the verifier in memory-checking.
   /// Note: Only SparkSubtableStrategy uses the parameter `r`
@@ -116,11 +115,11 @@ where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {
-  /// Create new SubtableEvaluations
+  /// Create new Subtables
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
-  pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], m: usize, s: usize) -> Self {
+  pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
-    let subtable_entries = S::materialize_subtables(m, r);
+    let subtable_entries = S::materialize_subtables(r);
     let lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES] =
       S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);

@@ -7,21 +7,22 @@ use super::SubtableStrategy;
 
 pub enum LTSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> for LTSubtableStrategy {
+impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
+  for LTSubtableStrategy
+{
   const NUM_SUBTABLES: usize = 2;
   const NUM_MEMORIES: usize = 2 * C;
 
   fn materialize_subtables(
-    m: usize,
     _r: &[Vec<F>; C],
   ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
-    let bits_per_operand = (log2(m) / 2) as usize;
+    let bits_per_operand = (log2(M) / 2) as usize;
 
-    let mut materialized_lt: Vec<F> = Vec::with_capacity(m);
-    let mut materialized_eq: Vec<F> = Vec::with_capacity(m);
+    let mut materialized_lt: Vec<F> = Vec::with_capacity(M);
+    let mut materialized_eq: Vec<F> = Vec::with_capacity(M);
 
     // Materialize table in counting order where lhs | rhs counts 0->m
-    for idx in 0..m {
+    for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
 
       // Note packs memory T[row] = lhs | rhs | 0 / 1 -- x controls highest order bits
@@ -98,7 +99,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> fo
 mod test {
   use ark_curve25519::Fr;
 
-  use crate::{utils::index_to_field_bitvector, materialization_mle_parity_test};
+  use crate::{materialization_mle_parity_test, utils::index_to_field_bitvector};
 
   use super::*;
 
@@ -107,16 +108,28 @@ mod test {
     const C: usize = 1;
     const M: usize = 64;
     let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &[vec![]], &point);
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
+      0,
+      &[vec![]],
+      &point,
+    );
     assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
 
     let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &[vec![]], &point);
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
+      0,
+      &[vec![]],
+      &point,
+    );
     assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
 
     // Eq
     let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &[vec![]], &point);
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
+      0,
+      &[vec![]],
+      &point,
+    );
     assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
   }
 
@@ -153,7 +166,7 @@ mod test {
     const C: usize = 2;
     const M: usize = 16;
     let materialized: [Vec<Fr>; 2] =
-      <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(16, &[vec![], vec![]]);
+      <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(&[vec![], vec![]]);
     let lt = materialized[0].clone();
     let eq = materialized[1].clone();
 
@@ -176,5 +189,11 @@ mod test {
     // ...
   }
 
-  materialization_mle_parity_test!(lt_materialization_parity_test, LTSubtableStrategy, Fr, /* m = */ 16, /* NUM_SUBTABLES = */ 2);
+  materialization_mle_parity_test!(
+    lt_materialization_parity_test,
+    LTSubtableStrategy,
+    Fr,
+    /* m = */ 16,
+    /* NUM_SUBTABLES = */ 2
+  );
 }

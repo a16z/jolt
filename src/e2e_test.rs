@@ -68,5 +68,5 @@ macro_rules! e2e_test {
 e2e_test!(prove_4d_lt, LTSubtableStrategy,  G1Projective, Fr, /* C= */ 4, /* M= */ 16, /* sparsity= */ 16);
 e2e_test!(prove_4d_lt_big_s, LTSubtableStrategy,  G1Projective, Fr, /* C= */ 4, /* M= */ 16, /* sparsity= */ 128);
 e2e_test!(prove_4d_and, AndSubtableStrategy, G1Projective, Fr, /* C= */ 4, /* M= */ 16, /* sparsity= */ 16);
-e2e_test!(prove_3d_range, RangeCheckSubtableStrategy::<40>, G1Projective, Fr, /* C= */ 3, /* M= */ 16, /* sparsity= */ 16);
-e2e_test!(prove_4d_spark, SparkSubtableStrategy, G1Projective, Fr, /* C= */ 4, /* M= */ { 1 << 8 }, /* sparsity= */ 1 << 8);
+e2e_test!(prove_3d_range, RangeCheckSubtableStrategy::<40>, G1Projective, Fr, /* C= */ 3, /* M= */ 256, /* sparsity= */ 16);
+e2e_test!(prove_4d_spark, SparkSubtableStrategy, G1Projective, Fr, /* C= */ 4, /* M= */ 256, /* sparsity= */ 1 << 8);
