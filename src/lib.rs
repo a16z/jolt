@@ -26,6 +26,7 @@ mod transcript;
 mod unipoly;
 mod utils;
 mod gaussian_elimination;
+mod msm;
 pub mod bench;
 
 #[cfg(test)]

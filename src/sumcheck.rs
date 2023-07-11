@@ -7,12 +7,16 @@ use super::nizk::DotProductProof;
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use super::unipoly::{CompressedUniPoly, UniPoly};
 use ark_ec::CurveGroup;
-use ark_ec::VariableBaseMSM;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::One;
-
 use merlin::Transcript;
+
+#[cfg(feature = "ark-msm")]
+use ark_ec::VariableBaseMSM;
+
+#[cfg(not(feature = "ark-msm"))]
+use super::msm::VariableBaseMSM;
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;

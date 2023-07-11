@@ -6,12 +6,18 @@
 use super::super::errors::ProofVerifyError;
 use super::super::math::Math;
 use super::super::transcript::ProofTranscript;
-use ark_ec::{CurveGroup, VariableBaseMSM};
+use ark_ec::{CurveGroup};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::One;
 use core::iter;
 use merlin::Transcript;
+
+#[cfg(feature = "ark-msm")]
+use ark_ec::VariableBaseMSM;
+
+#[cfg(not(feature = "ark-msm"))]
+use super::super::msm::VariableBaseMSM;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BulletReductionProof<G: CurveGroup> {

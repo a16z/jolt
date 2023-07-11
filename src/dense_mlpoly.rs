@@ -9,12 +9,17 @@ use super::nizk::{DotProductProofGens, DotProductProofLog};
 use super::random::RandomTape;
 use super::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
-use ark_ec::VariableBaseMSM;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::Zero;
 use core::ops::Index;
 use merlin::Transcript;
+
+#[cfg(feature = "ark-msm")]
+use ark_ec::VariableBaseMSM;
+
+#[cfg(not(feature = "ark-msm"))]
+use super::msm::VariableBaseMSM;
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;

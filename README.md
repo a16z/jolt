@@ -25,7 +25,9 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 
 ## Cmds
 - `cargo build --release`
-- `cargo build --release -- --chart`
+- `cargo run --release `
+- `cargo run --release -- --chart`: Display performance gant chart
+- `cargo run --release --features ark-msm`: Run without MSM small field optimizations
 - `sudo cargo flamegraph`
 - `cargo bench`
 

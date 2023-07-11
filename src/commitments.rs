@@ -1,10 +1,15 @@
 use ark_ec::CurveGroup;
-use ark_ec::VariableBaseMSM;
 use ark_std::rand::SeedableRng;
 use digest::{ExtendableOutput, Input};
 use rand_chacha::ChaCha20Rng;
 use sha3::Shake256;
 use std::io::Read;
+
+#[cfg(feature = "ark-msm")]
+use ark_ec::VariableBaseMSM;
+
+#[cfg(not(feature = "ark-msm"))]
+use super::msm::VariableBaseMSM;
 
 #[derive(Debug)]
 pub struct MultiCommitGens<G> {
