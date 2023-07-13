@@ -13,9 +13,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   const NUM_SUBTABLES: usize = 2;
   const NUM_MEMORIES: usize = 2 * C;
 
-  fn materialize_subtables(
-    _r: &[Vec<F>; C],
-  ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
+  fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
     let bits_per_operand = (log2(M) / 2) as usize;
 
     let mut materialized_lt: Vec<F> = Vec::with_capacity(M);
@@ -45,7 +43,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   }
 
   /// LT = (1-x_i)* y_i * eq(x_{>i}, y_{>i})
-  fn evaluate_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
@@ -110,7 +108,6 @@ mod test {
     let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
     let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
       0,
-      &[vec![]],
       &point,
     );
     assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
@@ -118,7 +115,6 @@ mod test {
     let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
     let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
       0,
-      &[vec![]],
       &point,
     );
     assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
@@ -127,7 +123,6 @@ mod test {
     let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
     let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
       0,
-      &[vec![]],
       &point,
     );
     assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
@@ -166,7 +161,7 @@ mod test {
     const C: usize = 2;
     const M: usize = 16;
     let materialized: [Vec<Fr>; 2] =
-      <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(&[vec![], vec![]]);
+      <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables();
     let lt = materialized[0].clone();
     let eq = materialized[1].clone();
 

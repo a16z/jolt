@@ -4,7 +4,6 @@ use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use libspartan::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
-use libspartan::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
 use libspartan::sparse_mlpoly::subtables::lt::LTSubtableStrategy;
 use libspartan::sparse_mlpoly::subtables::and::AndSubtableStrategy;
 use libspartan::{
@@ -37,8 +36,7 @@ macro_rules! bench_surge {
       let mut group = $criterion.benchmark_group(format!("Surge(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
       group.sample_size(10);
 
-      let spark_randomness = gen_random_points::<F, C>(log_m);
-      let eq_randomness: Vec<F> = gen_random_point::<F>(log_s);
+      let r: Vec<F> = gen_random_point::<F>(log_s);
 
       let nz = gen_indices::<C>(S, m);
       let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_m);
@@ -91,8 +89,7 @@ macro_rules! bench_surge {
             let _proof =
               SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
                 &mut dense,
-                &spark_randomness,
-                &eq_randomness,
+                &r,
                 &gens,
                 &mut prover_transcript,
                 &mut random_tape,
@@ -130,20 +127,8 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
 }
 
 fn bench(criterion: &mut Criterion) {
-  // bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
-  // bench_surge!(Fr, EdwardsProjective, LTSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "255199");
-  // bench_surge!(Fr, EdwardsProjective, AndSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
-
-  // Plookup comparison
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 10, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 12, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 14, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 16, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 18, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 20, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 22, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 24, criterion, "25519");
-  bench_surge!(Fr, EdwardsProjective, SparkSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 26, criterion, "25519");
+  bench_surge!(Fr, EdwardsProjective, LTSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "255199");
+  bench_surge!(Fr, EdwardsProjective, AndSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
 }
 
 

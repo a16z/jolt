@@ -5,7 +5,6 @@ use ark_ff::PrimeField;
 use ark_std::{log2, test_rng};
 use crate::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
 use crate::sparse_mlpoly::subtables::and::AndSubtableStrategy;
-use crate::sparse_mlpoly::subtables::spark::SparkSubtableStrategy;
 use crate::{
   random::RandomTape,
   sparse_mlpoly::{
@@ -58,8 +57,7 @@ macro_rules! single_pass_surge {
         let log_m = log2(m_computed) as usize;
         let log_s: usize = log2($sparsity) as usize;
   
-        let spark_randomness = gen_random_points::<F, C>(log_m);
-        let eq_randomness: Vec<F> = gen_random_point::<F>(log_s);
+        let r: Vec<F> = gen_random_point::<F>(log_s);
   
         let nz = gen_indices::<C>(S, M);
         let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_m);
@@ -79,8 +77,7 @@ macro_rules! single_pass_surge {
         let _proof =
         SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
             &mut dense,
-            &spark_randomness,
-            &eq_randomness,
+            &r,
             &gens,
             &mut prover_transcript,
             &mut random_tape,

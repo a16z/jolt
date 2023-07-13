@@ -12,14 +12,13 @@ use crate::{
   math::Math,
   random::RandomTape,
   transcript::{AppendToTranscript, ProofTranscript},
-  utils::eq_poly::EqPolynomial
+  utils::eq_poly::EqPolynomial,
 };
 
 use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
 
 pub mod and;
 pub mod lt;
-pub mod spark;
 pub mod range_check;
 
 #[cfg(test)]
@@ -30,20 +29,14 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   const NUM_MEMORIES: usize;
 
   /// Materialize subtables indexed [1, ..., \alpha]
-  /// Note: Only SparkSubtableStrategy uses the parameter `r`.
-  ///
-  /// Params
-  /// - `r`: point at which to materialize the table (potentially unused)
-  fn materialize_subtables(r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
+  fn materialize_subtables() -> [Vec<F>; Self::NUM_SUBTABLES];
 
   /// Evaluates the MLE of a subtable at the given point. Used by the verifier in memory-checking.
-  /// Note: Only SparkSubtableStrategy uses the parameter `r`
   ///
   /// Params
   /// - `subtable_index`: Which subtable to evaluate the MLE of. Ranges 0..ALPHA
-  /// - `r`: point at which to materialize the table (potentially unused)
   /// - `point`: Point at which to evaluate the MLE
-  fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
+  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F;
 
   /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
   fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
@@ -105,7 +98,7 @@ where
   pub lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES],
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
-  sparsity: usize
+  sparsity: usize,
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
@@ -117,9 +110,9 @@ where
 {
   /// Create new Subtables
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
-  pub fn new(nz: &[Vec<usize>; C], r: &[Vec<F>; C], s: usize) -> Self {
+  pub fn new(nz: &[Vec<usize>; C], s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
-    let subtable_entries = S::materialize_subtables(r);
+    let subtable_entries = S::materialize_subtables();
     let lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES] =
       S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);
@@ -129,7 +122,7 @@ where
       lookup_polys,
       combined_poly,
       strategy: PhantomData,
-      sparsity: nz[0].len()
+      sparsity: nz[0].len(),
     }
   }
 
@@ -154,7 +147,7 @@ where
     })
   }
 
-  #[tracing::instrument(skip_all, name="Subtables.commit")]
+  #[tracing::instrument(skip_all, name = "Subtables.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &PolyCommitmentGens<G>,
@@ -163,7 +156,7 @@ where
     CombinedTableCommitment { comm_ops_val }
   }
 
-  #[tracing::instrument(skip_all, name="Subtables.compute_sumcheck_claim")]
+  #[tracing::instrument(skip_all, name = "Subtables.compute_sumcheck_claim")]
   pub fn compute_sumcheck_claim(&self, eq: &EqPolynomial<F>) -> F {
     let g_operands = self.lookup_polys.clone();
     let hypercube_size = g_operands[0].len();
@@ -177,7 +170,7 @@ where
         let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
 
         // eq * g(T_1[k], ..., T_\alpha[k])
-        eq_evals[k] * S::combine_lookups(&g_operands) 
+        eq_evals[k] * S::combine_lookups(&g_operands)
       })
       .sum()
   }
@@ -248,7 +241,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   }
 
   /// evalues both polynomials at r and produces a joint proof of opening
-  #[tracing::instrument(skip_all, name="CombinedEval.prove")]
+  #[tracing::instrument(skip_all, name = "CombinedEval.prove")]
   pub fn prove(
     combined_poly: &DensePolynomial<G::ScalarField>,
     eval_ops_val_vec: &Vec<G::ScalarField>,
