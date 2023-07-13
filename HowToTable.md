@@ -7,7 +7,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
     const NUM_SUBTABLES: usize;
     const NUM_MEMORIES: usize;
 
-    fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
+    fn materialize_subtables(r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
 
     fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
 
@@ -43,12 +43,12 @@ const NUM_MEMORIES: usize = <desired_value>;
 
 ### 2. `materialize_subtables`
 
-This method materializes the subtables for a given size `m` and point `r`.
+This method materializes the subtables for a given point `r`.
 
 *Note: Most subtables will not use the parameter `r`, this is vestigial and used for Spark (see `SparkSubtableStrategy`). See [issue](https://github.com/a16z/Surge/issues/4).*
 
 ```rust
-fn materialize_subtables(m: usize, r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES] {
+fn materialize_subtables(r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES] {
     // Implementation goes here
 }
 ```

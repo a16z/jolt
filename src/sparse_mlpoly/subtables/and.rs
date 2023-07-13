@@ -7,19 +7,20 @@ use super::SubtableStrategy;
 
 pub enum AndSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> for AndSubtableStrategy {
+impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
+  for AndSubtableStrategy
+{
   const NUM_SUBTABLES: usize = 1;
   const NUM_MEMORIES: usize = C;
 
   fn materialize_subtables(
-    m: usize,
     _r: &[Vec<F>; C],
   ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
-    let mut materialized: Vec<F> = Vec::with_capacity(m);
-    let bits_per_operand = (log2(m) / 2) as usize;
+    let mut materialized: Vec<F> = Vec::with_capacity(M);
+    let bits_per_operand = (log2(M) / 2) as usize;
 
     // Materialize table in counting order where lhs | rhs counts 0->m
-    for idx in 0..m {
+    for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
       let out = lhs & rhs;
 
@@ -66,7 +67,10 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M> fo
 
 #[cfg(test)]
 mod test {
-  use crate::{sparse_mlpoly::subtables::Subtables, utils::index_to_field_bitvector, materialization_mle_parity_test};
+  use crate::{
+    materialization_mle_parity_test, sparse_mlpoly::subtables::Subtables,
+    utils::index_to_field_bitvector,
+  };
 
   use super::*;
   use ark_curve25519::Fr;
@@ -78,7 +82,12 @@ mod test {
     const M: usize = 1 << 4;
 
     let materialized: [Vec<Fr>; 1] =
-      <AndSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(M, &[vec![], vec![], vec![], vec![]]);
+      <AndSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(&[
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+      ]);
     assert_eq!(materialized.len(), 1);
     assert_eq!(materialized[0].len(), M);
 
@@ -119,7 +128,6 @@ mod test {
   fn valid_merged_poly() {
     const C: usize = 2;
     const M: usize = 1 << 4;
-    let log_m = log2(M) as usize;
 
     let x_indices: Vec<usize> = vec![0, 2];
     let y_indices: Vec<usize> = vec![5, 9];
@@ -128,7 +136,7 @@ mod test {
     let r_y: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
 
     let subtable_evals: Subtables<Fr, C, M, AndSubtableStrategy> =
-      Subtables::new(&[x_indices, y_indices], &[r_x, r_y], 1 << log_m, 2);
+      Subtables::new(&[x_indices, y_indices], &[r_x, r_y], 2);
 
     // Real equation here is log2(sparsity) + log2(C)
     let combined_table_index_bits = 2;
@@ -147,5 +155,11 @@ mod test {
   }
 
   materialization_mle_parity_test!(materialization_parity, AndSubtableStrategy, Fr, 16, 1);
-  materialization_mle_parity_test!(materialization_parity_nonzero_c, AndSubtableStrategy, Fr, 16, 2);
+  materialization_mle_parity_test!(
+    materialization_parity_nonzero_c,
+    AndSubtableStrategy,
+    Fr,
+    16,
+    2
+  );
 }

@@ -46,7 +46,7 @@ where
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
-  #[tracing::instrument(skip_all, name="MemoryChecking.prove")]
+  #[tracing::instrument(skip_all, name = "MemoryChecking.prove")]
   pub fn prove(
     dense: &DensifiedRepresentation<G::ScalarField, C>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
@@ -151,7 +151,7 @@ where
 pub struct GrandProducts<F> {
   /// Corresponds to the Init_{row/col} hash in the Spartan paper.
   init: GrandProductCircuit<F>,
-  /// Corresponds to the RS_{row/col} hash in the Sparatan paper.
+  /// Corresponds to the RS_{row/col} hash in the Spartan paper.
   read: GrandProductCircuit<F>,
   /// Corresponds to the WS_{row/col} hash in the Spartan paper.
   write: GrandProductCircuit<F>,
@@ -196,7 +196,8 @@ impl<F: PrimeField> GrandProducts<F> {
     let prod_write = GrandProductCircuit::new(&grand_product_input_write);
     let prod_final = GrandProductCircuit::new(&grand_product_input_final);
 
-    #[cfg(debug)] {
+    #[cfg(debug)]
+    {
       let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
       let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
       // H(Init) * H(WS) ?= H(RS) * H(Audit)
@@ -303,8 +304,12 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
-where
+struct HashLayerProof<
+  G: CurveGroup,
+  const C: usize,
+  const M: usize,
+  S: SubtableStrategy<G::ScalarField, C, M>,
+> where
   [(); S::NUM_MEMORIES]: Sized,
 {
   eval_dim: [G::ScalarField; C],
@@ -316,12 +321,13 @@ where
   proof_derefs: CombinedTableEvalProof<G, C>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>> HashLayerProof<G, C, M, S>
+impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
+  HashLayerProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {
-  #[tracing::instrument(skip_all, name="HashLayer.prove")]
+  #[tracing::instrument(skip_all, name = "HashLayer.prove")]
   fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
     dense: &DensifiedRepresentation<G::ScalarField, C>,
@@ -617,6 +623,7 @@ where
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
     for i in 0..S::NUM_MEMORIES {
       let j = S::memory_to_dimension_index(i);
+      let k = S::memory_to_subtable_index(i);
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
       Self::check_reed_solomon_fingerprints(
@@ -626,7 +633,7 @@ where
         &self.eval_read[j],
         &self.eval_final[j],
         &init_addr,
-        &S::evaluate_subtable_mle(i, spark_randomness, rand_mem),
+        &S::evaluate_subtable_mle(k, spark_randomness, rand_mem),
         r_hash,
         r_multiset_check,
       )?;
@@ -657,7 +664,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   /// Params
   /// - `grand_products`: The grand product circuits whose evaluations are proven.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  #[tracing::instrument(skip_all, name="ProductLayer.prove")]
+  #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G>(
     grand_products: &mut [GrandProducts<F>; NUM_MEMORIES],
     transcript: &mut Transcript,
