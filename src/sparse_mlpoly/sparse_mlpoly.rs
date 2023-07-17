@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
-use crate::dense_mlpoly::{PolyCommitment, PolyCommitmentGens, DensePolynomial};
+use crate::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::errors::ProofVerifyError;
 use crate::math::Math;
 use crate::random::RandomTape;
@@ -15,7 +15,7 @@ use crate::sumcheck::SumcheckInstanceProof;
 use crate::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::eq_poly::EqPolynomial;
 use ark_ec::CurveGroup;
-use tracing::{Level, event, field::Empty};
+use tracing::{event, field::Empty, Level};
 
 use ark_serialize::*;
 
@@ -134,16 +134,13 @@ where
 {
   /// Prove an opening of the Sparse Matrix Polynomial
   /// - `dense`: DensifiedRepresentation
-  /// - `spark_randomness`: c log(m) sized coordinates at which to prove the evaluation of the sparse polynomial
-  /// - `eq_randomness`: log(s) sized coordinates at which to prove the evaluation of eq in the primary sumcheck
+  /// - `r`: log(s) sized coordinates at which to prove the evaluation of eq in the primary sumcheck
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
-  #[tracing::instrument(skip_all, name="SparsePoly.prove")]
+  #[tracing::instrument(skip_all, name = "SparsePoly.prove")]
   pub fn prove(
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
-    // TODO: https://github.com/a16z/Surge/issues/4
-    spark_randomness: &[Vec<G::ScalarField>; C],
-    eq_randomness: &Vec<G::ScalarField>,
+    r: &Vec<G::ScalarField>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -153,10 +150,9 @@ where
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    spark_randomness.iter().for_each(|r_i| assert_eq!(r_i.len(), dense.log_m));
-    assert_eq!(eq_randomness.len(), log2(dense.s) as usize);
+    assert_eq!(r.len(), log2(dense.s) as usize);
 
-    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, spark_randomness, dense.s);
+    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, dense.s);
 
     // commit to non-deterministic choices of the prover
     let comm_derefs = {
@@ -165,7 +161,7 @@ where
       comm
     };
 
-    let eq = EqPolynomial::new(eq_randomness.clone());
+    let eq = EqPolynomial::new(r.clone());
     let claimed_eval = subtables.compute_sumcheck_claim(&eq);
 
     <Transcript as ProofTranscript<G>>::append_scalar(
@@ -174,14 +170,15 @@ where
       &claimed_eval,
     );
 
-    let mut combined_sumcheck_polys: [DensePolynomial<G::ScalarField>; S::NUM_MEMORIES + 1] = std::array::from_fn(|i| {
-      if i != S::NUM_MEMORIES {
-        subtables.lookup_polys[i].clone()
-      } else {
-        DensePolynomial::new(eq.evals())
-      }
-    });
-    
+    let mut combined_sumcheck_polys: [DensePolynomial<G::ScalarField>; S::NUM_MEMORIES + 1] =
+      std::array::from_fn(|i| {
+        if i != S::NUM_MEMORIES {
+          subtables.lookup_polys[i].clone()
+        } else {
+          DensePolynomial::new(eq.evals())
+        }
+      });
+
     let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<
       _,
       G,
@@ -239,15 +236,12 @@ where
   pub fn verify(
     &self,
     commitment: &SparsePolynomialCommitment<G>,
-    spark_randomness: &[Vec<G::ScalarField>; C],
     eq_randomness: &Vec<G::ScalarField>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    spark_randomness.iter()
-      .for_each(|r_i| assert_eq!(r_i.len(), commitment.log_m));
     debug_assert_eq!(eq_randomness.len(), log2(commitment.s) as usize);
 
     // add claims to transcript and obtain challenges for randomized mem-check circuit
@@ -267,7 +261,6 @@ where
       S::sumcheck_poly_degree(),
       transcript,
     )?;
-
 
     // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
     // TODO: https://github.com/a16z/Surge/issues/4
@@ -294,7 +287,6 @@ where
       commitment,
       &self.comm_derefs,
       gens,
-      spark_randomness,
       &(r_mem_check[0], r_mem_check[1]),
       commitment.s,
       transcript,

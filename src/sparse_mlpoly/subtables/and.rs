@@ -13,9 +13,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   const NUM_SUBTABLES: usize = 1;
   const NUM_MEMORIES: usize = C;
 
-  fn materialize_subtables(
-    _r: &[Vec<F>; C],
-  ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
+  fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
     let mut materialized: Vec<F> = Vec::with_capacity(M);
     let bits_per_operand = (log2(M) / 2) as usize;
 
@@ -32,7 +30,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     [materialized]
   }
 
-  fn evaluate_subtable_mle(_: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(_: usize, point: &Vec<F>) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
@@ -82,12 +80,7 @@ mod test {
     const M: usize = 1 << 4;
 
     let materialized: [Vec<Fr>; 1] =
-      <AndSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables(&[
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-      ]);
+      <AndSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables();
     assert_eq!(materialized.len(), 1);
     assert_eq!(materialized[0].len(), M);
 
@@ -132,11 +125,8 @@ mod test {
     let x_indices: Vec<usize> = vec![0, 2];
     let y_indices: Vec<usize> = vec![5, 9];
 
-    let r_x: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
-    let r_y: Vec<Fr> = vec![Fr::zero(), Fr::zero()]; // unused
-
     let subtable_evals: Subtables<Fr, C, M, AndSubtableStrategy> =
-      Subtables::new(&[x_indices, y_indices], &[r_x, r_y], 2);
+      Subtables::new(&[x_indices, y_indices], 2);
 
     // Real equation here is log2(sparsity) + log2(C)
     let combined_table_index_bits = 2;

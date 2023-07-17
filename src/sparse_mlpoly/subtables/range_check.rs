@@ -12,9 +12,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
   const NUM_SUBTABLES: usize = 3;
   const NUM_MEMORIES: usize = C;
 
-  fn materialize_subtables(
-    _r: &[Vec<F>; C],
-  ) -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
+  fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
     assert!(M.is_power_of_two());
 
     let full: Vec<F> = (0..M).map(|i| F::from(i as u64)).collect();
@@ -35,7 +33,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
     [full, remainder, zeros]
   }
 
-  fn evaluate_subtable_mle(subtable_index: usize, _: &[Vec<F>; C], point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
     if subtable_index == 0 {
       let b = point.len();
       let mut result = F::zero();
@@ -106,12 +104,7 @@ mod test {
   fn table_materialization() {
     const M: usize = 1 << 16;
     let subtables: [Vec<Fr>; 3] =
-      <RangeCheckSubtableStrategy<40> as SubtableStrategy<Fr, 4, M>>::materialize_subtables(&[
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-      ]);
+      <RangeCheckSubtableStrategy<40> as SubtableStrategy<Fr, 4, M>>::materialize_subtables();
     assert_eq!(subtables.len(), 3);
 
     subtables

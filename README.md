@@ -15,8 +15,7 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
   let proof = 
     SparsePolynomialEvaluationProof::<EdwardsProjective, C, M, SubtableStrategy>::prove(
         &mut dense,
-        &spark_randomness,
-        &eq_randomness,
+        &r,
         &gens,
         &mut prover_transcript,
         &mut random_tape,
