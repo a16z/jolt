@@ -282,33 +282,3 @@ mod grand_product_circuit_tests {
     proof.verify::<G1Projective, _>(&expected_eval, 4, &mut transcript);
   }
 }
-
-// #[cfg(test)]
-// mod generalized_scalar_product_tests {
-//   use super::*;
-//   use crate::utils::index_to_field_bitvector;
-//   use ark_bls12_381::Fr;
-
-//   #[test]
-//   fn evaluate() {
-//     // Create three dense polynomials, evaluate each over every point on the boolean hypercube and sum the products of each term
-//     let A = DensePolynomial::new(vec![Fr::from(3), Fr::from(3), Fr::from(3), Fr::from(3)]);
-//     let B = DensePolynomial::new(vec![Fr::from(5), Fr::from(5), Fr::from(5), Fr::from(5)]);
-//     let C = DensePolynomial::new(vec![Fr::from(7), Fr::from(7), Fr::from(7), Fr::from(7)]);
-
-//     let gsp = GeneralizedScalarProduct::new([A.clone(), B.clone(), C.clone()]);
-
-//     // Calculate manually: Evaluate each at every point on the boolean hypercube and sum the products
-//     let mut manual_eval = Fr::from(0u64);
-//     for i in 0..4 {
-//       let a = A.evaluate(&index_to_field_bitvector(i, 2));
-//       let b = B.evaluate(&index_to_field_bitvector(i, 2));
-//       let c = C.evaluate(&index_to_field_bitvector(i, 2));
-
-//       manual_eval += a * b * c;
-//     }
-
-//     let multiply_all = |vals: [Fr; 3]| vals.iter().product();
-//     assert_eq!(gsp.evaluate(&multiply_all), manual_eval);
-//   }
-// }

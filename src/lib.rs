@@ -13,21 +13,21 @@ extern crate sha3;
 #[cfg(feature = "multicore")]
 extern crate rayon;
 
+pub mod bench;
 mod commitments;
 mod dense_mlpoly;
 mod errors;
+mod gaussian_elimination;
+mod grand_product;
 mod math;
+mod msm;
 mod nizk;
-mod product_tree;
 pub mod random;
 pub mod sparse_mlpoly;
 mod sumcheck;
 mod transcript;
 mod unipoly;
 mod utils;
-mod gaussian_elimination;
-mod msm;
-pub mod bench;
 
 #[cfg(test)]
 mod e2e_test;

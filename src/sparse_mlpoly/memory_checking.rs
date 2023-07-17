@@ -1,7 +1,7 @@
 use crate::dense_mlpoly::{DensePolynomial, PolyEvalProof};
 use crate::errors::ProofVerifyError;
+use crate::grand_product::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::math::Math;
-use crate::product_tree::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::random::RandomTape;
 use crate::sparse_mlpoly::densified::DensifiedRepresentation;
 use crate::sparse_mlpoly::sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
