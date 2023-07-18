@@ -17,7 +17,7 @@ use merlin::Transcript;
 use num_integer::Roots;
 use rand_chacha::rand_core::RngCore;
 
-macro_rules! bench_surge {
+macro_rules! bench_lasso {
   ($field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $M:expr, $sparsity:expr, $criterion:expr, $field_name:expr) => {
     {
       const N: usize = $N;
@@ -33,7 +33,7 @@ macro_rules! bench_surge {
       let log_s = log2(S) as usize;
 
       let short_strat_name = std::any::type_name::<SubtableStrategy>().split("::").last().unwrap();
-      let mut group = $criterion.benchmark_group(format!("Surge(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
+      let mut group = $criterion.benchmark_group(format!("Lasso(strat={}, N={}, C={}, S={}, F={})", short_strat_name, N, C, S, $field_name));
       group.sample_size(10);
 
       let r: Vec<F> = gen_random_point::<F>(log_s);
@@ -127,8 +127,8 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
 }
 
 fn bench(criterion: &mut Criterion) {
-  bench_surge!(Fr, EdwardsProjective, LTSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "255199");
-  bench_surge!(Fr, EdwardsProjective, AndSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
+  bench_lasso!(Fr, EdwardsProjective, LTSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "255199");
+  bench_lasso!(Fr, EdwardsProjective, AndSubtableStrategy, 1 << 32, 2, 1 << 16, criterion, "25519");
 }
 
 

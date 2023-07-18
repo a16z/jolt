@@ -1,5 +1,5 @@
 # Engineering Overview
-This document describes the Surge / Lasso proof system from an engineering perspective. Of course the most accurate and up-to-date view can be found in the code itself.
+This document describes the Lasso proof system from an engineering perspective. Of course the most accurate and up-to-date view can be found in the code itself.
 
 ## Reformulation of Lasso: Figure 9
 *The following section paraphrases Lasso Figure 9.*

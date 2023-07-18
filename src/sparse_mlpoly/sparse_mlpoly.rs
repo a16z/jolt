@@ -263,7 +263,6 @@ where
     )?;
 
     // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
-    // TODO: https://github.com/a16z/Surge/issues/4
     let eq_eval = EqPolynomial::new(eq_randomness.clone()).evaluate(&r_z);
     assert_eq!(
       eq_eval * S::combine_lookups(&self.primary_sumcheck.eval_derefs),
@@ -294,6 +293,6 @@ where
   }
 
   fn protocol_name() -> &'static [u8] {
-    b"Surge SparsePolynomialEvaluationProof"
+    b"Lasso SparsePolynomialEvaluationProof"
   }
 }

@@ -41,7 +41,7 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
   r_i
 }
 
-macro_rules! single_pass_surge {
+macro_rules! single_pass_lasso {
     ($span_name:expr, $field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $M:expr, $sparsity:expr) => {
       (tracing::info_span!($span_name), move || {
         const N: usize = $N;
@@ -88,13 +88,13 @@ macro_rules! single_pass_surge {
 
 pub fn benches() -> Vec<(tracing::Span, fn())> {
     vec![
-      single_pass_surge!("And(2^10)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 10),
-      single_pass_surge!("And(2^12)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 12),
-      single_pass_surge!("And(2^14)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 14),
-      single_pass_surge!("And(2^16)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 16),
-      single_pass_surge!("And(2^18)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 18),
-      single_pass_surge!("And(2^20)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 20),
-      single_pass_surge!("And(2^22)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 22),
-      single_pass_surge!("And(2^24)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 24),
+      single_pass_lasso!("And(2^10)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 10),
+      single_pass_lasso!("And(2^12)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 12),
+      single_pass_lasso!("And(2^14)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 14),
+      single_pass_lasso!("And(2^16)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 16),
+      single_pass_lasso!("And(2^18)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 18),
+      single_pass_lasso!("And(2^20)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 20),
+      single_pass_lasso!("And(2^22)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 22),
+      single_pass_lasso!("And(2^24)", Fr, EdwardsProjective, AndSubtableStrategy, /* N= */ 1 << 16, /* C= */ 1, /* M= */ 1 << 16, /* S= */ 1 << 24),
     ]
 }
