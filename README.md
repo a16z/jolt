@@ -1,6 +1,5 @@
-# Surge
-![surge](imgs/surge.jpg)
-Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving zero-knowledge succinctness things.
+# Lasso
+Lookup Arguments via Sum-check and Sparse polynomial commitments, including for Oversized tables
 
 ## Overview
 - See [EngineeringOverview.md](EngineeringOverview.md) for a high level technical outline
@@ -30,4 +29,4 @@ Here, we Surge. Ever heard of the Cola? Yeah. Like that, but proving. Proving ze
 - `sudo cargo flamegraph`
 - `cargo bench`
 
-*Note on benching / flamegraphing: Turn off the parallel feature in Cargo.toml (`multicore`) and / or `export RAYON_NUM_THREADS=1` to make flamegraph more interpretable. Turning off `multicore` and leaving `unset RAYON_NUM_THREADS` allows testing Arkworks MSM parallelism without Surge parallelism.*
+*Note on benching / flamegraphing: Turn off the parallel feature in Cargo.toml (`multicore`) and / or `export RAYON_NUM_THREADS=1` to make flamegraph more interpretable. Turning off `multicore` and leaving `unset RAYON_NUM_THREADS` allows testing Arkworks MSM parallelism without Lasso parallelism.*

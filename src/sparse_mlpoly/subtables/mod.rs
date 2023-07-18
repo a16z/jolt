@@ -335,7 +335,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   }
 
   fn protocol_name() -> &'static [u8] {
-    b"Surge CombinedTableEvalProof"
+    b"Lasso CombinedTableEvalProof"
   }
 }
 

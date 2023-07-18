@@ -109,7 +109,7 @@ mod test {
 ```
 
 ## End-to-End Testing
-To ensure the `SubtableStrategy` has been written correctly as a whole we can fall back to the end-to-end proof system of Surge. A test can be added in `e2e_test.rs` using the `e2e_test!` macro. 
+To ensure the `SubtableStrategy` has been written correctly as a whole we can fall back to the end-to-end proof system of Lasso. A test can be added in `e2e_test.rs` using the `e2e_test!` macro. 
 
 ```rust
     e2e_test!(prove_4d_lt, LTSubtableStrategy,  G1Projective, Fr, /* C= */ 4, /* M= */ 16, /* sparsity= */ 16);

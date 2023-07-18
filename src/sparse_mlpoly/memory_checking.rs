@@ -83,7 +83,7 @@ where
   /// - `comm`: The sparse polynomial commitment.
   /// - `comm_derefs`: The commitment to the E_i polynomials.
   /// - `gens`: Generates public parameters for polynomial commitments.
-  /// - `r`: The evaluation point at which the Surge commitment is being opened.
+  /// - `r`: The evaluation point at which the Lasso commitment is being opened.
   /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
   /// - `s`: Sparsity, i.e. the number of lookups.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
@@ -137,7 +137,7 @@ where
   }
 
   fn protocol_name() -> &'static [u8] {
-    b"Surge MemoryCheckingProof"
+    b"Lasso MemoryCheckingProof"
   }
 }
 
@@ -462,7 +462,7 @@ where
   /// - `eval_final`: The evaluation final_i(r''_i).
   /// - `init_addr`: The MLE of the initial memory values, evaluated at r''_i.
   /// - `init_addr`: The MLE of the memory addresses, evaluated at r''_i.
-  /// - `r_i`: One chunk of the evaluation point at which the Surge commitment is being opened.
+  /// - `r_i`: One chunk of the evaluation point at which the Lasso commitment is being opened.
   /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
   /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
   fn check_reed_solomon_fingerprints(
@@ -639,7 +639,7 @@ where
   }
 
   fn protocol_name() -> &'static [u8] {
-    b"Surge HashLayerProof"
+    b"Lasso HashLayerProof"
   }
 }
 
@@ -652,7 +652,7 @@ struct ProductLayerProof<F: PrimeField, const NUM_MEMORIES: usize> {
 
 impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES> {
   fn protocol_name() -> &'static [u8] {
-    b"Surge ProductLayerProof"
+    b"Lasso ProductLayerProof"
   }
 
   /// Performs grand product argument proofs required for memory-checking.
