@@ -3,10 +3,10 @@
 #![allow(non_snake_case)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
-use super::super::errors::ProofVerifyError;
-use super::super::math::Math;
-use super::super::transcript::ProofTranscript;
-use ark_ec::{CurveGroup};
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
+use crate::utils::transcript::ProofTranscript;
+use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::One;

@@ -1,10 +1,13 @@
-use ark_ff::{PrimeField, BigInteger};
+use ark_ff::{BigInteger, PrimeField};
 
 #[cfg(test)]
 pub mod test;
 
-pub mod eq_poly;
-pub mod identity_poly;
+pub mod errors;
+pub mod gaussian_elimination;
+pub mod math;
+pub mod random;
+pub mod transcript;
 
 /// Converts an integer value to a bitvector (all values {0,1}) of field elements.
 /// Note: ordering has the MSB in the highest index. All of the following represent the integer 1:
@@ -65,12 +68,12 @@ pub fn is_power_of_two(num: usize) -> bool {
 /// Splits `item` into two chunks of `num_bits` size where each is less than 2^num_bits.
 /// Ex: split_bits(0b101_000, 3) -> (101, 000)
 pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
-    let max_value = (1 << num_bits) - 1; // Calculate the maximum value that can be represented with num_bits
+  let max_value = (1 << num_bits) - 1; // Calculate the maximum value that can be represented with num_bits
 
-    let low_chunk = item & max_value; // Extract the lower bits
-    let high_chunk = (item >> num_bits) & max_value; // Shift the item to the right and extract the next set of bits
+  let low_chunk = item & max_value; // Extract the lower bits
+  let high_chunk = (item >> num_bits) & max_value; // Shift the item to the right and extract the next set of bits
 
-    (high_chunk, low_chunk)
+  (high_chunk, low_chunk)
 }
 
 /// Packs params x,y,z into a field element in order xyz allocating `b` bits for each element
@@ -78,13 +81,13 @@ pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
 pub fn pack_field_xyz<F: PrimeField>(x: usize, y: usize, z: usize, b: usize) -> F {
   let mut bits: Vec<bool> = Vec::with_capacity(3 * b);
   for i in 0..b {
-      bits.push((z >> i) & 1 == 1);
+    bits.push((z >> i) & 1 == 1);
   }
   for i in 0..b {
-      bits.push((y >> i) & 1 == 1);
+    bits.push((y >> i) & 1 == 1);
   }
   for i in 0..b {
-      bits.push((x >> i) & 1 == 1);
+    bits.push((x >> i) & 1 == 1);
   }
   F::from(F::BigInt::from_bits_le(&bits))
 }

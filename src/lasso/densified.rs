@@ -1,11 +1,8 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use crate::dense_mlpoly::DensePolynomial;
-
-use super::sparse_mlpoly::{
-  SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment,
-};
+use crate::poly::dense_mlpoly::DensePolynomial;
+use super::surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment};
 
 pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub dim_usize: [Vec<usize>; C],
@@ -20,7 +17,7 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
 }
 
 impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
-  #[tracing::instrument(skip_all, name="Densify")]
+  #[tracing::instrument(skip_all, name = "Densify")]
   fn from(sparse: &SparseLookupMatrix<C>) -> Self {
     // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
@@ -77,7 +74,7 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
-  #[tracing::instrument(skip_all, name="Dense.commit")]
+  #[tracing::instrument(skip_all, name = "Dense.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &SparsePolyCommitmentGens<G>,

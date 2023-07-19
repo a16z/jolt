@@ -17,7 +17,6 @@ macro_rules! materialization_mle_parity_test {
     ($test_name:ident, $table_type:ty, $F:ty, $M:expr, $NUM_SUBTABLES:expr) => {
     #[test]
     fn $test_name() {
-        use crate::sparse_mlpoly::subtables::test::gen_random_point;
         use ark_std::log2;
 
         const C: usize = 4;

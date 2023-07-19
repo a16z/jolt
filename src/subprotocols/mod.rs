@@ -1,14 +1,17 @@
 #![allow(clippy::too_many_arguments)]
-use super::commitments::{Commitments, MultiCommitGens};
-use super::errors::ProofVerifyError;
-use super::math::Math;
-use super::random::RandomTape;
-use super::transcript::ProofTranscript;
+use crate::poly::commitments::{Commitments, MultiCommitGens};
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
+use crate::utils::random::RandomTape;
+use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_serialize::*;
 use bullet::BulletReductionProof;
 use merlin::Transcript;
+
 mod bullet;
+pub mod grand_product;
+pub mod sumcheck;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct KnowledgeProof<G: CurveGroup> {
@@ -459,7 +462,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     (0..a.len()).map(|i| a[i] * b[i]).sum()
   }
 
-  #[tracing::instrument(skip_all, name="DotProductProofLog.prove")]
+  #[tracing::instrument(skip_all, name = "DotProductProofLog.prove")]
   pub fn prove(
     gens: &DotProductProofGens<G>,
     transcript: &mut Transcript,

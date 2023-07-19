@@ -1,9 +1,9 @@
 #![allow(dead_code)]
-use super::dense_mlpoly::DensePolynomial;
-use super::math::Math;
 use super::sumcheck::SumcheckInstanceProof;
-use super::transcript::ProofTranscript;
-use crate::utils::eq_poly::EqPolynomial;
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::eq_poly::EqPolynomial;
+use crate::utils::math::Math;
+use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
@@ -97,7 +97,7 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 }
 
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
-  #[tracing::instrument(skip_all, name="BatchedGrandProductArgument.prove")]
+  #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
   pub fn prove<G>(
     grand_product_circuits: &mut Vec<&mut GrandProductCircuit<F>>,
     transcript: &mut Transcript,
@@ -264,7 +264,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 #[cfg(test)]
 mod grand_product_circuit_tests {
   use super::*;
-  use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
+  use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
 
   #[test]
   fn prove_verify() {

@@ -1,13 +1,13 @@
 #![allow(clippy::too_many_arguments)]
-use crate::utils::{compute_dotproduct, self};
-use crate::utils::eq_poly::EqPolynomial;
+use crate::poly::eq_poly::EqPolynomial;
+use crate::utils::{self, compute_dotproduct};
 
 use super::commitments::{Commitments, MultiCommitGens};
-use super::errors::ProofVerifyError;
-use super::math::Math;
-use super::nizk::{DotProductProofGens, DotProductProofLog};
-use super::random::RandomTape;
-use super::transcript::{AppendToTranscript, ProofTranscript};
+use crate::subprotocols::{DotProductProofGens, DotProductProofLog};
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
+use crate::utils::random::RandomTape;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
@@ -19,7 +19,7 @@ use merlin::Transcript;
 use ark_ec::VariableBaseMSM;
 
 #[cfg(not(feature = "ark-msm"))]
-use super::msm::VariableBaseMSM;
+use crate::msm::VariableBaseMSM;
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
@@ -60,7 +60,10 @@ pub struct ConstPolyCommitment<G: CurveGroup> {
 
 impl<F: PrimeField> DensePolynomial<F> {
   pub fn new(Z: Vec<F>) -> Self {
-    assert!(utils::is_power_of_two(Z.len()), "Dense multi-linear polynomials must be made from a power of 2");
+    assert!(
+      utils::is_power_of_two(Z.len()),
+      "Dense multi-linear polynomials must be made from a power of 2"
+    );
 
     DensePolynomial {
       num_vars: Z.len().log_2() as usize,
@@ -104,7 +107,11 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   #[cfg(feature = "multicore")]
-  fn commit_inner<G: CurveGroup<ScalarField = F>>(&self, blinds: &[F], gens: &MultiCommitGens<G>) -> PolyCommitment<G> {
+  fn commit_inner<G: CurveGroup<ScalarField = F>>(
+    &self,
+    blinds: &[F],
+    gens: &MultiCommitGens<G>,
+  ) -> PolyCommitment<G> {
     let L_size = blinds.len();
     let R_size = self.Z.len() / L_size;
     assert_eq!(L_size * R_size, self.Z.len());
@@ -274,7 +281,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     b"polynomial evaluation proof"
   }
 
-  #[tracing::instrument(skip_all, name="DensePolyEval.prove")]
+  #[tracing::instrument(skip_all, name = "DensePolyEval.prove")]
   pub fn prove(
     poly: &DensePolynomial<G::ScalarField>,
     blinds_opt: Option<&PolyCommitmentBlinds<G::ScalarField>>,
@@ -379,8 +386,8 @@ impl<G: CurveGroup> PolyEvalProof<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_curve25519::Fr;
   use ark_curve25519::EdwardsProjective as G1Projective;
+  use ark_curve25519::Fr;
   use ark_std::test_rng;
   use ark_std::One;
   use ark_std::UniformRand;
