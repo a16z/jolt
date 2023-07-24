@@ -13,20 +13,12 @@ extern crate sha3;
 #[cfg(feature = "multicore")]
 extern crate rayon;
 
-pub mod bench;
-mod commitments;
-mod dense_mlpoly;
-mod errors;
-mod gaussian_elimination;
-mod grand_product;
-mod math;
+pub mod lasso;
+pub mod subtables;
+pub mod benches;
 mod msm;
-mod nizk;
-pub mod random;
-pub mod sparse_mlpoly;
-mod sumcheck;
-mod transcript;
-mod unipoly;
+mod poly;
+mod subprotocols;
 mod utils;
 
 #[cfg(test)]

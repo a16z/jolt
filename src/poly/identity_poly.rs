@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 
-use crate::math::Math;
+use crate::utils::math::Math;
 
 pub struct IdentityPolynomial {
     size_point: usize,

@@ -2,18 +2,18 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
-use crate::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
-use crate::errors::ProofVerifyError;
-use crate::math::Math;
-use crate::random::RandomTape;
-use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::memory_checking::MemoryCheckingProof;
-use crate::sparse_mlpoly::subtables::{
+use crate::lasso::densified::DensifiedRepresentation;
+use crate::lasso::memory_checking::MemoryCheckingProof;
+use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
+use crate::poly::eq_poly::EqPolynomial;
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subtables::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
-use crate::sumcheck::SumcheckInstanceProof;
-use crate::transcript::{AppendToTranscript, ProofTranscript};
-use crate::utils::eq_poly::EqPolynomial;
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
+use crate::utils::random::RandomTape;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use tracing::{event, field::Empty, Level};
 

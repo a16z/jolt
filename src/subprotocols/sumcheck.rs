@@ -1,11 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
-use super::commitments::MultiCommitGens;
-use super::dense_mlpoly::DensePolynomial;
-use super::errors::ProofVerifyError;
-use super::nizk::DotProductProof;
-use super::transcript::{AppendToTranscript, ProofTranscript};
-use super::unipoly::{CompressedUniPoly, UniPoly};
+use crate::poly::commitments::MultiCommitGens;
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::subprotocols::DotProductProof;
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
@@ -16,13 +16,13 @@ use merlin::Transcript;
 use ark_ec::VariableBaseMSM;
 
 #[cfg(not(feature = "ark-msm"))]
-use super::msm::VariableBaseMSM;
+use crate::msm::VariableBaseMSM;
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
 impl<F: PrimeField> SumcheckInstanceProof<F> {
-  #[tracing::instrument(skip_all, name="Sumcheck.prove_batched")]
+  #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched")]
   pub fn prove_cubic_batched<Func, G>(
     claim: &F,
     num_rounds: usize,
@@ -52,40 +52,42 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       #[cfg(not(feature = "multicore"))]
       let iterator = poly_A_vec_par.iter().zip(poly_B_vec_par.iter());
 
-      let evals: Vec<(F,F,F)> = iterator.map(|(poly_A, poly_B)| {
-        let mut eval_point_0 = F::zero();
-        let mut eval_point_2 = F::zero();
-        let mut eval_point_3 = F::zero();
+      let evals: Vec<(F, F, F)> = iterator
+        .map(|(poly_A, poly_B)| {
+          let mut eval_point_0 = F::zero();
+          let mut eval_point_2 = F::zero();
+          let mut eval_point_3 = F::zero();
 
-        let len = poly_A.len() / 2;
-        for i in 0..len {
-          // eval 0: bound_func is A(low)
-          eval_point_0 += comb_func(&poly_A[i], &poly_B[i], &poly_C_par[i]);
+          let len = poly_A.len() / 2;
+          for i in 0..len {
+            // eval 0: bound_func is A(low)
+            eval_point_0 += comb_func(&poly_A[i], &poly_B[i], &poly_C_par[i]);
 
-          // eval 2: bound_func is -A(low) + 2*A(high)
-          let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-          let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-          let poly_C_bound_point = poly_C_par[len + i] + poly_C_par[len + i] - poly_C_par[i];
-          eval_point_2 += comb_func(
-            &poly_A_bound_point,
-            &poly_B_bound_point,
-            &poly_C_bound_point,
-          );
+            // eval 2: bound_func is -A(low) + 2*A(high)
+            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+            let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
+            let poly_C_bound_point = poly_C_par[len + i] + poly_C_par[len + i] - poly_C_par[i];
+            eval_point_2 += comb_func(
+              &poly_A_bound_point,
+              &poly_B_bound_point,
+              &poly_C_bound_point,
+            );
 
-          // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-          let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
-          let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
-          let poly_C_bound_point = poly_C_bound_point + poly_C_par[len + i] - poly_C_par[i];
+            // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
+            let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
+            let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
+            let poly_C_bound_point = poly_C_bound_point + poly_C_par[len + i] - poly_C_par[i];
 
-          eval_point_3 += comb_func(
-            &poly_A_bound_point,
-            &poly_B_bound_point,
-            &poly_C_bound_point,
-          );
-        }
+            eval_point_3 += comb_func(
+              &poly_A_bound_point,
+              &poly_B_bound_point,
+              &poly_C_bound_point,
+            );
+          }
 
-        (eval_point_0, eval_point_2, eval_point_3)
-      }).collect();
+          (eval_point_0, eval_point_2, eval_point_3)
+        })
+        .collect();
 
       let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
       let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
@@ -408,9 +410,9 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::math::Math;
+  use crate::utils::math::Math;
   use crate::utils::test::TestTranscript;
-  use ark_curve25519::{Fr, EdwardsProjective as G1Projective};
+  use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
   use ark_ff::Zero;
 
   #[test]

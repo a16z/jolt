@@ -1,15 +1,15 @@
-use crate::dense_mlpoly::{DensePolynomial, PolyEvalProof};
-use crate::errors::ProofVerifyError;
-use crate::grand_product::{BatchedGrandProductArgument, GrandProductCircuit};
-use crate::math::Math;
-use crate::random::RandomTape;
-use crate::sparse_mlpoly::densified::DensifiedRepresentation;
-use crate::sparse_mlpoly::sparse_mlpoly::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
-use crate::sparse_mlpoly::subtables::{
+use crate::lasso::densified::DensifiedRepresentation;
+use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
+use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
+use crate::poly::identity_poly::IdentityPolynomial;
+use crate::subprotocols::grand_product::{BatchedGrandProductArgument, GrandProductCircuit};
+use crate::subtables::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
-use crate::transcript::ProofTranscript;
-use crate::utils::identity_poly::IdentityPolynomial;
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
+use crate::utils::random::RandomTape;
+use crate::utils::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};

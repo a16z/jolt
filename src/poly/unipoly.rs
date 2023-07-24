@@ -1,10 +1,9 @@
 use super::commitments::{Commitments, MultiCommitGens};
-use super::transcript::{AppendToTranscript, ProofTranscript};
-use crate::gaussian_elimination::gaussian_elimination;
+use crate::utils::gaussian_elimination::gaussian_elimination;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]

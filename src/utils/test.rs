@@ -5,7 +5,7 @@ use ark_std::test_rng;
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
 
-use crate::transcript::ProofTranscript;
+use crate::utils::transcript::ProofTranscript;
 
 pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [Vec<F>; C] {
   std::array::from_fn(|_| {

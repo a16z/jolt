@@ -7,15 +7,14 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-  dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
-  errors::ProofVerifyError,
-  math::Math,
-  random::RandomTape,
-  transcript::{AppendToTranscript, ProofTranscript},
-  utils::eq_poly::EqPolynomial,
+  lasso::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
+  poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
+  poly::eq_poly::EqPolynomial,
+  utils::errors::ProofVerifyError,
+  utils::math::Math,
+  utils::random::RandomTape,
+  utils::transcript::{AppendToTranscript, ProofTranscript},
 };
-
-use super::{densified::DensifiedRepresentation, memory_checking::GrandProducts};
 
 pub mod and;
 pub mod lt;

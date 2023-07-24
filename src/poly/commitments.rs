@@ -9,7 +9,7 @@ use std::io::Read;
 use ark_ec::VariableBaseMSM;
 
 #[cfg(not(feature = "ark-msm"))]
-use super::msm::VariableBaseMSM;
+use crate::msm::VariableBaseMSM;
 
 #[derive(Debug)]
 pub struct MultiCommitGens<G> {

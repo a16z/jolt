@@ -2,18 +2,16 @@ use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
 use merlin::Transcript;
 
 use crate::{
-  math::Math,
-  random::RandomTape,
-  sparse_mlpoly::{
+  lasso::{
     densified::DensifiedRepresentation,
-    sparse_mlpoly::{
-      SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof,
-    },
-    subtables::{
-      and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
-      SubtableStrategy,
-    },
+    surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
   },
+  subtables::{
+    and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
+    SubtableStrategy,
+  },
+  utils::math::Math,
+  utils::random::RandomTape,
 };
 
 macro_rules! e2e_test {

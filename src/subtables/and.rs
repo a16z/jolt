@@ -66,8 +66,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
 #[cfg(test)]
 mod test {
   use crate::{
-    materialization_mle_parity_test, sparse_mlpoly::subtables::Subtables,
-    utils::index_to_field_bitvector,
+    materialization_mle_parity_test, subtables::Subtables, utils::index_to_field_bitvector,
   };
 
   use super::*;
