@@ -97,7 +97,6 @@ where
   pub lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES],
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
-  sparsity: usize,
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
@@ -121,7 +120,6 @@ where
       lookup_polys,
       combined_poly,
       strategy: PhantomData,
-      sparsity: nz[0].len(),
     }
   }
 
