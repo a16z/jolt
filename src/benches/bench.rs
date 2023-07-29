@@ -13,7 +13,6 @@ use ark_curve25519::{EdwardsProjective, Fr};
 use ark_ff::PrimeField;
 use ark_std::{log2, test_rng};
 use merlin::Transcript;
-use num_integer::Roots;
 use rand_chacha::rand_core::RngCore;
 
 pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<[usize; C]> {
@@ -40,9 +39,8 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
 }
 
 macro_rules! single_pass_lasso {
-  ($span_name:expr, $field:ty, $group:ty, $subtable_strategy:ty, $N:expr, $C:expr, $M:expr, $sparsity:expr) => {
+  ($span_name:expr, $field:ty, $group:ty, $subtable_strategy:ty, $C:expr, $M:expr, $sparsity:expr) => {
     (tracing::info_span!($span_name), move || {
-      const N: usize = $N;
       const C: usize = $C;
       const M: usize = $M;
       const S: usize = $sparsity;
@@ -50,9 +48,7 @@ macro_rules! single_pass_lasso {
       type G = $group;
       type SubtableStrategy = $subtable_strategy;
 
-      let m_computed = N.nth_root(C as u32);
-      assert_eq!(m_computed, M);
-      let log_m = log2(m_computed) as usize;
+      let log_m = log2(M) as usize;
       let log_s: usize = log2($sparsity) as usize;
 
       let r: Vec<F> = gen_random_point::<F>(log_s);
@@ -77,14 +73,96 @@ macro_rules! single_pass_lasso {
   };
 }
 
-pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum BenchType {
+  JoltDemo,
+  Halo2Comparison,
+}
+
+pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, fn())> {
+  match bench_type {
+    BenchType::JoltDemo => jolt_demo_benchmarks(),
+    BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
+    _ => panic!("BenchType does not have a mapping")
+  }
+}
+
+fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
+  vec![
+    single_pass_lasso!(
+      "And(2^128, 2^10)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 10
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^12)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 12
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^14)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 14
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^16)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 16
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^18)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 18
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^20)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 20 
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^22)",
+      Fr,
+      EdwardsProjective,
+      AndSubtableStrategy,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 22 
+    ),
+  ]
+}
+
+
+fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
   vec![
     single_pass_lasso!(
       "And(2^10)",
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 10
@@ -94,7 +172,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 12
@@ -104,7 +181,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 14
@@ -114,7 +190,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 16
@@ -124,7 +199,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 18
@@ -134,7 +208,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 20
@@ -144,7 +217,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 22
@@ -154,7 +226,6 @@ pub fn benchmarks() -> Vec<(tracing::Span, fn())> {
       Fr,
       EdwardsProjective,
       AndSubtableStrategy,
-      /* N= */ 1 << 16,
       /* C= */ 1,
       /* M= */ 1 << 16,
       /* S= */ 1 << 24
