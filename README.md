@@ -1,7 +1,7 @@
+# Lasso
 ![imgs/lasso_logo.png](imgs/lasso_logo.png)
 
-# Lasso
-Lookup Arguments via Sum-check and Sparse polynomial commitments, including for Oversized tables
+Lookup Arguments via Sum-check and Sparse polynomial commitments, including for Oversized tables.
 
 ## Overview
 - See [EngineeringOverview.md](EngineeringOverview.md) for a high level technical outline
