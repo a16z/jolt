@@ -18,6 +18,7 @@ use crate::{
 
 pub mod and;
 pub mod or;
+pub mod xor;
 pub mod lt;
 pub mod range_check;
 

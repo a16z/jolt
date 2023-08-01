@@ -5,10 +5,10 @@ use crate::utils::{pack_field_xyz, split_bits};
 
 use super::SubtableStrategy;
 
-pub enum OrSubtableStrategy {}
+pub enum XorSubtableStrategy {}
 
 impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
-  for OrSubtableStrategy
+  for XorSubtableStrategy
 {
   const NUM_SUBTABLES: usize = 1;
   const NUM_MEMORIES: usize = C;
@@ -20,7 +20,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     // Materialize table in counting order where lhs | rhs counts 0->m
     for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
-      let out = lhs | rhs;
+      let out = lhs ^ rhs;
 
       // Note packs memory T[row] = lhs | rhs | out -- x controls highest order bits
       let row = pack_field_xyz(lhs, rhs, out, bits_per_operand);
@@ -31,7 +31,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   }
 
   fn evaluate_subtable_mle(_: usize, point: &Vec<F>) -> F {
-    // (1 - (1-x)(1-y))
+    // (1-x)*y + x*(1-y)
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
@@ -40,7 +40,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     for i in 0..b {
       let x = x[b - i - 1];
       let y = y[b - i - 1];
-      result += F::from(1u64 << (i)) * (F::one() - (F::one() - x) * (F::one() - y));
+      result += F::from(1u64 << (i)) * ((F::one() - x) * y + x * (F::one() - y));
       result += F::from(1u64 << (b + i)) * y;
       result += F::from(1u64 << (2 * b + i)) * x;
     }
@@ -74,7 +74,6 @@ mod test {
 
   use super::*;
   use ark_curve25519::Fr;
-  use ark_ff::Zero;
 
   #[test]
   fn table_materialization_hardcoded() {
@@ -82,7 +81,7 @@ mod test {
     const M: usize = 1 << 4;
 
     let materialized: [Vec<Fr>; 1] =
-      <OrSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables();
+      <XorSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables();
     assert_eq!(materialized.len(), 1);
     assert_eq!(materialized[0].len(), M);
 
@@ -92,19 +91,19 @@ mod test {
     assert_eq!(table[2], Fr::from(0b00_10_10));
     assert_eq!(table[3], Fr::from(0b00_11_11));
     assert_eq!(table[4], Fr::from(0b01_00_01));
-    assert_eq!(table[5], Fr::from(0b01_01_01));
+    assert_eq!(table[5], Fr::from(0b01_01_00));
     assert_eq!(table[6], Fr::from(0b01_10_11));
-    assert_eq!(table[7], Fr::from(0b01_11_11));
+    assert_eq!(table[7], Fr::from(0b01_11_10));
     assert_eq!(table[8], Fr::from(0b10_00_10));
     assert_eq!(table[9], Fr::from(0b10_01_11));
-    assert_eq!(table[10], Fr::from(0b10_10_10));
+    assert_eq!(table[10], Fr::from(0b10_10_00));
     // ...
   }
 
   #[test]
   fn combine() {
     const M: usize = 1 << 16;
-    let combined: Fr = <OrSubtableStrategy as SubtableStrategy<Fr, 4, M>>::combine_lookups(&[
+    let combined: Fr = <XorSubtableStrategy as SubtableStrategy<Fr, 4, M>>::combine_lookups(&[
       Fr::from(100),
       Fr::from(200),
       Fr::from(300),
@@ -127,17 +126,17 @@ mod test {
     let x_indices: Vec<usize> = vec![0, 2];
     let y_indices: Vec<usize> = vec![5, 9];
 
-    let subtable_evals: Subtables<Fr, C, M, OrSubtableStrategy> =
+    let subtable_evals: Subtables<Fr, C, M, XorSubtableStrategy> =
       Subtables::new(&[x_indices, y_indices], 2);
 
     // Real equation here is log2(sparsity) + log2(C)
     let combined_table_index_bits = 2;
 
     for (x, expected) in vec![
-      (0, 0b00_00_00), // or(0) -> 00 | 00 = 00 -> 00_00_00
-      (1, 0b00_10_10), // or(2) -> 00 | 10 = 10 -> 00_10_10
-      (2, 0b01_01_01), // or(5) -> 01 | 01 = 01 -> 01_01_01
-      (3, 0b10_01_11), // or(9)  -> 10 | 01 = 11 -> 10_01_11
+      (0, 0b00_00_00), // xor(0) -> 00 | 00 = 00 -> 00_00_00
+      (1, 0b00_10_10), // xor(2) -> 00 | 10 = 10 -> 00_10_10
+      (2, 0b01_01_00), // xor(5) -> 01 | 01 = 00 -> 01_01_00
+      (3, 0b10_01_11), // xor(9) -> 10 | 01 = 11 -> 10_01_11
     ] {
       let calculated = subtable_evals
         .combined_poly
@@ -146,10 +145,10 @@ mod test {
     }
   }
 
-  materialization_mle_parity_test!(materialization_parity, OrSubtableStrategy, Fr, 16, 1);
+  materialization_mle_parity_test!(materialization_parity, XorSubtableStrategy, Fr, 16, 1);
   materialization_mle_parity_test!(
     materialization_parity_nonzero_c,
-    OrSubtableStrategy,
+    XorSubtableStrategy,
     Fr,
     16,
     2
