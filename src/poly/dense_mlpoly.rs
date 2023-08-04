@@ -185,9 +185,24 @@ impl<F: PrimeField> DensePolynomial<F> {
       EqPolynomial::<F>::compute_factored_lens(self.get_num_vars());
     let L_size = left_num_vars.pow2();
     let R_size = right_num_vars.pow2();
-    (0..R_size)
+
+    #[cfg(feature = "multicore")]
+    let bound_vals = (0..R_size)
+      .into_par_iter()
+      .map(|i| {
+        (0..L_size)
+          .into_par_iter()
+          .map(|j| L[j] * self.Z[j * R_size + i])
+          .sum()
+      })
+      .collect();
+
+    #[cfg(not(feature = "multicore"))]
+    let bound_vals = (0..R_size)
       .map(|i| (0..L_size).map(|j| L[j] * self.Z[j * R_size + i]).sum())
-      .collect()
+      .collect();
+
+    bound_vals
   }
 
   pub fn bound_poly_var_top(&mut self, r: &F) {

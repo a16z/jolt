@@ -1,5 +1,8 @@
 use ark_ff::{BigInteger, PrimeField};
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 #[cfg(test)]
 pub mod test;
 
@@ -58,7 +61,13 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
 #[tracing::instrument(skip_all, name = "compute_dotproduct")]
 pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
   assert_eq!(a.len(), b.len());
-  (0..a.len()).map(|i| a[i] * b[i]).sum()
+
+  #[cfg(feature = "multicore")]
+  let dot_product = (0..a.len()).into_par_iter().map(|i| a[i] * b[i]).sum();
+  #[cfg(not(feature = "multicore"))]
+  let dot_product = (0..a.len()).map(|i| a[i] * b[i]).sum();
+
+  dot_product
 }
 
 /// Checks if `num` is a power of 2.
