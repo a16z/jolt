@@ -3,9 +3,6 @@
 use ark_ff::{prelude::*, PrimeField, BigInt};
 use ark_std::{borrow::Borrow, iterable::Iterable, vec::Vec};
 
-pub mod stream_pippenger;
-pub use stream_pippenger::*;
-
 use ark_ec::{ScalarMul, CurveGroup};
 
 #[cfg(feature = "parallel")]
