@@ -127,6 +127,7 @@ where
 
   /// Converts subtables T_1, ..., T_{\alpha} and densified multilinear polynomial
   /// into grand products for memory-checking.
+  #[tracing::instrument(skip_all, name = "Subtables.to_grand_products")]
   pub fn to_grand_products(
     &self,
     dense: &DensifiedRepresentation<F, C>,

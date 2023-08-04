@@ -179,6 +179,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     (self.commit_inner(&blinds.blinds, &gens.gens.gens_n), blinds)
   }
 
+  #[tracing::instrument(skip_all, name = "DensePolynomial.bound")]
   pub fn bound(&self, L: &[F]) -> Vec<F> {
     let (left_num_vars, right_num_vars) =
       EqPolynomial::<F>::compute_factored_lens(self.get_num_vars());
@@ -208,6 +209,7 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   // returns Z(r) in O(n) time
+  #[tracing::instrument(skip_all, name = "DensePolynomial.evaluate")]
   pub fn evaluate(&self, r: &[F]) -> F {
     // r must have a value for each variable
     assert_eq!(r.len(), self.get_num_vars());
