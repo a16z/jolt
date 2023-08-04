@@ -74,7 +74,7 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
 }
 
 impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
-  #[tracing::instrument(skip_all, name = "Dense.commit")]
+  #[tracing::instrument(skip_all, name = "DensifiedRepresentation.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     gens: &SparsePolyCommitmentGens<G>,

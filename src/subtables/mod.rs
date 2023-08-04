@@ -16,11 +16,14 @@ use crate::{
   utils::transcript::{AppendToTranscript, ProofTranscript},
 };
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 pub mod and;
-pub mod or;
-pub mod xor;
 pub mod lt;
+pub mod or;
 pub mod range_check;
+pub mod xor;
 
 #[cfg(test)]
 pub mod test;
@@ -163,16 +166,29 @@ where
     g_operands
       .iter()
       .for_each(|operand| assert_eq!(operand.len(), hypercube_size));
-
+    
     let eq_evals = eq.evals();
-    (0..hypercube_size)
+    
+    #[cfg(feature = "multicore")]
+    let claim = (0..hypercube_size)
+      .into_par_iter()
       .map(|k| {
         let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
-
         // eq * g(T_1[k], ..., T_\alpha[k])
         eq_evals[k] * S::combine_lookups(&g_operands)
       })
-      .sum()
+      .sum();
+
+    #[cfg(not(feature = "multicore"))]
+    let claim = (0..hypercube_size)
+      .map(|k| {
+        let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
+        // eq * g(T_1[k], ..., T_\alpha[k])
+        eq_evals[k] * S::combine_lookups(&g_operands)
+      })
+      .sum();
+
+    claim
   }
 }
 

@@ -149,6 +149,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     PolyCommitment { C }
   }
 
+  #[tracing::instrument(skip_all, name = "DensePolynomial.commit")]
   pub fn commit<G>(
     &self,
     gens: &PolyCommitmentGens<G>,

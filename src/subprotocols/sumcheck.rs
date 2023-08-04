@@ -156,7 +156,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     Func: Fn(&[F; ALPHA]) -> F,
     G: CurveGroup<ScalarField = F>,
   {
-    let mut e = *claim; // TODO: Currently unused but could make poly evals marginally more efficient
     let mut r: Vec<F> = Vec::new();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
@@ -216,7 +215,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       for poly_i in 0..polys.len() {
         polys[poly_i].bound_poly_var_top(&r_j);
       }
-      e = round_uni_poly.evaluate(&r_j);
       compressed_polys.push(round_uni_poly.compress());
     }
 
