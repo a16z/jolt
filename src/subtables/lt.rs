@@ -49,7 +49,8 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     let (x, y) = point.split_at(b);
 
     // TODO: Improve
-    if subtable_index % 2 == 0 {
+    debug_assert!(subtable_index < 2);
+    if subtable_index == 0 {
       // LT subtable
       let mut bitpacked = F::zero();
       let mut result = F::zero();
@@ -106,25 +107,16 @@ mod test {
     const C: usize = 1;
     const M: usize = 64;
     let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
-      0,
-      &point,
-    );
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
 
     let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
-      0,
-      &point,
-    );
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
     assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
 
     // Eq
     let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
-      0,
-      &point,
-    );
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
   }
 

@@ -7,8 +7,8 @@ use crate::{
     surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
   },
   subtables::{
-    and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
-    SubtableStrategy,
+    and::AndSubtableStrategy, eq::EqSubtableStrategy, lt::LTSubtableStrategy,
+    range_check::RangeCheckSubtableStrategy, SubtableStrategy,
   },
   utils::math::Math,
   utils::random::RandomTape,
@@ -96,5 +96,14 @@ e2e_test!(
   Fr,
   /* C= */ 3,
   /* M= */ 256,
+  /* sparsity= */ 16
+);
+e2e_test!(
+  prove_4d_eq,
+  EqSubtableStrategy,
+  G1Projective,
+  Fr,
+  /* C= */ 4,
+  /* M= */ 16,
   /* sparsity= */ 16
 );

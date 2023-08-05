@@ -20,6 +20,7 @@ use crate::{
 use rayon::prelude::*;
 
 pub mod and;
+pub mod eq;
 pub mod lt;
 pub mod or;
 pub mod range_check;
@@ -166,9 +167,9 @@ where
     g_operands
       .iter()
       .for_each(|operand| assert_eq!(operand.len(), hypercube_size));
-    
+
     let eq_evals = eq.evals();
-    
+
     #[cfg(feature = "multicore")]
     let claim = (0..hypercube_size)
       .into_par_iter()
