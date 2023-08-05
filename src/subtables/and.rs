@@ -34,6 +34,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
+    println!("x: {:?}, y; {:?}", x, y);
 
     let mut result = F::zero();
     for i in 0..b {

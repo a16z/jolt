@@ -24,6 +24,7 @@ pub mod eq;
 pub mod lt;
 pub mod or;
 pub mod range_check;
+pub mod sll;
 pub mod xor;
 
 #[cfg(test)]

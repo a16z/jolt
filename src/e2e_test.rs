@@ -8,7 +8,7 @@ use crate::{
   },
   subtables::{
     and::AndSubtableStrategy, eq::EqSubtableStrategy, lt::LTSubtableStrategy,
-    range_check::RangeCheckSubtableStrategy, SubtableStrategy,
+    range_check::RangeCheckSubtableStrategy, sll::SllSubtableStrategy, SubtableStrategy,
   },
   utils::math::Math,
   utils::random::RandomTape,
@@ -101,6 +101,15 @@ e2e_test!(
 e2e_test!(
   prove_4d_eq,
   EqSubtableStrategy,
+  G1Projective,
+  Fr,
+  /* C= */ 4,
+  /* M= */ 16,
+  /* sparsity= */ 16
+);
+e2e_test!(
+  prove_4d_sll,
+  SllSubtableStrategy,
   G1Projective,
   Fr,
   /* C= */ 4,
