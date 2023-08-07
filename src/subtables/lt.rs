@@ -77,6 +77,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
 
   /// Combines lookups into the LT subtables.
   /// Assumes ALPHA lookups are ordered: LT[0], EQ[0], ... LT[C], EQ[C]
+  /// T = LT[0] + LT[1]*EQ[0] + ... + LT[C]*EQ[0]*...*EQ[C-1]
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let mut sum = F::zero();
     let mut eq_prod = F::one();
@@ -96,6 +97,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
 #[cfg(test)]
 mod test {
   use ark_curve25519::Fr;
+  use ark_std::{One, Zero};
 
   use crate::{materialization_mle_parity_test, utils::index_to_field_bitvector};
 

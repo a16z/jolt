@@ -18,7 +18,7 @@ macro_rules! e2e_test {
   ($test_name:ident, $Strategy:ty, $G:ty, $F:ty, $C:expr, $M:expr, $sparsity:expr) => {
     #[test]
     fn $test_name() {
-      use crate::utils::test::{gen_indices, gen_random_point, gen_random_points};
+      use crate::utils::test::{gen_indices, gen_random_point};
       use ark_std::log2;
 
       const C: usize = $C;

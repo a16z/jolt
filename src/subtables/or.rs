@@ -74,7 +74,6 @@ mod test {
 
   use super::*;
   use ark_curve25519::Fr;
-  use ark_ff::Zero;
 
   #[test]
   fn table_materialization_hardcoded() {
