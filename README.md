@@ -12,12 +12,12 @@ Lookup Arguments via Sum-check and Sparse polynomial commitments, including for 
 ## Current usage
 
 ```rust
-  let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_M);
-  let mut dense: DensifiedRepresentation<Fr, C, EqSubtableStrategy> = DensifiedRepresentation::from(&lookup_matrix);
-  let (gens, commitment) = dense.commit::<EdwardsProjective>();
+  let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
+  let mut dense: DensifiedRepresentation<F, C> = DensifiedRepresentation::from(&lookup_matrix);
+  let commitment = dense.commit::<G>(&gens);
 
   let proof =
-    SparsePolynomialEvaluationProof::<EdwardsProjective, C, M, SubtableStrategy>::prove(
+    SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
         &mut dense,
         &r,
         &gens,
