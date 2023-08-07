@@ -1,4 +1,6 @@
 #![allow(clippy::too_many_arguments)]
+#![allow(dead_code)]
+
 use crate::poly::commitments::{Commitments, MultiCommitGens};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;

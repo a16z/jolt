@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+
 use super::sumcheck::SumcheckInstanceProof;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -64,7 +65,6 @@ impl<F: PrimeField> GrandProductCircuit<F> {
   }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct LayerProofBatched<F: PrimeField> {
   pub proof: SumcheckInstanceProof<F>,

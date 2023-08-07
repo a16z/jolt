@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -20,6 +22,7 @@ pub struct CompressedUniPoly<F: PrimeField> {
 }
 
 impl<F: PrimeField> UniPoly<F> {
+  #[allow(dead_code)]
   pub fn from_coeff(coeffs: Vec<F>) -> Self {
     UniPoly { coeffs }
   }

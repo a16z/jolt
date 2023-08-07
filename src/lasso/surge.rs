@@ -15,7 +15,6 @@ use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
-use tracing::{event, field::Empty, Level};
 
 use ark_serialize::*;
 

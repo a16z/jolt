@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use crate::lasso::surge::SparsePolyCommitmentGens;
 use crate::subtables::and::AndSubtableStrategy;
 use crate::{
@@ -79,11 +77,12 @@ pub enum BenchType {
   Halo2Comparison,
 }
 
+#[allow(unreachable_patterns)] // good errors on new BenchTypes
 pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, fn())> {
   match bench_type {
     BenchType::JoltDemo => jolt_demo_benchmarks(),
     BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
-    _ => panic!("BenchType does not have a mapping")
+    _ => panic!("BenchType does not have a mapping"),
   }
 }
 
@@ -141,7 +140,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
-      /* S= */ 1 << 20 
+      /* S= */ 1 << 20
     ),
     single_pass_lasso!(
       "And(2^128, 2^22)",
@@ -150,11 +149,10 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
-      /* S= */ 1 << 22 
+      /* S= */ 1 << 22
     ),
   ]
 }
-
 
 fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
   vec![

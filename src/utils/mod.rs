@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ark_ff::{BigInteger, PrimeField};
 
 #[cfg(feature = "multicore")]

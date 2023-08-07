@@ -1,5 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
+#![allow(dead_code)]
+
 use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -145,7 +147,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
   #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
   pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>, const ALPHA: usize>(
-    claim: &F,
+    _claim: &F,
     num_rounds: usize,
     polys: &mut [DensePolynomial<F>; ALPHA],
     comb_func: Func,
@@ -176,7 +178,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
         eval_points[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
 
-        // TODO: Note can be computed from prev_round_claim - eval_point_0
+        // TODO: Can be computed from prev_round_claim - eval_point_0
         let eval_at_one: [F; ALPHA] = std::array::from_fn(|j| polys[j][mle_half + poly_term_i]);
         eval_points[1] += comb_func(&eval_at_one);
 

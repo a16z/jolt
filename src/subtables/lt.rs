@@ -1,4 +1,4 @@
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::PrimeField;
 use ark_std::log2;
 
 use crate::utils::{pack_field_xyz, split_bits};
@@ -106,25 +106,16 @@ mod test {
     const C: usize = 1;
     const M: usize = 64;
     let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
-      0,
-      &point,
-    );
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
 
     let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
-      0,
-      &point,
-    );
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
     assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
 
     // Eq
     let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(
-      0,
-      &point,
-    );
+    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
     assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
   }
 
