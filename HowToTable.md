@@ -7,9 +7,9 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
     const NUM_SUBTABLES: usize;
     const NUM_MEMORIES: usize;
 
-    fn materialize_subtables(r: &[Vec<F>; C]) -> [Vec<F>; Self::NUM_SUBTABLES];
+    fn materialize_subtables() -> [Vec<F>; Self::NUM_SUBTABLES];
 
-    fn evaluate_subtable_mle(subtable_index: usize, r: &[Vec<F>; C], point: &Vec<F>) -> F;
+    fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F;
 
     fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
 
@@ -34,7 +34,7 @@ To implement the `SubtableStrategy` trait, you need to define the following meth
 
 ### 1. `NUM_SUBTABLES` and `NUM_MEMORIES`
 
-These associated constants specify the number of subtables and memories used in the strategy. Replace `NUM_SUBTABLES` and `NUM_MEMORIES` with the desired values. Often these constant parameters will be a function of `C`.
+These associated constants specify the number of subtables and memories used in the strategy. Replace `NUM_SUBTABLES` and `NUM_MEMORIES` with the desired values. `NUM_MEMORIES` is typically a multiple of `C`.
 
 ```rust
 const NUM_SUBTABLES: usize = <desired_value>;
@@ -66,7 +66,7 @@ fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
 Replace the implementation with your logic to evaluate and return the MLE of the specified subtable at the given point.
 
 ### 4. `combine_lookups`
-This method defines the g function that computes the combined lookup value T[r] based on the lookup values of different subtables and memories.
+This method defines the $g$ polynomial that computes the combined lookup value $T[r]$ based on the lookup values of different subtables/memories.
 
 ```rust
 fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F {
@@ -78,9 +78,9 @@ Replace the implementation with your logic to combine the lookup values and retu
 
 ### 5. `g_poly_degree`
 
-This method specifies the total degree of the g function. The total degree determines the number of evaluation points in each sumcheck round (N+1 points define a degree-N polynomial).
+This method specifies the total degree of the g function. The total degree determines the number of evaluation points sent in each sumcheck round (N+1 points define a degree-N polynomial).
 
-To simplify: Each term in `combine_lookups` can be thought of as a univariate polynomial, what is the degree after applying the collation function `g`?
+To simplify: Each term in `combine_lookups` can be thought of as a degree-1 polynomial, what is the degree after applying the collation function `g`?
 
 ```rust
 fn g_poly_degree() -> usize {

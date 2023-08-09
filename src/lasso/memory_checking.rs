@@ -460,8 +460,8 @@ where
   /// - `eval_dim`: The evaluation dim_i(r'''_i).
   /// - `eval_read`: The evaluation read_i(r'''_i).
   /// - `eval_final`: The evaluation final_i(r''_i).
-  /// - `init_addr`: The MLE of the initial memory values, evaluated at r''_i.
   /// - `init_addr`: The MLE of the memory addresses, evaluated at r''_i.
+  /// - `init_memory`: The MLE of the initial memory values, evaluated at r''_i.
   /// - `r_i`: One chunk of the evaluation point at which the Lasso commitment is being opened.
   /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
   /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
