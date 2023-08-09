@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::PrimeField;
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
@@ -88,35 +88,13 @@ pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
   (high_chunk, low_chunk)
 }
 
-/// Packs params x,y,z into a field element in order xyz allocating `b` bits for each element
-/// field = x | y | z where x represents the most significant bits.
-pub fn pack_field_xyz<F: PrimeField>(x: usize, y: usize, z: usize, b: usize) -> F {
-  let mut bits: Vec<bool> = Vec::with_capacity(3 * b);
-  for i in 0..b {
-    bits.push((z >> i) & 1 == 1);
-  }
-  for i in 0..b {
-    bits.push((y >> i) & 1 == 1);
-  }
-  for i in 0..b {
-    bits.push((x >> i) & 1 == 1);
-  }
-  F::from(F::BigInt::from_bits_le(&bits))
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_curve25519::Fr;
 
   #[test]
   fn split() {
     assert_eq!(split_bits(0b00_01, 2), (0, 1));
     assert_eq!(split_bits(0b10_01, 2), (2, 1));
-  }
-
-  #[test]
-  fn pack() {
-    assert_eq!(pack_field_xyz::<Fr>(1, 0, 0, 2), Fr::from(16));
   }
 }

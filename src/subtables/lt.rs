@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use crate::utils::{pack_field_xyz, split_bits};
+use crate::utils::split_bits;
 
 use super::SubtableStrategy;
 
@@ -22,21 +22,8 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     // Materialize table in counting order where lhs | rhs counts 0->m
     for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
-
-      // Note packs memory T[row] = lhs | rhs | 0 / 1 -- x controls highest order bits
-      let row_lt = if lhs < rhs {
-        pack_field_xyz(lhs, rhs, 1, bits_per_operand)
-      } else {
-        pack_field_xyz(lhs, rhs, 0, bits_per_operand)
-      };
-      materialized_lt.push(row_lt);
-
-      let row_eq = if lhs == rhs {
-        pack_field_xyz(lhs, rhs, 1, bits_per_operand)
-      } else {
-        pack_field_xyz(lhs, rhs, 0, bits_per_operand)
-      };
-      materialized_eq.push(row_eq);
+      materialized_lt.push(F::from((lhs < rhs) as u64));
+      materialized_eq.push(F::from((lhs == rhs) as u64));
     }
 
     [materialized_lt, materialized_eq]
@@ -48,35 +35,27 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
 
-    // TODO: Improve
     if subtable_index % 2 == 0 {
       // LT subtable
-      let mut bitpacked = F::zero();
       let mut result = F::zero();
       let mut eq_term = F::one();
       for i in 0..b {
-        bitpacked += F::from(1u64 << (2 * b + i)) * x[b - i - 1];
-        bitpacked += F::from(1u64 << (b + i)) * y[b - i - 1];
-
         result += (F::one() - x[i]) * y[i] * eq_term;
         eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
       }
-      bitpacked + result
+      result
     } else {
       // EQ subtable
-      let mut bitpacked = F::zero();
       let mut eq_term = F::one();
       for i in 0..b {
-        bitpacked += F::from(1u64 << (2 * b + i)) * x[b - i - 1];
-        bitpacked += F::from(1u64 << (b + i)) * y[b - i - 1];
         eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
       }
-      bitpacked + eq_term
+      eq_term
     }
   }
 
   /// Combines lookups into the LT subtables.
-  /// Assumes ALPHA lookups are ordered: LT[0], EQ[0], ... LT[C], EQ[C]
+  /// Assumes `vals` are ordered: LT[0], EQ[0], ... LT[C], EQ[C]
   /// T = LT[0] + LT[1]*EQ[0] + ... + LT[C]*EQ[0]*...*EQ[C-1]
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let mut sum = F::zero();
@@ -102,24 +81,6 @@ mod test {
   use crate::{materialization_mle_parity_test, utils::index_to_field_bitvector};
 
   use super::*;
-
-  #[test]
-  fn mle() {
-    const C: usize = 1;
-    const M: usize = 64;
-    let point: Vec<Fr> = index_to_field_bitvector(0b011_101, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
-    assert_eq!(eval, pack_field_xyz(0b011, 0b101, 1, 3));
-
-    let point: Vec<Fr> = index_to_field_bitvector(0b111_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
-    assert_eq!(eval, pack_field_xyz(0b111, 0b011, 0, 3));
-
-    // Eq
-    let point: Vec<Fr> = index_to_field_bitvector(0b011_011, 6);
-    let eval = <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::evaluate_subtable_mle(0, &point);
-    assert_eq!(eval, pack_field_xyz(0b011, 0b011, 0, 3));
-  }
 
   #[test]
   fn combine() {
@@ -158,23 +119,23 @@ mod test {
     let lt = materialized[0].clone();
     let eq = materialized[1].clone();
 
-    assert_eq!(lt[0], Fr::from(0b00_00_00));
-    assert_eq!(lt[1], Fr::from(0b00_01_01));
-    assert_eq!(lt[2], Fr::from(0b00_10_01));
-    assert_eq!(lt[3], Fr::from(0b00_11_01));
-    assert_eq!(lt[4], Fr::from(0b01_00_00));
-    assert_eq!(lt[5], Fr::from(0b01_01_00));
-    assert_eq!(lt[6], Fr::from(0b01_10_01));
-    // ...
+    assert_eq!(lt[0], Fr::from(0b00)); // 00 < 00 = false
+    assert_eq!(lt[1], Fr::from(0b01)); // 00 < 01 = true
+    assert_eq!(lt[2], Fr::from(0b01)); // 00 < 10 = true
+    assert_eq!(lt[3], Fr::from(0b01)); // 00 < 11 = true
+    assert_eq!(lt[4], Fr::from(0b00)); // 01 < 00 = false
+    assert_eq!(lt[5], Fr::from(0b00)); // 01 < 01 = false
+    assert_eq!(lt[6], Fr::from(0b01)); // 01 < 10 = true
+                                       // ...
 
-    assert_eq!(eq[0], Fr::from(0b00_00_01));
-    assert_eq!(eq[1], Fr::from(0b00_01_00));
-    assert_eq!(eq[2], Fr::from(0b00_10_00));
-    assert_eq!(eq[3], Fr::from(0b00_11_00));
-    assert_eq!(eq[4], Fr::from(0b01_00_00));
-    assert_eq!(eq[5], Fr::from(0b01_01_01));
-    assert_eq!(eq[6], Fr::from(0b01_10_00));
-    // ...
+    assert_eq!(eq[0], Fr::from(0b01)); // 00 == 00 = true
+    assert_eq!(eq[1], Fr::from(0b00)); // 00 == 01 = false
+    assert_eq!(eq[2], Fr::from(0b00)); // 00 == 10 = false
+    assert_eq!(eq[3], Fr::from(0b00)); // 00 == 11 = false
+    assert_eq!(eq[4], Fr::from(0b00)); // 01 == 00 = false
+    assert_eq!(eq[5], Fr::from(0b01)); // 01 == 01 = true
+    assert_eq!(eq[6], Fr::from(0b00)); // 01 == 10 = false
+                                       // ...
   }
 
   materialization_mle_parity_test!(

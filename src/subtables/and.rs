@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use crate::utils::{pack_field_xyz, split_bits};
+use crate::utils::split_bits;
 
 use super::SubtableStrategy;
 
@@ -20,10 +20,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     // Materialize table in counting order where lhs | rhs counts 0->m
     for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
-      let out = lhs & rhs;
-
-      // Note packs memory T[row] = lhs | rhs | out -- x controls highest order bits
-      let row = pack_field_xyz(lhs, rhs, out, bits_per_operand);
+      let row = F::from((lhs & rhs) as u64);
       materialized.push(row);
     }
 
@@ -38,8 +35,6 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     let mut result = F::zero();
     for i in 0..b {
       result += F::from(1u64 << (i)) * x[b - i - 1] * y[b - i - 1];
-      result += F::from(1u64 << (b + i)) * y[b - i - 1];
-      result += F::from(1u64 << (2 * b + i)) * x[b - i - 1];
     }
     result
   }
@@ -47,7 +42,6 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   /// Combine AND table subtable evaluations
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
-  /// x3 | y3 | z3 | x2 | y2 | z2 | x1 | y1 | z1 | x0 | y0 | z0 |
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let increment = log2(M) as usize;
     let mut sum = F::zero();
@@ -83,18 +77,18 @@ mod test {
     assert_eq!(materialized[0].len(), M);
 
     let table: Vec<Fr> = materialized[0].clone();
-    assert_eq!(table[0], Fr::from(0b00_00_00));
-    assert_eq!(table[1], Fr::from(0b00_01_00));
-    assert_eq!(table[2], Fr::from(0b00_10_00));
-    assert_eq!(table[3], Fr::from(0b00_11_00));
-    assert_eq!(table[4], Fr::from(0b01_00_00));
-    assert_eq!(table[5], Fr::from(0b01_01_01));
-    assert_eq!(table[6], Fr::from(0b01_10_00));
-    assert_eq!(table[7], Fr::from(0b01_11_01));
-    assert_eq!(table[8], Fr::from(0b10_00_00));
-    assert_eq!(table[9], Fr::from(0b10_01_00));
-    assert_eq!(table[10], Fr::from(0b10_10_10));
-    // ...
+    assert_eq!(table[0], Fr::from(0b00)); // 00 & 00
+    assert_eq!(table[1], Fr::from(0b00)); // 00 & 01
+    assert_eq!(table[2], Fr::from(0b00)); // 00 & 10
+    assert_eq!(table[3], Fr::from(0b00)); // 00 & 11
+    assert_eq!(table[4], Fr::from(0b00)); // 01 & 00
+    assert_eq!(table[5], Fr::from(0b01)); // 01 & 01
+    assert_eq!(table[6], Fr::from(0b00)); // 01 & 10
+    assert_eq!(table[7], Fr::from(0b01)); // 01 & 11
+    assert_eq!(table[8], Fr::from(0b00)); // 10 & 00
+    assert_eq!(table[9], Fr::from(0b00)); // 10 & 01
+    assert_eq!(table[10], Fr::from(0b10)); // 10 & 10
+                                           // ...
   }
 
   #[test]
@@ -130,10 +124,10 @@ mod test {
     let combined_table_index_bits = 2;
 
     for (x, expected) in vec![
-      (0, 0b00_00_00), // and(0) -> 00 & 00 = 00 -> 00_00_00
-      (1, 0b00_10_00), // and(2) -> 00 & 10 = 00 -> 00_10_00
-      (2, 0b01_01_01), // and(5) -> 01 & 01 = 01 -> 01_01_01
-      (3, 0b10_01_00), // and(9)  -> 10 & 01 = 00 -> 10_01_00
+      (0, 0b00), // and(0) -> 00 & 00 = 00
+      (1, 0b00), // and(2) -> 00 & 10 = 00
+      (2, 0b01), // and(5) -> 01 & 01 = 01
+      (3, 0b00), // and(9)  -> 10 & 01 = 00
     ] {
       let calculated = subtable_evals
         .combined_poly
