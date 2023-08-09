@@ -24,6 +24,7 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
     let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
     let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
 
+    // TODO(#29): Parallelize
     for i in 0..C {
       let mut access_sequence = sparse
         .nz
@@ -39,7 +40,7 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
       // this is sufficient to ensure that the write-set, consisting of (addr, val, ts) tuples, is a set
       for i in 0..sparse.s {
         let memory_address = access_sequence[i];
-        assert!(memory_address < sparse.m);
+        debug_assert!(memory_address < sparse.m);
         let ts = final_timestamps[memory_address];
         read_timestamps[i] = ts;
         let write_timestamp = ts + 1;

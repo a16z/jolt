@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
-#![allow(dead_code)]
 
 use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -62,6 +61,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
           let len = poly_A.len() / 2;
           for i in 0..len {
+            // TODO(#28): Optimize
+
             // eval 0: bound_func is A(low)
             eval_point_0 += comb_func(&poly_A[i], &poly_B[i], &poly_C_par[i]);
 
@@ -155,7 +156,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
   where
-    Func: Fn(&[F; ALPHA]) -> F,
+    Func: Fn(&[F; ALPHA]) -> F + std::marker::Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let mut r: Vec<F> = Vec::new();
@@ -167,8 +168,19 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let mut eval_points = vec![F::zero(); combined_degree + 1];
 
       let mle_half = polys[0].len() / 2;
-      for poly_term_i in 0..mle_half {
+
+      // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
+      #[cfg(feature = "multicore")]
+      let iterator = (0..mle_half).into_par_iter();
+
+      #[cfg(not(feature = "multicore"))]
+      let iterator = (0..mle_half).iter();
+
+      let accum: Vec<Vec<F>> = iterator.map(|poly_term_i| {
+        let mut accum = vec![F::zero(); combined_degree + 1];
         // Evaluate P({0, ..., |g(r)|})
+
+        // TODO(#28): Optimize
         // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
         // of the m terms in the Dense multilinear polynomials. Formula is:
         // half = | D_{n-1} | / 2
@@ -176,11 +188,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         // eval 0: bound_func is A(low)
         // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-        eval_points[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
+        accum[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
 
-        // TODO: Can be computed from prev_round_claim - eval_point_0
+        // TODO(#28): Can be computed from prev_round_claim - eval_point_0
         let eval_at_one: [F; ALPHA] = std::array::from_fn(|j| polys[j][mle_half + poly_term_i]);
-        eval_points[1] += comb_func(&eval_at_one);
+        accum[1] += comb_func(&eval_at_one);
 
         // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
         // D_n(index, 0) = D_{n-1} +
@@ -197,8 +209,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               existing_term[poly_i] + poly[mle_half + poly_term_i] - poly[poly_term_i];
           }
 
-          eval_points[eval_i] += comb_func(&poly_evals);
+          accum[eval_i] += comb_func(&poly_evals);
           existing_term = poly_evals;
+        }
+        accum
+      }).collect();
+
+      // TODO: This can be parallelized now
+      for poly_i in 0..(combined_degree + 1) {
+        for mle_i in 0..mle_half {
+          eval_points[poly_i] += accum[mle_i][poly_i];
         }
       }
 
@@ -296,6 +316,7 @@ pub struct ZKSumcheckInstanceProof<G: CurveGroup> {
   proofs: Vec<DotProductProof<G>>,
 }
 
+#[allow(dead_code)]
 impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
   pub fn new(comm_polys: Vec<G>, comm_evals: Vec<G>, proofs: Vec<DotProductProof<G>>) -> Self {
     ZKSumcheckInstanceProof {

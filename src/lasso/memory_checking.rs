@@ -266,6 +266,8 @@ impl<F: PrimeField> GrandProducts<F> {
         .collect::<Vec<F>>(),
     );
 
+    // TODO(#30): Parallelize
+
     // read: s hash evaluations => log(s)-variate polynomial
     assert_eq!(dim_i.len(), read_i.len());
     let num_ops = dim_i.len();
