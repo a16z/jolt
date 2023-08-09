@@ -91,7 +91,6 @@ pub struct SparseLookupMatrix<const C: usize> {
 impl<const C: usize> SparseLookupMatrix<C> {
   pub fn new(nonzero_indices: Vec<[usize; C]>, log_m: usize) -> Self {
     let s = nonzero_indices.len().next_power_of_two();
-    // TODO(moodlezoup): nonzero_indices.resize?
 
     SparseLookupMatrix {
       nz: nonzero_indices,
@@ -192,7 +191,6 @@ where
       transcript,
     );
 
-    // TODO(moodlezoup): Is it safe to reuse gens_derefs here?
     // Combined eval proof for E_i(r_z)
     let eval_derefs: [G::ScalarField; S::NUM_MEMORIES] =
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(&r_z));

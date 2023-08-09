@@ -141,7 +141,6 @@ where
   }
 }
 
-// TODO(moodlezoup): Combine init and write, read and final
 /// Contains grand product circuits to evaluate multi-set checks on memories.
 /// Evaluating each circuit is equivalent to computing the hash/fingerprint
 /// H_{\tau, \gamma} of the corresponding set.
@@ -486,7 +485,7 @@ where
                      v: &G::ScalarField,
                      t: &G::ScalarField|
      -> G::ScalarField { *t * gamma.square() + *v * *gamma + *a - tau };
-    // TODO(moodlezoup): this differs from the Lasso paper a little:
+    // Note: this differs from the Lasso paper a little:
     // (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
 
     let (claim_init, claim_read, claim_write, claim_final) = claims;

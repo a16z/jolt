@@ -19,7 +19,6 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
 impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
   #[tracing::instrument(skip_all, name = "Densify")]
   fn from(sparse: &SparseLookupMatrix<C>) -> Self {
-    // TODO(moodlezoup) Initialize as arrays using std::array::from_fn ?
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
     let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
@@ -31,7 +30,6 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
         .iter()
         .map(|indices| indices[i])
         .collect::<Vec<usize>>();
-      // TODO(moodlezoup) Is this resize necessary/in the right place?
       access_sequence.resize(sparse.s, 0usize);
 
       let mut final_timestamps = vec![0usize; sparse.m];
