@@ -215,7 +215,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         accum
       }).collect();
 
-      // TODO: This can be parallelized now
+      // TODO(#31): Parallelize
       for poly_i in 0..(combined_degree + 1) {
         for mle_i in 0..mle_half {
           eval_points[poly_i] += accum[mle_i][poly_i];

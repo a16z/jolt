@@ -2,7 +2,7 @@
 
 ![imgs/lasso_logo.png](imgs/lasso_logo.png)
 
-Lookup Arguments via Sum-check and Sparse polynomial commitments, including for Oversized tables.
+Lookup Arguments via Sum-check and Sparse polynomial commitments, including for Oversized tables. Code originally derived from [Spartan](https://github.com/microsoft/Spartan) by Srinath Setty.
 
 ## Overview
 
@@ -31,7 +31,7 @@ Lookup Arguments via Sum-check and Sparse polynomial commitments, including for 
 -   `cargo build --release`
 -   `cargo run --release -- --name <bench_name>`
 -   `cargo run --release -- --name <bench_name> --chart`: Display performance gant chart
--   `cargo run --release --name <bench_name> --features ark-msm`: Run without MSM small field optimizations
+-   `cargo run --release --features ark-msm -- --name <bench_name>`: Run without MSM small field optimizations
 -   `sudo cargo flamegraph`
 
 _Note on benching / flamegraphing: Turn off the parallel feature in Cargo.toml (`multicore`) and / or `export RAYON_NUM_THREADS=1` to make flamegraph more interpretable. Turning off `multicore` and leaving `unset RAYON_NUM_THREADS` allows testing Arkworks MSM parallelism without Lasso parallelism._

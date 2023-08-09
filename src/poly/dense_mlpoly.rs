@@ -239,7 +239,6 @@ impl<F: PrimeField> DensePolynomial<F> {
   }
 
   pub fn extend(&mut self, other: &DensePolynomial<F>) {
-    // TODO: allow extension even when some vars are bound
     assert_eq!(self.Z.len(), self.len);
     let other_vec = other.vec();
     assert_eq!(other_vec.len(), self.len);
