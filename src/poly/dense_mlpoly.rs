@@ -3,7 +3,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct};
 
 use super::commitments::{Commitments, MultiCommitGens};
-use crate::subprotocols::{DotProductProofGens, DotProductProofLog};
+use crate::subprotocols::dot_product::{DotProductProofGens, DotProductProofLog};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
@@ -403,7 +403,9 @@ impl<G: CurveGroup> PolyEvalProof<G> {
 
 #[cfg(test)]
 mod tests {
+
   use super::*;
+  use crate::subprotocols::dot_product::DotProductProof;
   use ark_curve25519::EdwardsProjective as G1Projective;
   use ark_curve25519::Fr;
   use ark_std::test_rng;
@@ -428,7 +430,7 @@ mod tests {
       .collect::<Vec<G::ScalarField>>();
 
     // compute dot product between LZ and R
-    DotProductProofLog::<G>::compute_dotproduct(&LZ, &R)
+    DotProductProof::<G>::compute_dotproduct(&LZ, &R)
   }
 
   #[test]

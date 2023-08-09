@@ -5,7 +5,7 @@
 use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::subprotocols::DotProductProof;
+use crate::subprotocols::dot_product::DotProductProof;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
