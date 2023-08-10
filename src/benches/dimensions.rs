@@ -3,10 +3,10 @@ use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use ark_std::{log2, test_rng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use libspartan::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
-use libspartan::sparse_mlpoly::subtables::lt::LTSubtableStrategy;
-use libspartan::sparse_mlpoly::subtables::and::AndSubtableStrategy;
-use libspartan::{
+use liblasso::sparse_mlpoly::sparse_mlpoly::SparsePolyCommitmentGens;
+use liblasso::sparse_mlpoly::subtables::lt::LTSubtableStrategy;
+use liblasso::sparse_mlpoly::subtables::and::AndSubtableStrategy;
+use liblasso::{
   random::RandomTape,
   sparse_mlpoly::{
     densified::DensifiedRepresentation,

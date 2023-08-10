@@ -1,4 +1,4 @@
-use libspartan::benches::bench::{benchmarks, BenchType};
+use liblasso::benches::bench::{benchmarks, BenchType};
 use tracing_subscriber::{self, fmt::format::FmtSpan};
 
 use clap::Parser;
