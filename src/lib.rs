@@ -20,7 +20,7 @@ mod msm;
 mod poly;
 mod subprotocols;
 pub mod subtables;
-pub mod utils;
+mod utils;
 
 #[cfg(test)]
 mod e2e_test;
