@@ -36,7 +36,9 @@ rand_chacha = { version = "0.3.0", default-features = false }
 ark-ec = { version = "0.4.2", default-features = false }
 ark-ff = { version = "0.4.2", default-features = false }
 ark-std = { version = "0.4.0", default-features = false }
-ark-serialize =  { version = "0.4.2", default-features = false, features = [ "derive" ] }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
 
 # ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
 criterion = { version = "0.3.1", features = ["html_reports"] }
@@ -57,20 +59,15 @@ name = "liblasso"
 path = "src/lib.rs"
 
 [features]
-default = [ 
+default = [
     "ark-ec/parallel",
     "ark-ff/parallel",
-    "ark-std/parallel",    
+    "ark-std/parallel",
     "ark-ff/asm",
-    "multicore"
+    "multicore",
 ]
 multicore = ["rayon"]
 ark-msm = [] # run with arkworks MSM without small field element optimization
-
-[[bench]]
-path = "src/benches"
-name = "dimensions"
-harness = false
 
 [profile.release]
 debug = true
