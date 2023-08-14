@@ -18,8 +18,7 @@ Lookup Arguments via Sum-check and Sparse polynomial commitments, including for 
 ## Current usage
 
 ```rust
-  let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
-  let mut dense: DensifiedRepresentation<F, C> = DensifiedRepresentation::from(&lookup_matrix);
+  let mut dense: DensifiedRepresentation<F, C> = DensifiedRepresentation::from(&nz, log_M);
   let commitment = dense.commit::<G>(&gens);
 
   let proof =
