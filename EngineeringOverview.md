@@ -62,9 +62,7 @@ $v_{E_i}$ is provided by sumcheck in step 2. $E_i(r_z)$ is provided by an oracle
 
 ### 1. Prover commitments
 
-`SparseLookupMatrix` is created from a `C` sized vector of non-zero indices along each dimension.
-
-We convert the `SparseLookupMatrix` to a `DensifiedRepresentation` which handles the construction of:
+We convert a `C` sized vector of lookup indices into a `DensifiedRepresentation` which handles the construction of:
 
 -   $`\text{dim}_i \ \forall i=1,...,C`$
 -   $`E_i \ \forall i=1,...,C`$

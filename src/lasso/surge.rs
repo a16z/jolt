@@ -81,27 +81,6 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseLookupMatrix<const C: usize> {
-  pub nz: Vec<[usize; C]>, // non-zero indices nz_1(i), ..., nz_c(i)
-  pub s: usize,            // sparsity
-  pub log_m: usize,
-  pub m: usize,
-}
-
-impl<const C: usize> SparseLookupMatrix<C> {
-  pub fn new(nonzero_indices: Vec<[usize; C]>, log_m: usize) -> Self {
-    let s = nonzero_indices.len().next_power_of_two();
-
-    SparseLookupMatrix {
-      nz: nonzero_indices,
-      s,
-      log_m,
-      m: log_m.pow2(),
-    }
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,

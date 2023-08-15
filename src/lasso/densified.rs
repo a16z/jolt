@@ -1,8 +1,9 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
+use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use super::surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialCommitment};
+use crate::utils::math::Math;
 
 pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub dim_usize: [Vec<usize>; C],
@@ -16,9 +17,12 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub m: usize,
 }
 
-impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRepresentation<F, C> {
+impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   #[tracing::instrument(skip_all, name = "Densify")]
-  fn from(sparse: &SparseLookupMatrix<C>) -> Self {
+  pub fn from_lookup_indices(indices: &Vec<[usize; C]>, log_m: usize) -> Self {
+    let s = indices.len().next_power_of_two();
+    let m = log_m.pow2();
+
     let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
     let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
@@ -26,21 +30,20 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
 
     // TODO(#29): Parallelize
     for i in 0..C {
-      let mut access_sequence = sparse
-        .nz
+      let mut access_sequence = indices
         .iter()
         .map(|indices| indices[i])
         .collect::<Vec<usize>>();
-      access_sequence.resize(sparse.s, 0usize);
+      access_sequence.resize(s, 0usize);
 
-      let mut final_timestamps = vec![0usize; sparse.m];
-      let mut read_timestamps = vec![0usize; sparse.s];
+      let mut final_timestamps = vec![0usize; m];
+      let mut read_timestamps = vec![0usize; s];
 
       // since read timestamps are trustworthy, we can simply increment the r-ts to obtain a w-ts
       // this is sufficient to ensure that the write-set, consisting of (addr, val, ts) tuples, is a set
-      for i in 0..sparse.s {
+      for i in 0..s {
         let memory_address = access_sequence[i];
-        debug_assert!(memory_address < sparse.m);
+        debug_assert!(memory_address < m);
         let ts = final_timestamps[memory_address];
         read_timestamps[i] = ts;
         let write_timestamp = ts + 1;
@@ -65,14 +68,12 @@ impl<F: PrimeField, const C: usize> From<&SparseLookupMatrix<C>> for DensifiedRe
       r#final: r#final.try_into().unwrap(),
       combined_l_variate_polys,
       combined_log_m_variate_polys,
-      s: sparse.s,
-      log_m: sparse.log_m,
-      m: sparse.m,
+      s,
+      log_m,
+      m,
     }
   }
-}
 
-impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
   #[tracing::instrument(skip_all, name = "DensifiedRepresentation.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,

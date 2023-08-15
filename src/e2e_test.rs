@@ -4,7 +4,7 @@ use merlin::Transcript;
 use crate::{
   lasso::{
     densified::DensifiedRepresentation,
-    surge::{SparseLookupMatrix, SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
+    surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
   },
   subtables::{
     and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
@@ -32,9 +32,8 @@ macro_rules! e2e_test {
       // generate sparse polynomial
       let nz: Vec<[usize; C]> = gen_indices($sparsity, M);
 
-      let lookup_matrix = SparseLookupMatrix::new(nz, log_M);
-
-      let mut dense: DensifiedRepresentation<$F, C> = DensifiedRepresentation::from(&lookup_matrix);
+      let mut dense: DensifiedRepresentation<$F, C> =
+        DensifiedRepresentation::from_lookup_indices(&nz, log_M);
       let gens =
         SparsePolyCommitmentGens::<$G>::new(b"gens_sparse_poly", C, $sparsity, NUM_MEMORIES, log_M);
       let commitment = dense.commit::<$G>(&gens);

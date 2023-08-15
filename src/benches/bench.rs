@@ -1,10 +1,7 @@
 use crate::lasso::surge::SparsePolyCommitmentGens;
 use crate::subtables::and::AndSubtableStrategy;
 use crate::{
-  lasso::{
-    densified::DensifiedRepresentation,
-    surge::{SparseLookupMatrix, SparsePolynomialEvaluationProof},
-  },
+  lasso::{densified::DensifiedRepresentation, surge::SparsePolynomialEvaluationProof},
   utils::random::RandomTape,
 };
 use ark_curve25519::{EdwardsProjective, Fr};
@@ -52,10 +49,10 @@ macro_rules! single_pass_lasso {
       let r: Vec<F> = gen_random_point::<F>(log_s);
 
       let nz = gen_indices::<C>(S, M);
-      let lookup_matrix = SparseLookupMatrix::new(nz.clone(), log_m);
 
       // Prove
-      let mut dense: DensifiedRepresentation<F, C> = DensifiedRepresentation::from(&lookup_matrix);
+      let mut dense: DensifiedRepresentation<F, C> =
+        DensifiedRepresentation::from_lookup_indices(&nz, log_m);
       let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, S, C, log_m);
       let _commitment = dense.commit::<$group>(&gens);
       let mut random_tape = RandomTape::new(b"proof");
