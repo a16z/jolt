@@ -34,6 +34,8 @@ Lookup Arguments via Sum-check and Sparse polynomial commitments, including for 
 
 ## Cmds
 
+Note: requires nightly Rust
+
 -   `cargo build --release`
 -   `cargo run --release -- --name <bench_name>`
 -   `cargo run --release -- --name <bench_name> --chart`: Display performance gant chart
