@@ -7,8 +7,10 @@ use super::SubtableStrategy;
 
 pub enum LTSubtableStrategy {}
 
-impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
-  for LTSubtableStrategy
+pub struct ComparisonSubtableStrategy<const LT: bool>;
+
+impl<F: PrimeField, const C: usize, const M: usize, const LT: bool> SubtableStrategy<F, C, M>
+  for ComparisonSubtableStrategy<LT>
 {
   const NUM_SUBTABLES: usize = 2;
   const NUM_MEMORIES: usize = 2 * C;
@@ -22,7 +24,14 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     // Materialize table in counting order where lhs | rhs counts 0->m
     for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
-      materialized_lt.push(F::from((lhs < rhs) as u64));
+      match LT {
+        true => {
+          materialized_lt.push(F::from((lhs < rhs) as u64));
+        }
+        false => {
+          materialized_lt.push(F::from((lhs > rhs) as u64));
+        }
+      }
       materialized_eq.push(F::from((lhs == rhs) as u64));
     }
 
@@ -40,7 +49,14 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
       let mut result = F::zero();
       let mut eq_term = F::one();
       for i in 0..b {
-        result += (F::one() - x[i]) * y[i] * eq_term;
+        match LT {
+          true => {
+            result += (F::one() - x[i]) * y[i] * eq_term;
+          }
+          false => {
+            result += x[i] * (F::one() - y[i]) * eq_term;
+          }
+        }
         eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
       }
       result
@@ -106,7 +122,8 @@ mod test {
       + Fr::from(30u64) * Fr::one() * Fr::zero()
       + Fr::from(40u64) * Fr::one() * Fr::zero() * Fr::one();
 
-    let combined = <LTSubtableStrategy as SubtableStrategy<_, C, M>>::combine_lookups(&vals);
+    let combined =
+      <ComparisonSubtableStrategy<true> as SubtableStrategy<_, C, M>>::combine_lookups(&vals);
     assert_eq!(combined, expected);
   }
 
@@ -115,7 +132,7 @@ mod test {
     const C: usize = 2;
     const M: usize = 16;
     let materialized: [Vec<Fr>; 2] =
-      <LTSubtableStrategy as SubtableStrategy<Fr, C, M>>::materialize_subtables();
+      <ComparisonSubtableStrategy<true> as SubtableStrategy<Fr, C, M>>::materialize_subtables();
     let lt = materialized[0].clone();
     let eq = materialized[1].clone();
 
@@ -138,9 +155,37 @@ mod test {
                                        // ...
   }
 
+  #[test]
+  fn table_materialization_gt_hardcoded() {
+    const C: usize = 2;
+    const M: usize = 16;
+    let materialized: [Vec<Fr>; 2] =
+      <ComparisonSubtableStrategy<false> as SubtableStrategy<Fr, C, M>>::materialize_subtables();
+    let lt = materialized[0].clone();
+    let eq = materialized[1].clone();
+
+    assert_eq!(lt[0], Fr::from(0b00)); // 00 > 00 = false
+    assert_eq!(lt[1], Fr::from(0b00)); // 00 > 01 = false
+    assert_eq!(lt[2], Fr::from(0b00)); // 00 > 10 = false
+    assert_eq!(lt[3], Fr::from(0b00)); // 00 > 11 = false
+    assert_eq!(lt[4], Fr::from(0b01)); // 01 > 00 = true
+    assert_eq!(lt[5], Fr::from(0b00)); // 01 > 01 = true
+    assert_eq!(lt[6], Fr::from(0b00)); // 01 > 10 = false
+                                       // ...
+
+    assert_eq!(eq[0], Fr::from(0b01)); // 00 == 00 = true
+    assert_eq!(eq[1], Fr::from(0b00)); // 00 == 01 = false
+    assert_eq!(eq[2], Fr::from(0b00)); // 00 == 10 = false
+    assert_eq!(eq[3], Fr::from(0b00)); // 00 == 11 = false
+    assert_eq!(eq[4], Fr::from(0b00)); // 01 == 00 = false
+    assert_eq!(eq[5], Fr::from(0b01)); // 01 == 01 = true
+    assert_eq!(eq[6], Fr::from(0b00)); // 01 == 10 = false
+                                       // ...
+  }
+
   materialization_mle_parity_test!(
     lt_materialization_parity_test,
-    LTSubtableStrategy,
+    ComparisonSubtableStrategy<true>,
     Fr,
     /* m = */ 16,
     /* NUM_SUBTABLES = */ 2
