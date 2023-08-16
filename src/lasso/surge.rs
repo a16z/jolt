@@ -230,6 +230,7 @@ where
     }
   }
 
+  #[tracing::instrument(skip_all, name = "SparsePoly.verify")]
   pub fn verify(
     &self,
     commitment: &SparsePolynomialCommitment<G>,

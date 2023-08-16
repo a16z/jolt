@@ -57,16 +57,18 @@ macro_rules! single_pass_lasso {
       // Prove
       let mut dense: DensifiedRepresentation<F, C> = DensifiedRepresentation::from(&lookup_matrix);
       let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, S, C, log_m);
-      let _commitment = dense.commit::<$group>(&gens);
+      let commitment = dense.commit::<$group>(&gens);
       let mut random_tape = RandomTape::new(b"proof");
       let mut prover_transcript = Transcript::new(b"example");
-      let _proof = SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
+      let proof = SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
         &mut dense,
         &r,
         &gens,
         &mut prover_transcript,
         &mut random_tape,
       );
+      let mut verify_transcript = Transcript::new(b"example");
+      proof.verify(&commitment, &r, &gens, &mut verify_transcript).expect("should verify");
     })
   };
 }
