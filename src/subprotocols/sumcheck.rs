@@ -176,49 +176,51 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       #[cfg(not(feature = "multicore"))]
       let iterator = (0..mle_half).iter();
 
-      let accum: Vec<Vec<F>> = iterator.map(|poly_term_i| {
-        let mut accum = vec![F::zero(); combined_degree + 1];
-        // Evaluate P({0, ..., |g(r)|})
+      let accum: Vec<Vec<F>> = iterator
+        .map(|poly_term_i| {
+          let mut accum = vec![F::zero(); combined_degree + 1];
+          // Evaluate P({0, ..., |g(r)|})
 
-        // TODO(#28): Optimize
-        // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
-        // of the m terms in the Dense multilinear polynomials. Formula is:
-        // half = | D_{n-1} | / 2
-        // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+          // TODO(#28): Optimize
+          // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
+          // of the m terms in the Dense multilinear polynomials. Formula is:
+          // half = | D_{n-1} | / 2
+          // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
 
-        // eval 0: bound_func is A(low)
-        // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-        accum[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
+          // eval 0: bound_func is A(low)
+          // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+          accum[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
 
-        // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-        let eval_at_one: [F; ALPHA] = std::array::from_fn(|j| polys[j][mle_half + poly_term_i]);
-        accum[1] += comb_func(&eval_at_one);
+          // TODO(#28): Can be computed from prev_round_claim - eval_point_0
+          let eval_at_one: [F; ALPHA] = std::array::from_fn(|j| polys[j][mle_half + poly_term_i]);
+          accum[1] += comb_func(&eval_at_one);
 
-        // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-        // D_n(index, 0) = D_{n-1} +
-        // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-        // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-        // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-        // ...
-        let mut existing_term = eval_at_one;
-        for eval_i in 2..(combined_degree + 1) {
-          let mut poly_evals = [F::zero(); ALPHA];
-          for poly_i in 0..polys.len() {
-            let poly = &polys[poly_i];
-            poly_evals[poly_i] =
-              existing_term[poly_i] + poly[mle_half + poly_term_i] - poly[poly_term_i];
+          // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+          // D_n(index, 0) = D_{n-1} +
+          // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+          // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+          // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+          // ...
+          let mut existing_term = eval_at_one;
+          for acc in accum.iter_mut().take(combined_degree + 1).skip(2) {
+            let mut poly_evals = [F::zero(); ALPHA];
+            for poly_i in 0..polys.len() {
+              let poly = &polys[poly_i];
+              poly_evals[poly_i] =
+                existing_term[poly_i] + poly[mle_half + poly_term_i] - poly[poly_term_i];
+            }
+
+            *acc += comb_func(&poly_evals);
+            existing_term = poly_evals;
           }
-
-          accum[eval_i] += comb_func(&poly_evals);
-          existing_term = poly_evals;
-        }
-        accum
-      }).collect();
+          accum
+        })
+        .collect();
 
       // TODO(#31): Parallelize
-      for poly_i in 0..(combined_degree + 1) {
-        for mle_i in 0..mle_half {
-          eval_points[poly_i] += accum[mle_i][poly_i];
+      for (poly_i, eval_point) in eval_points.iter_mut().enumerate().take(combined_degree + 1) {
+        for mle in accum.iter().take(mle_half) {
+          *eval_point += mle[poly_i];
         }
       }
 
@@ -234,8 +236,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       r.push(r_j);
 
       // bound all tables to the verifier's challenege
-      for poly_i in 0..polys.len() {
-        polys[poly_i].bound_poly_var_top(&r_j);
+      for poly in polys.iter_mut() {
+        poly.bound_poly_var_top(&r_j);
       }
       compressed_polys.push(round_uni_poly.compress());
     }

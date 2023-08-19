@@ -1,4 +1,4 @@
-
+use super::bullet::BulletReductionProof;
 use crate::poly::commitments::{Commitments, MultiCommitGens};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -7,7 +7,6 @@ use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_serialize::*;
 use merlin::Transcript;
-use super::bullet::BulletReductionProof;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DotProductProof<G: CurveGroup> {

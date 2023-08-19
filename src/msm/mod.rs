@@ -36,7 +36,7 @@ pub trait VariableBaseMSM: ScalarMul {
   fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
     (bases.len() == scalars.len())
       .then(|| Self::msm_unchecked(bases, scalars))
-      .ok_or(bases.len().min(scalars.len()))
+      .ok_or_else(|| bases.len().min(scalars.len()))
   }
 
   /// Optimized implementation of multi-scalar multiplication.
@@ -151,7 +151,7 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 
   // We're traversing windows from high to low.
   lowest
-    + &window_sums[1..]
+    + window_sums[1..]
       .iter()
       .rev()
       .fold(zero, |mut total, sum_i| {
@@ -196,12 +196,12 @@ fn msm_bigint<V: VariableBaseMSM>(
   let one = V::ScalarField::one().into_bigint();
 
   let zero = V::zero();
-  let window_starts: Vec<_> = (0..num_bits).step_by(c).collect();
+  let window_starts = (0..num_bits).step_by(c);
 
   // Each window is of size `c`.
   // We divide up the bits 0..num_bits into windows of size `c`, and
   // in parallel process each such window.
-  let window_sums: Vec<_> = ark_std::cfg_into_iter!(window_starts)
+  let window_sums: Vec<_> = window_starts
     .map(|w_start| {
       let mut res = zero;
       // We don't need the "zero" bucket, so we only have 2^c - 1 buckets.
@@ -261,7 +261,7 @@ fn msm_bigint<V: VariableBaseMSM>(
 
   // We're traversing windows from high to low.
   lowest
-    + &window_sums[1..]
+    + window_sums[1..]
       .iter()
       .rev()
       .fold(zero, |mut total, sum_i| {

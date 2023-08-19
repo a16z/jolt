@@ -33,7 +33,7 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
     [full, remainder, zeros]
   }
 
-  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, point: &[F]) -> F {
     if subtable_index == 0 {
       let b = point.len();
       let mut result = F::zero();
@@ -63,10 +63,8 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
     let log_m = log2(M) as usize;
     if memory_index * log_m > LOG_R {
       2
-    } else if (memory_index + 1) * log_m > LOG_R {
-      1
     } else {
-      0
+      usize::from((memory_index + 1) * log_m > LOG_R)
     }
   }
 
@@ -80,9 +78,9 @@ impl<F: PrimeField, const C: usize, const M: usize, const LOG_R: usize> Subtable
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let log_m = log2(M) as usize;
     let mut sum = F::zero();
-    for i in 0..C {
+    for (i, val) in vals.iter().enumerate().take(C) {
       let weight: u64 = 1u64 << (i * log_m);
-      sum += F::from(weight) * vals[i];
+      sum += F::from(weight) * val;
     }
     sum
   }
