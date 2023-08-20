@@ -85,7 +85,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
-  eval_derefs: [G::ScalarField; ALPHA],
+  eval_derefs: Vec<G::ScalarField>,
   proof_derefs: CombinedTableEvalProof<G, ALPHA>,
 }
 
@@ -118,7 +118,7 @@ where
   #[tracing::instrument(skip_all, name = "SparsePoly.prove")]
   pub fn prove(
     dense: &mut DensifiedRepresentation<G::ScalarField, C>,
-    r: &Vec<G::ScalarField>,
+    r: &[G::ScalarField],
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -139,7 +139,7 @@ where
       comm
     };
 
-    let eq = EqPolynomial::new(r.clone());
+    let eq = EqPolynomial::new(r.to_vec());
     let claimed_eval = subtables.compute_sumcheck_claim(&eq);
 
     <Transcript as ProofTranscript<G>>::append_scalar(
@@ -148,14 +148,14 @@ where
       &claimed_eval,
     );
 
-    let mut combined_sumcheck_polys: [DensePolynomial<G::ScalarField>; S::NUM_MEMORIES + 1] =
-      std::array::from_fn(|i| {
+    let mut combined_sumcheck_polys: Vec<DensePolynomial<G::ScalarField>> =
+      (0..(S::NUM_MEMORIES + 1)).map(|i| {
         if i != S::NUM_MEMORIES {
           subtables.lookup_polys[i].clone()
         } else {
           DensePolynomial::new(eq.evals())
         }
-      });
+      }).collect();
 
     let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<
       _,
@@ -172,8 +172,8 @@ where
     );
 
     // Combined eval proof for E_i(r_z)
-    let eval_derefs: [G::ScalarField; S::NUM_MEMORIES] =
-      std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(&r_z));
+    let eval_derefs: Vec<G::ScalarField> =
+      (0..S::NUM_MEMORIES).map(|i| subtables.lookup_polys[i].evaluate(&r_z)).collect();
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
       eval_derefs.as_ref(),
@@ -214,7 +214,7 @@ where
   pub fn verify(
     &self,
     commitment: &SparsePolynomialCommitment<G>,
-    eq_randomness: &Vec<G::ScalarField>,
+    eq_randomness: &[G::ScalarField],
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
@@ -241,7 +241,7 @@ where
     )?;
 
     // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
-    let eq_eval = EqPolynomial::new(eq_randomness.clone()).evaluate(&r_z);
+    let eq_eval = EqPolynomial::new(eq_randomness.to_vec()).evaluate(&r_z);
     assert_eq!(
       eq_eval * S::combine_lookups(&self.primary_sumcheck.eval_derefs),
       claim_last,

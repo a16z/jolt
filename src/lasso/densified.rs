@@ -6,10 +6,10 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;
 
 pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
-  pub dim_usize: [Vec<usize>; C],
-  pub dim: [DensePolynomial<F>; C],
-  pub read: [DensePolynomial<F>; C],
-  pub r#final: [DensePolynomial<F>; C],
+  pub dim_usize: Vec<Vec<usize>>,
+  pub dim: Vec<DensePolynomial<F>>,
+  pub read: Vec<DensePolynomial<F>>,
+  pub r#final: Vec<DensePolynomial<F>>,
   pub combined_l_variate_polys: DensePolynomial<F>,
   pub combined_log_m_variate_polys: DensePolynomial<F>,
   pub s: usize, // sparsity

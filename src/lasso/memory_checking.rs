@@ -654,7 +654,7 @@ where
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct ProductLayerProof<F: PrimeField, const NUM_MEMORIES: usize> {
-  grand_product_evals: [(F, F, F, F); NUM_MEMORIES],
+  grand_product_evals: Vec<(F, F, F, F)>,
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
 }
@@ -680,7 +680,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let grand_product_evals: [(F, F, F, F); NUM_MEMORIES] = std::array::from_fn(|i| {
+    let grand_product_evals: Vec<(F, F, F, F)> = (0..NUM_MEMORIES).map(|i| {
       let hash_init = grand_products[i].init.evaluate();
       let hash_read = grand_products[i].read.evaluate();
       let hash_write = grand_products[i].write.evaluate();
@@ -702,7 +702,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
       );
 
       (hash_init, hash_read, hash_write, hash_final)
-    });
+    }).collect();
 
     let mut read_write_grand_products: Vec<&mut GrandProductCircuit<F>> = grand_products
       .iter_mut()
@@ -741,7 +741,8 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    for (hash_init, hash_read, hash_write, hash_final) in self.grand_product_evals {
+    // TODO: This clone is likely expensive
+    for (hash_init, hash_read, hash_write, hash_final) in self.grand_product_evals.clone() {
       // Multiset equality check
       assert_eq!(hash_init * hash_write, hash_read * hash_final);
 

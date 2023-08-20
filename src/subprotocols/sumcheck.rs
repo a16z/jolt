@@ -150,13 +150,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>, const ALPHA: usize>(
     _claim: &F,
     num_rounds: usize,
-    polys: &mut [DensePolynomial<F>; ALPHA],
+    polys: &mut Vec<DensePolynomial<F>>,
     comb_func: Func,
     combined_degree: usize,
     transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
   where
-    Func: Fn(&[F; ALPHA]) -> F + Sync,
+    Func: Fn(&[F]) -> F + std::marker::Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let mut r: Vec<F> = Vec::new();
@@ -187,35 +187,34 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
           // half = | D_{n-1} | / 2
           // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
 
-          // eval 0: bound_func is A(low)
-          // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-          accum[0] += comb_func(&std::array::from_fn(|j| polys[j][poly_term_i]));
+        // eval 0: bound_func is A(low)
+        let params_zero: Vec<F> = (0..ALPHA).map(|j| polys[j][poly_term_i]).collect();
+        accum[0] += comb_func(&params_zero);
 
-          // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-          let eval_at_one: [F; ALPHA] = std::array::from_fn(|j| polys[j][mle_half + poly_term_i]);
-          accum[1] += comb_func(&eval_at_one);
+        // TODO(#28): Can be computed from prev_round_claim - eval_point_0
+        let params_one: Vec<F> = (0..ALPHA).map(|j| polys[j][mle_half + poly_term_i]).collect();
+        accum[1] += comb_func(&params_one);
 
-          // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-          // D_n(index, 0) = D_{n-1} +
-          // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-          // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-          // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-          // ...
-          let mut existing_term = eval_at_one;
-          for acc in accum.iter_mut().skip(2) {
-            let mut poly_evals = [F::zero(); ALPHA];
-            for poly_i in 0..polys.len() {
-              let poly = &polys[poly_i];
-              poly_evals[poly_i] =
-                existing_term[poly_i] + poly[mle_half + poly_term_i] - poly[poly_term_i];
-            }
-
-            *acc += comb_func(&poly_evals);
-            existing_term = poly_evals;
+        // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+        // D_n(index, 0) = D_{n-1} +
+        // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+        // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+        // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+        // ...
+        let mut existing_term = params_one;
+        for eval_i in 2..(combined_degree + 1) {
+          let mut poly_evals = vec![F::zero(); ALPHA];
+          for poly_i in 0..polys.len() {
+            let poly = &polys[poly_i];
+            poly_evals[poly_i] =
+              existing_term[poly_i] + poly[mle_half + poly_term_i] - poly[poly_term_i];
           }
-          accum
-        })
-        .collect();
+
+          accum[eval_i] += comb_func(&poly_evals);
+          existing_term = poly_evals;
+        }
+        accum
+      }).collect();
 
       #[cfg(feature = "multicore")]
       eval_points
@@ -280,7 +279,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
   /// - `transcript`: Fiat-shamir transcript
   ///
-  /// Returns (e, r)
+  /// Returns (e, r)1
   /// - `e`: Claimed evaluation at random point
   /// - `r`: Evaluation point
   pub fn verify<G, T: ProofTranscript<G>>(
