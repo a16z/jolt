@@ -13,7 +13,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   const NUM_SUBTABLES: usize = 1;
   const NUM_MEMORIES: usize = C;
 
-  fn materialize_subtables() -> [Vec<F>; <Self as SubtableStrategy<F, C, M>>::NUM_SUBTABLES] {
+  fn materialize_subtables() -> Vec<Vec<F>> {
     let mut materialized: Vec<F> = Vec::with_capacity(M);
     let bits_per_operand = (log2(M) / 2) as usize;
 
@@ -24,7 +24,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
       materialized.push(row);
     }
 
-    [materialized]
+    vec![materialized]
   }
 
   fn evaluate_subtable_mle(_: usize, point: &Vec<F>) -> F {
@@ -42,7 +42,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   /// Combine AND table subtable evaluations
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
-  fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
+  fn combine_lookups(vals: &[F]) -> F {
     let increment = log2(M) as usize;
     let mut sum = F::zero();
     for i in 0..C {

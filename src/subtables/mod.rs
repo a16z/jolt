@@ -20,10 +20,10 @@ use crate::{
 use rayon::prelude::*;
 
 pub mod and;
-pub mod lt;
-pub mod or;
-pub mod range_check;
-pub mod xor;
+// pub mod lt;
+// pub mod or;
+// pub mod range_check;
+// pub mod xor;
 
 #[cfg(test)]
 pub mod test;
@@ -33,7 +33,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   const NUM_MEMORIES: usize;
 
   /// Materialize subtables indexed [1, ..., \alpha]
-  fn materialize_subtables() -> [Vec<F>; Self::NUM_SUBTABLES];
+  fn materialize_subtables() -> Vec<Vec<F>>;
 
   /// Evaluates the MLE of a subtable at the given point. Used by the verifier in memory-checking.
   ///
@@ -43,17 +43,19 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F;
 
   /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
-  fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
+  fn combine_lookups(vals: &[F]) -> F;
 
   /// The total degree of `g`, i.e. considering `combine_lookups` as a log(m)-variate polynomial.
   /// Determines the number of evaluation points in each sumcheck round.
   fn g_poly_degree() -> usize;
 
   /// Computes eq * g(T_1[k], ..., T_\alpha[k]) assuming the eq evaluation is the last element in vals
-  fn combine_lookups_eq(vals: &[F; Self::NUM_MEMORIES + 1]) -> F {
-    let mut table_evals: [F; Self::NUM_MEMORIES] = [F::zero(); Self::NUM_MEMORIES];
-    table_evals.copy_from_slice(&vals[0..Self::NUM_MEMORIES]);
-    Self::combine_lookups(&table_evals) * vals[Self::NUM_MEMORIES]
+  fn combine_lookups_eq(vals: &[F]) -> F {
+    // len(vals) == Self::NUM_MEMORIES + 1
+    // len(combine_lookups.vals) == Self::NUM_MEMORIES
+    // let mut table_evals: Vec<F> = Vec::with_capacity(Self::NUM_MEMORIES);
+    // table_evals.copy_from_slice(&vals[0..Self::NUM_MEMORIES]);
+    Self::combine_lookups(&vals[0..Self::NUM_MEMORIES]) * vals[Self::NUM_MEMORIES]
   }
 
   /// Total degree of eq * g(T_1[k], ..., T_\alpha[k])
@@ -76,11 +78,11 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   /// Converts subtables T_1, ..., T_{\alpha} and lookup indices nz_1, ..., nz_c
   /// into log(m)-variate "lookup polynomials" E_1, ..., E_{\alpha}.
   fn to_lookup_polys(
-    subtable_entries: &[Vec<F>; Self::NUM_SUBTABLES],
-    nz: &[Vec<usize>; C],
+    subtable_entries: &Vec<Vec<F>>,
+    nz: &Vec<Vec<usize>>,
     s: usize,
-  ) -> [DensePolynomial<F>; Self::NUM_MEMORIES] {
-    std::array::from_fn(|i| {
+  ) -> Vec<DensePolynomial<F>> {
+    (0..Self::NUM_MEMORIES).map(|i|{
       let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
       for j in 0..s {
         let subtable = &subtable_entries[Self::memory_to_subtable_index(i)];
@@ -88,7 +90,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
         subtable_lookups.push(subtable[nz]);
       }
       DensePolynomial::new(subtable_lookups)
-    })
+    }).collect()
   }
 }
 
@@ -98,8 +100,8 @@ where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {
-  subtable_entries: [Vec<F>; S::NUM_SUBTABLES],
-  pub lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES],
+  subtable_entries: Vec<Vec<F>>,
+  pub lookup_polys: Vec<DensePolynomial<F>>,
   pub combined_poly: DensePolynomial<F>,
   strategy: PhantomData<S>,
 }
@@ -113,10 +115,10 @@ where
 {
   /// Create new Subtables
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
-  pub fn new(nz: &[Vec<usize>; C], s: usize) -> Self {
+  pub fn new(nz: &Vec<Vec<usize>>, s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
     let subtable_entries = S::materialize_subtables();
-    let lookup_polys: [DensePolynomial<F>; S::NUM_MEMORIES] =
+    let lookup_polys: Vec<DensePolynomial<F>> =
       S::to_lookup_polys(&subtable_entries, nz, s);
     let combined_poly = DensePolynomial::merge(&lookup_polys);
 
@@ -135,8 +137,8 @@ where
     &self,
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; S::NUM_MEMORIES] {
-    std::array::from_fn(|i| {
+  ) -> Vec<GrandProducts<F>> {
+    (0..S::NUM_MEMORIES).map(|i| {
       let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
       let j = S::memory_to_dimension_index(i);
       GrandProducts::new(
@@ -147,7 +149,7 @@ where
         &dense.r#final[j],
         r_mem_check,
       )
-    })
+    }).collect()
   }
 
   #[tracing::instrument(skip_all, name = "Subtables.commit")]
@@ -173,7 +175,7 @@ where
     let claim = (0..hypercube_size)
       .into_par_iter()
       .map(|k| {
-        let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
+        let g_operands: Vec<F> = (0..S::NUM_MEMORIES).map(|j| g_operands[j][k]).collect();
         // eq * g(T_1[k], ..., T_\alpha[k])
         eq_evals[k] * S::combine_lookups(&g_operands)
       })
@@ -182,7 +184,7 @@ where
     #[cfg(not(feature = "multicore"))]
     let claim = (0..hypercube_size)
       .map(|k| {
-        let g_operands: [F; S::NUM_MEMORIES] = std::array::from_fn(|j| g_operands[j][k]);
+        let g_operands: Vec<F> = (0..S::NUM_MEMORIES)(|j| g_operands[j][k]).collect();
         // eq * g(T_1[k], ..., T_\alpha[k])
         eq_evals[k] * S::combine_lookups(&g_operands)
       })
@@ -206,7 +208,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   fn prove_single(
     joint_poly: &DensePolynomial<G::ScalarField>,
     r: &[G::ScalarField],
-    evals: Vec<G::ScalarField>,
+    evals: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -227,7 +229,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
         evals.len().log_2() as usize,
       );
 
-      let mut poly_evals = DensePolynomial::new(evals);
+      let mut poly_evals = DensePolynomial::new(evals.to_vec());
       for i in (0..challenges.len()).rev() {
         poly_evals.bound_poly_var_bot(&challenges[i]);
       }
@@ -260,7 +262,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   #[tracing::instrument(skip_all, name = "CombinedEval.prove")]
   pub fn prove(
     combined_poly: &DensePolynomial<G::ScalarField>,
-    eval_ops_val_vec: &Vec<G::ScalarField>,
+    eval_ops_val_vec: &[G::ScalarField],
     r: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
@@ -272,14 +274,14 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
     );
 
     let evals = {
-      let mut evals = eval_ops_val_vec.clone();
+      let mut evals: Vec<G::ScalarField> = eval_ops_val_vec.to_vec();
       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
       evals.to_vec()
     };
     let proof_table_eval = CombinedTableEvalProof::<G, C>::prove_single(
       combined_poly,
       r,
-      evals,
+      &evals,
       gens,
       transcript,
       random_tape,
@@ -292,7 +294,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
     proof: &PolyEvalProof<G>,
     comm: &PolyCommitment<G>,
     r: &[G::ScalarField],
-    evals: Vec<G::ScalarField>,
+    evals: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
@@ -305,7 +307,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       b"challenge_combine_n_to_one",
       evals.len().log_2() as usize,
     );
-    let mut poly_evals = DensePolynomial::new(evals);
+    let mut poly_evals = DensePolynomial::new(evals.to_vec());
     for i in (0..challenges.len()).rev() {
       poly_evals.bound_poly_var_bot(&challenges[i]);
     }
@@ -344,7 +346,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       &self.proof_table_eval,
       &comm.comm_ops_val,
       r,
-      evals,
+      &evals,
       gens,
       transcript,
     )
