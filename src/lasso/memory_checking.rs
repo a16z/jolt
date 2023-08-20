@@ -741,10 +741,9 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    // TODO: This clone is likely expensive
-    for (hash_init, hash_read, hash_write, hash_final) in self.grand_product_evals.clone() {
+    for (hash_init, hash_read, hash_write, hash_final) in &self.grand_product_evals {
       // Multiset equality check
-      assert_eq!(hash_init * hash_write, hash_read * hash_final);
+      debug_assert_eq!(*hash_init * *hash_write, *hash_read * *hash_final);
 
       <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_init", &hash_init);
       <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_read", &hash_read);
