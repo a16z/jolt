@@ -20,6 +20,7 @@ use ark_serialize::*;
 
 use ark_std::log2;
 use merlin::Transcript;
+use std::marker::Sync;
 
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
@@ -93,7 +94,7 @@ pub struct SparsePolynomialEvaluationProof<
   G: CurveGroup,
   const C: usize,
   const M: usize,
-  S: SubtableStrategy<G::ScalarField, C, M>,
+  S: SubtableStrategy<G::ScalarField, C, M> + Sync,
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
@@ -102,7 +103,7 @@ pub struct SparsePolynomialEvaluationProof<
   memory_check: MemoryCheckingProof<G, C, M, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
+impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M> + Sync>
   SparsePolynomialEvaluationProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
