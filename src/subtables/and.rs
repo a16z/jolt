@@ -45,7 +45,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
     let increment = log2(M) as usize;
     let mut sum = F::zero();
-    for (i, val) in vals.iter().enumerate().take(C) {
+    for (i, val) in vals.iter().enumerate() {
       let weight: u64 = 1u64 << (i * increment);
       sum += F::from(weight) * val;
     }

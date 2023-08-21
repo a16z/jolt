@@ -621,11 +621,7 @@ where
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for (i, grand_product_claim) in grand_product_claims
-      .iter()
-      .enumerate()
-      .take(S::NUM_MEMORIES)
-    {
+    for (i, grand_product_claim) in grand_product_claims.iter().enumerate() {
       let j = S::memory_to_dimension_index(i);
       let k = S::memory_to_subtable_index(i);
       // Check ALPHA memories / lookup polys / grand products

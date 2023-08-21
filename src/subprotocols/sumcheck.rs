@@ -202,7 +202,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
           // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
           // ...
           let mut existing_term = eval_at_one;
-          for acc in accum.iter_mut().take(combined_degree + 1).skip(2) {
+          for acc in accum.iter_mut().skip(2) {
             let mut poly_evals = [F::zero(); ALPHA];
             for poly_i in 0..polys.len() {
               let poly = &polys[poly_i];
@@ -218,7 +218,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         .collect();
 
       // TODO(#31): Parallelize
-      for (poly_i, eval_point) in eval_points.iter_mut().enumerate().take(combined_degree + 1) {
+      for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
         for mle in accum.iter().take(mle_half) {
           *eval_point += mle[poly_i];
         }
