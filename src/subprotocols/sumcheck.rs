@@ -226,7 +226,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         })
         .collect();
 
-      // TODO(#31): Parallelize
       (0..(combined_degree + 1)).into_par_iter().for_each(|poly_i| {
         (0..mle_half).into_par_iter().for_each(|mle_i| {
           #[cfg(feature = "multicore")]
