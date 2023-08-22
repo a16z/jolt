@@ -22,6 +22,9 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
+#[cfg(feature = "multicore")]
+use parking_lot::Mutex;
+
 impl<F: PrimeField> SumcheckInstanceProof<F> {
   #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched")]
   pub fn prove_cubic_batched<Func, G>(
@@ -165,16 +168,22 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     for _round in 0..num_rounds {
       // Vector storing evaluations of combined polynomials g(x) = P_0(x) * ... P_{num_polys} (x)
       // for points {0, ..., |g(x)|}
-      let mut eval_points = vec![F::zero(); combined_degree + 1];
 
       let mle_half = polys[0].len() / 2;
 
       // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
       #[cfg(feature = "multicore")]
-      let iterator = (0..mle_half).into_par_iter();
+      let (iterator, eval_points) = {
+        let iterator = (0..mle_half).into_par_iter();
+        let eval_points = Mutex::new(vec![F::zero(); combined_degree + 1]);
+        (iterator, eval_points)
+      };
 
       #[cfg(not(feature = "multicore"))]
-      let iterator = 0..mle_half;
+      let (iterator, mut eval_points) = {
+        let iterator = (0..mle_half).iter();
+        let mut eval_points = vec![F::zero(); combined_degree + 1];
+      };
 
       let accum: Vec<Vec<F>> = iterator
         .map(|poly_term_i| {
@@ -218,11 +227,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         .collect();
 
       // TODO(#31): Parallelize
-      for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
-        for mle in accum.iter().take(mle_half) {
-          *eval_point += mle[poly_i];
-        }
-      }
+      (0..(combined_degree + 1)).into_par_iter().for_each(|poly_i| {
+        (0..mle_half).into_par_iter().for_each(|mle_i| {
+          #[cfg(feature = "multicore")]
+          let mut eval_points = eval_points.lock();
+          eval_points[poly_i] += accum[mle_i][poly_i];
+        })
+      });
+
+      #[cfg(feature = "multicore")]
+      let eval_points = eval_points.into_inner();
 
       let round_uni_poly = UniPoly::from_evals(&eval_points);
 
