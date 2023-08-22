@@ -48,7 +48,6 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
       (iterator, dim_usize, dim, read, r#final)
     };
 
-    // TODO(#29): Parallelize
     iterator.for_each(|i| {
       let mut access_sequence = indices
         .iter()
