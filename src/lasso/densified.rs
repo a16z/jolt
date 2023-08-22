@@ -1,6 +1,11 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+#[cfg(feature = "multicore")]
+use std::sync::Mutex;
+
 use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;
@@ -23,13 +28,28 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
     let s = indices.len().next_power_of_two();
     let m = log_m.pow2();
 
-    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
-    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    #[cfg(feature = "multicore")]
+    let (iterator, dim_usize, dim, read, r#final) = {
+      let iterator = (0..C).into_par_iter();
+      let dim_usize: Mutex<Vec<Vec<usize>>> = Mutex::new(Vec::with_capacity(C));
+      let dim: Mutex<Vec<DensePolynomial<F>>> = Mutex::new(Vec::with_capacity(C));
+      let read: Mutex<Vec<DensePolynomial<F>>> = Mutex::new(Vec::with_capacity(C));
+      let r#final: Mutex<Vec<DensePolynomial<F>>> = Mutex::new(Vec::with_capacity(C));
+      (iterator, dim_usize, dim, read, r#final)
+    };
+
+    #[cfg(not(feature = "multicore"))]
+    let (iterator, dim_usize, dim, read, r#final) = {
+      let iterator = (0..C).iter();
+      let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
+      let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+      let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+      let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+      (iterator, dim_usize, dim, read, r#final)
+    };
 
     // TODO(#29): Parallelize
-    for i in 0..C {
+    iterator.for_each(|i| {
       let mut access_sequence = indices
         .iter()
         .map(|indices| indices[i])
@@ -50,11 +70,29 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
         final_timestamps[memory_address] = write_timestamp;
       }
 
+      #[cfg(feature = "multicore")]
+      let (mut dim_usize, mut dim, mut read, mut r#final) = {
+        let dim_usize = dim_usize.lock().unwrap();
+        let dim = dim.lock().unwrap();
+        let read = read.lock().unwrap();
+        let r#final = r#final.lock().unwrap();
+        (dim_usize, dim, read, r#final)
+      };
+
       dim.push(DensePolynomial::from_usize(&access_sequence));
       read.push(DensePolynomial::from_usize(&read_timestamps));
       r#final.push(DensePolynomial::from_usize(&final_timestamps));
       dim_usize.push(access_sequence);
-    }
+    });
+
+    #[cfg(feature = "multicore")]
+    let (dim_usize, dim, read, r#final) = {
+      let dim_usize = dim_usize.into_inner().unwrap();
+      let dim = dim.into_inner().unwrap();
+      let read = read.into_inner().unwrap();
+      let r#final = r#final.into_inner().unwrap();
+      (dim_usize, dim, read, r#final)
+    };
 
     let l_variate_polys = [dim.as_slice(), read.as_slice()].concat();
 
