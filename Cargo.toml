@@ -30,6 +30,7 @@ zeroize = { version = "1", default-features = false }
 itertools = "0.10.0"
 colored = "2.0.0"
 thiserror = "1.0"
+parking_lot = { version = "0.12.1", optional = true }
 
 rand_chacha = { version = "0.3.0", default-features = false }
 
@@ -66,7 +67,7 @@ default = [
     "ark-ff/asm",
     "multicore",
 ]
-multicore = ["rayon"]
+multicore = ["rayon", "parking_lot"]
 ark-msm = [] # run with arkworks MSM without small field element optimization
 
 [profile.release]

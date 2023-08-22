@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 #[cfg(feature = "multicore")]
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::DensePolynomial;
@@ -71,10 +71,10 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
 
       #[cfg(feature = "multicore")]
       let (mut dim_usize, mut dim, mut read, mut r#final) = {
-        let dim_usize = dim_usize.lock().unwrap();
-        let dim = dim.lock().unwrap();
-        let read = read.lock().unwrap();
-        let r#final = r#final.lock().unwrap();
+        let dim_usize = dim_usize.lock();
+        let dim = dim.lock();
+        let read = read.lock();
+        let r#final = r#final.lock();
         (dim_usize, dim, read, r#final)
       };
 
@@ -86,10 +86,10 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
 
     #[cfg(feature = "multicore")]
     let (dim_usize, dim, read, r#final) = {
-      let dim_usize = dim_usize.into_inner().unwrap();
-      let dim = dim.into_inner().unwrap();
-      let read = read.into_inner().unwrap();
-      let r#final = r#final.into_inner().unwrap();
+      let dim_usize = dim_usize.into_inner();
+      let dim = dim.into_inner();
+      let read = read.into_inner();
+      let r#final = r#final.into_inner();
       (dim_usize, dim, read, r#final)
     };
 
