@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::marker::{PhantomData, Sync};
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -18,6 +18,7 @@ use crate::{
 
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
+use std::sync::Arc;
 
 pub mod and;
 pub mod lt;
@@ -28,7 +29,7 @@ pub mod xor;
 #[cfg(test)]
 pub mod test;
 
-pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
+pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize>: Sync{
   const NUM_SUBTABLES: usize;
   const NUM_MEMORIES: usize;
 
@@ -136,18 +137,20 @@ where
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
   ) -> [GrandProducts<F>; S::NUM_MEMORIES] {
-    std::array::from_fn(|i| {
-      let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
-      let j = S::memory_to_dimension_index(i);
-      GrandProducts::new(
-        subtable,
-        &dense.dim[j],
-        &dense.dim_usize[j],
-        &dense.read[j],
-        &dense.r#final[j],
-        r_mem_check,
-      )
-    })
+    let self_arc = Arc::new(self);
+
+    (0..S::NUM_MEMORIES).into_par_iter().map(|i| {
+        let subtable = &self_arc.subtable_entries[S::memory_to_subtable_index(i)];
+        let j = S::memory_to_dimension_index(i);
+        GrandProducts::new(
+            subtable,
+            &dense.dim[j],
+            &dense.dim_usize[j],
+            &dense.read[j],
+            &dense.r#final[j],
+            r_mem_check,
+        )
+    }).collect::<Vec<_>>().try_into().unwrap()
   }
 
   #[tracing::instrument(skip_all, name = "Subtables.commit")]
