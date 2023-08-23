@@ -43,7 +43,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
-    let increment = log2(M) as usize;
+    let increment = log2(M) as usize / 2;
     let mut sum = F::zero();
     for i in 0..C {
       let weight: u64 = 1u64 << (i * increment);
@@ -101,11 +101,11 @@ mod test {
       Fr::from(400),
     ]);
 
-    // 2^0 * 100 + 2^16 * 200 + 2^32 * 300 + 2^48 * 400
+    // 2^0 * 100 + 2^8 * 200 + 2^16 * 300 + 2^24 * 400
     let expected = (1u64 * 100u64)
-      + ((1u64 << 16u64) * 200u64)
-      + ((1u64 << 32u64) * 300u64)
-      + ((1u64 << 48u64) * 400u64);
+      + ((1u64 << 8u64) * 200u64)
+      + ((1u64 << 16u64) * 300u64)
+      + ((1u64 << 24u64) * 400u64);
     assert_eq!(combined, Fr::from(expected));
   }
 
