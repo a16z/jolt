@@ -81,9 +81,9 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
+pub struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
   proof: SumcheckInstanceProof<G::ScalarField>,
-  claimed_evaluation: G::ScalarField,
+  pub claimed_evaluation: G::ScalarField,
   eval_derefs: [G::ScalarField; ALPHA],
   proof_derefs: CombinedTableEvalProof<G, ALPHA>,
 }
@@ -98,7 +98,7 @@ pub struct SparsePolynomialEvaluationProof<
   [(); S::NUM_MEMORIES]: Sized,
 {
   comm_derefs: CombinedTableCommitment<G>,
-  primary_sumcheck: PrimarySumcheck<G, { S::NUM_MEMORIES }>,
+  pub primary_sumcheck: PrimarySumcheck<G, { S::NUM_MEMORIES }>,
   memory_check: MemoryCheckingProof<G, C, M, S>,
 }
 
