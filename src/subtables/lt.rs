@@ -30,7 +30,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   }
 
   /// LT = (1-x_i)* y_i * eq(x_{>i}, y_{>i})
-  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, point: &[F]) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);

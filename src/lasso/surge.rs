@@ -175,7 +175,7 @@ where
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(&r_z));
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
-      &eval_derefs.to_vec(),
+      eval_derefs.as_ref(),
       &r_z,
       &gens.gens_derefs,
       transcript,

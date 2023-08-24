@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
@@ -169,7 +171,7 @@ impl<F: PrimeField> GrandProducts<F> {
   pub fn new(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
-    dim_i_usize: &Vec<usize>,
+    dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -230,7 +232,7 @@ impl<F: PrimeField> GrandProducts<F> {
   fn build_grand_product_inputs(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
-    dim_i_usize: &Vec<usize>,
+    dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -344,7 +346,7 @@ where
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
-      &eval_derefs.to_vec(),
+      eval_derefs.as_ref(),
       rand_ops,
       &gens.gens_derefs,
       transcript,
@@ -493,7 +495,7 @@ where
     let (claim_init, claim_read, claim_write, claim_final) = claims;
 
     // init
-    let hash_init = hash_func(&init_addr, &init_memory, &G::ScalarField::zero());
+    let hash_init = hash_func(init_addr, init_memory, &G::ScalarField::zero());
     assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
     // read
@@ -508,7 +510,7 @@ where
     // final: shares addr and val with init
     let eval_final_addr = init_addr;
     let eval_final_val = init_memory;
-    let hash_final = hash_func(&eval_final_addr, &eval_final_val, eval_final);
+    let hash_final = hash_func(eval_final_addr, eval_final_val, eval_final);
     assert_eq!(hash_final, *claim_final); // verify the last claim of the `final` grand product sumcheck
 
     Ok(())
@@ -619,13 +621,13 @@ where
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for i in 0..S::NUM_MEMORIES {
+    for (i, grand_product_claim) in grand_product_claims.iter().enumerate() {
       let j = S::memory_to_dimension_index(i);
       let k = S::memory_to_subtable_index(i);
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
       Self::check_reed_solomon_fingerprints(
-        &grand_product_claims[i],
+        grand_product_claim,
         &self.eval_derefs[i],
         &self.eval_dim[j],
         &self.eval_read[j],
