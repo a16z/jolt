@@ -93,13 +93,11 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
 
   /// Used to map an index [0, num_memories) -> [0, num_subtables)
   fn memory_to_subtable_index(i: usize) -> usize {
-    // TODO: make correct
-    0
+    i / Self::subtable_dimensionality()
   }
 
   fn memory_to_dimension_index(i: usize) -> usize {
-    // TODO: make correct
-    i % 4
+    i % Self::subtable_dimensionality()
   }
 
   fn flat_subtables() -> Vec<Box<dyn SubtableStrategy<F>>> {
