@@ -372,7 +372,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     );
 
     // compute L and R
-    let eq = EqPolynomial::new(r.to_vec());
+    let eq: EqPolynomial<_> = EqPolynomial::new(r.to_vec());
     let (L, R) = eq.compute_factored_evals();
 
     // compute a weighted sum of commitments and L

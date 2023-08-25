@@ -2,6 +2,9 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
+use std::marker::PhantomData;
+
+use crate::jolt::JoltStrategy;
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::memory_checking::MemoryCheckingProof;
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
@@ -81,56 +84,55 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
   }
 }
 
+// TODO: Could store reference
+// 1. `TableSizeInfo.C`
+// 2. `DIMS_PER_MEMORY` (C)
+// 3. `TableSizeInfo::C()`
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
+struct PrimarySumcheck<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
-  proof_derefs: CombinedTableEvalProof<G, ALPHA>,
+  proof_derefs: CombinedTableEvalProof<G, S>,
+  _marker: PhantomData<S>,
+}
+
+// TODO: Rename
+// TODO: Should we just use 'M' / 'C' or are these overloaded?
+#[derive(Clone, Debug)]
+pub struct TableSizeInfo {
+  DIMS_PER_MEMORY: usize, // C
+  MEMORY_SIZE: usize,     // M
+  NUM_MEMORIES: usize,
+  primary_sumcheck_terms: usize, // NUM_MEMORIES + 1 (eq)
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparsePolynomialEvaluationProof<
-  G: CurveGroup,
-  const C: usize,
-  const M: usize,
-  S: SubtableStrategy<G::ScalarField, C, M> + Sync,
-> where
-  [(); S::NUM_MEMORIES]: Sized,
-{
+pub struct SparsePolynomialEvaluationProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   comm_derefs: CombinedTableCommitment<G>,
-  primary_sumcheck: PrimarySumcheck<G, { S::NUM_MEMORIES }>,
-  memory_check: MemoryCheckingProof<G, C, M, S>,
+  primary_sumcheck: PrimarySumcheck<G, S>,
+  memory_check: MemoryCheckingProof<G, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M> + Sync>
-  SparsePolynomialEvaluationProof<G, C, M, S>
-where
-  [(); S::NUM_SUBTABLES]: Sized,
-  [(); S::NUM_MEMORIES]: Sized,
-  [(); S::NUM_MEMORIES + 1]: Sized,
-{
+impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationProof<G, S> {
   /// Prove an opening of the Sparse Matrix Polynomial
   /// - `dense`: DensifiedRepresentation
   /// - `r`: log(s) sized coordinates at which to prove the evaluation of eq in the primary sumcheck
   /// - `eval`: evaluation of \widetilde{M}(r = (r_1, ..., r_logM))
   /// - `gens`: Commitment generator
-  #[tracing::instrument(skip_all, name = "SparsePoly.prove")]
+  // #[tracing::instrument(skip_all, name = "SparsePoly.prove")]
   pub fn prove(
-    dense: &mut DensifiedRepresentation<G::ScalarField, C>,
+    dense: &mut DensifiedRepresentation<G::ScalarField, S>,
     r: &[G::ScalarField],
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> Self
-  where
-    [(); S::NUM_SUBTABLES]: Sized,
-  {
+  ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     assert_eq!(r.len(), log2(dense.s) as usize);
 
-    let subtables = Subtables::<_, C, M, S>::new(&dense.dim_usize, dense.s);
+    let subtables = Subtables::<G::ScalarField, S>::new(&dense.dim_usize, dense.s);
 
     // commit to non-deterministic choices of the prover
     let comm_derefs = {
@@ -149,31 +151,31 @@ where
     );
 
     let mut combined_sumcheck_polys: Vec<DensePolynomial<G::ScalarField>> =
-      (0..(S::NUM_MEMORIES + 1)).map(|i| {
-        if i != S::NUM_MEMORIES {
-          subtables.lookup_polys[i].clone()
-        } else {
-          DensePolynomial::new(eq.evals())
-        }
-      }).collect();
+      (0..(S::num_memories() + 1))
+        .map(|i| {
+          if i != S::num_memories() {
+            subtables.lookup_polys[i].clone()
+          } else {
+            DensePolynomial::new(eq.evals())
+          }
+        })
+        .collect();
 
-    let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<
-      _,
-      G,
-      Transcript,
-      { S::NUM_MEMORIES + 1 },
-    >(
-      &claimed_eval,
-      dense.s.log_2(),
-      &mut combined_sumcheck_polys,
-      S::combine_lookups_eq,
-      S::sumcheck_poly_degree(),
-      transcript,
-    );
+    let (primary_sumcheck_proof, r_z, _) =
+      SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
+        &claimed_eval,
+        dense.s.log_2(),
+        &mut combined_sumcheck_polys,
+        S::combine_lookups_eq,
+        S::num_memories() + 1, // TODO(sragss): Correct?
+        S::primary_poly_degree(),
+        transcript,
+      );
 
     // Combined eval proof for E_i(r_z)
-    let eval_derefs: Vec<G::ScalarField> =
-      (0..S::NUM_MEMORIES).map(|i| subtables.lookup_polys[i].evaluate(&r_z)).collect();
+    let eval_derefs: Vec<G::ScalarField> = (0..S::num_memories())
+      .map(|i| subtables.lookup_polys[i].evaluate(&r_z))
+      .collect();
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
       eval_derefs.as_ref(),
@@ -205,6 +207,7 @@ where
         claimed_evaluation: claimed_eval,
         eval_derefs,
         proof_derefs,
+        _marker: PhantomData,
       },
       memory_check,
     }
@@ -236,7 +239,7 @@ where
     let (claim_last, r_z) = self.primary_sumcheck.proof.verify::<G, Transcript>(
       self.primary_sumcheck.claimed_evaluation,
       commitment.s.log_2(),
-      S::sumcheck_poly_degree(),
+      S::primary_poly_degree(),
       transcript,
     )?;
 

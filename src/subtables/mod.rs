@@ -7,7 +7,10 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-  lasso::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
+  jolt::JoltStrategy,
+  lasso::{
+    densified::DensifiedRepresentation, memory_checking::GrandProducts, surge::TableSizeInfo,
+  },
   poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
   poly::eq_poly::EqPolynomial,
   utils::errors::ProofVerifyError,
@@ -96,25 +99,15 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   }
 }
 
-pub struct Subtables<F: PrimeField, const C: usize, const M: usize, S>
-where
-  S: SubtableStrategy<F, C, M>,
-  [(); S::NUM_SUBTABLES]: Sized,
-  [(); S::NUM_MEMORIES]: Sized,
-{
+pub struct Subtables<F: PrimeField, S: JoltStrategy<F>> {
   subtable_entries: Vec<Vec<F>>,
   pub lookup_polys: Vec<DensePolynomial<F>>,
   pub combined_poly: DensePolynomial<F>,
-  strategy: PhantomData<S>,
+  _marker: PhantomData<S>,
 }
 
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
-impl<F: PrimeField, const C: usize, const M: usize, S> Subtables<F, C, M, S>
-where
-  S: SubtableStrategy<F, C, M> + Sync,
-  [(); S::NUM_SUBTABLES]: Sized,
-  [(); S::NUM_MEMORIES]: Sized,
-{
+impl<F: PrimeField, S: JoltStrategy<F>> Subtables<F, S> {
   /// Create new Subtables
   /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
   pub fn new(nz: &Vec<Vec<usize>>, s: usize) -> Self {
@@ -127,7 +120,7 @@ where
       subtable_entries,
       lookup_polys,
       combined_poly,
-      strategy: PhantomData,
+      _marker: PhantomData,
     }
   }
 
@@ -136,12 +129,12 @@ where
   #[tracing::instrument(skip_all, name = "Subtables.to_grand_products")]
   pub fn to_grand_products(
     &self,
-    dense: &DensifiedRepresentation<F, C>,
+    dense: &DensifiedRepresentation<F, S>,
     r_mem_check: &(F, F),
   ) -> Vec<GrandProducts<F>> {
     #[cfg(feature = "multicore")]
     {
-      (0..S::NUM_MEMORIES)
+      (0..S::num_memories())
         .into_par_iter()
         .map(|i| {
           let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
@@ -159,7 +152,7 @@ where
     }
     #[cfg(not(feature = "multicore"))]
     {
-      (0..S::NUM_MEMORIES)
+      (0..S::num_memories())
         .map(|i| {
           let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
           let j = S::memory_to_dimension_index(i);
@@ -199,7 +192,7 @@ where
     let claim = (0..hypercube_size)
       .into_par_iter()
       .map(|k| {
-        let g_operands: Vec<F> = (0..S::NUM_MEMORIES).map(|j| g_operands[j][k]).collect();
+        let g_operands: Vec<F> = (0..S::num_memories()).map(|j| g_operands[j][k]).collect();
         // eq * g(T_1[k], ..., T_\alpha[k])
         eq_evals[k] * S::combine_lookups(&g_operands)
       })
@@ -208,7 +201,7 @@ where
     #[cfg(not(feature = "multicore"))]
     let claim = (0..hypercube_size)
       .map(|k| {
-        let g_operands: Vec<F> = (0..S::NUM_MEMORIES)(|j| g_operands[j][k]).collect();
+        let g_operands: Vec<F> = (0..S::num_memories())(|j| g_operands[j][k]).collect();
         // eq * g(T_1[k], ..., T_\alpha[k])
         eq_evals[k] * S::combine_lookups(&g_operands)
       })
@@ -224,11 +217,12 @@ pub struct CombinedTableCommitment<G: CurveGroup> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CombinedTableEvalProof<G: CurveGroup, const C: usize> {
+pub struct CombinedTableEvalProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   proof_table_eval: PolyEvalProof<G>,
+  _marker: PhantomData<S>,
 }
 
-impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
+impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S> {
   fn prove_single(
     joint_poly: &DensePolynomial<G::ScalarField>,
     r: &[G::ScalarField],
@@ -294,7 +288,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      CombinedTableEvalProof::<G, C>::protocol_name(),
+      CombinedTableEvalProof::<G, S>::protocol_name(),
     );
 
     let evals = {
@@ -302,7 +296,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
       evals
     };
-    let proof_table_eval = CombinedTableEvalProof::<G, C>::prove_single(
+    let proof_table_eval = CombinedTableEvalProof::<G, S>::prove_single(
       combined_poly,
       r,
       &evals,
@@ -311,7 +305,10 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
       random_tape,
     );
 
-    CombinedTableEvalProof { proof_table_eval }
+    CombinedTableEvalProof {
+      proof_table_eval,
+      _marker: PhantomData,
+    }
   }
 
   fn verify_single(
@@ -361,12 +358,12 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      CombinedTableEvalProof::<G, C>::protocol_name(),
+      CombinedTableEvalProof::<G, S>::protocol_name(),
     );
     let mut evals = evals.to_owned();
     evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
-    CombinedTableEvalProof::<G, C>::verify_single(
+    CombinedTableEvalProof::<G, S>::verify_single(
       &self.proof_table_eval,
       &comm.comm_ops_val,
       r,
