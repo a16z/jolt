@@ -20,6 +20,7 @@ mod msm;
 mod poly;
 mod subprotocols;
 pub mod subtables;
+pub mod jolt;
 mod utils;
 
 #[cfg(test)]

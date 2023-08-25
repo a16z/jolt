@@ -147,11 +147,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// - `r_eval_point`: Final random point of evaluation
   /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
   #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
-  pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>, const ALPHA: usize>(
+  pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>>(
     _claim: &F,
     num_rounds: usize,
     polys: &mut Vec<DensePolynomial<F>>,
     comb_func: Func,
+    comb_func_terms: usize,
     combined_degree: usize,
     transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
@@ -187,11 +188,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
 
         // eval 0: bound_func is A(low)
-        let params_zero: Vec<F> = (0..ALPHA).map(|j| polys[j][poly_term_i]).collect();
+        let params_zero: Vec<F> = (0..comb_func_terms).map(|j| polys[j][poly_term_i]).collect();
         accum[0] += comb_func(&params_zero);
 
         // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-        let params_one: Vec<F> = (0..ALPHA).map(|j| polys[j][mle_half + poly_term_i]).collect();
+        let params_one: Vec<F> = (0..comb_func_terms).map(|j| polys[j][mle_half + poly_term_i]).collect();
         accum[1] += comb_func(&params_one);
 
         // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
@@ -202,7 +203,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // ...
         let mut existing_term = params_one;
         for eval_i in 2..(combined_degree + 1) {
-          let mut poly_evals = vec![F::zero(); ALPHA];
+          let mut poly_evals = vec![F::zero(); comb_func_terms];
           for poly_i in 0..polys.len() {
             let poly = &polys[poly_i];
             poly_evals[poly_i] =
@@ -458,20 +459,21 @@ mod test {
         * B.evaluate(&index_to_field_bitvector(i, num_vars))
         * C.evaluate(&index_to_field_bitvector(i, num_vars));
     }
-    let mut polys = [A.clone(), B.clone(), C.clone()];
+    let mut polys = vec![A.clone(), B.clone(), C.clone()];
 
     let comb_func_prod =
-      |polys: &[Fr; 3]| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
+      |polys: &[Fr]| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
 
     let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
 
     let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
     let (proof, prove_randomness, _final_poly_evals) =
-      SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _, 3>(
+      SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _>(
         &claim,
         num_vars,
         &mut polys,
         comb_func_prod,
+        3,
         3,
         &mut transcript,
       );

@@ -1,11 +1,14 @@
+use std::marker::PhantomData;
+
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
+use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment, TableSizeInfo};
+use crate::jolt::JoltStrategy;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;
 
-pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
+pub struct DensifiedRepresentation<F: PrimeField, S: JoltStrategy<F>> {
   pub dim_usize: Vec<Vec<usize>>,
   pub dim: Vec<DensePolynomial<F>>,
   pub read: Vec<DensePolynomial<F>>,
@@ -15,21 +18,24 @@ pub struct DensifiedRepresentation<F: PrimeField, const C: usize> {
   pub s: usize, // sparsity
   pub log_m: usize,
   pub m: usize,
+  _marker: PhantomData<S>
 }
 
-impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
+impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
   #[tracing::instrument(skip_all, name = "Densify")]
-  pub fn from_lookup_indices(indices: &Vec<[usize; C]>, log_m: usize) -> Self {
+  pub fn from_lookup_indices(indices: &Vec<Vec<usize>>, log_m: usize) -> Self {
+    // TODO: Assert sizes of indices
+
     let s = indices.len().next_power_of_two();
     let m = log_m.pow2();
 
-    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
-    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
+    let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(S::subtable_dimensionality());
+    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(S::subtable_dimensionality());
+    let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(S::subtable_dimensionality());
+    let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(S::subtable_dimensionality());
 
     // TODO(#29): Parallelize
-    for i in 0..C {
+    for i in 0..S::subtable_dimensionality() {
       let mut access_sequence = indices
         .iter()
         .map(|indices| indices[i])
@@ -71,6 +77,7 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
       s,
       log_m,
       m,
+      _marker: PhantomData
     }
   }
 

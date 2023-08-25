@@ -1,3 +1,6 @@
+use std::marker::PhantomData;
+
+use crate::jolt::JoltStrategy;
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
@@ -17,24 +20,16 @@ use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
+use super::surge::TableSizeInfo;
+
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<
-  G: CurveGroup,
-  const C: usize,
-  const M: usize,
-  S: SubtableStrategy<G::ScalarField, C, M>,
-> where
-  [(); S::NUM_MEMORIES]: Sized,
-{
-  proof_prod_layer: ProductLayerProof<G::ScalarField, { S::NUM_MEMORIES }>,
-  proof_hash_layer: HashLayerProof<G, C, M, S>,
+pub struct MemoryCheckingProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
+  proof_prod_layer: ProductLayerProof<G::ScalarField>,
+  proof_hash_layer: HashLayerProof<G, S>,
+  _marker: PhantomData<S>
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
-  MemoryCheckingProof<G, C, M, S>
-where
-  [(); S::NUM_SUBTABLES]: Sized,
-  [(); S::NUM_MEMORIES]: Sized,
+impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> MemoryCheckingProof<G, S>
 {
   /// Proves that E_i polynomials are well-formed, i.e., that E_i(j) equals T_i[dim_i(j)] for all j ∈ {0, 1}^{log(m)},
   /// using memory-checking techniques as described in Section 5 of the Lasso paper, or Section 7.2 of the Spartan paper.
@@ -46,11 +41,11 @@ where
   /// - `gens`: Generates public parameters for polynomial commitments.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   /// - `random_tape`: Randomness for dense polynomial commitments.
-  #[tracing::instrument(skip_all, name = "MemoryChecking.prove")]
+  // #[tracing::instrument(skip_all, name = "MemoryChecking.prove")]
   pub fn prove(
-    dense: &DensifiedRepresentation<G::ScalarField, C>,
+    dense: &DensifiedRepresentation<G::ScalarField, S>,
     r_mem_check: &(G::ScalarField, G::ScalarField),
-    subtables: &Subtables<G::ScalarField, C, M, S>,
+    subtables: &Subtables<G::ScalarField, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -59,7 +54,7 @@ where
 
     let mut grand_products = subtables.to_grand_products(dense, r_mem_check);
     let (proof_prod_layer, rand_mem, rand_ops) =
-      ProductLayerProof::prove::<G>(&mut grand_products, transcript);
+      ProductLayerProof::prove::<G>(&mut grand_products, transcript, S::num_memories());
 
     let proof_hash_layer = HashLayerProof::prove(
       (&rand_mem, &rand_ops),
@@ -67,12 +62,13 @@ where
       subtables,
       gens,
       transcript,
-      random_tape,
+      random_tape
     );
 
     MemoryCheckingProof {
       proof_prod_layer,
       proof_hash_layer,
+      _marker: PhantomData
     }
   }
 
@@ -107,19 +103,19 @@ where
       .proof_prod_layer
       .verify::<G>(num_ops, num_cells, transcript)?;
 
-    let claims: [(
+    let claims: Vec<(
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); S::NUM_MEMORIES] = std::array::from_fn(|i| {
+    )> = (0..S::num_memories()).map(|i| {
       (
         claims_mem[2 * i],     // init
         claims_ops[2 * i],     // read
         claims_ops[2 * i + 1], // write
         claims_mem[2 * i + 1], // final
       )
-    });
+    }).collect();
 
     // verify the proof of hash layer
     self.proof_hash_layer.verify(
@@ -303,34 +299,24 @@ impl<F: PrimeField> GrandProducts<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<
-  G: CurveGroup,
-  const C: usize,
-  const M: usize,
-  S: SubtableStrategy<G::ScalarField, C, M>,
-> where
-  [(); S::NUM_MEMORIES]: Sized,
+struct HashLayerProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>>
 {
-  eval_dim: [G::ScalarField; C],
-  eval_read: [G::ScalarField; C],
-  eval_final: [G::ScalarField; C],
-  eval_derefs: [G::ScalarField; S::NUM_MEMORIES],
+  eval_dim: Vec<G::ScalarField>, // C-sized
+  eval_read: Vec<G::ScalarField>, // C-sized
+  eval_final: Vec<G::ScalarField>, // C-sized
+  eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G, C>,
+  proof_derefs: CombinedTableEvalProof<G, S>,
+  _marker: PhantomData<S>
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
-  HashLayerProof<G, C, M, S>
-where
-  [(); S::NUM_SUBTABLES]: Sized,
-  [(); S::NUM_MEMORIES]: Sized,
-{
+impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> HashLayerProof<G, S> {
   #[tracing::instrument(skip_all, name = "HashLayer.prove")]
   fn prove(
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    dense: &DensifiedRepresentation<G::ScalarField, C>,
-    subtables: &Subtables<G::ScalarField, C, M, S>,
+    dense: &DensifiedRepresentation<G::ScalarField, S>,
+    subtables: &Subtables<G::ScalarField, S>,
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
@@ -340,8 +326,8 @@ where
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: [G::ScalarField; S::NUM_MEMORIES] =
-      std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(rand_ops));
+    let eval_derefs: Vec<G::ScalarField> =
+      (0..S::num_memories()).map(|i| subtables.lookup_polys[i].evaluate(rand_ops)).collect();
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
       &eval_derefs.to_vec(),
@@ -354,13 +340,14 @@ where
     // form a single decommitment using comm_comb_ops
     let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
 
-    let eval_dim: [G::ScalarField; C] = std::array::from_fn(|i| dense.dim[i].evaluate(rand_ops));
-    let eval_read: [G::ScalarField; C] = std::array::from_fn(|i| dense.read[i].evaluate(rand_ops));
-    let eval_final: [G::ScalarField; C] =
-      std::array::from_fn(|i| dense.r#final[i].evaluate(rand_mem));
+    let eval_dim: Vec<G::ScalarField> = (0..S::subtable_dimensionality()).map(|i| dense.dim[i].evaluate(rand_ops)).collect();
+    let eval_read: Vec<G::ScalarField> = (0..S::subtable_dimensionality()).map(|i| dense.read[i].evaluate(rand_ops)).collect();
+    let eval_final: Vec<G::ScalarField> =
+      (0..S::subtable_dimensionality()).map(|i| dense.r#final[i].evaluate(rand_mem)).collect();
 
-    evals_ops.extend(eval_dim);
-    evals_ops.extend(eval_read);
+    // TODO(sragss): clones likely unecessary
+    evals_ops.extend(eval_dim.clone());
+    evals_ops.extend(eval_read.clone());
     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
 
     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
@@ -448,6 +435,7 @@ where
       proof_mem,
       eval_derefs,
       proof_derefs,
+      _marker: PhantomData
     }
   }
 
@@ -522,7 +510,7 @@ where
       G::ScalarField,
       G::ScalarField,
       G::ScalarField,
-    ); S::NUM_MEMORIES],
+    )], // NUM_MEMORIES-sized
     comm: &SparsePolynomialCommitment<G>,
     gens: &SparsePolyCommitmentGens<G>,
     table_eval_commitment: &CombinedTableCommitment<G>,
@@ -545,8 +533,9 @@ where
     )?;
 
     let mut evals_ops: Vec<G::ScalarField> = Vec::new();
-    evals_ops.extend(self.eval_dim);
-    evals_ops.extend(self.eval_read);
+    // TODO(sragss): clones likely unecessary
+    evals_ops.extend(self.eval_dim.clone());
+    evals_ops.extend(self.eval_read.clone());
     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
 
     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
@@ -619,7 +608,7 @@ where
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for i in 0..S::NUM_MEMORIES {
+    for i in 0..S::num_memories() {
       let j = S::memory_to_dimension_index(i);
       let k = S::memory_to_subtable_index(i);
       // Check ALPHA memories / lookup polys / grand products
@@ -631,7 +620,7 @@ where
         &self.eval_read[j],
         &self.eval_final[j],
         &init_addr,
-        &S::evaluate_subtable_mle(k, rand_mem),
+        &S::evaluate_memory_mle(k, rand_mem),
         r_hash,
         r_multiset_check,
       )?;
@@ -645,13 +634,14 @@ where
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField, const NUM_MEMORIES: usize> {
+struct ProductLayerProof<F: PrimeField> {
   grand_product_evals: Vec<(F, F, F, F)>,
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
+  num_memories: usize 
 }
 
-impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES> {
+impl<F: PrimeField> ProductLayerProof<F> {
   fn protocol_name() -> &'static [u8] {
     b"Lasso ProductLayerProof"
   }
@@ -666,13 +656,14 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   pub fn prove<G>(
     grand_products: &mut Vec<GrandProducts<F>>,
     transcript: &mut Transcript,
+    num_memories: usize 
   ) -> (Self, Vec<F>, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let grand_product_evals: Vec<(F, F, F, F)> = (0..NUM_MEMORIES).map(|i| {
+    let grand_product_evals: Vec<(F, F, F, F)> = (0..num_memories).map(|i| {
       let hash_init = grand_products[i].init.evaluate();
       let hash_read = grand_products[i].read.evaluate();
       let hash_write = grand_products[i].write.evaluate();
@@ -717,6 +708,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
       grand_product_evals,
       proof_mem,
       proof_ops,
+      num_memories
     };
 
     (product_layer_proof, rand_mem, rand_ops)
