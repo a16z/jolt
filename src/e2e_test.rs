@@ -10,8 +10,8 @@ use crate::{
     surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
   },
   subtables::{
-    and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
-    SubtableStrategy, or::OrSubtableStrategy,
+    and::AndSubtableStrategy, lt::LTSubtableStrategy, or::OrSubtableStrategy,
+    range_check::RangeCheckSubtableStrategy, SubtableStrategy,
   },
   utils::random::RandomTape,
   utils::{math::Math, test::gen_random_point},
@@ -101,11 +101,10 @@ e2e_test!(
   /* sparsity= */ 16
 );
 
-
 #[test]
 fn and_e2e() {
-  const C: usize = 2;
-  const M: usize = 16;
+  const C: usize = 4;
+  const M: usize = 1 << 16;
   const S: usize = 2;
   type F = Fr;
   type G = G1Projective;
@@ -118,7 +117,20 @@ fn and_e2e() {
   // Elements are of the form [ x2 || y2, x1 || y1 ]
   // So nz[0] is performing a lookup of AND(x, y) = AND(1110, 0011) = 0010
   // nz[1] is unused; we just need s ≥ 2
-  let nz = vec![[0b1011, 0b1100], [0b0000, 0b0000]];
+  let nz = vec![
+    [
+      0b0000111000000011,
+      0b0000000000000000,
+      0b0000000000000000,
+      0b0000000000000000,
+    ],
+    [
+      0b0000000000000000,
+      0b0000000000000000,
+      0b0000000000000000,
+      0b0000000000000000,
+    ],
+  ];
 
   // Prove
   let mut dense: DensifiedRepresentation<F, C> =
@@ -141,7 +153,11 @@ fn and_e2e() {
   // Should print 0010
   println!(
     "{}",
-    eval.to_bits_be().iter().map(|&b| if b { "1" } else { "0" }).collect::<String>()
+    eval
+      .to_bits_be()
+      .iter()
+      .map(|&b| if b { "1" } else { "0" })
+      .collect::<String>()
   );
 
   let mut verify_transcript = Transcript::new(b"example");
