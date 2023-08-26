@@ -173,6 +173,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
       );
 
     // Combined eval proof for E_i(r_z)
+    // TODO: I think this might be broken.
     let eval_derefs: Vec<G::ScalarField> = (0..S::num_memories())
       .map(|i| subtables.lookup_polys[i].evaluate(&r_z))
       .collect();

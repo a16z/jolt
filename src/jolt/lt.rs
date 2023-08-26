@@ -17,7 +17,9 @@ impl<F: PrimeField> JoltStrategy<F> for LTVM {
   type Instruction = LTVMInstruction;
 
   fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
-    vec![Box::new(LTInstruction {_marker: PhantomData::<F>})]
+    vec![Box::new(LTInstruction {
+      _marker: PhantomData::<F>,
+    })]
   }
 
   fn primary_poly_degree() -> usize {
@@ -27,14 +29,18 @@ impl<F: PrimeField> JoltStrategy<F> for LTVM {
 }
 
 pub struct LTInstruction<F: PrimeField> {
-    _marker: PhantomData<F>
+  _marker: PhantomData<F>,
 }
 
 impl<F: PrimeField> InstructionStrategy<F> for LTInstruction<F> {
   fn subtables(&self) -> Vec<Box<dyn super::SubtableStrategy<F>>> {
     vec![
-        Box::new(LTSubtable {_marker: PhantomData::<F>}), 
-        Box::new(EQSubtable {_marker: PhantomData::<F>})
+      Box::new(LTSubtable {
+        _marker: PhantomData::<F>,
+      }),
+      Box::new(EQSubtable {
+        _marker: PhantomData::<F>,
+      }),
     ]
   }
 
@@ -58,7 +64,7 @@ impl<F: PrimeField> InstructionStrategy<F> for LTInstruction<F> {
 }
 
 pub struct LTSubtable<F: PrimeField> {
-    _marker: PhantomData<F>
+  _marker: PhantomData<F>,
 }
 impl<F: PrimeField> SubtableStrategy<F> for LTSubtable<F> {
   fn dimensions(&self) -> usize {
@@ -92,15 +98,15 @@ impl<F: PrimeField> SubtableStrategy<F> for LTSubtable<F> {
     let mut result = F::zero();
     let mut eq_term = F::one();
     for i in 0..b {
-    result += (F::one() - x[i]) * y[i] * eq_term;
-    eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
+      result += (F::one() - x[i]) * y[i] * eq_term;
+      eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
     }
     result
   }
 }
 
 pub struct EQSubtable<F: PrimeField> {
-    _marker: PhantomData<F>
+  _marker: PhantomData<F>,
 }
 impl<F: PrimeField> SubtableStrategy<F> for EQSubtable<F> {
   fn dimensions(&self) -> usize {
@@ -133,7 +139,7 @@ impl<F: PrimeField> SubtableStrategy<F> for EQSubtable<F> {
 
     let mut eq_term = F::one();
     for i in 0..b {
-        eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
+      eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
     }
     eq_term
   }
@@ -143,17 +149,19 @@ impl<F: PrimeField> SubtableStrategy<F> for EQSubtable<F> {
 mod tests {
   use ark_curve25519::{EdwardsProjective, Fr};
   use ark_ff::PrimeField;
-  use ark_std::{log2, test_rng};
+  use ark_std::{log2, test_rng, One, Zero};
   use merlin::Transcript;
   use rand_chacha::rand_core::RngCore;
 
   use crate::{
-    jolt::lt::LTVM,
+    jolt::{lt::LTVM, JoltStrategy},
     lasso::{
       densified::DensifiedRepresentation,
       surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
     },
-    utils::random::RandomTape,
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    subtables::Subtables,
+    utils::{ff_bitvector_dbg, index_to_field_bitvector, random::RandomTape, split_bits},
   };
 
   pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<Vec<usize>> {
@@ -206,5 +214,121 @@ mod tests {
     proof
       .verify(&commitment, &r, &gens, &mut verify_transcript)
       .expect("should verify");
+  }
+
+  #[test]
+  fn to_lookup_polys() {
+    const C: usize = 8;
+    const S: usize = 1 << 3;
+    const M: usize = 1 << 16;
+
+    // let nz: Vec<Vec<usize>> = gen_indices::<C>(S, M);
+    let nz: Vec<Vec<usize>> = vec![
+      vec![
+        1,            // LT: True, EQ: False
+        1 << 8,       // LT: False, EQ: False
+        1 + (1 << 8), // LT: False, EQ: True
+        5,
+        4,
+        3,
+        2,
+        1
+      ];
+      C
+    ];
+    let (lhs, rhs) = split_bits(1 + (1 << 8), 8);
+    assert_eq!(lhs, rhs);
+
+    let subtable_entries: Vec<Vec<Fr>> = LTVM::materialize_subtables();
+    assert_eq!(subtable_entries[0][0], Fr::zero()); // LT 0 > 0 = 0
+    assert_eq!(subtable_entries[0][1], Fr::one()); // LT 1 > 0 = 1
+    assert_eq!(subtable_entries[0][(1 << 15) - 1], Fr::one()); // LT MAX > 0 = 1
+    assert_eq!(subtable_entries[0][1 << 15], Fr::zero()); // LT 0 > 1 = 0
+
+    let lookup_polys: Vec<DensePolynomial<Fr>> = LTVM::to_lookup_polys(&subtable_entries, &nz, S);
+    assert_eq!(lookup_polys[0][0], Fr::one()); // True
+    assert_eq!(lookup_polys[0][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[0][2], Fr::zero()); // False
+    assert_eq!(lookup_polys[5][0], Fr::one()); // True
+    assert_eq!(lookup_polys[6][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[7][2], Fr::zero()); // False
+
+    assert_eq!(lookup_polys[8][0], Fr::zero()); // False
+    assert_eq!(lookup_polys[8][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[8][2], Fr::one()); // True
+    assert_eq!(lookup_polys[9][0], Fr::zero()); // False
+    assert_eq!(lookup_polys[10][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[11][2], Fr::one()); // True
+  }
+
+  #[test]
+  fn subtable_construction() {
+    const C: usize = 8;
+    const S: usize = 1 << 2;
+    const M: usize = 1 << 16;
+
+    let log_m = log2(M) as usize;
+    let log_s: usize = log2(S) as usize;
+
+    // Densified takes indices - 'sparsity' x 'C' sized and rotates to make dense.dim_usize
+    let nz: Vec<Vec<usize>> = vec![
+      vec![1; C],
+      vec![1 << 8; C],
+      vec![1 + (1 << 8); C],
+      vec![5; C],
+    ];
+
+    let dense: DensifiedRepresentation<Fr, LTVM> =
+      DensifiedRepresentation::from_lookup_indices(&nz, log_m);
+    let subtables = Subtables::<Fr, LTVM>::new(&dense.dim_usize, dense.s);
+
+    let demo_poly = DensePolynomial::new(vec![Fr::from(5), Fr::from(6), Fr::from(7), Fr::from(8)]);
+    assert_eq!(
+      demo_poly.evaluate(&index_to_field_bitvector(0, 2)),
+      demo_poly[0]
+    );
+    assert_eq!(
+      demo_poly.evaluate(&index_to_field_bitvector(1, 2)),
+      demo_poly[1]
+    );
+    assert_eq!(
+      demo_poly.evaluate(&index_to_field_bitvector(2, 2)),
+      demo_poly[2]
+    );
+    assert_eq!(
+      demo_poly.evaluate(&index_to_field_bitvector(3, 2)),
+      demo_poly[3]
+    );
+
+    // LT
+    let eval_point = index_to_field_bitvector(0, log_s);
+    let eval = subtables.lookup_polys[0].evaluate(&eval_point);
+    assert_eq!(eval, Fr::one());
+
+    let eval_point = index_to_field_bitvector(1, log_s);
+    let eval = subtables.lookup_polys[0].evaluate(&eval_point);
+    assert_eq!(eval, Fr::zero());
+
+    let eval_point = index_to_field_bitvector(2, log_s);
+    let eval = subtables.lookup_polys[0].evaluate(&eval_point);
+    assert_eq!(eval, Fr::zero());
+
+    // EQ
+    let eval_point = index_to_field_bitvector(0, log_s);
+    let eval = subtables.lookup_polys[8].evaluate(&eval_point);
+    assert_eq!(eval, Fr::zero());
+
+    let eval_point = index_to_field_bitvector(1, log_s);
+    let eval = subtables.lookup_polys[8].evaluate(&eval_point);
+    assert_eq!(eval, Fr::zero());
+
+    let eval_point = index_to_field_bitvector(2, log_s);
+    let eval = subtables.lookup_polys[8].evaluate(&eval_point);
+    assert_eq!(eval, Fr::one());
+
+    let eq = EqPolynomial::new(vec![Fr::zero(), Fr::one(), Fr::one()]);
+    let eval = subtables.compute_sumcheck_claim(&eq);
+
+    // TODO: check subtables.lookup_polys[i].evaluate
   }
 }
