@@ -96,7 +96,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
 
 pub struct Subtables<F: PrimeField, S: JoltStrategy<F>>
 {
-  subtable_entries: Vec<Vec<F>>,
+  pub subtable_entries: Vec<Vec<F>>,
   pub lookup_polys: Vec<DensePolynomial<F>>,
   pub combined_poly: DensePolynomial<F>,
   _marker: PhantomData<S>

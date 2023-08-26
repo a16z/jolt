@@ -13,6 +13,7 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
 
   fn combine_lookups(vals: &[F]) -> F {
     assert_eq!(vals.len(), Self::num_memories());
+
     let mut memory_index: usize = 0;
     let mut sum: F = F::zero();
     for instruction in Self::instructions() {
@@ -33,20 +34,30 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
     Self::combine_lookups(&vals[0..Self::num_memories()]) * vals[Self::num_memories()]
   }
 
+  /// Converts materialized subtables (`subtable_entries`) and subtable lookup indices (`nz`) into `num_memories` different `DensePolynomials` storing 
+  /// `sparsity` evalutations of each subtable at the corresponding index.
+  /// - `subtable_entries`: Materialized subtables of size `num_subtables` x `subtable.memory_size` 
+  /// - `nz`: Non-zero indices of size `subtable_dimensionality` x `sparisty`
   fn to_lookup_polys(
     subtable_entries: &Vec<Vec<F>>,
-    nz: &Vec<Vec<usize>>, // TODO: This concept doesn't really make sense any more
+    nz: &Vec<Vec<usize>>,
     s: usize,
   ) -> Vec<DensePolynomial<F>> {
-    assert_eq!(subtable_entries.len(), Self::num_subtables());
+    debug_assert_eq!(subtable_entries.len(), Self::num_subtables());
+    debug_assert_eq!(nz.len(), Self::subtable_dimensionality());
+
     (0..Self::num_memories())
       .map(|memory_index| {
-        // TODO: assert `subtable_entires[memory_index]` sizing.
+        debug_assert_eq!(
+            subtable_entries[Self::memory_to_subtable_index(memory_index)].len(), 
+            Self::flat_subtables()[Self::memory_to_subtable_index(memory_index)].memory_size()
+        );
 
         let mut subtable_lookups: Vec<F> = Vec::with_capacity(s);
         for sparsity_index in 0..s {
           let subtable = &subtable_entries[Self::memory_to_subtable_index(memory_index)];
           let nz = nz[Self::memory_to_dimension_index(memory_index)][sparsity_index];
+
           subtable_lookups.push(subtable[nz]);
         }
         DensePolynomial::new(subtable_lookups)
@@ -91,11 +102,12 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
     Self::flat_subtables()[Self::memory_to_subtable_index(memory_index)].evaluate_mle(point)
   }
 
-  /// Used to map an index [0, num_memories) -> [0, num_subtables)
+  /// Maps an index [0, num_memories) -> [0, num_subtables)
   fn memory_to_subtable_index(i: usize) -> usize {
     i / Self::subtable_dimensionality()
   }
 
+  /// Maps an index [0, num_memories) -> [0, subtable_dimensionality]
   fn memory_to_dimension_index(i: usize) -> usize {
     i % Self::subtable_dimensionality()
   }

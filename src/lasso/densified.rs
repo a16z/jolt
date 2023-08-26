@@ -22,9 +22,11 @@ pub struct DensifiedRepresentation<F: PrimeField, S: JoltStrategy<F>> {
 }
 
 impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
+  /// Densifies indices.
+  /// - `indices`: `sparsity` x `subtable_dimensionality` sized matrix of lookups.
   #[tracing::instrument(skip_all, name = "Densify")]
   pub fn from_lookup_indices(indices: &Vec<Vec<usize>>, log_m: usize) -> Self {
-    // TODO: Assert sizes of indices
+    debug_assert_eq!(indices[0].len(), S::subtable_dimensionality());
 
     let s = indices.len().next_power_of_two();
     let m = log_m.pow2();
