@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment, TableSizeInfo};
+use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::jolt::JoltStrategy;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;

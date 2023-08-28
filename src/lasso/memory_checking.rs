@@ -20,8 +20,6 @@ use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
-use super::surge::TableSizeInfo;
-
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   proof_prod_layer: ProductLayerProof<G::ScalarField>,
