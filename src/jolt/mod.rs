@@ -36,6 +36,10 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
 
   /// Converts materialized subtables (`subtable_entries`) and subtable lookup indices (`nz`) into `num_memories` different `DensePolynomials` storing 
   /// `sparsity` evalutations of each subtable at the corresponding index.
+  /// 
+  /// DensePolynomials are ordered for subtables ST1, ST2, ST3: [ST1[0], ST2[0], ST3[0], ... ST1[C-1], ST2[C-1], ST3[C-1]]
+  /// 
+  /// Params:
   /// - `subtable_entries`: Materialized subtables of size `num_subtables` x `subtable.memory_size` 
   /// - `nz`: Non-zero indices of size `subtable_dimensionality` x `sparisty`
   fn to_lookup_polys(
@@ -104,12 +108,12 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
 
   /// Maps an index [0, num_memories) -> [0, num_subtables)
   fn memory_to_subtable_index(i: usize) -> usize {
-    i / Self::subtable_dimensionality()
+    i % Self::num_subtables()
   }
 
   /// Maps an index [0, num_memories) -> [0, subtable_dimensionality]
   fn memory_to_dimension_index(i: usize) -> usize {
-    i % Self::subtable_dimensionality()
+    i / Self::num_subtables()
   }
 
   fn flat_subtables() -> Vec<Box<dyn SubtableStrategy<F>>> {

@@ -68,7 +68,7 @@ pub struct LTSubtable<F: PrimeField> {
 }
 impl<F: PrimeField> SubtableStrategy<F> for LTSubtable<F> {
   fn dimensions(&self) -> usize {
-    8
+    4
   }
 
   fn memory_size(&self) -> usize {
@@ -110,7 +110,7 @@ pub struct EQSubtable<F: PrimeField> {
 }
 impl<F: PrimeField> SubtableStrategy<F> for EQSubtable<F> {
   fn dimensions(&self) -> usize {
-    8
+    4
   }
 
   fn memory_size(&self) -> usize {
@@ -185,7 +185,7 @@ mod tests {
 
   #[test]
   fn e2e() {
-    const C: usize = 8;
+    const C: usize = 4;
     const S: usize = 1 << 8;
     const M: usize = 1 << 16;
 
@@ -198,7 +198,7 @@ mod tests {
     let mut dense: DensifiedRepresentation<Fr, LTVM> =
       DensifiedRepresentation::from_lookup_indices(&nz, log_m);
     let gens =
-      SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, S, C, log_m);
+      SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, S, 2*C, log_m);
     let commitment = dense.commit::<EdwardsProjective>(&gens);
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -218,7 +218,7 @@ mod tests {
 
   #[test]
   fn to_lookup_polys() {
-    const C: usize = 8;
+    const C: usize = 4;
     const S: usize = 1 << 3;
     const M: usize = 1 << 16;
 
@@ -249,21 +249,21 @@ mod tests {
     assert_eq!(lookup_polys[0][0], Fr::one()); // True
     assert_eq!(lookup_polys[0][1], Fr::zero()); // False
     assert_eq!(lookup_polys[0][2], Fr::zero()); // False
-    assert_eq!(lookup_polys[5][0], Fr::one()); // True
-    assert_eq!(lookup_polys[6][1], Fr::zero()); // False
-    assert_eq!(lookup_polys[7][2], Fr::zero()); // False
+    assert_eq!(lookup_polys[1][0], Fr::one()); // True
+    assert_eq!(lookup_polys[2][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[3][2], Fr::zero()); // False
 
-    assert_eq!(lookup_polys[8][0], Fr::zero()); // False
-    assert_eq!(lookup_polys[8][1], Fr::zero()); // False
-    assert_eq!(lookup_polys[8][2], Fr::one()); // True
-    assert_eq!(lookup_polys[9][0], Fr::zero()); // False
-    assert_eq!(lookup_polys[10][1], Fr::zero()); // False
-    assert_eq!(lookup_polys[11][2], Fr::one()); // True
+    assert_eq!(lookup_polys[C][0], Fr::zero()); // False
+    assert_eq!(lookup_polys[C][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[C][2], Fr::one()); // True
+    assert_eq!(lookup_polys[C+1][0], Fr::zero()); // False
+    assert_eq!(lookup_polys[C+2][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[C+3][2], Fr::one()); // True
   }
 
   #[test]
   fn subtable_construction() {
-    const C: usize = 8;
+    const C: usize = 4;
     const S: usize = 1 << 2;
     const M: usize = 1 << 16;
 
@@ -315,20 +315,68 @@ mod tests {
 
     // EQ
     let eval_point = index_to_field_bitvector(0, log_s);
-    let eval = subtables.lookup_polys[8].evaluate(&eval_point);
+    let eval = subtables.lookup_polys[C].evaluate(&eval_point);
     assert_eq!(eval, Fr::zero());
 
     let eval_point = index_to_field_bitvector(1, log_s);
-    let eval = subtables.lookup_polys[8].evaluate(&eval_point);
+    let eval = subtables.lookup_polys[C].evaluate(&eval_point);
     assert_eq!(eval, Fr::zero());
 
     let eval_point = index_to_field_bitvector(2, log_s);
-    let eval = subtables.lookup_polys[8].evaluate(&eval_point);
+    let eval = subtables.lookup_polys[C].evaluate(&eval_point);
     assert_eq!(eval, Fr::one());
 
     let eq = EqPolynomial::new(vec![Fr::zero(), Fr::one(), Fr::one()]);
     let eval = subtables.compute_sumcheck_claim(&eq);
 
     // TODO: check subtables.lookup_polys[i].evaluate
+  }
+
+  #[test]
+  fn combine_lookups() {
+    const C: usize = 4;
+    const S: usize = 1 << 3;
+    const M: usize = 1 << 16;
+
+    // let nz: Vec<Vec<usize>> = gen_indices::<C>(S, M);
+    let nz: Vec<Vec<usize>> = vec![
+      vec![
+        1,            // LT: True, EQ: False
+        1 << 8,       // LT: False, EQ: False
+        1 + (1 << 8), // LT: False, EQ: True
+        5,
+        4,
+        3,
+        2,
+        1
+      ];
+      C
+    ];
+
+    let subtable_entries: Vec<Vec<Fr>> = LTVM::materialize_subtables();
+    assert_eq!(subtable_entries[0][0], Fr::zero()); // LT 0 > 0 = 0
+    assert_eq!(subtable_entries[0][1], Fr::one()); // LT 1 > 0 = 1
+    assert_eq!(subtable_entries[0][(1 << 15) - 1], Fr::one()); // LT MAX > 0 = 1
+    assert_eq!(subtable_entries[0][1 << 15], Fr::zero()); // LT 0 > 1 = 0
+
+    let lookup_polys: Vec<DensePolynomial<Fr>> = LTVM::to_lookup_polys(&subtable_entries, &nz, S);
+
+    // LT[0], EQ[0], LT[1], EQ[1], ...
+    // LT[0] + LT[1]EQ[0] + LT[2]EQ[0]EQ[1]
+    let lt = vec![Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5)];
+    let eq = vec![Fr::from(6), Fr::from(7), Fr::from(8), Fr::from(9)];
+
+    let vals = vec![lt[0], eq[0], lt[1], eq[1], lt[2], eq[2], lt[3], eq[3]];
+    // let vals = &[lt.clone(), eq.clone()].concat();
+
+    let combined = LTVM::combine_lookups(&vals);
+    let expected = 
+        lt[0] + 
+        lt[1] * eq[0] + 
+        lt[2] * eq[0] * eq[1] + 
+        lt[3] * eq[0] * eq[1] * eq[2];
+    assert_eq!(combined, expected);
+
+    // TODO: Dense polynomial ordering fed into combine is wrong!!!
   }
 }

@@ -8,9 +8,7 @@ use merlin::Transcript;
 
 use crate::{
   jolt::JoltStrategy,
-  lasso::{
-    densified::DensifiedRepresentation, memory_checking::GrandProducts, surge::TableSizeInfo,
-  },
+  lasso::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
   poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
   poly::eq_poly::EqPolynomial,
   utils::errors::ProofVerifyError,

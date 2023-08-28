@@ -26,8 +26,6 @@ use std::marker::Sync;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-use super::surge::TableSizeInfo;
-
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   proof_prod_layer: ProductLayerProof<G::ScalarField>,
