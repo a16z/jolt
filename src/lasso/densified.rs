@@ -4,7 +4,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
 use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
-use crate::jolt::JoltStrategy;
+use crate::jolt::jolt_strategy::JoltStrategy;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;
 

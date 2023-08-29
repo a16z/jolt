@@ -13,7 +13,7 @@ use crate::{
   utils::errors::ProofVerifyError,
   utils::math::Math,
   utils::random::RandomTape,
-  utils::transcript::{AppendToTranscript, ProofTranscript}, jolt::JoltStrategy,
+  utils::transcript::{AppendToTranscript, ProofTranscript}, jolt::jolt_strategy::JoltStrategy,
 };
 
 #[cfg(feature = "multicore")]

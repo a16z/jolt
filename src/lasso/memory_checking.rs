@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::jolt::JoltStrategy;
+use crate::jolt::jolt_strategy::JoltStrategy;
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};

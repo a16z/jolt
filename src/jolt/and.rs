@@ -3,7 +3,7 @@ use ark_std::log2;
 
 use crate::utils::split_bits;
 
-use super::{JoltStrategy, SubtableStrategy, InstructionStrategy};
+use crate::jolt::jolt_strategy::{JoltStrategy, SubtableStrategy, InstructionStrategy};
 
 
 pub enum AndVMInstruction {

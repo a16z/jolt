@@ -5,7 +5,7 @@ use ark_std::log2;
 
 use crate::utils::split_bits;
 
-use super::{InstructionStrategy, JoltStrategy, SubtableStrategy};
+use super::jolt_strategy::{InstructionStrategy, JoltStrategy, SubtableStrategy};
 
 pub enum LTVMInstruction {
   LT(u64, u64),
@@ -33,7 +33,7 @@ pub struct LTInstruction<F: PrimeField> {
 }
 
 impl<F: PrimeField> InstructionStrategy<F> for LTInstruction<F> {
-  fn subtables(&self) -> Vec<Box<dyn super::SubtableStrategy<F>>> {
+  fn subtables(&self) -> Vec<Box<dyn SubtableStrategy<F>>> {
     vec![
       Box::new(LTSubtable {
         _marker: PhantomData::<F>,
@@ -154,7 +154,7 @@ mod tests {
   use rand_chacha::rand_core::RngCore;
 
   use crate::{
-    jolt::{lt::LTVM, JoltStrategy},
+    jolt::{lt::LTVM, jolt_strategy::JoltStrategy},
     lasso::{
       densified::DensifiedRepresentation,
       surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
