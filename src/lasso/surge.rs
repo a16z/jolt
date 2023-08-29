@@ -124,14 +124,12 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
 
     let subtables = Subtables::<G::ScalarField, S>::new(&dense.dim_usize, dense.s);
 
-    println!("[sam] Committing");
     // commit to non-deterministic choices of the prover
     let comm_derefs = {
       let comm = subtables.commit(&gens.gens_derefs);
       comm.append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
       comm
     };
-    println!("[sam] Completed Commitment");
 
     let eq = EqPolynomial::new(r.to_vec());
     let claimed_eval = subtables.compute_sumcheck_claim(&eq);
@@ -157,7 +155,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
         S::primary_poly_degree(),
         transcript,
       );
-    println!("[sam] Completed SumcheckInstanceProof::prove_arbitrary");
 
     // Combined eval proof for E_i(r_z)
     // TODO: I think this might be broken.
@@ -172,8 +169,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
       transcript,
       random_tape,
     );
-    println!("[sam] evaluating at {:?}", r_z);
-    println!("[sam] Completed CombineTableEvalProof");
 
     let memory_check = {
       // produce a random element from the transcript for hash function
@@ -234,11 +229,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
     )?;
 
     // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
-    println!(
-      "[sam] Primary Sumcheck verify eval_derefs len {}",
-      self.primary_sumcheck.eval_derefs.len()
-    );
-    println!("[sam] evaluating at {:?}", r_z);
     let eq_eval = EqPolynomial::new(eq_randomness.to_vec()).evaluate(&r_z);
     assert_eq!(
       eq_eval * S::combine_lookups(&self.primary_sumcheck.eval_derefs),

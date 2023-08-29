@@ -24,7 +24,7 @@ impl<F: PrimeField> JoltStrategy<F> for LTVM {
 
   fn primary_poly_degree() -> usize {
     // LT[C-1] * EQ[0] * ... * EQ[C-2] + 1
-    4
+    5
   }
 }
 
@@ -222,7 +222,6 @@ mod tests {
     const S: usize = 1 << 3;
     const M: usize = 1 << 16;
 
-    // let nz: Vec<Vec<usize>> = gen_indices::<C>(S, M);
     let nz: Vec<Vec<usize>> = vec![
       vec![
         1,            // LT: True, EQ: False
@@ -246,19 +245,21 @@ mod tests {
     assert_eq!(subtable_entries[0][1 << 15], Fr::zero()); // LT 0 > 1 = 0
 
     let lookup_polys: Vec<DensePolynomial<Fr>> = LTVM::to_lookup_polys(&subtable_entries, &nz, S);
+    // LT on even indices
     assert_eq!(lookup_polys[0][0], Fr::one()); // True
     assert_eq!(lookup_polys[0][1], Fr::zero()); // False
     assert_eq!(lookup_polys[0][2], Fr::zero()); // False
-    assert_eq!(lookup_polys[1][0], Fr::one()); // True
-    assert_eq!(lookup_polys[2][1], Fr::zero()); // False
-    assert_eq!(lookup_polys[3][2], Fr::zero()); // False
+    assert_eq!(lookup_polys[2][0], Fr::one()); // True
+    assert_eq!(lookup_polys[4][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[6][2], Fr::zero()); // False
 
-    assert_eq!(lookup_polys[C][0], Fr::zero()); // False
-    assert_eq!(lookup_polys[C][1], Fr::zero()); // False
-    assert_eq!(lookup_polys[C][2], Fr::one()); // True
-    assert_eq!(lookup_polys[C+1][0], Fr::zero()); // False
-    assert_eq!(lookup_polys[C+2][1], Fr::zero()); // False
-    assert_eq!(lookup_polys[C+3][2], Fr::one()); // True
+    // EQ on odd indices
+    assert_eq!(lookup_polys[1][0], Fr::zero()); // False
+    assert_eq!(lookup_polys[1][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[1][2], Fr::one()); // True
+    assert_eq!(lookup_polys[3][0], Fr::zero()); // False
+    assert_eq!(lookup_polys[5][1], Fr::zero()); // False
+    assert_eq!(lookup_polys[7][2], Fr::one()); // True
   }
 
   #[test]
@@ -315,21 +316,16 @@ mod tests {
 
     // EQ
     let eval_point = index_to_field_bitvector(0, log_s);
-    let eval = subtables.lookup_polys[C].evaluate(&eval_point);
+    let eval = subtables.lookup_polys[1].evaluate(&eval_point);
     assert_eq!(eval, Fr::zero());
 
     let eval_point = index_to_field_bitvector(1, log_s);
-    let eval = subtables.lookup_polys[C].evaluate(&eval_point);
+    let eval = subtables.lookup_polys[1].evaluate(&eval_point);
     assert_eq!(eval, Fr::zero());
 
     let eval_point = index_to_field_bitvector(2, log_s);
-    let eval = subtables.lookup_polys[C].evaluate(&eval_point);
+    let eval = subtables.lookup_polys[1].evaluate(&eval_point);
     assert_eq!(eval, Fr::one());
-
-    let eq = EqPolynomial::new(vec![Fr::zero(), Fr::one(), Fr::one()]);
-    let eval = subtables.compute_sumcheck_claim(&eq);
-
-    // TODO: check subtables.lookup_polys[i].evaluate
   }
 
   #[test]
