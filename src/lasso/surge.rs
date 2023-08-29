@@ -4,7 +4,7 @@
 
 use std::marker::PhantomData;
 
-use crate::jolt::JoltStrategy;
+use crate::jolt::jolt_strategy::JoltStrategy;
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::memory_checking::MemoryCheckingProof;
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};

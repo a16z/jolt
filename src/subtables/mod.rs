@@ -7,7 +7,7 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-  jolt::JoltStrategy,
+  jolt::jolt_strategy::JoltStrategy,
   lasso::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
   poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
   poly::eq_poly::EqPolynomial,
