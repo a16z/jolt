@@ -25,7 +25,7 @@ pub fn gaussian_elimination<F: PrimeField>(matrix: &mut [Vec<F>]) -> Vec<F> {
     #[allow(clippy::needless_range_loop)]
     for i in 0..size {
         if matrix[i][i] == F::zero() {
-            println!("Infinitely many solutions");
+            panic!("Infinitely many solutions");
         }
     }
 
