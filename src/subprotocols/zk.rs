@@ -69,11 +69,9 @@ impl<G: CurveGroup> KnowledgeProof<G> {
     let lhs = self.z1.commit(&self.z2, gens_n);
     let rhs = *C * c + self.alpha;
 
-    if lhs == rhs {
-      Ok(())
-    } else {
-      Err(ProofVerifyError::InternalError)
-    }
+    (lhs == rhs)
+      .then_some(())
+      .ok_or(ProofVerifyError::InternalError)
   }
 }
 

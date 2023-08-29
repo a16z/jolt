@@ -290,7 +290,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let poly = self.compressed_polys[i].decompress(&e);
 
       // verify degree bound
-      assert_eq!(poly.degree(), degree_bound);
+      if poly.degree() != degree_bound {
+        return Err(ProofVerifyError::InvalidInputLength(
+          degree_bound,
+          poly.degree(),
+        ));
+      }
 
       // check if G_k(0) + G_k(1) = e
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
