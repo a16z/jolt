@@ -538,7 +538,7 @@ mod tests {
     for _i in 0..s {
       r.push(G::ScalarField::rand(&mut prng));
     }
-    let chis = tests::compute_chis_at_r::<G::ScalarField>(&r);
+    let chis = compute_chis_at_r::<G::ScalarField>(&r);
     let chis_m = EqPolynomial::<G::ScalarField>::new(r).evals();
     assert_eq!(chis, chis_m);
   }
@@ -575,7 +575,7 @@ mod tests {
     for _i in 0..s {
       r.push(F::rand(&mut prng));
     }
-    let (L, R) = tests::compute_factored_chis_at_r(&r);
+    let (L, R) = compute_factored_chis_at_r(&r);
     let eq = EqPolynomial::new(r);
     let (L2, R2) = eq.compute_factored_evals();
     assert_eq!(L, L2);

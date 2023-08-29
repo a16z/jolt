@@ -5,15 +5,6 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
-extern crate core;
-extern crate digest;
-extern crate merlin;
-extern crate rand;
-extern crate sha3;
-
-#[cfg(feature = "multicore")]
-extern crate rayon;
-
 pub mod benches;
 pub mod lasso;
 mod msm;
