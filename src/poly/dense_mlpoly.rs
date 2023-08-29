@@ -515,7 +515,7 @@ mod tests {
     chis
   }
 
-  pub fn compute_outerproduct<F: PrimeField>(L: Vec<F>, R: Vec<F>) -> Vec<F> {
+  pub fn compute_outerproduct<F: PrimeField>(L: &[F], R: &[F]) -> Vec<F> {
     assert_eq!(L.len(), R.len());
     (0..L.len())
       .map(|i| (0..R.len()).map(|j| L[i] * R[j]).collect::<Vec<F>>())
@@ -558,7 +558,7 @@ mod tests {
     }
     let chis = EqPolynomial::new(r.clone()).evals();
     let (L, R) = EqPolynomial::new(r).compute_factored_evals();
-    let O = compute_outerproduct(L, R);
+    let O = compute_outerproduct(&L, &R);
     assert_eq!(chis, O);
   }
 
