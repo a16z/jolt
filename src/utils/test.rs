@@ -156,7 +156,7 @@ mod test {
     }
   }
 
-  fn verify_vecs<G: CurveGroup, F: PrimeField, T: ProofTranscript<G>>(
+  fn verify_vecs<G: CurveGroup, T: ProofTranscript<G>>(
     transcript: &mut T,
     vecs: Vec<Vec<G::ScalarField>>,
   ) {

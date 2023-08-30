@@ -111,7 +111,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
   /// - `gens`: Commitment generator
   // #[tracing::instrument(skip_all, name = "SparsePoly.prove")]
   pub fn prove(
-    dense: &mut DensifiedRepresentation<G::ScalarField, S>,
+    dense: &DensifiedRepresentation<G::ScalarField, S>,
     r: &[G::ScalarField],
     gens: &SparsePolyCommitmentGens<G>,
     transcript: &mut Transcript,

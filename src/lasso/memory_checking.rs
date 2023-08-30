@@ -1,3 +1,6 @@
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+
 use std::marker::PhantomData;
 
 use crate::jolt::jolt_strategy::JoltStrategy;
@@ -163,7 +166,7 @@ impl<F: PrimeField> GrandProducts<F> {
   pub fn new(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
-    dim_i_usize: &Vec<usize>,
+    dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -224,7 +227,7 @@ impl<F: PrimeField> GrandProducts<F> {
   fn build_grand_product_inputs(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
-    dim_i_usize: &Vec<usize>,
+    dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -353,7 +356,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> HashLayerProof<G, S> {
     let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_combine_n_to_one",
-      evals_ops.len().log_2() as usize,
+      evals_ops.len().log_2(),
     );
 
     let mut poly_evals_ops = DensePolynomial::new(evals_ops);
@@ -391,7 +394,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> HashLayerProof<G, S> {
     let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_combine_two_to_one",
-      eval_final.len().log_2() as usize,
+      eval_final.len().log_2(),
     );
 
     let mut poly_evals_mem = DensePolynomial::new_padded(eval_final.to_vec());
@@ -469,32 +472,32 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> HashLayerProof<G, S> {
     tau: &G::ScalarField,
   ) -> Result<(), ProofVerifyError> {
     // Computes the Reed-Solomon fingerprint of the tuple (a, v, t)
-    let hash_func = |a: &G::ScalarField,
-                     v: &G::ScalarField,
-                     t: &G::ScalarField|
-     -> G::ScalarField { *t * gamma.square() + *v * *gamma + *a - tau };
+    let hash_func = |a: G::ScalarField,
+                     v: G::ScalarField,
+                     t: G::ScalarField|
+     -> G::ScalarField { t * gamma.square() + v * *gamma + a - tau };
     // Note: this differs from the Lasso paper a little:
     // (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
 
     let (claim_init, claim_read, claim_write, claim_final) = claims;
 
     // init
-    let hash_init = hash_func(&init_addr, &init_memory, &G::ScalarField::zero());
+    let hash_init = hash_func(*init_addr, *init_memory, G::ScalarField::zero());
     assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
     // read
-    let hash_read = hash_func(eval_dim, eval_deref, eval_read);
+    let hash_read = hash_func(*eval_dim, *eval_deref, *eval_read);
     assert_eq!(hash_read, *claim_read); // verify the last claim of the `read` grand product sumcheck
 
     // write: shares addr, val with read
     let eval_write = *eval_read + G::ScalarField::one();
-    let hash_write = hash_func(eval_dim, eval_deref, &eval_write);
+    let hash_write = hash_func(*eval_dim, *eval_deref, eval_write);
     assert_eq!(hash_write, *claim_write); // verify the last claim of the `write` grand product sumcheck
 
     // final: shares addr and val with init
     let eval_final_addr = init_addr;
     let eval_final_val = init_memory;
-    let hash_final = hash_func(&eval_final_addr, &eval_final_val, eval_final);
+    let hash_final = hash_func(*eval_final_addr, *eval_final_val, *eval_final);
     assert_eq!(hash_final, *claim_final); // verify the last claim of the `final` grand product sumcheck
 
     Ok(())
@@ -541,7 +544,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> HashLayerProof<G, S> {
     let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_combine_n_to_one",
-      evals_ops.len().log_2() as usize,
+      evals_ops.len().log_2(),
     );
 
     let mut poly_evals_ops = DensePolynomial::new(evals_ops);
@@ -577,7 +580,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> HashLayerProof<G, S> {
     let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_combine_two_to_one",
-      self.eval_final.len().log_2() as usize,
+      self.eval_final.len().log_2(),
     );
 
     let mut poly_evals_mem = DensePolynomial::new_padded(self.eval_final.to_vec());
@@ -652,7 +655,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G>(
-    grand_products: &mut Vec<GrandProducts<F>>,
+    grand_products: &mut [GrandProducts<F>],
     transcript: &mut Transcript,
     num_memories: usize 
   ) -> (Self, Vec<F>, Vec<F>)
@@ -727,17 +730,17 @@ impl<F: PrimeField> ProductLayerProof<F> {
       // Multiset equality check
       debug_assert_eq!(*hash_init * *hash_write, *hash_read * *hash_final);
 
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_init", &hash_init);
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_read", &hash_read);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_init", hash_init);
+      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_read", hash_read);
       <Transcript as ProofTranscript<G>>::append_scalar(
         transcript,
         b"claim_hash_write",
-        &hash_write,
+        hash_write,
       );
       <Transcript as ProofTranscript<G>>::append_scalar(
         transcript,
         b"claim_hash_final",
-        &hash_final,
+        hash_final,
       );
     }
 

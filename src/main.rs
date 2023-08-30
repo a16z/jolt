@@ -20,7 +20,7 @@ fn main() {
   if args.chart {
     tracing_texray::init();
     benchmarks(args.name).iter().for_each(|(span, bench)| {
-      tracing_texray::examine(span.to_owned()).in_scope(|| bench());
+      tracing_texray::examine(span.to_owned()).in_scope(bench);
     });
   } else {
     let collector = tracing_subscriber::fmt()

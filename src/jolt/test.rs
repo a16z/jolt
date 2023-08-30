@@ -5,8 +5,8 @@ macro_rules! jolt_materialization_mle_parity_test {
     #[test]
     fn $test_name() {
         use ark_std::log2;
-        use crate::jolt::jolt_strategy::JoltStrategy;
-        use crate::utils::index_to_field_bitvector;
+        use $crate::jolt::jolt_strategy::JoltStrategy;
+        use $crate::utils::index_to_field_bitvector;
 
         const M: usize = $M;
 

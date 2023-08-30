@@ -66,7 +66,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     );
 
     DensePolynomial {
-      num_vars: Z.len().log_2() as usize,
+      num_vars: Z.len().log_2(),
       len: Z.len(),
       Z,
     }
@@ -80,7 +80,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     DensePolynomial {
-      num_vars: poly_evals.len().log_2() as usize,
+      num_vars: poly_evals.len().log_2(),
       len: poly_evals.len(),
       Z: poly_evals,
     }

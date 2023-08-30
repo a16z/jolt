@@ -39,7 +39,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     let mut left_vec: Vec<DensePolynomial<F>> = Vec::new();
     let mut right_vec: Vec<DensePolynomial<F>> = Vec::new();
 
-    let num_layers = poly.len().log_2() as usize;
+    let num_layers = poly.len().log_2();
     let (outp_left, outp_right) = poly.split(poly.len() / 2);
 
     left_vec.push(outp_left);
@@ -122,7 +122,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       let mut poly_C_par = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
       assert_eq!(poly_C_par.len(), len / 2);
 
-      let num_rounds_prod = poly_C_par.len().log_2() as usize;
+      let num_rounds_prod = poly_C_par.len().log_2();
       let comb_func_prod = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F| -> F {
         *poly_A_comp * *poly_B_comp * *poly_C_comp
       };
@@ -209,7 +209,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
   where
     G: CurveGroup<ScalarField = F>,
   {
-    let num_layers = len.log_2() as usize;
+    let num_layers = len.log_2();
     let mut rand: Vec<F> = Vec::new();
     assert_eq!(self.proof.len(), num_layers);
 
