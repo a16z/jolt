@@ -16,33 +16,31 @@ impl<F: PrimeField> JoltStrategy<F> for AndVM {
     type Instruction = AndVMInstruction;
 
     fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
-        vec![Box::new(AndInstruction::new())]
+        vec![Box::new(AndInstruction::new(4, 1 << 16))]
     }
 }
 
-pub struct AndInstruction {}
+pub struct AndInstruction {
+    C: usize,
+    M: usize,
+}
 impl AndInstruction {
-    fn new() -> Self {
-        Self {}
+    fn new(C: usize, M: usize) -> Self {
+        Self { C, M }
     }
 }
 
 impl<F: PrimeField> InstructionStrategy<F> for AndInstruction {
     fn subtables(&self) -> Vec<Box<dyn SubtableStrategy<F>>> {
-        vec![Box::new(AndSubtable::new())]
+        vec![Box::new(AndSubtable::new(self.C, self.M))]
     }
 
     fn combine_lookups(&self, vals: &[F]) -> F {
-        // TODO:
-        // let C: usize = self.subtables()[0].dimensions();
-        // let M: usize = self.subtables()[0].memory_size();
-        let C: usize = 4;
-        let M: usize = 1 << 16;
-        assert_eq!(vals.len(), C);
+        assert_eq!(vals.len(), self.C);
 
-        let increment = log2(M) as usize;
+        let increment = log2(self.M) as usize;
         let mut sum = F::zero();
-        for i in 0..C {
+        for i in 0..self.C {
           let weight: u64 = 1u64 << (i * increment);
           sum += F::from(weight) * vals[i];
         }
@@ -54,26 +52,26 @@ impl<F: PrimeField> InstructionStrategy<F> for AndInstruction {
     }
 }
 
-pub struct AndSubtable {}
+pub struct AndSubtable {
+    C: usize,
+    M: usize
+}
 impl AndSubtable {
-    fn new() -> Self {
-        Self {}
+    fn new(C: usize, M: usize) -> Self {
+        Self { C, M }
     }
 }
 
 impl<F: PrimeField> SubtableStrategy<F> for AndSubtable {
     fn dimensions(&self) -> usize {
-        4
+        self.C
     }
 
     fn memory_size(&self) -> usize {
-        // TODO: Promote to generic or field
-        1 << 16
+        self.M
     }
 
-
     fn materialize(&self) -> Vec<F> {
-        // TODO: There *must* be a less horrendous way to do this.
         let M: usize = <AndSubtable as SubtableStrategy<F>>::memory_size(self);
 
         let mut materialized: Vec<F> = Vec::with_capacity(M);

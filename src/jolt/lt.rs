@@ -18,12 +18,16 @@ impl<F: PrimeField> JoltStrategy<F> for LTVM {
 
   fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
     vec![Box::new(LTInstruction {
+        C: 4,
+        M: 1 << 16,
       _marker: PhantomData::<F>,
     })]
   }
 }
 
 pub struct LTInstruction<F: PrimeField> {
+    C: usize,
+    M: usize,
   _marker: PhantomData<F>,
 }
 
@@ -31,9 +35,13 @@ impl<F: PrimeField> InstructionStrategy<F> for LTInstruction<F> {
   fn subtables(&self) -> Vec<Box<dyn SubtableStrategy<F>>> {
     vec![
       Box::new(LTSubtable {
+        C: self.C,
+        M: self.M,
         _marker: PhantomData::<F>,
       }),
       Box::new(EQSubtable {
+        C: self.C,
+        M: self.M,
         _marker: PhantomData::<F>,
       }),
     ]
@@ -59,15 +67,17 @@ impl<F: PrimeField> InstructionStrategy<F> for LTInstruction<F> {
 }
 
 pub struct LTSubtable<F: PrimeField> {
+    C: usize,
+    M: usize,
   _marker: PhantomData<F>,
 }
 impl<F: PrimeField> SubtableStrategy<F> for LTSubtable<F> {
   fn dimensions(&self) -> usize {
-    4
+    self.C
   }
 
   fn memory_size(&self) -> usize {
-    1 << 16
+    self.M
   }
 
   fn materialize(&self) -> Vec<F> {
@@ -101,15 +111,17 @@ impl<F: PrimeField> SubtableStrategy<F> for LTSubtable<F> {
 }
 
 pub struct EQSubtable<F: PrimeField> {
+    C: usize,
+    M: usize,
   _marker: PhantomData<F>,
 }
 impl<F: PrimeField> SubtableStrategy<F> for EQSubtable<F> {
   fn dimensions(&self) -> usize {
-    4
+    self.C
   }
 
   fn memory_size(&self) -> usize {
-    1 << 16
+    self.M
   }
 
   fn materialize(&self) -> Vec<F> {
