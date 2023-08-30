@@ -168,7 +168,7 @@ mod tests {
     },
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subtables::Subtables,
-    utils::{ff_bitvector_dbg, index_to_field_bitvector, random::RandomTape, split_bits},
+    utils::{ff_bitvector_dbg, index_to_field_bitvector, random::RandomTape, split_bits}, jolt_materialization_mle_parity_test,
   };
 
   pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<Vec<usize>> {
@@ -373,4 +373,6 @@ mod tests {
     let expected = lt[0] + lt[1] * eq[0] + lt[2] * eq[0] * eq[1] + lt[3] * eq[0] * eq[1] * eq[2];
     assert_eq!(combined, expected);
   }
+
+  jolt_materialization_mle_parity_test!(mle_parity, LTVM, Fr, /* M= */ 1 << 16);
 }

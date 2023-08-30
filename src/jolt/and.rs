@@ -108,7 +108,7 @@ mod tests {
     use rand_chacha::rand_core::RngCore;
     use ark_curve25519::{Fr, EdwardsProjective};
 
-    use crate::{lasso::{densified::DensifiedRepresentation, surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof}}, jolt::and::AndVM, utils::random::RandomTape};
+    use crate::{jolt_materialization_mle_parity_test, lasso::{densified::DensifiedRepresentation, surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof}}, jolt::{and::AndVM}, utils::random::RandomTape};
 
     pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<Vec<usize>> {
         let mut rng = test_rng();
@@ -157,4 +157,7 @@ mod tests {
         let mut verify_transcript = Transcript::new(b"example");
         proof.verify(&commitment, &r, &gens, &mut verify_transcript).expect("should verify");
     }
+
+    jolt_materialization_mle_parity_test!(mle_parity, AndVM, Fr, /* M= */ 1 << 16);
+
 }
