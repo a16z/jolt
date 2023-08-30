@@ -18,10 +18,6 @@ impl<F: PrimeField> JoltStrategy<F> for AndVM {
     fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
         vec![Box::new(AndInstruction::new())]
     }
-
-    fn primary_poly_degree() -> usize {
-        2
-    }
 }
 
 pub struct AndInstruction {}
