@@ -40,7 +40,8 @@ pub struct Subtables<F: PrimeField, S: JoltStrategy<F>>
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
 impl<F: PrimeField, S: JoltStrategy<F>> Subtables<F, S> {
   /// Create new Subtables
-  /// - `evaluations`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
+  /// - `nz`: non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials
+  /// - `s`: number of lookups
   pub fn new(nz: &Vec<Vec<usize>>, s: usize) -> Self {
     nz.iter().for_each(|nz_dim| assert_eq!(nz_dim.len(), s));
     let subtable_entries = S::materialize_subtables();
