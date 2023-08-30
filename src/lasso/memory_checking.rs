@@ -7,7 +7,7 @@ use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
 use crate::poly::identity_poly::IdentityPolynomial;
 use crate::subprotocols::grand_product::{BatchedGrandProductArgument, GrandProductCircuit};
 use crate::subtables::{
-  CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
+  CombinedTableCommitment, CombinedTableEvalProof, Subtables,
 };
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;

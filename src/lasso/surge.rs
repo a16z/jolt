@@ -11,7 +11,7 @@ use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentG
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subtables::{
-  CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
+  CombinedTableCommitment, CombinedTableEvalProof, Subtables,
 };
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
