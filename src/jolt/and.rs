@@ -25,7 +25,7 @@ pub struct AndInstruction {
     M: usize,
 }
 impl AndInstruction {
-    fn new(C: usize, M: usize) -> Self {
+    pub fn new(C: usize, M: usize) -> Self {
         Self { C, M }
     }
 }

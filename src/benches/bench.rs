@@ -1,15 +1,15 @@
 use crate::lasso::surge::SparsePolyCommitmentGens;
-use crate::subtables::and::AndSubtableStrategy;
 use crate::{
   lasso::{densified::DensifiedRepresentation, surge::SparsePolynomialEvaluationProof},
   utils::random::RandomTape,
 };
+use crate::jolt::jolt_strategy::{JoltStrategy, InstructionStrategy};
+use crate::jolt::and::AndInstruction;
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_ff::PrimeField;
 use ark_std::{log2, test_rng};
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
-use crate::jolt::and::AndVM;
 
 pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<Vec<usize>> {
   let mut rng = test_rng();
@@ -35,15 +35,27 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
 }
 
 macro_rules! single_pass_lasso {
-  ($span_name:expr, $field:ty, $group:ty, $subtable_strategy:ty, $C:expr, $M:expr, $sparsity:expr) => {
+  ($span_name:expr, $field:ty, $group:ty, $C:expr, $M:expr, $sparsity:expr) => {
     (tracing::info_span!($span_name), move || {
+      type F = $field;
+      type G = $group;
+
       const C: usize = $C;
       const M: usize = $M;
       const S: usize = $sparsity;
-      type F = $field;
-      type G = $group;
-      type SubtableStrategy = $subtable_strategy;
-      type JoltStrat = AndVM;
+
+      struct TempVM {}
+      pub enum Unused{}
+
+      impl<F: PrimeField> JoltStrategy<F> for TempVM {
+        type Instruction = Unused;
+
+        fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
+          vec![Box::new(AndInstruction::new(C, M))]
+        }
+      }
+
+      type JoltStrat = TempVM;
 
       let log_m = log2(M) as usize;
       let log_s: usize = log2($sparsity) as usize;
@@ -91,145 +103,130 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, fn())> {
 
 fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
   vec![
-    // single_pass_lasso!(
-    //   "And(2^128, 2^10)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 4,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 10
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^128, 2^12)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 4,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 12
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^128, 2^14)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 4,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 14
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^128, 2^16)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 4,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 16
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^128, 2^18)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 4,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 18
-    // ),
+    single_pass_lasso!(
+      "And(2^128, 2^10)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 10
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^12)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 12
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^14)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 14
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^16)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 16
+    ),
+    single_pass_lasso!(
+      "And(2^128, 2^18)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 18
+    ),
     single_pass_lasso!(
       "And(2^128, 2^20)",
       Fr,
       EdwardsProjective,
-      AndSubtableStrategy,
-      /* C= */ 4,
+      /* C= */ 8,
       /* M= */ 1 << 16,
       /* S= */ 1 << 20
     ),
-    // single_pass_lasso!(
-    //   "And(2^128, 2^22)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 4,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 22
-    // ),
+    single_pass_lasso!(
+      "And(2^128, 2^22)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 8,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 22
+    ),
   ]
 }
 
 fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
   vec![
-    // single_pass_lasso!(
-    //   "And(2^10)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 10
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^12)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 12
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^14)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 14
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^16)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 16
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^18)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 18
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^20)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 20
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^22)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 22
-    // ),
-    // single_pass_lasso!(
-    //   "And(2^24)",
-    //   Fr,
-    //   EdwardsProjective,
-    //   AndSubtableStrategy,
-    //   /* C= */ 1,
-    //   /* M= */ 1 << 16,
-    //   /* S= */ 1 << 24
-    // ),
+    single_pass_lasso!(
+      "And(2^10)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 10
+    ),
+    single_pass_lasso!(
+      "And(2^12)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 12
+    ),
+    single_pass_lasso!(
+      "And(2^14)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 14
+    ),
+    single_pass_lasso!(
+      "And(2^16)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 16
+    ),
+    single_pass_lasso!(
+      "And(2^18)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 18
+    ),
+    single_pass_lasso!(
+      "And(2^20)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 20
+    ),
+    single_pass_lasso!(
+      "And(2^22)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 22
+    ),
+    single_pass_lasso!(
+      "And(2^24)",
+      Fr,
+      EdwardsProjective,
+      /* C= */ 1,
+      /* M= */ 1 << 16,
+      /* S= */ 1 << 24
+    ),
   ]
 }
