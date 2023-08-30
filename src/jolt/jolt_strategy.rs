@@ -8,10 +8,6 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
   /// All instructions used by this VM.
   fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>>;
 
-  /// Degree of the primary sumcheck univariate polynomial. Describes number of points required to uniquely define
-  /// the associated polynomial.
-  fn primary_poly_degree() -> usize;
-
   /// Computes g(T_1[k], ..., T_\alpha[k])
   fn combine_lookups(vals: &[F]) -> F {
     assert_eq!(vals.len(), Self::num_memories());
@@ -83,6 +79,19 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
 
   fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
     Self::flat_subtables()[Self::memory_to_subtable_index(memory_index)].evaluate_mle(point)
+  }
+
+  /// Degree of the primary sumcheck univariate polynomial. Describes number of points required to uniquely define
+  /// the associated polynomial.
+  fn primary_poly_degree() -> usize {
+    let max_instruction_degree = Self::instructions()
+    .iter()
+    .map(|instruction| instruction.g_poly_degree())
+    .max()
+    .unwrap();
+    
+    // Add evaluation of eq
+    max_instruction_degree + 1
   }
 
   /// Maps an index [0, num_memories) -> [0, num_subtables)

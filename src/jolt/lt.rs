@@ -21,11 +21,6 @@ impl<F: PrimeField> JoltStrategy<F> for LTVM {
       _marker: PhantomData::<F>,
     })]
   }
-
-  fn primary_poly_degree() -> usize {
-    // LT[C-1] * EQ[0] * ... * EQ[C-2] + 1
-    5
-  }
 }
 
 pub struct LTInstruction<F: PrimeField> {
@@ -59,7 +54,7 @@ impl<F: PrimeField> InstructionStrategy<F> for LTInstruction<F> {
   }
 
   fn g_poly_degree(&self) -> usize {
-    todo!()
+    4
   }
 }
 
@@ -154,7 +149,7 @@ mod tests {
   use rand_chacha::rand_core::RngCore;
 
   use crate::{
-    jolt::{lt::LTVM, jolt_strategy::JoltStrategy},
+    jolt::{jolt_strategy::JoltStrategy, lt::LTVM},
     lasso::{
       densified::DensifiedRepresentation,
       surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
@@ -198,7 +193,7 @@ mod tests {
     let mut dense: DensifiedRepresentation<Fr, LTVM> =
       DensifiedRepresentation::from_lookup_indices(&nz, log_m);
     let gens =
-      SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, S, 2*C, log_m);
+      SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens_sparse_poly", C, S, 2 * C, log_m);
     let commitment = dense.commit::<EdwardsProjective>(&gens);
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
@@ -355,24 +350,15 @@ mod tests {
     assert_eq!(subtable_entries[0][(1 << 15) - 1], Fr::one()); // LT MAX > 0 = 1
     assert_eq!(subtable_entries[0][1 << 15], Fr::zero()); // LT 0 > 1 = 0
 
-    let lookup_polys: Vec<DensePolynomial<Fr>> = LTVM::to_lookup_polys(&subtable_entries, &nz, S);
-
     // LT[0], EQ[0], LT[1], EQ[1], ...
     // LT[0] + LT[1]EQ[0] + LT[2]EQ[0]EQ[1]
     let lt = vec![Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5)];
     let eq = vec![Fr::from(6), Fr::from(7), Fr::from(8), Fr::from(9)];
 
     let vals = vec![lt[0], eq[0], lt[1], eq[1], lt[2], eq[2], lt[3], eq[3]];
-    // let vals = &[lt.clone(), eq.clone()].concat();
 
     let combined = LTVM::combine_lookups(&vals);
-    let expected = 
-        lt[0] + 
-        lt[1] * eq[0] + 
-        lt[2] * eq[0] * eq[1] + 
-        lt[3] * eq[0] * eq[1] * eq[2];
+    let expected = lt[0] + lt[1] * eq[0] + lt[2] * eq[0] * eq[1] + lt[3] * eq[0] * eq[1] * eq[2];
     assert_eq!(combined, expected);
-
-    // TODO: Dense polynomial ordering fed into combine is wrong!!!
   }
 }
