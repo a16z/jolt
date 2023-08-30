@@ -166,18 +166,18 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
   ) -> PolyEvalProof<G> {
     assert_eq!(
       joint_poly.get_num_vars(),
-      r.len() + evals.len().log_2() as usize
+      r.len() + evals.len().log_2() 
     );
 
     // append the claimed evaluations to transcript
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
 
     // n-to-1 reduction
     let (r_joint, eval_joint) = {
       let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
         transcript,
         b"challenge_combine_n_to_one",
-        evals.len().log_2() as usize,
+        evals.len().log_2(),
       );
 
       let mut poly_evals = DensePolynomial::new(evals.to_vec());
@@ -253,13 +253,13 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     // append the claimed evaluations to transcript
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
+    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
 
     // n-to-1 reduction
     let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
       transcript,
       b"challenge_combine_n_to_one",
-      evals.len().log_2() as usize,
+      evals.len().log_2(),
     );
     let mut poly_evals = DensePolynomial::new(evals.to_vec());
     for i in (0..challenges.len()).rev() {

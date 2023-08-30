@@ -166,9 +166,9 @@ mod tests {
       densified::DensifiedRepresentation,
       surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
     },
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    poly::dense_mlpoly::DensePolynomial,
     subtables::Subtables,
-    utils::{ff_bitvector_dbg, index_to_field_bitvector, random::RandomTape, split_bits}, jolt_materialization_mle_parity_test,
+    utils::{index_to_field_bitvector, random::RandomTape, split_bits}, jolt_materialization_mle_parity_test,
   };
 
   pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<Vec<usize>> {
@@ -227,7 +227,6 @@ mod tests {
   fn to_lookup_polys() {
     const C: usize = 4;
     const S: usize = 1 << 3;
-    const M: usize = 1 << 16;
 
     let nz: Vec<Vec<usize>> = vec![
       vec![
@@ -337,25 +336,6 @@ mod tests {
 
   #[test]
   fn combine_lookups() {
-    const C: usize = 4;
-    const S: usize = 1 << 3;
-    const M: usize = 1 << 16;
-
-    // let nz: Vec<Vec<usize>> = gen_indices::<C>(S, M);
-    let nz: Vec<Vec<usize>> = vec![
-      vec![
-        1,            // LT: True, EQ: False
-        1 << 8,       // LT: False, EQ: False
-        1 + (1 << 8), // LT: False, EQ: True
-        5,
-        4,
-        3,
-        2,
-        1
-      ];
-      C
-    ];
-
     let subtable_entries: Vec<Vec<Fr>> = LTVM::materialize_subtables();
     assert_eq!(subtable_entries[0][0], Fr::zero()); // LT 0 > 0 = 0
     assert_eq!(subtable_entries[0][1], Fr::one()); // LT 1 > 0 = 1

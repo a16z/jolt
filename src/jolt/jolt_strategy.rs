@@ -109,8 +109,7 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
   fn flat_subtables() -> Vec<Box<dyn SubtableStrategy<F>>> {
     Self::instructions()
       .iter()
-      .map(|instruction| instruction.subtables())
-      .flatten()
+      .flat_map(|instruction| instruction.subtables())
       .collect()
   }
 

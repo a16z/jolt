@@ -70,10 +70,10 @@ impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
     let combined_log_m_variate_polys = DensePolynomial::merge(&r#final);
 
     DensifiedRepresentation {
-      dim_usize: dim_usize.try_into().unwrap(),
-      dim: dim.try_into().unwrap(),
-      read: read.try_into().unwrap(),
-      r#final: r#final.try_into().unwrap(),
+      dim_usize,
+      dim,
+      read,
+      r#final,
       combined_l_variate_polys,
       combined_log_m_variate_polys,
       s,
