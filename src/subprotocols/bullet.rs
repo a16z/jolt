@@ -172,10 +172,11 @@ impl<G: CurveGroup> BulletReductionProof<G> {
     if lg_n >= 32 {
       // 4 billion multiplications should be enough for anyone
       // and this check prevents overflow in 1<<lg_n below.
-      return Err(ProofVerifyError::InternalError);
+      return Err(ProofVerifyError::InputTooLarge);
     }
+    let target = 1 << lg_n;
     if n != (1 << lg_n) {
-      return Err(ProofVerifyError::InternalError);
+      return Err(ProofVerifyError::InvalidInputLength(target, n));
     }
 
     // 1. Recompute x_k,...,x_1 based on the proof transcript

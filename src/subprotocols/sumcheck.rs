@@ -37,7 +37,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
   where
-    Func: Fn(&F, &F, &F) -> F + std::marker::Sync,
+    Func: Fn(&F, &F, &F) -> F + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let (poly_A_vec_par, poly_B_vec_par, poly_C_par) = poly_vec_par;
@@ -156,7 +156,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     transcript: &mut T,
   ) -> (Self, Vec<F>, Vec<F>)
   where
-    Func: Fn(&[F; ALPHA]) -> F + std::marker::Sync,
+    Func: Fn(&[F; ALPHA]) -> F + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let mut r: Vec<F> = Vec::new();
@@ -290,7 +290,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let poly = self.compressed_polys[i].decompress(&e);
 
       // verify degree bound
-      assert_eq!(poly.degree(), degree_bound);
+      if poly.degree() != degree_bound {
+        return Err(ProofVerifyError::InvalidInputLength(
+          degree_bound,
+          poly.degree(),
+        ));
+      }
 
       // check if G_k(0) + G_k(1) = e
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);

@@ -22,8 +22,8 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     // Materialize table in counting order where lhs | rhs counts 0->m
     for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
-      materialized_lt.push(F::from((lhs < rhs) as u64));
-      materialized_eq.push(F::from((lhs == rhs) as u64));
+      materialized_lt.push(F::from(u64::from(lhs < rhs)));
+      materialized_eq.push(F::from(u64::from(lhs == rhs)));
     }
 
     [materialized_lt, materialized_eq]
