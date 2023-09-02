@@ -241,6 +241,7 @@ impl<F: PrimeField> GrandProducts<F> {
   ) {
     let (gamma, tau) = r_mem_check;
 
+    // TODO(moodlezoup): (t * gamma^2 + v * gamma + a - tau) * flags + (1 - flags)
     // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
     let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 

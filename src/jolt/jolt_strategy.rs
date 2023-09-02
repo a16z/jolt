@@ -85,11 +85,11 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
   /// the associated polynomial.
   fn primary_poly_degree() -> usize {
     let max_instruction_degree = Self::instructions()
-    .iter()
-    .map(|instruction| instruction.g_poly_degree())
-    .max()
-    .unwrap();
-    
+      .iter()
+      .map(|instruction| instruction.g_poly_degree())
+      .max()
+      .unwrap();
+
     // Add evaluation of eq
     max_instruction_degree + 1
   }
@@ -148,35 +148,35 @@ pub trait JoltStrategy<F: PrimeField>: Sync + Send {
 }
 
 pub trait InstructionStrategy<F: PrimeField> {
-    /// Returns subtables used by this InstructionStrategy in order.
-    fn subtables(&self) -> Vec<Box<dyn SubtableStrategy<F>>>;
+  /// Returns subtables used by this InstructionStrategy in order.
+  fn subtables(&self) -> Vec<Box<dyn SubtableStrategy<F>>>;
 
-    /// Combines g(T1[0], T2[0], T3[0], ... T1[C-1], T2[C-1], T3[C-1])
-    fn combine_lookups(&self, vals: &[F]) -> F;
+  /// Combines g(T1[0], T2[0], T3[0], ... T1[C-1], T2[C-1], T3[C-1])
+  fn combine_lookups(&self, vals: &[F]) -> F;
 
-    /// Degree of the g polynomial considering all T (subtable) polynomials a 
-    /// degree-1 univariate polynomial.
-    fn g_poly_degree(&self) -> usize;
+  /// Degree of the g polynomial considering all T (subtable) polynomials a
+  /// degree-1 univariate polynomial.
+  fn g_poly_degree(&self) -> usize;
 
-    /// Evaluate the MLE of the `subtable_index` subtable with ordered defined in 
-    /// `InstructionStrategy::subtables()`.
-    fn evaluate_subtable_mle(&self, subtable_index: usize, point: &[F]) -> F {
-        self.subtables()[subtable_index].evaluate_mle(point)
+  /// Evaluate the MLE of the `subtable_index` subtable with ordered defined in
+  /// `InstructionStrategy::subtables()`.
+  fn evaluate_subtable_mle(&self, subtable_index: usize, point: &[F]) -> F {
+    self.subtables()[subtable_index].evaluate_mle(point)
+  }
+
+  /// Total number of unique subtables.
+  fn num_subtables(&self) -> usize {
+    self.subtables().len()
+  }
+
+  /// Total number of memories across all subtables.
+  fn num_memories(&self) -> usize {
+    let mut memories = 0;
+    for subtable in self.subtables() {
+      memories += subtable.dimensions();
     }
-
-    /// Total number of unique subtables.
-    fn num_subtables(&self) -> usize {
-        self.subtables().len()
-    }
-
-    /// Total number of memories across all subtables.
-    fn num_memories(&self) -> usize {
-        let mut memories = 0;
-        for subtable in self.subtables() {
-        memories += subtable.dimensions();
-        }
-        memories
-    }
+    memories
+  }
 }
 
 pub trait SubtableStrategy<F: PrimeField> {

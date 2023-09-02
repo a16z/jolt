@@ -149,6 +149,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         .map(|i| claims_to_verify[i] * coeff_vec[i])
         .sum();
 
+      // TODO(moodlezoup): Degree 5 for last layer
       let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::<F>::prove_cubic_batched::<_, G>(
         &claim,
         num_rounds_prod,
