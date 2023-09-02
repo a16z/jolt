@@ -50,6 +50,9 @@ tracing-subscriber = "0.3.17"
 tracing-texray = "0.2.0"
 clap = { version = "4.3.10", features = ["derive"] }
 hashbrown = "0.14.0"
+strum = "0.25.0"
+strum_macros = "0.25.2"
+enum_dispatch = "0.3.12"
 
 [dev-dependencies]
 criterion = "0.3.1"
@@ -59,13 +62,7 @@ name = "liblasso"
 path = "src/lib.rs"
 
 [features]
-default = [
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "ark-ff/asm",
-    "multicore",
-]
+default = ["ark-ec/parallel", "ark-ff/parallel", "ark-std/parallel", "ark-ff/asm", "multicore"]
 multicore = ["rayon"]
 ark-msm = [] # run with arkworks MSM without small field element optimization
 
