@@ -1,3 +1,4 @@
+use std::any::{Any, TypeId};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -32,27 +33,25 @@ pub trait ChunkIndices {
   fn to_indices<const C: usize, const LOG_M: usize>(&self) -> [usize; C];
 }
 
-pub trait Opcode {
-  fn to_opcode(&self) -> u8;
-}
-
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, EnumIter, EnumCountMacro)]
 #[enum_dispatch(ChunkIndices, SubtableDecomposition)]
 pub enum TestInstructionSet {
   XOR(XORInstruction),
   EQ(EQInstruction),
 }
 
-impl Opcode for TestInstructionSet {
+pub trait Opcode {
   fn to_opcode(&self) -> u8 {
     unsafe { *<*const _>::from(self).cast::<u8>() }
   }
 }
 
-#[derive(Copy, Clone)]
+impl Opcode for TestInstructionSet {}
+
+#[derive(Copy, Clone, Default)]
 pub struct XORInstruction(u64, u64);
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct EQInstruction(u64, u64);
 
 impl<F: PrimeField> JoltInstruction<F> for XORInstruction {
@@ -106,25 +105,28 @@ impl ChunkIndices for EQInstruction {
 // ==================== SUBTABLES ====================
 
 #[enum_dispatch]
-pub trait LassoSubtable<F: PrimeField> {
+pub trait LassoSubtable<F: PrimeField>: 'static {
   // TODO: M
 
+  fn subtable_id(&self) -> TypeId {
+    TypeId::of::<Self>()
+  }
   fn materialize(&self) -> Vec<F>;
   fn evaluate_mle(&self, point: &[F]) -> F;
 }
 
-#[enum_dispatch(LassoSubtable<F>, ToEnum<F>)]
-#[derive(EnumCountMacro, EnumIter)]
+#[enum_dispatch(LassoSubtable<F>)]
+#[derive(EnumCountMacro, EnumIter, Debug)]
 pub enum TestSubtables<F: PrimeField> {
   XOR(XORSubtable<F>),
   EQ(EQSubtable<F>),
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct XORSubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct EQSubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }
@@ -149,15 +151,53 @@ impl<F: PrimeField> LassoSubtable<F> for EQSubtable<F> {
   }
 }
 
+impl<F: PrimeField> TestSubtables<F> {
+  fn from_subtable_id(subtable_id: TypeId) -> Self {
+    let xor_id = TypeId::of::<XORSubtable<F>>();
+    let eq_id = TypeId::of::<EQSubtable<F>>();
+
+    if subtable_id == TypeId::of::<XORSubtable<F>>() {
+      TestSubtables::XOR(XORSubtable {
+        _field: PhantomData,
+      })
+    } else if subtable_id == TypeId::of::<EQSubtable<F>>() {
+      TestSubtables::EQ(EQSubtable {
+        _field: PhantomData,
+      })
+    } else {
+      panic!("Unexpected subtable id")
+    }
+
+    // match subtable_id {
+    //   xor_id => TestSubtables::XOR(XORSubtable {
+    //     _field: PhantomData,
+    //   }),
+    //   eq_id => TestSubtables::EQ(EQSubtable {
+    //     _field: PhantomData,
+    //   }),
+    //   _ => panic!("Unexpected subtable id")
+    // }
+  }
+}
+
 // ==================== JOLT ====================
 pub trait Jolt<F: PrimeField, const C: usize, const LOG_M: usize> {
-  type InstructionSet: ChunkIndices + SubtableDecomposition + Opcode;
+  type InstructionSet: ChunkIndices + SubtableDecomposition + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount;
 
   const NUM_SUBTABLES: usize = Self::Subtables::COUNT;
   const NUM_MEMORIES: usize = C * Self::Subtables::COUNT;
 
   fn prove(ops: Vec<Self::InstructionSet>) {
+    for instruction in Self::InstructionSet::iter() {
+      for subtable in instruction.subtables::<F>().iter() {
+        println!(
+          "{:?}",
+          TestSubtables::<F>::from_subtable_id(subtable.subtable_id())
+        );
+      }
+    }
+
     // let mut dim_i, read_i, final_i =
     Self::polynomialize(ops);
 
@@ -188,7 +228,8 @@ pub trait Jolt<F: PrimeField, const C: usize, const LOG_M: usize> {
   }
 
   fn combine_lookups(vals: &[F]) -> F {
-    // E_1(x) ... E_{NUM_MEMORIES}(x)
+    for instruction in Self::InstructionSet::iter() {}
+
     unimplemented!("TODO");
   }
 
