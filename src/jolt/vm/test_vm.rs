@@ -14,6 +14,9 @@ use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable, LassoSubtable};
 
 // ==================== INSTRUCTIONS ====================
 
+// TODO(moodlezoup): make this a macro
+// e.g. instruction_set!("TestInstructionSet", XORInstruction, EQInstruction)
+
 #[repr(u8)]
 #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
 #[enum_dispatch(ChunkIndices, SubtableDecomposition)]
@@ -26,6 +29,9 @@ impl Opcode for TestInstructionSet {}
 
 // ==================== SUBTABLES ====================
 
+// TODO(moodlezoup): make all of this a macro too
+// e.g. subtable_enum!("TestSubtables", XORSubtable, EQSubtable)
+
 #[enum_dispatch(LassoSubtable<F>)]
 #[derive(EnumCountMacro, EnumIter, Debug)]
 pub enum TestSubtables<F: PrimeField> {
@@ -33,16 +39,15 @@ pub enum TestSubtables<F: PrimeField> {
   EQ(EQSubtable<F>),
 }
 
-// TODO(moodlezoup): make this a macro
 impl<F: PrimeField> From<TypeId> for TestSubtables<F> {
   fn from(subtable_id: TypeId) -> Self {
     let xor_id = TypeId::of::<XORSubtable<F>>();
     let eq_id = TypeId::of::<EQSubtable<F>>();
 
     if subtable_id == TypeId::of::<XORSubtable<F>>() {
-      TestSubtables::XOR(XORSubtable::new())
+      TestSubtables::from(XORSubtable::new())
     } else if subtable_id == TypeId::of::<EQSubtable<F>>() {
-      TestSubtables::EQ(EQSubtable::new())
+      TestSubtables::from(EQSubtable::new())
     } else {
       panic!("Unexpected subtable id")
     }
