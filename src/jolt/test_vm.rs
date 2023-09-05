@@ -1,4 +1,4 @@
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -181,12 +181,14 @@ impl<F: PrimeField> TestSubtables<F> {
 }
 
 // ==================== JOLT ====================
-pub trait Jolt<F: PrimeField, const C: usize, const LOG_M: usize> {
+pub trait Jolt<F: PrimeField> {
   type InstructionSet: ChunkIndices + SubtableDecomposition + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount;
 
+  const C: usize;
+  const LOG_M: usize;
   const NUM_SUBTABLES: usize = Self::Subtables::COUNT;
-  const NUM_MEMORIES: usize = C * Self::Subtables::COUNT;
+  const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
   fn prove(ops: Vec<Self::InstructionSet>) {
     for instruction in Self::InstructionSet::iter() {
@@ -242,13 +244,12 @@ pub trait Jolt<F: PrimeField, const C: usize, const LOG_M: usize> {
   }
 }
 
-pub struct TestJoltVM<F: PrimeField, const C: usize, const LOG_M: usize> {
-  _field: PhantomData<F>,
-}
+pub enum TestJoltVM {}
 
-impl<F: PrimeField, const C: usize, const LOG_M: usize> Jolt<F, C, LOG_M>
-  for TestJoltVM<F, C, LOG_M>
-{
+impl<F: PrimeField> Jolt<F> for TestJoltVM {
+  const C: usize = 4;
+  const LOG_M: usize = 16;
+
   type InstructionSet = TestInstructionSet;
   type Subtables = TestSubtables<F>;
 }
