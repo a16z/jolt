@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use ark_ff::PrimeField;
@@ -12,16 +13,18 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;
 use crate::utils::split_bits;
 
-// use super::jolt_strategy::{InstructionStrategy, JoltStrategy, SubtableStrategy};
-
 // ==================== INSTRUCTIONS ====================
 
 trait JoltInstruction<F: PrimeField> {
   // TODO: C, M
-  //   type Subtables;
 
   fn combine_lookups(vals: &[F]) -> F;
   fn g_poly_degree() -> usize;
+}
+
+#[enum_dispatch]
+pub trait SubtableDecomposition {
+  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>>;
 }
 
 #[enum_dispatch]
@@ -35,12 +38,10 @@ pub trait Opcode {
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-#[enum_dispatch(ChunkIndices)]
+#[enum_dispatch(ChunkIndices, SubtableDecomposition)]
 pub enum TestInstructionSet {
   XOR(XORInstruction),
   EQ(EQInstruction),
-  LT(LTInstruction),
-  NOT(NOTInstruction),
 }
 
 impl Opcode for TestInstructionSet {
@@ -53,21 +54,22 @@ impl Opcode for TestInstructionSet {
 pub struct XORInstruction(u64, u64);
 #[derive(Copy, Clone)]
 pub struct EQInstruction(u64, u64);
-#[derive(Copy, Clone)]
-pub struct LTInstruction(u64, u64);
-#[derive(Copy, Clone)]
-pub struct NOTInstruction(u64);
 
 impl<F: PrimeField> JoltInstruction<F> for XORInstruction {
-  // TODO: assocsiated tuple vs associated enum vs method
-  //   type Subtables = (XORSubtable<F>);
-
   fn combine_lookups(vals: &[F]) -> F {
     unimplemented!("TODO");
   }
 
   fn g_poly_degree() -> usize {
     1
+  }
+}
+
+impl SubtableDecomposition for XORInstruction {
+  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+    vec![Box::new(XORSubtable {
+      _field: PhantomData,
+    })]
   }
 }
 
@@ -87,39 +89,15 @@ impl<F: PrimeField> JoltInstruction<F> for EQInstruction {
   }
 }
 
+impl SubtableDecomposition for EQInstruction {
+  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+    vec![Box::new(EQSubtable {
+      _field: PhantomData,
+    })]
+  }
+}
+
 impl ChunkIndices for EQInstruction {
-  fn to_indices<const C: usize, const LOG_M: usize>(&self) -> [usize; C] {
-    unimplemented!("TODO");
-  }
-}
-
-impl<F: PrimeField> JoltInstruction<F> for LTInstruction {
-  fn combine_lookups(vals: &[F]) -> F {
-    unimplemented!("TODO");
-  }
-
-  fn g_poly_degree() -> usize {
-    unimplemented!("TODO");
-  }
-}
-
-impl ChunkIndices for LTInstruction {
-  fn to_indices<const C: usize, const LOG_M: usize>(&self) -> [usize; C] {
-    unimplemented!("TODO");
-  }
-}
-
-impl<F: PrimeField> JoltInstruction<F> for NOTInstruction {
-  fn combine_lookups(vals: &[F]) -> F {
-    unimplemented!("TODO");
-  }
-
-  fn g_poly_degree() -> usize {
-    1
-  }
-}
-
-impl ChunkIndices for NOTInstruction {
   fn to_indices<const C: usize, const LOG_M: usize>(&self) -> [usize; C] {
     unimplemented!("TODO");
   }
@@ -135,7 +113,7 @@ pub trait LassoSubtable<F: PrimeField> {
   fn evaluate_mle(&self, point: &[F]) -> F;
 }
 
-#[enum_dispatch(LassoSubtable<F>)]
+#[enum_dispatch(LassoSubtable<F>, ToEnum<F>)]
 #[derive(EnumCountMacro, EnumIter)]
 pub enum TestSubtables<F: PrimeField> {
   XOR(XORSubtable<F>),
@@ -173,15 +151,23 @@ impl<F: PrimeField> LassoSubtable<F> for EQSubtable<F> {
 
 // ==================== JOLT ====================
 pub trait Jolt<F: PrimeField, const C: usize, const LOG_M: usize> {
-  type InstructionSet: ChunkIndices + Opcode;
+  type InstructionSet: ChunkIndices + SubtableDecomposition + Opcode;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount;
 
   const NUM_SUBTABLES: usize = Self::Subtables::COUNT;
   const NUM_MEMORIES: usize = C * Self::Subtables::COUNT;
 
   fn prove(ops: Vec<Self::InstructionSet>) {
+    // let mut dim_i, read_i, final_i =
     Self::polynomialize(ops);
-    // unimplemented!("TODO");
+
+    // - commit dim_i, read_i, final_i
+    // - materialize subtables
+    // - Create NUM_MEMORIES E_i polys (to_lookup_polys + commit)
+    //   - subtable -> C E_i polys?
+    // - Compute primary sumcheck claim
+    // - sumcheck
+    // - memory checking
   }
 
   fn polynomialize(ops: Vec<Self::InstructionSet>) {
@@ -190,18 +176,20 @@ pub trait Jolt<F: PrimeField, const C: usize, const LOG_M: usize> {
     let ops_u8: Vec<u8> = ops.iter().map(|op| op.to_opcode()).collect();
     println!("{:?}", ops_u8);
 
-    // let mut dim_usize: Vec<Vec<usize>> = Vec::with_capacity(C);
+    // let ops_subtables: Vec<_> = ops
+    //   .iter()
+    //   .map(|op| {
+    //     for subtable in op.subtables::<F>() {
+    //       let t: Self::Subtables = Self::coerce_subtable(subtable);
+    //       println!("{:?}", t);
+    //     }
+    //   })
+    //   .collect();
+  }
 
-    // let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    // let mut read: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-    // let mut r#final: Vec<DensePolynomial<F>> = Vec::with_capacity(C);
-
-    // let s = ops.len().next_power_of_two();
-
-    // for i in 0..C {
-    //   let mut final_timestamps = vec![0usize; LOG_M.pow2()];
-    //   let mut read_timestamps = vec![0usize; s];
-    // }
+  fn combine_lookups(vals: &[F]) -> F {
+    // E_1(x) ... E_{NUM_MEMORIES}(x)
+    unimplemented!("TODO");
   }
 
   fn materialize_subtables() -> Vec<Vec<F>> {
@@ -239,33 +227,10 @@ mod tests {
     utils::{index_to_field_bitvector, random::RandomTape, split_bits},
   };
 
-  //   pub fn gen_indices<const C: usize>(sparsity: usize, memory_size: usize) -> Vec<Vec<usize>> {
-  //     let mut rng = test_rng();
-  //     let mut all_indices: Vec<Vec<usize>> = Vec::new();
-  //     for _ in 0..sparsity {
-  //       let indices = vec![rng.next_u64() as usize % memory_size; C];
-  //       all_indices.push(indices);
-  //     }
-  //     all_indices
-  //   }
-
-  //   pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
-  //     let mut rng = test_rng();
-  //     let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-  //     for _ in 0..memory_bits {
-  //       r_i.push(F::rand(&mut rng));
-  //     }
-  //     r_i
-  //   }
-
   #[test]
   fn e2e() {
     const C: usize = 4;
-    // const S: usize = 1 << 8;
     const M: usize = 1 << 16;
-
-    // let log_m = log2(M) as usize;
-    // let log_s: usize = log2(S) as usize;
 
     TestJoltVM::<Fr, C, 16>::prove(vec![
       TestInstructionSet::XOR(XORInstruction(420, 69)),
