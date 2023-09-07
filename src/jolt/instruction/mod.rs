@@ -4,10 +4,8 @@ use enum_dispatch::enum_dispatch;
 use crate::jolt::{subtable::LassoSubtable, vm::test_vm::TestInstructionSet};
 
 trait JoltInstruction<F: PrimeField> {
-  // TODO: C, M
-
-  fn combine_lookups(vals: &[F]) -> F;
-  fn g_poly_degree() -> usize;
+  fn combine_lookups<const C: usize, const M: usize>(vals: &[F]) -> F;
+  fn g_poly_degree<const C: usize>() -> usize;
 }
 
 #[enum_dispatch]
@@ -17,7 +15,7 @@ pub trait SubtableDecomposition {
 
 #[enum_dispatch]
 pub trait ChunkIndices {
-  fn to_indices<const C: usize, const LOG_M: usize>(&self) -> [usize; C];
+  fn to_indices<const C: usize, const M: usize>(&self) -> [usize; C];
 }
 
 pub trait Opcode {

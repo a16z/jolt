@@ -11,7 +11,7 @@ pub trait Jolt<F: PrimeField> {
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount;
 
   const C: usize;
-  const LOG_M: usize;
+  const M: usize;
   const NUM_SUBTABLES: usize = Self::Subtables::COUNT;
   const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
@@ -63,7 +63,7 @@ pub trait Jolt<F: PrimeField> {
   fn materialize_subtables() -> Vec<Vec<F>> {
     let mut subtables: Vec<Vec<F>> = Vec::with_capacity(Self::Subtables::COUNT);
     for subtable in Self::Subtables::iter() {
-      subtables.push(subtable.materialize());
+      subtables.push(subtable.materialize(Self::M));
     }
     subtables
   }
