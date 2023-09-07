@@ -2,7 +2,6 @@ use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
@@ -41,9 +40,6 @@ pub enum TestSubtables<F: PrimeField> {
 
 impl<F: PrimeField> From<TypeId> for TestSubtables<F> {
   fn from(subtable_id: TypeId) -> Self {
-    let xor_id = TypeId::of::<XORSubtable<F>>();
-    let eq_id = TypeId::of::<EQSubtable<F>>();
-
     if subtable_id == TypeId::of::<XORSubtable<F>>() {
       TestSubtables::from(XORSubtable::new())
     } else if subtable_id == TypeId::of::<EQSubtable<F>>() {
@@ -60,7 +56,7 @@ pub enum TestJoltVM {}
 
 impl<F: PrimeField> Jolt<F> for TestJoltVM {
   const C: usize = 4;
-  const LOG_M: usize = 16;
+  const M: usize = 1 << 16;
 
   type InstructionSet = TestInstructionSet;
   type Subtables = TestSubtables<F>;
