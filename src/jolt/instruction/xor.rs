@@ -5,7 +5,7 @@ use super::{ChunkIndices, JoltInstruction, SubtableDecomposition};
 use crate::jolt::subtable::{xor::XORSubtable, LassoSubtable};
 
 #[derive(Copy, Clone, Default)]
-pub struct XORInstruction(u64, u64);
+pub struct XORInstruction(pub u64, pub u64);
 
 impl<F: PrimeField> JoltInstruction<F> for XORInstruction {
   fn combine_lookups<const C: usize, const M: usize>(vals: &[F]) -> F {

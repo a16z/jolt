@@ -1,4 +1,6 @@
 use ark_ff::PrimeField;
+use std::any::TypeId;
+use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::{
@@ -8,7 +10,7 @@ use crate::jolt::{
 
 pub trait Jolt<F: PrimeField> {
   type InstructionSet: ChunkIndices + SubtableDecomposition + Opcode + IntoEnumIterator + EnumCount;
-  type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount;
+  type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + Debug + From<TypeId>;
 
   const C: usize;
   const M: usize;
@@ -18,10 +20,10 @@ pub trait Jolt<F: PrimeField> {
   fn prove(ops: Vec<Self::InstructionSet>) {
     for instruction in Self::InstructionSet::iter() {
       for subtable in instruction.subtables::<F>().iter() {
-        // println!(
-        //   "{:?}",
-        //   TestSubtables::<F>::from_subtable_id(subtable.subtable_id())
-        // );
+        println!(
+          "{:?}",
+          <Self as Jolt<F>>::Subtables::from(subtable.subtable_id())
+        );
       }
     }
 

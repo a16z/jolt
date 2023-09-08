@@ -11,44 +11,36 @@ use crate::jolt::instruction::{
 };
 use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable, LassoSubtable};
 
-// ==================== INSTRUCTIONS ====================
-
-// TODO(moodlezoup): make this a macro
-// e.g. instruction_set!("TestInstructionSet", XORInstruction, EQInstruction)
-
-#[repr(u8)]
-#[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-#[enum_dispatch(ChunkIndices, SubtableDecomposition)]
-pub enum TestInstructionSet {
-  XOR(XORInstruction),
-  EQ(EQInstruction),
+macro_rules! instruction_set {
+    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[repr(u8)]
+        #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
+        #[enum_dispatch(ChunkIndices, SubtableDecomposition)]
+        pub enum $enum_name { $($alias($struct)),+ }
+        impl Opcode for $enum_name {}
+    };
 }
 
-impl Opcode for TestInstructionSet {}
-
-// ==================== SUBTABLES ====================
-
-// TODO(moodlezoup): make all of this a macro too
-// e.g. subtable_enum!("TestSubtables", XORSubtable, EQSubtable)
-
-#[enum_dispatch(LassoSubtable<F>)]
-#[derive(EnumCountMacro, EnumIter, Debug)]
-pub enum TestSubtables<F: PrimeField> {
-  XOR(XORSubtable<F>),
-  EQ(EQSubtable<F>),
+macro_rules! subtable_enum {
+    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[enum_dispatch(LassoSubtable<F>)]
+        #[derive(EnumCountMacro, EnumIter, Debug)]
+        pub enum $enum_name<F: PrimeField> { $($alias($struct)),+ }
+        impl<F: PrimeField> From<TypeId> for $enum_name<F> {
+          fn from(subtable_id: TypeId) -> Self {
+            $(
+              if subtable_id == TypeId::of::<$struct>() {
+                $enum_name::from(<$struct>::new())
+              } else
+            )+
+            { panic!("Unexpected subtable id") }
+          }
+        }
+    };
 }
 
-impl<F: PrimeField> From<TypeId> for TestSubtables<F> {
-  fn from(subtable_id: TypeId) -> Self {
-    if subtable_id == TypeId::of::<XORSubtable<F>>() {
-      TestSubtables::from(XORSubtable::new())
-    } else if subtable_id == TypeId::of::<EQSubtable<F>>() {
-      TestSubtables::from(EQSubtable::new())
-    } else {
-      panic!("Unexpected subtable id")
-    }
-  }
-}
+instruction_set!(TestInstructionSet, XOR: XORInstruction, EQ: EQInstruction);
+subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
 
 // ==================== JOLT ====================
 
@@ -73,13 +65,13 @@ mod tests {
   use rand_chacha::rand_core::RngCore;
 
   use crate::{
-    jolt::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+    jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     utils::{index_to_field_bitvector, random::RandomTape, split_bits},
   };
 
   #[test]
   fn e2e() {
-    TestJoltVM::<Fr>::prove(vec![
+    <TestJoltVM as Jolt<Fr>>::prove(vec![
       TestInstructionSet::XOR(XORInstruction(420, 69)),
       TestInstructionSet::EQ(EQInstruction(420, 69)),
       TestInstructionSet::EQ(EQInstruction(420, 420)),
