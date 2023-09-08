@@ -5,7 +5,7 @@ use super::{ChunkIndices, JoltInstruction, SubtableDecomposition};
 use crate::jolt::subtable::{eq::EQSubtable, LassoSubtable};
 
 #[derive(Copy, Clone, Default)]
-pub struct EQInstruction(u64, u64);
+pub struct EQInstruction(pub u64, pub u64);
 
 impl<F: PrimeField> JoltInstruction<F> for EQInstruction {
   fn combine_lookups<const C: usize, const M: usize>(vals: &[F]) -> F {
