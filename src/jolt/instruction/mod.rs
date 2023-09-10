@@ -15,7 +15,7 @@ pub trait SubtableDecomposition {
 
 #[enum_dispatch]
 pub trait ChunkIndices {
-  fn to_indices<const C: usize, const M: usize>(&self) -> [usize; C];
+  fn to_indices(&self, C: usize, M: usize) -> Vec<usize>;
 }
 
 pub trait Opcode {

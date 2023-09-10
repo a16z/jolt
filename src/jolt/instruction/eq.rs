@@ -1,5 +1,4 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 
 use super::{ChunkIndices, JoltInstruction, SubtableDecomposition};
 use crate::jolt::subtable::{eq::EQSubtable, LassoSubtable};
@@ -24,13 +23,15 @@ impl SubtableDecomposition for EQInstruction {
 }
 
 impl ChunkIndices for EQInstruction {
-  fn to_indices<const C: usize, const M: usize>(&self) -> [usize; C] {
-    let operand_bits: usize = (log2(M) / 2) as usize;
+  fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    let operand_bits: usize = log_M;
     let operand_bit_mask: usize = (1 << operand_bits) - 1;
-    std::array::from_fn(|i| {
-      let left: usize = (self.0 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
-      let right: usize = (self.1 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
-      (left << operand_bits) | right
-    })
+    (0..C)
+      .map(|i| {
+        let left: usize = (self.0 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
+        let right: usize = (self.1 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
+        (left << operand_bits) | right
+      })
+      .collect()
   }
 }
