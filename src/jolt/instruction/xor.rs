@@ -32,13 +32,15 @@ impl SubtableDecomposition for XORInstruction {
 }
 
 impl ChunkIndices for XORInstruction {
-  fn to_indices<const C: usize, const M: usize>(&self) -> [usize; C] {
-    let operand_bits: usize = (log2(M) / 2) as usize;
+  fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    let operand_bits: usize = log_M / 2;
     let operand_bit_mask: usize = (1 << operand_bits) - 1;
-    std::array::from_fn(|i| {
-      let left = (self.0 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
-      let right = (self.1 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
-      (left << operand_bits) | right
-    })
+    (0..C)
+      .map(|i| {
+        let left = (self.0 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
+        let right = (self.1 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
+        (left << operand_bits) | right
+      })
+      .collect()
   }
 }

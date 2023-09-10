@@ -18,7 +18,7 @@ pub struct DensifiedRepresentation<F: PrimeField, S: JoltStrategy<F>> {
   pub s: usize, // sparsity
   pub log_m: usize,
   pub m: usize,
-  _marker: PhantomData<S>
+  _marker: PhantomData<S>,
 }
 
 impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
@@ -80,7 +80,7 @@ impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
       s,
       log_m,
       m,
-      _marker: PhantomData
+      _marker: PhantomData,
     }
   }
 
