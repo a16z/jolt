@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use super::LassoSubtable;
 use crate::utils::split_bits;
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct XORSubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }

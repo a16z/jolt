@@ -1,14 +1,13 @@
 use ark_ff::PrimeField;
 use std::any::TypeId;
-use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::{
   jolt::{
-    instruction::{ChunkIndices, Opcode, SubtableDecomposition},
+    instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  poly::dense_mlpoly::DensePolynomial,
+  poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
   utils::math::Math,
 };
 
@@ -25,8 +24,8 @@ pub struct PolynomialRepresentation<F: PrimeField> {
 }
 
 pub trait Jolt<F: PrimeField> {
-  type InstructionSet: ChunkIndices + SubtableDecomposition + Opcode + IntoEnumIterator + EnumCount;
-  type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + Debug + From<TypeId>;
+  type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
+  type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
   const C: usize;
   const M: usize;
@@ -40,11 +39,22 @@ pub trait Jolt<F: PrimeField> {
 
     let polynomials = Self::polynomialize(ops, &subtable_lookup_indices, &materialized_subtables);
 
-    // commit to polynomials
+    // TODO(moodlezoup): commit to polynomials
 
-    // - Compute primary sumcheck claim
-    // - sumcheck
-    // - memory checking
+    // let eq = EqPolynomial::new(r.to_vec());
+    // let sumcheck_claim = Self::compute_sumcheck_claim(ops, &polynomials.E_polys, &eq);
+
+    // TODO(moodlezoup): sumcheck (jolt-specific sumcheck implementation?)
+
+    // TODO(moodlezoup): memory checking
+    // MemoryCheckingProof::prove(
+    //   polynomials,
+    //   gamma, tau,
+    //   &materialized_subtables,
+    //   gens,
+    //   transcript,
+    //   random_tape
+    // );
   }
 
   fn polynomialize(
@@ -88,8 +98,10 @@ pub trait Jolt<F: PrimeField> {
       read_cts.push(DensePolynomial::from_usize(&read_cts_i));
       final_cts.push(DensePolynomial::from_usize(&final_cts_i));
       flags.push(DensePolynomial::from_usize(&flags_i));
+    }
 
-      for subtable_index in 0..Self::NUM_SUBTABLES {
+    for subtable_index in 0..Self::NUM_SUBTABLES {
+      for i in 0..Self::C {
         let subtable_lookups: Vec<F> = subtable_lookup_indices[i]
           .iter()
           .map(|&lookup_index| materialized_subtables[subtable_index][lookup_index])
@@ -117,16 +129,46 @@ pub trait Jolt<F: PrimeField> {
     }
   }
 
-  fn combine_lookups(vals: &[F]) -> F {
-    for instruction in Self::InstructionSet::iter() {
-      for subtable in instruction.subtables::<F>().iter() {
-        println!(
-          "{:?}",
-          <Self as Jolt<F>>::Subtables::from(subtable.subtable_id())
-        );
+  fn compute_sumcheck_claim(
+    ops: Vec<Self::InstructionSet>,
+    E_polys: &Vec<DensePolynomial<F>>,
+    eq: &EqPolynomial<F>,
+  ) -> F {
+    let m = ops.len().next_power_of_two();
+    E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
+
+    let eq_evals = eq.evals();
+
+    let mut claim = F::zero();
+    for (k, op) in ops.iter().enumerate() {
+      let memory_indices = Self::instruction_to_memory_indices(&op);
+      let mut filtered_operands: Vec<F> = Vec::with_capacity(memory_indices.len());
+      for index in memory_indices {
+        filtered_operands.push(E_polys[index][k]);
       }
+      claim += eq_evals[k] * op.combine_lookups::<F>(&filtered_operands, Self::C, Self::M);
     }
 
+    claim
+  }
+
+  fn instruction_to_memory_indices(op: &Self::InstructionSet) -> Vec<usize> {
+    let instruction_subtables: Vec<Self::Subtables> = op
+      .subtables::<F>()
+      .iter()
+      .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
+      .collect();
+
+    let mut memory_indices = Vec::with_capacity(Self::C * instruction_subtables.len());
+    for subtable in instruction_subtables {
+      let index: usize = subtable.into();
+      memory_indices.extend((Self::C * index)..(Self::C * (index + 1)));
+    }
+
+    memory_indices
+  }
+
+  fn combine_lookups(vals: &[F]) -> F {
     unimplemented!("TODO");
   }
 
@@ -144,6 +186,7 @@ pub trait Jolt<F: PrimeField> {
       .iter()
       .map(|op| op.to_indices(Self::C, Self::M.log_2()))
       .collect();
+
     let mut subtable_lookup_indices: Vec<Vec<usize>> = Vec::with_capacity(Self::C);
     for i in 0..Self::C {
       let mut access_sequence: Vec<usize> =
