@@ -24,7 +24,7 @@ impl SubtableDecomposition for EQInstruction {
 
 impl ChunkIndices for EQInstruction {
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    let operand_bits: usize = log_M;
+    let operand_bits: usize = log_M / 2;
     let operand_bit_mask: usize = (1 << operand_bits) - 1;
     (0..C)
       .map(|i| {
