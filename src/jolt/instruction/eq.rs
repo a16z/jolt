@@ -1,28 +1,24 @@
 use ark_ff::PrimeField;
 
-use super::{ChunkIndices, JoltInstruction, SubtableDecomposition};
+use super::JoltInstruction;
 use crate::jolt::subtable::{eq::EQSubtable, LassoSubtable};
 
 #[derive(Copy, Clone, Default)]
 pub struct EQInstruction(pub u64, pub u64);
 
-impl<F: PrimeField> JoltInstruction<F> for EQInstruction {
-  fn combine_lookups<const C: usize, const M: usize>(vals: &[F]) -> F {
+impl JoltInstruction for EQInstruction {
+  fn combine_lookups<F: PrimeField>(&self, vals: &[F], _: usize, _: usize) -> F {
     vals.iter().product()
   }
 
-  fn g_poly_degree<const C: usize>() -> usize {
+  fn g_poly_degree(&self, C: usize) -> usize {
     C
   }
-}
 
-impl SubtableDecomposition for EQInstruction {
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![Box::new(EQSubtable::new())]
   }
-}
 
-impl ChunkIndices for EQInstruction {
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
     let operand_bits: usize = log_M / 2;
     let operand_bit_mask: usize = (1 << operand_bits) - 1;

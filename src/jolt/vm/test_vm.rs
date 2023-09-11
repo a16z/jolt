@@ -1,30 +1,30 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
-use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
-use crate::jolt::instruction::{
-  eq::EQInstruction, xor::XORInstruction, ChunkIndices, Opcode, SubtableDecomposition,
-};
+use crate::jolt::instruction::{eq::EQInstruction, xor::XORInstruction, JoltInstruction, Opcode};
 use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(u8)]
         #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-        #[enum_dispatch(ChunkIndices, SubtableDecomposition)]
+        #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl Opcode for $enum_name {}
     };
 }
 
+// TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with 
+//     combined trait/function to_enum_index(subtable: &dyn LassoSubtable<F>) => usize
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[repr(usize)]
         #[enum_dispatch(LassoSubtable<F>)]
-        #[derive(EnumCountMacro, EnumIter, Debug)]
+        #[derive(EnumCountMacro, EnumIter)]
         pub enum $enum_name<F: PrimeField> { $($alias($struct)),+ }
         impl<F: PrimeField> From<TypeId> for $enum_name<F> {
           fn from(subtable_id: TypeId) -> Self {
@@ -34,6 +34,12 @@ macro_rules! subtable_enum {
               } else
             )+
             { panic!("Unexpected subtable id") }
+          }
+        }
+
+        impl<F: PrimeField> Into<usize> for $enum_name<F> {
+          fn into(self) -> usize {
+            unsafe { *<*const _>::from(&self).cast::<usize>() }
           }
         }
     };

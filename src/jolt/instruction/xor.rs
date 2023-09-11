@@ -1,14 +1,14 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use super::{ChunkIndices, JoltInstruction, SubtableDecomposition};
+use super::JoltInstruction;
 use crate::jolt::subtable::{xor::XORSubtable, LassoSubtable};
 
 #[derive(Copy, Clone, Default)]
 pub struct XORInstruction(pub u64, pub u64);
 
-impl<F: PrimeField> JoltInstruction<F> for XORInstruction {
-  fn combine_lookups<const C: usize, const M: usize>(vals: &[F]) -> F {
+impl JoltInstruction for XORInstruction {
+  fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     assert_eq!(vals.len(), C);
     let increment = log2(M) as usize;
 
@@ -20,18 +20,13 @@ impl<F: PrimeField> JoltInstruction<F> for XORInstruction {
     sum
   }
 
-  fn g_poly_degree<const C: usize>() -> usize {
+  fn g_poly_degree(&self, C: usize) -> usize {
     1
   }
-}
-
-impl SubtableDecomposition for XORInstruction {
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![Box::new(XORSubtable::new())]
   }
-}
 
-impl ChunkIndices for XORInstruction {
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
     let operand_bits: usize = log_M / 2;
     let operand_bit_mask: usize = (1 << operand_bits) - 1;
