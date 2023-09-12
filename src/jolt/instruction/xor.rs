@@ -20,7 +20,7 @@ impl JoltInstruction for XORInstruction {
     sum
   }
 
-  fn g_poly_degree(&self, C: usize) -> usize {
+  fn g_poly_degree(&self, _: usize) -> usize {
     1
   }
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
