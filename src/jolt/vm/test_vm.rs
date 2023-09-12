@@ -1,3 +1,4 @@
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
@@ -52,12 +53,12 @@ subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
 
 pub enum TestJoltVM {}
 
-impl<F: PrimeField> Jolt<F> for TestJoltVM {
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
   const C: usize = 4;
   const M: usize = 1 << 16;
 
   type InstructionSet = TestInstructionSet;
-  type Subtables = TestSubtables<F>;
+  type Subtables = TestSubtables<G::ScalarField>;
 }
 
 // ==================== TEST ====================
@@ -94,7 +95,7 @@ mod tests {
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
 
-    <TestJoltVM as Jolt<Fr>>::prove(
+    <TestJoltVM as Jolt<_, EdwardsProjective>>::prove(
       vec![
         TestInstructionSet::XOR(XORInstruction(420, 69)),
         TestInstructionSet::EQ(EQInstruction(420, 69)),
