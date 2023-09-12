@@ -21,12 +21,11 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   pub dim: Vec<DensePolynomial<F>>,
   pub read_cts: Vec<DensePolynomial<F>>,
   pub final_cts: Vec<DensePolynomial<F>>,
-  pub flags: Vec<DensePolynomial<F>>,
   pub E_polys: Vec<DensePolynomial<F>>,
+  pub flag: DensePolynomial<F>,
   // TODO(moodlezoup): Consider pulling out combined polys into separate struct
   pub combined_dim_read_poly: DensePolynomial<F>,
   pub combined_final_poly: DensePolynomial<F>,
-  pub combined_flags_poly: DensePolynomial<F>,
   pub combined_E_poly: DensePolynomial<F>,
 }
 
@@ -34,14 +33,14 @@ pub struct PolynomialRepresentation<F: PrimeField> {
 pub struct SurgeCommitment<G: CurveGroup> {
   pub dim_read_commitment: PolyCommitment<G>,
   pub final_commitment: PolyCommitment<G>,
-  pub flags_commitment: PolyCommitment<G>,
+  pub flag_commitment: PolyCommitment<G>,
   pub E_commitment: PolyCommitment<G>,
 }
 
 pub struct SurgeCommitmentGenerators<G: CurveGroup> {
   pub dim_read_commitment_gens: PolyCommitmentGens<G>,
   pub final_commitment_gens: PolyCommitmentGens<G>,
-  pub flags_commitment_gens: PolyCommitmentGens<G>,
+  pub flag_commitment_gens: PolyCommitmentGens<G>,
   pub E_commitment_gens: PolyCommitmentGens<G>,
 }
 
@@ -56,9 +55,7 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     let (final_commitment, _) = self
       .combined_final_poly
       .commit(&generators.final_commitment_gens, None);
-    let (flags_commitment, _) = self
-      .combined_flags_poly
-      .commit(&generators.flags_commitment_gens, None);
+    let (flag_commitment, _) = self.flag.commit(&generators.flag_commitment_gens, None);
     let (E_commitment, _) = self
       .combined_E_poly
       .commit(&generators.E_commitment_gens, None);
@@ -66,7 +63,7 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     SurgeCommitment {
       dim_read_commitment,
       final_commitment,
-      flags_commitment,
+      flag_commitment,
       E_commitment,
     }
   }
@@ -99,7 +96,6 @@ pub trait Jolt<F: PrimeField> {
     //     ops.len().log_2(),
     //     &mut combined_sumcheck_polys,
     //     Self::combine_lookups,
-    //     num_subtable_polys,
     //     S::primary_poly_degree(),
     //     transcript,
     //   );
@@ -130,7 +126,6 @@ pub trait Jolt<F: PrimeField> {
     let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
     let mut read_cts: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
     let mut final_cts: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
-    let mut flags: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
     let mut E_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::NUM_MEMORIES);
 
     for i in 0..Self::C {
@@ -138,7 +133,6 @@ pub trait Jolt<F: PrimeField> {
 
       let mut final_cts_i = vec![0usize; Self::M];
       let mut read_cts_i = vec![0usize; m];
-      let mut flags_i: Vec<Vec<usize>> = Vec::with_capacity(m);
 
       for j in 0..m {
         let memory_address = access_sequence[j];
@@ -146,18 +140,11 @@ pub trait Jolt<F: PrimeField> {
         let counter = final_cts_i[memory_address];
         read_cts_i[j] = counter;
         final_cts_i[memory_address] = counter + 1;
-
-        let mut opcode_bitvector = vec![0usize, Self::NUM_INSTRUCTIONS.next_power_of_two()];
-        opcode_bitvector[opcodes[j] as usize] = 1;
-        flags_i.push(opcode_bitvector);
       }
-
-      let flags_i: Vec<usize> = flags_i.into_iter().flatten().collect();
 
       dim.push(DensePolynomial::from_usize(access_sequence));
       read_cts.push(DensePolynomial::from_usize(&read_cts_i));
       final_cts.push(DensePolynomial::from_usize(&final_cts_i));
-      flags.push(DensePolynomial::from_usize(&flags_i));
     }
 
     for subtable_index in 0..Self::NUM_SUBTABLES {
@@ -170,21 +157,28 @@ pub trait Jolt<F: PrimeField> {
       }
     }
 
+    let mut flag_bitvectors: Vec<Vec<usize>> = Vec::with_capacity(m);
+    for j in 0..m {
+      let mut opcode_bitvector = vec![0usize, Self::NUM_INSTRUCTIONS.next_power_of_two()];
+      opcode_bitvector[opcodes[j] as usize] = 1;
+      flag_bitvectors.push(opcode_bitvector);
+    }
+    let flag_bitvectors: Vec<usize> = flag_bitvectors.into_iter().flatten().collect();
+    let flag = DensePolynomial::from_usize(&flag_bitvectors);
+
     let dim_read_polys = [dim.as_slice(), read_cts.as_slice()].concat();
     let combined_dim_read_poly = DensePolynomial::merge(&dim_read_polys);
     let combined_final_poly = DensePolynomial::merge(&final_cts);
-    let combined_flags_poly = DensePolynomial::merge(&flags);
     let combined_E_poly = DensePolynomial::merge(&E_polys);
 
     PolynomialRepresentation {
       dim,
       read_cts,
       final_cts,
-      flags,
+      flag,
       E_polys,
       combined_dim_read_poly,
       combined_final_poly,
-      combined_flags_poly,
       combined_E_poly,
     }
   }
@@ -206,7 +200,7 @@ pub trait Jolt<F: PrimeField> {
       for index in memory_indices {
         filtered_operands.push(E_polys[index][k]);
       }
-      claim += eq_evals[k] * op.combine_lookups::<F>(&filtered_operands, Self::C, Self::M);
+      claim += eq_evals[k] * op.combine_lookups(&filtered_operands, Self::C, Self::M);
     }
 
     claim
@@ -229,7 +223,27 @@ pub trait Jolt<F: PrimeField> {
   }
 
   fn combine_lookups(vals: &[F]) -> F {
-    unimplemented!("TODO");
+    assert_eq!(vals.len(), Self::NUM_MEMORIES + 2);
+
+    let mut sum = F::zero();
+    for instruction in Self::InstructionSet::iter() {
+      let memory_indices = Self::instruction_to_memory_indices(&instruction);
+      let mut filtered_operands: Vec<F> = Vec::with_capacity(memory_indices.len());
+      for index in memory_indices {
+        filtered_operands.push(vals[index]);
+      }
+      sum += instruction.combine_lookups(&filtered_operands, Self::C, Self::M);
+    }
+    // eq(...) * flag(...) * g(...)
+    vals[vals.len() - 2] * vals[vals.len() - 1] * sum
+  }
+
+  fn sumcheck_poly_degree() -> usize {
+    Self::InstructionSet::iter()
+      .map(|instruction| instruction.g_poly_degree(Self::C))
+      .max()
+      .unwrap()
+      + 2 // eq and flag
   }
 
   fn materialize_subtables() -> Vec<Vec<F>> {
