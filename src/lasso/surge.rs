@@ -10,9 +10,7 @@ use crate::lasso::memory_checking::MemoryCheckingProof;
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::subtables::{
-  CombinedTableCommitment, CombinedTableEvalProof, Subtables,
-};
+use crate::subtables::{CombinedTableCommitment, CombinedTableEvalProof, Subtables};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
@@ -83,17 +81,17 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
   }
 }
 
-// TODO: Could store reference 
+// TODO: Could store reference
 // 1. `TableSizeInfo.C`
 // 2. `DIMS_PER_MEMORY` (C)
-// 3. `TableSizeInfo::C()` 
+// 3. `TableSizeInfo::C()`
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct PrimarySumcheck<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
   proof_derefs: CombinedTableEvalProof<G, S>,
-  _marker: PhantomData<S>
+  _marker: PhantomData<S>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -139,28 +137,25 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
       &claimed_eval,
     );
 
-    let num_subtable_polys = S::num_memories() + 1;
-    let mut combined_sumcheck_polys: Vec<DensePolynomial<G::ScalarField>> = subtables.lookup_polys.clone();
+    let mut combined_sumcheck_polys: Vec<DensePolynomial<G::ScalarField>> =
+      subtables.lookup_polys.clone();
     combined_sumcheck_polys.push(DensePolynomial::new(eq.evals()));
 
-    let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<
-      _,
-      G,
-      Transcript,
-    >(
-      &claimed_eval,
-      dense.s.log_2(),
-      &mut combined_sumcheck_polys,
-      S::combine_lookups_eq,
-      num_subtable_polys,
-      S::primary_poly_degree(),
-      transcript,
-    );
+    let (primary_sumcheck_proof, r_z, _) =
+      SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
+        &claimed_eval,
+        dense.s.log_2(),
+        &mut combined_sumcheck_polys,
+        S::combine_lookups_eq,
+        S::primary_poly_degree(),
+        transcript,
+      );
 
     // Combined eval proof for E_i(r_z)
     // TODO: I think this might be broken.
-    let eval_derefs: Vec<G::ScalarField> =
-      (0..S::num_memories()).map(|i| subtables.lookup_polys[i].evaluate(&r_z)).collect();
+    let eval_derefs: Vec<G::ScalarField> = (0..S::num_memories())
+      .map(|i| subtables.lookup_polys[i].evaluate(&r_z))
+      .collect();
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
       &eval_derefs.to_vec(),
@@ -181,7 +176,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
         &subtables,
         gens,
         transcript,
-        random_tape
+        random_tape,
       )
     };
 
@@ -192,9 +187,9 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
         claimed_evaluation: claimed_eval,
         eval_derefs,
         proof_derefs,
-        _marker: PhantomData
+        _marker: PhantomData,
       },
-      memory_check
+      memory_check,
     }
   }
 
