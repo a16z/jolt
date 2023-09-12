@@ -18,7 +18,7 @@ macro_rules! instruction_set {
     };
 }
 
-// TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with 
+// TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with
 //     combined trait/function to_enum_index(subtable: &dyn LassoSubtable<F>) => usize
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
@@ -72,16 +72,36 @@ mod tests {
 
   use crate::{
     jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
-    utils::{index_to_field_bitvector, random::RandomTape, split_bits},
+    utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
   };
+
+  pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+    let mut rng = test_rng();
+    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+    for _ in 0..memory_bits {
+      r_i.push(F::rand(&mut rng));
+    }
+    r_i
+  }
 
   #[test]
   fn e2e() {
-    <TestJoltVM as Jolt<Fr>>::prove(vec![
+    let ops: Vec<TestInstructionSet> = vec![
       TestInstructionSet::XOR(XORInstruction(420, 69)),
       TestInstructionSet::EQ(EQInstruction(420, 69)),
       TestInstructionSet::EQ(EQInstruction(420, 420)),
-    ]);
+    ];
+
+    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
+
+    <TestJoltVM as Jolt<Fr>>::prove(
+      vec![
+        TestInstructionSet::XOR(XORInstruction(420, 69)),
+        TestInstructionSet::EQ(EQInstruction(420, 69)),
+        TestInstructionSet::EQ(EQInstruction(420, 420)),
+      ],
+      r,
+    );
   }
 
   // TODO(moodlezoup): test that union of VM::InstructionSet's subtables = VM::Subtables

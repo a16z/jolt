@@ -1,4 +1,7 @@
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
@@ -7,7 +10,10 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+  poly::{
+    dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
+    eq_poly::EqPolynomial,
+  },
   utils::math::Math,
 };
 
@@ -17,10 +23,53 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   pub final_cts: Vec<DensePolynomial<F>>,
   pub flags: Vec<DensePolynomial<F>>,
   pub E_polys: Vec<DensePolynomial<F>>,
+  // TODO(moodlezoup): Consider pulling out combined polys into separate struct
   pub combined_dim_read_poly: DensePolynomial<F>,
   pub combined_final_poly: DensePolynomial<F>,
   pub combined_flags_poly: DensePolynomial<F>,
   pub combined_E_poly: DensePolynomial<F>,
+}
+
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct SurgeCommitment<G: CurveGroup> {
+  pub dim_read_commitment: PolyCommitment<G>,
+  pub final_commitment: PolyCommitment<G>,
+  pub flags_commitment: PolyCommitment<G>,
+  pub E_commitment: PolyCommitment<G>,
+}
+
+pub struct SurgeCommitmentGenerators<G: CurveGroup> {
+  pub dim_read_commitment_gens: PolyCommitmentGens<G>,
+  pub final_commitment_gens: PolyCommitmentGens<G>,
+  pub flags_commitment_gens: PolyCommitmentGens<G>,
+  pub E_commitment_gens: PolyCommitmentGens<G>,
+}
+
+impl<F: PrimeField> PolynomialRepresentation<F> {
+  fn commit<G: CurveGroup<ScalarField = F>>(
+    &self,
+    generators: &SurgeCommitmentGenerators<G>,
+  ) -> SurgeCommitment<G> {
+    let (dim_read_commitment, _) = self
+      .combined_dim_read_poly
+      .commit(&generators.dim_read_commitment_gens, None);
+    let (final_commitment, _) = self
+      .combined_final_poly
+      .commit(&generators.final_commitment_gens, None);
+    let (flags_commitment, _) = self
+      .combined_flags_poly
+      .commit(&generators.flags_commitment_gens, None);
+    let (E_commitment, _) = self
+      .combined_E_poly
+      .commit(&generators.E_commitment_gens, None);
+
+    SurgeCommitment {
+      dim_read_commitment,
+      final_commitment,
+      flags_commitment,
+      E_commitment,
+    }
+  }
 }
 
 pub trait Jolt<F: PrimeField> {
@@ -33,16 +82,27 @@ pub trait Jolt<F: PrimeField> {
   const NUM_INSTRUCTIONS: usize = Self::InstructionSet::COUNT;
   const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
-  fn prove(ops: Vec<Self::InstructionSet>) {
+  fn prove(ops: Vec<Self::InstructionSet>, r: Vec<F>) {
     let materialized_subtables = Self::materialize_subtables();
     let subtable_lookup_indices = Self::subtable_lookup_indices(&ops);
 
-    let polynomials = Self::polynomialize(ops, &subtable_lookup_indices, &materialized_subtables);
+    let polynomials = Self::polynomialize(&ops, &subtable_lookup_indices, &materialized_subtables);
 
     // TODO(moodlezoup): commit to polynomials
 
-    // let eq = EqPolynomial::new(r.to_vec());
-    // let sumcheck_claim = Self::compute_sumcheck_claim(ops, &polynomials.E_polys, &eq);
+    let eq = EqPolynomial::new(r.to_vec());
+    let sumcheck_claim = Self::compute_sumcheck_claim(&ops, &polynomials.E_polys, &eq);
+
+    // let (primary_sumcheck_proof, r_z, _) =
+    //   SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
+    //     &sumcheck_claim,
+    //     ops.len().log_2(),
+    //     &mut combined_sumcheck_polys,
+    //     Self::combine_lookups,
+    //     num_subtable_polys,
+    //     S::primary_poly_degree(),
+    //     transcript,
+    //   );
 
     // TODO(moodlezoup): sumcheck (jolt-specific sumcheck implementation?)
 
@@ -58,7 +118,7 @@ pub trait Jolt<F: PrimeField> {
   }
 
   fn polynomialize(
-    ops: Vec<Self::InstructionSet>,
+    ops: &Vec<Self::InstructionSet>,
     subtable_lookup_indices: &Vec<Vec<usize>>,
     materialized_subtables: &Vec<Vec<F>>,
   ) -> PolynomialRepresentation<F> {
@@ -130,7 +190,7 @@ pub trait Jolt<F: PrimeField> {
   }
 
   fn compute_sumcheck_claim(
-    ops: Vec<Self::InstructionSet>,
+    ops: &Vec<Self::InstructionSet>,
     E_polys: &Vec<DensePolynomial<F>>,
     eq: &EqPolynomial<F>,
   ) -> F {
@@ -182,10 +242,9 @@ pub trait Jolt<F: PrimeField> {
 
   fn subtable_lookup_indices(ops: &Vec<Self::InstructionSet>) -> Vec<Vec<usize>> {
     let m = ops.len().next_power_of_two();
-    let chunked_indices: Vec<Vec<usize>> = ops
-      .iter()
-      .map(|op| op.to_indices(Self::C, Self::M.log_2()))
-      .collect();
+    let log_m = Self::M.log_2();
+    let chunked_indices: Vec<Vec<usize>> =
+      ops.iter().map(|op| op.to_indices(Self::C, log_m)).collect();
 
     let mut subtable_lookup_indices: Vec<Vec<usize>> = Vec::with_capacity(Self::C);
     for i in 0..Self::C {
