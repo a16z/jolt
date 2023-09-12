@@ -10,9 +10,7 @@ use crate::lasso::memory_checking::MemoryCheckingProof;
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::subtables::{
-  CombinedTableCommitment, CombinedTableEvalProof, Subtables,
-};
+use crate::subtables::{CombinedTableCommitment, CombinedTableEvalProof, Subtables};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
@@ -140,7 +138,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
       &claimed_eval,
     );
 
-    let num_subtable_polys = S::num_memories() + 1;
     let mut combined_sumcheck_polys: Vec<DensePolynomial<G::ScalarField>> =
       subtables.lookup_polys.clone();
     combined_sumcheck_polys.push(DensePolynomial::new(eq.evals()));
@@ -151,7 +148,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
         dense.s.log_2(),
         &mut combined_sumcheck_polys,
         S::combine_lookups_eq,
-        num_subtable_polys,
         S::primary_poly_degree(),
         transcript,
       );
