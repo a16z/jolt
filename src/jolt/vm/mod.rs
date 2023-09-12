@@ -14,6 +14,7 @@ use crate::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
     eq_poly::EqPolynomial,
   },
+  subprotocols::sumcheck::SumcheckInstanceProof,
   utils::math::Math,
 };
 
@@ -69,7 +70,7 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
   }
 }
 
-pub trait Jolt<F: PrimeField> {
+pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
@@ -90,17 +91,16 @@ pub trait Jolt<F: PrimeField> {
     let eq = EqPolynomial::new(r.to_vec());
     let sumcheck_claim = Self::compute_sumcheck_claim(&ops, &polynomials.E_polys, &eq);
 
+    // TODO(moodlezoup): sumcheck (jolt-specific sumcheck implementation?)
     // let (primary_sumcheck_proof, r_z, _) =
-    //   SumcheckInstanceProof::<G::ScalarField>::prove_arbitrary::<_, G, Transcript>(
+    //   SumcheckInstanceProof::prove_arbitrary::<_, G, Transcript>(
     //     &sumcheck_claim,
     //     ops.len().log_2(),
     //     &mut combined_sumcheck_polys,
     //     Self::combine_lookups,
-    //     S::primary_poly_degree(),
+    //     Self::sumcheck_poly_degree(),
     //     transcript,
     //   );
-
-    // TODO(moodlezoup): sumcheck (jolt-specific sumcheck implementation?)
 
     // TODO(moodlezoup): memory checking
     // MemoryCheckingProof::prove(
@@ -123,10 +123,10 @@ pub trait Jolt<F: PrimeField> {
     let mut opcodes: Vec<u8> = ops.iter().map(|op| op.to_opcode()).collect();
     opcodes.resize(m, 0);
 
-    let mut dim: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
-    let mut read_cts: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
-    let mut final_cts: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::C);
-    let mut E_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(Self::NUM_MEMORIES);
+    let mut dim: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
+    let mut read_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
+    let mut final_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
+    let mut E_polys: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
 
     for i in 0..Self::C {
       let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
@@ -149,7 +149,7 @@ pub trait Jolt<F: PrimeField> {
 
     for subtable_index in 0..Self::NUM_SUBTABLES {
       for i in 0..Self::C {
-        let subtable_lookups: Vec<F> = subtable_lookup_indices[i]
+        let subtable_lookups = subtable_lookup_indices[i]
           .iter()
           .map(|&lookup_index| materialized_subtables[subtable_index][lookup_index])
           .collect();
@@ -196,7 +196,7 @@ pub trait Jolt<F: PrimeField> {
     let mut claim = F::zero();
     for (k, op) in ops.iter().enumerate() {
       let memory_indices = Self::instruction_to_memory_indices(&op);
-      let mut filtered_operands: Vec<F> = Vec::with_capacity(memory_indices.len());
+      let mut filtered_operands = Vec::with_capacity(memory_indices.len());
       for index in memory_indices {
         filtered_operands.push(E_polys[index][k]);
       }
@@ -228,7 +228,7 @@ pub trait Jolt<F: PrimeField> {
     let mut sum = F::zero();
     for instruction in Self::InstructionSet::iter() {
       let memory_indices = Self::instruction_to_memory_indices(&instruction);
-      let mut filtered_operands: Vec<F> = Vec::with_capacity(memory_indices.len());
+      let mut filtered_operands = Vec::with_capacity(memory_indices.len());
       for index in memory_indices {
         filtered_operands.push(vals[index]);
       }
@@ -247,7 +247,7 @@ pub trait Jolt<F: PrimeField> {
   }
 
   fn materialize_subtables() -> Vec<Vec<F>> {
-    let mut subtables: Vec<Vec<F>> = Vec::with_capacity(Self::Subtables::COUNT);
+    let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Self::Subtables::COUNT);
     for subtable in Self::Subtables::iter() {
       subtables.push(subtable.materialize(Self::M));
     }
