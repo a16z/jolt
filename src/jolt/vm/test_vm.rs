@@ -94,7 +94,7 @@ mod tests {
     ];
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
-
+    let mut prover_transcript = Transcript::new(b"example");
     <TestJoltVM as Jolt<_, EdwardsProjective>>::prove(
       vec![
         TestInstructionSet::XOR(XORInstruction(420, 69)),
@@ -102,6 +102,7 @@ mod tests {
         TestInstructionSet::EQ(EQInstruction(420, 420)),
       ],
       r,
+      &mut prover_transcript,
     );
   }
 

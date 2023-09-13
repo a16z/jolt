@@ -5,7 +5,6 @@ use std::any::TypeId;
 use crate::jolt::vm::test_vm::TestSubtables;
 
 #[enum_dispatch]
-// TODO(moodlezoup): consider moving generic type param `F` to methods
 pub trait LassoSubtable<F: PrimeField>: 'static {
   fn subtable_id(&self) -> TypeId {
     TypeId::of::<Self>()

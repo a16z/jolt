@@ -19,7 +19,6 @@ impl<F: PrimeField> XORSubtable<F> {
 }
 
 impl<F: PrimeField> LassoSubtable<F> for XORSubtable<F> {
-  // TODO(moodlezoup): macro
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
     let bits_per_operand = (log2(M) / 2) as usize;
