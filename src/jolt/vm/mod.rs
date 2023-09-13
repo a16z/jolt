@@ -10,12 +10,13 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
+  lasso::memory_checking::MemoryCheckingProof,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
     eq_poly::EqPolynomial,
   },
   subprotocols::sumcheck::SumcheckInstanceProof,
-  utils::math::Math,
+  utils::{math::Math, random::RandomTape},
 };
 
 pub struct PolynomialRepresentation<F: PrimeField> {
@@ -28,21 +29,6 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   pub combined_dim_read_poly: DensePolynomial<F>,
   pub combined_final_poly: DensePolynomial<F>,
   pub combined_E_poly: DensePolynomial<F>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SurgeCommitment<G: CurveGroup> {
-  pub dim_read_commitment: PolyCommitment<G>,
-  pub final_commitment: PolyCommitment<G>,
-  pub flag_commitment: PolyCommitment<G>,
-  pub E_commitment: PolyCommitment<G>,
-}
-
-pub struct SurgeCommitmentGenerators<G: CurveGroup> {
-  pub dim_read_commitment_gens: PolyCommitmentGens<G>,
-  pub final_commitment_gens: PolyCommitmentGens<G>,
-  pub flag_commitment_gens: PolyCommitmentGens<G>,
-  pub E_commitment_gens: PolyCommitmentGens<G>,
 }
 
 impl<F: PrimeField> PolynomialRepresentation<F> {
@@ -70,6 +56,21 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
   }
 }
 
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct SurgeCommitment<G: CurveGroup> {
+  pub dim_read_commitment: PolyCommitment<G>,
+  pub final_commitment: PolyCommitment<G>,
+  pub flag_commitment: PolyCommitment<G>,
+  pub E_commitment: PolyCommitment<G>,
+}
+
+pub struct SurgeCommitmentGenerators<G: CurveGroup> {
+  pub dim_read_commitment_gens: PolyCommitmentGens<G>,
+  pub final_commitment_gens: PolyCommitmentGens<G>,
+  pub flag_commitment_gens: PolyCommitmentGens<G>,
+  pub E_commitment_gens: PolyCommitmentGens<G>,
+}
+
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
@@ -80,7 +81,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   const NUM_INSTRUCTIONS: usize = Self::InstructionSet::COUNT;
   const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
-  fn prove(ops: Vec<Self::InstructionSet>, r: Vec<F>) {
+  fn prove(ops: Vec<Self::InstructionSet>, r: Vec<F>, transcript: &mut Transcript) {
+    let m = ops.len().next_power_of_two();
+    // TODO(moodlezoup): transcript stuff
+
     let materialized_subtables = Self::materialize_subtables();
     let subtable_lookup_indices = Self::subtable_lookup_indices(&ops);
 
@@ -91,26 +95,59 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let eq = EqPolynomial::new(r.to_vec());
     let sumcheck_claim = Self::compute_sumcheck_claim(&ops, &polynomials.E_polys, &eq);
 
-    // TODO(moodlezoup): sumcheck (jolt-specific sumcheck implementation?)
-    // let (primary_sumcheck_proof, r_z, _) =
-    //   SumcheckInstanceProof::prove_arbitrary::<_, G, Transcript>(
-    //     &sumcheck_claim,
-    //     ops.len().log_2(),
-    //     &mut combined_sumcheck_polys,
-    //     Self::combine_lookups,
-    //     Self::sumcheck_poly_degree(),
-    //     transcript,
-    //   );
+    // TODO(moodlezoup): jolt-specific sumcheck implementation?
+    let mut sumcheck_polys = polynomials.E_polys.clone();
+    sumcheck_polys.push(DensePolynomial::new(eq.evals()));
+    sumcheck_polys.push(polynomials.flag);
+    let (primary_sumcheck_proof, r_sumcheck, _) =
+      SumcheckInstanceProof::prove_arbitrary::<_, G, Transcript>(
+        &sumcheck_claim,
+        m.log_2(),
+        &mut sumcheck_polys,
+        Self::combine_lookups,
+        Self::sumcheck_poly_degree(),
+        transcript,
+      );
 
-    // TODO(moodlezoup): memory checking
+    // let gamma = F::zero();
+    // let tau = F::zero();
+    // let mut random_tape = RandomTape::new(b"proof");
+    // let commitment_generators = Self::commitment_generators(m);
     // MemoryCheckingProof::prove(
     //   polynomials,
-    //   gamma, tau,
+    //   gamma,
+    //   tau,
     //   &materialized_subtables,
-    //   gens,
-    //   transcript,
-    //   random_tape
+    //   &commitment_generators,
+    //   &mut transcript,
+    //   &mut random_tape,
     // );
+  }
+
+  fn commitment_generators(m: usize) -> SurgeCommitmentGenerators<G> {
+    // dim_1, ... dim_C, read_1, ..., read_C
+    // log_2(C * m + C * m)
+    let num_vars_dim_read = (2 * Self::C * m).next_power_of_two().log_2();
+    // final_1, ..., final_C
+    // log_2(C * M)
+    let num_vars_final = (Self::C * Self::M).next_power_of_two().log_2();
+    // E_1, ..., E_alpha
+    // log_2(alpha * m)
+    let num_vars_E = (Self::NUM_MEMORIES * m).next_power_of_two().log_2();
+    let num_vars_flag =
+      m.next_power_of_two().log_2() + Self::NUM_INSTRUCTIONS.next_power_of_two().log_2();
+
+    let dim_read_commitment_gens = PolyCommitmentGens::new(num_vars_dim_read, b"asdf");
+    let final_commitment_gens = PolyCommitmentGens::new(num_vars_final, b"asd");
+    let E_commitment_gens = PolyCommitmentGens::new(num_vars_E, b"asdf");
+    let flag_commitment_gens = PolyCommitmentGens::new(num_vars_flag, b"1234");
+
+    SurgeCommitmentGenerators {
+      dim_read_commitment_gens,
+      final_commitment_gens,
+      flag_commitment_gens,
+      E_commitment_gens,
+    }
   }
 
   fn polynomialize(
