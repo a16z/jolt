@@ -1,7 +1,9 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 
-use crate::jolt::{subtable::LassoSubtable, vm::test_vm::TestInstructionSet};
+use super::instruction::{eq::EQInstruction, xor::XORInstruction};
+use super::subtable::LassoSubtable;
+use crate::jolt::vm::test_vm::TestInstructionSet;
 
 #[enum_dispatch]
 pub trait JoltInstruction {
@@ -9,6 +11,17 @@ pub trait JoltInstruction {
   fn g_poly_degree(&self, C: usize) -> usize;
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>>;
   fn to_indices(&self, C: usize, M: usize) -> Vec<usize>;
+}
+
+#[macro_export]
+macro_rules! instruction_set {
+    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[repr(u8)]
+        #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
+        #[enum_dispatch(JoltInstruction)]
+        pub enum $enum_name { $($alias($struct)),+ }
+        impl Opcode for $enum_name {}
+    };
 }
 
 pub trait Opcode {

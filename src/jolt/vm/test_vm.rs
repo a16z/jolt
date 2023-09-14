@@ -2,52 +2,16 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
-use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use crate::{instruction_set, subtable_enum};
+
 use super::Jolt;
-use crate::jolt::instruction::{eq::EQInstruction, xor::XORInstruction, JoltInstruction, Opcode};
-use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable, LassoSubtable};
+use crate::jolt::vm::instruction::{eq::EQInstruction, xor::XORInstruction, Opcode};
+use crate::jolt::vm::subtable::{eq::EQSubtable, xor::XORSubtable};
 
-macro_rules! instruction_set {
-    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[repr(u8)]
-        #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-        #[enum_dispatch(JoltInstruction)]
-        pub enum $enum_name { $($alias($struct)),+ }
-        impl Opcode for $enum_name {}
-    };
-}
-
-// TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with
-//     combined trait/function to_enum_index(subtable: &dyn LassoSubtable<F>) => usize
-macro_rules! subtable_enum {
-    ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
-        #[repr(usize)]
-        #[enum_dispatch(LassoSubtable<F>)]
-        #[derive(EnumCountMacro, EnumIter)]
-        pub enum $enum_name<F: PrimeField> { $($alias($struct)),+ }
-        impl<F: PrimeField> From<TypeId> for $enum_name<F> {
-          fn from(subtable_id: TypeId) -> Self {
-            $(
-              if subtable_id == TypeId::of::<$struct>() {
-                $enum_name::from(<$struct>::new())
-              } else
-            )+
-            { panic!("Unexpected subtable id") }
-          }
-        }
-
-        impl<F: PrimeField> Into<usize> for $enum_name<F> {
-          fn into(self) -> usize {
-            unsafe { *<*const _>::from(&self).cast::<usize>() }
-          }
-        }
-    };
-}
-
-instruction_set!(TestInstructionSet, XOR: XORInstruction, EQ: EQInstruction);
 subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
+instruction_set!(TestInstructionSet, XOR: XORInstruction, EQ: EQInstruction);
 
 // ==================== JOLT ====================
 

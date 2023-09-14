@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{xor::XORSubtable, LassoSubtable};
+use crate::jolt::vm::subtable::{xor::XORSubtable, LassoSubtable};
 
 #[derive(Copy, Clone, Default)]
 pub struct XORInstruction(pub u64, pub u64);

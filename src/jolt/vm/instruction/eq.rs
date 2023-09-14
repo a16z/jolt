@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{eq::EQSubtable, LassoSubtable};
+use crate::jolt::vm::subtable::{eq::EQSubtable, LassoSubtable};
 
 #[derive(Copy, Clone, Default)]
 pub struct EQInstruction(pub u64, pub u64);
