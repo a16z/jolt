@@ -9,7 +9,7 @@ use crate::jolt::instruction::{JoltInstruction, Opcode};
 use crate::jolt::subtable::LassoSubtable;
 
 use crate::{
-  lasso::memory_checking::MemoryCheckingProof,
+  // lasso::memory_checking::MemoryCheckingProof,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
     eq_poly::EqPolynomial,

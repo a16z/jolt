@@ -15,12 +15,9 @@ extern crate sha3;
 #[cfg(feature = "multicore")]
 extern crate rayon;
 
-pub mod benches;
-pub mod lasso;
 mod msm;
 mod poly;
 mod subprotocols;
-pub mod subtables;
 pub mod jolt;
 mod utils;
 
