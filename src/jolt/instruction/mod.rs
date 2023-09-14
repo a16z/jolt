@@ -3,7 +3,7 @@ use enum_dispatch::enum_dispatch;
 
 use super::instruction::{eq::EQInstruction, xor::XORInstruction};
 use super::subtable::LassoSubtable;
-use crate::jolt::vm::test_vm::TestInstructionSet;
+use crate::jolt::test_vm::TestInstructionSet;
 
 #[enum_dispatch]
 pub trait JoltInstruction {

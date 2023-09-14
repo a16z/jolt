@@ -5,11 +5,10 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use instruction::{JoltInstruction, Opcode};
-use subtable::LassoSubtable;
+use crate::jolt::instruction::{JoltInstruction, Opcode};
+use crate::jolt::subtable::LassoSubtable;
 
 use crate::{
-  
   lasso::memory_checking::MemoryCheckingProof,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
@@ -307,7 +306,3 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     subtable_lookup_indices
   }
 }
-
-pub mod test_vm;
-pub mod instruction;
-pub mod subtable;

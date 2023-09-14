@@ -6,9 +6,9 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use crate::{instruction_set, subtable_enum};
 
-use super::Jolt;
-use crate::jolt::vm::instruction::{eq::EQInstruction, xor::XORInstruction, Opcode};
-use crate::jolt::vm::subtable::{eq::EQSubtable, xor::XORSubtable};
+use crate::jolt::vm::Jolt;
+use crate::jolt::instruction::{eq::EQInstruction, xor::XORInstruction, Opcode};
+use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable};
 
 subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
 instruction_set!(TestInstructionSet, XOR: XORInstruction, EQ: EQInstruction);
@@ -36,7 +36,7 @@ mod tests {
   use rand_chacha::rand_core::RngCore;
 
   use crate::{
-    jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+    jolt::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
   };
 
