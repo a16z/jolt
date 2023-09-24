@@ -174,7 +174,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let iterator = (0..mle_half).into_par_iter();
 
       #[cfg(not(feature = "multicore"))]
-      let iterator = (0..mle_half).iter();
+      let iterator = 0..mle_half;
 
       let accum: Vec<Vec<F>> = iterator.map(|poly_term_i| {
         let mut accum = vec![F::zero(); combined_degree + 1];
