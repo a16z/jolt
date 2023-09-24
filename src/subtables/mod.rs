@@ -136,18 +136,42 @@ where
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
   ) -> Vec<GrandProducts<F>> {
-    (0..S::NUM_MEMORIES).into_par_iter().map(|i| {
-      let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
-      let j = S::memory_to_dimension_index(i);
-      GrandProducts::new(
-        subtable,
-        &dense.dim[j],
-        &dense.dim_usize[j],
-        &dense.read[j],
-        &dense.r#final[j],
-        r_mem_check,
-      )
-    }).collect::<Vec<_>>()
+    #[cfg(feature = "multicore")]
+    {
+      (0..S::NUM_MEMORIES)
+        .into_par_iter()
+        .map(|i| {
+          let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
+          let j = S::memory_to_dimension_index(i);
+          GrandProducts::new(
+            subtable,
+            &dense.dim[j],
+            &dense.dim_usize[j],
+            &dense.read[j],
+            &dense.r#final[j],
+            r_mem_check,
+          )
+        })
+        .collect::<Vec<_>>()
+    }
+
+    #[cfg(not(feature = "multicore"))]
+    {
+      (0..S::NUM_MEMORIES)
+        .map(|i| {
+          let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
+          let j = S::memory_to_dimension_index(i);
+          GrandProducts::new(
+            subtable,
+            &dense.dim[j],
+            &dense.dim_usize[j],
+            &dense.read[j],
+            &dense.r#final[j],
+            r_mem_check,
+          )
+        })
+        .collect::<Vec<_>>()
+    }
   }
 
   #[tracing::instrument(skip_all, name = "Subtables.commit")]
@@ -166,9 +190,9 @@ where
     g_operands
       .iter()
       .for_each(|operand| assert_eq!(operand.len(), hypercube_size));
-    
+
     let eq_evals = eq.evals();
-    
+
     #[cfg(feature = "multicore")]
     let claim = (0..hypercube_size)
       .into_par_iter()
