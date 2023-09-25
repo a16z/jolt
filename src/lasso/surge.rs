@@ -87,18 +87,17 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 // 2. `DIMS_PER_MEMORY` (C)
 // 3. `TableSizeInfo::C()`
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheck<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
+struct PrimarySumcheck<G: CurveGroup> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
   proof_derefs: CombinedTableEvalProof<G>,
-  _marker: PhantomData<S>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparsePolynomialEvaluationProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   comm_derefs: CombinedTableCommitment<G>,
-  primary_sumcheck: PrimarySumcheck<G, S>,
+  primary_sumcheck: PrimarySumcheck<G>,
   memory_check: MemoryCheckingProof<G, S>,
 }
 
@@ -188,7 +187,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
         claimed_evaluation: claimed_eval,
         eval_derefs,
         proof_derefs,
-        _marker: PhantomData,
       },
       memory_check,
     }
