@@ -20,6 +20,9 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 use std::marker::Sync;
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<
   G: CurveGroup,
@@ -273,19 +276,21 @@ impl<F: PrimeField> GrandProducts<F> {
 
     // read: s hash evaluations => log(s)-variate polynomial
     assert_eq!(dim_i.len(), read_i.len());
-    let num_ops = dim_i.len();
+
+    #[cfg(feature = "multicore")]
+    let num_ops = (0..dim_i.len()).into_par_iter();
+    #[cfg(not(feature = "multicore"))]
+    let num_ops = (0..dim_i.len()).iter();
     let grand_product_input_read = DensePolynomial::new(
-      (0..num_ops)
-        .map(|i| {
+      num_ops.clone().map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
           hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])
         })
-        .collect::<Vec<F>>(),
+        .collect::<Vec<F>>()
     );
     // write: s hash evaluation => log(s)-variate polynomial
     let grand_product_input_write = DensePolynomial::new(
-      (0..num_ops)
-        .map(|i| {
+      num_ops.map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by write_ts = read_ts + 1
           hash_func(
             &dim_i[i],
