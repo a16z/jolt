@@ -18,13 +18,14 @@ use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
+use std::marker::Sync;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<
   G: CurveGroup,
   const C: usize,
   const M: usize,
-  S: SubtableStrategy<G::ScalarField, C, M>,
+  S: SubtableStrategy<G::ScalarField, C, M> + Sync,
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
@@ -32,7 +33,7 @@ pub struct MemoryCheckingProof<
   proof_hash_layer: HashLayerProof<G, C, M, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
+impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M> + Sync>
   MemoryCheckingProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
@@ -666,7 +667,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G>(
-    grand_products: &mut [GrandProducts<F>; NUM_MEMORIES],
+    grand_products: &mut Vec<GrandProducts<F>>,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where

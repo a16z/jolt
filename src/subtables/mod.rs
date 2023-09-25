@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::marker::{PhantomData, Sync};
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -107,7 +107,7 @@ where
 /// Stores the non-sparse evaluations of T[k] for each of the 'c'-dimensions as DensePolynomials, enables combination and commitment.
 impl<F: PrimeField, const C: usize, const M: usize, S> Subtables<F, C, M, S>
 where
-  S: SubtableStrategy<F, C, M>,
+  S: SubtableStrategy<F, C, M> + Sync,
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
 {
@@ -135,19 +135,43 @@ where
     &self,
     dense: &DensifiedRepresentation<F, C>,
     r_mem_check: &(F, F),
-  ) -> [GrandProducts<F>; S::NUM_MEMORIES] {
-    std::array::from_fn(|i| {
-      let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
-      let j = S::memory_to_dimension_index(i);
-      GrandProducts::new(
-        subtable,
-        &dense.dim[j],
-        &dense.dim_usize[j],
-        &dense.read[j],
-        &dense.r#final[j],
-        r_mem_check,
-      )
-    })
+  ) -> Vec<GrandProducts<F>> {
+    #[cfg(feature = "multicore")]
+    {
+      (0..S::NUM_MEMORIES)
+        .into_par_iter()
+        .map(|i| {
+          let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
+          let j = S::memory_to_dimension_index(i);
+          GrandProducts::new(
+            subtable,
+            &dense.dim[j],
+            &dense.dim_usize[j],
+            &dense.read[j],
+            &dense.r#final[j],
+            r_mem_check,
+          )
+        })
+        .collect::<Vec<_>>()
+    }
+
+    #[cfg(not(feature = "multicore"))]
+    {
+      (0..S::NUM_MEMORIES)
+        .map(|i| {
+          let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
+          let j = S::memory_to_dimension_index(i);
+          GrandProducts::new(
+            subtable,
+            &dense.dim[j],
+            &dense.dim_usize[j],
+            &dense.read[j],
+            &dense.r#final[j],
+            r_mem_check,
+          )
+        })
+        .collect::<Vec<_>>()
+    }
   }
 
   #[tracing::instrument(skip_all, name = "Subtables.commit")]
