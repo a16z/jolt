@@ -65,7 +65,9 @@ macro_rules! single_pass_lasso {
         &mut random_tape,
       );
       let mut verify_transcript = Transcript::new(b"example");
-      proof.verify(&commitment, &r, &gens, &mut verify_transcript).expect("should verify");
+      proof
+        .verify(&commitment, &r, &gens, &mut verify_transcript)
+        .expect("should verify");
     })
   };
 }

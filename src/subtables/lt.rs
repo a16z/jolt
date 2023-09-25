@@ -22,15 +22,15 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     // Materialize table in counting order where lhs | rhs counts 0->m
     for idx in 0..M {
       let (lhs, rhs) = split_bits(idx, bits_per_operand);
-      materialized_lt.push(F::from((lhs < rhs) as u64));
-      materialized_eq.push(F::from((lhs == rhs) as u64));
+      materialized_lt.push(F::from(u64::from(lhs < rhs)));
+      materialized_eq.push(F::from(u64::from(lhs == rhs)));
     }
 
     [materialized_lt, materialized_eq]
   }
 
   /// LT = (1-x_i)* y_i * eq(x_{>i}, y_{>i})
-  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(subtable_index: usize, point: &[F]) -> F {
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);

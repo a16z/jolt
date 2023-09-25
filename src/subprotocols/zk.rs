@@ -16,68 +16,66 @@ pub struct KnowledgeProof<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> KnowledgeProof<G> {
-    fn protocol_name() -> &'static [u8] {
-      b"knowledge proof"
-    }
-  
-    pub fn prove(
-      gens_n: &MultiCommitGens<G>,
-      transcript: &mut Transcript,
-      random_tape: &mut RandomTape<G>,
-      x: &G::ScalarField,
-      r: &G::ScalarField,
-    ) -> (KnowledgeProof<G>, G) {
-      <Transcript as ProofTranscript<G>>::append_protocol_name(
-        transcript,
-        KnowledgeProof::<G>::protocol_name(),
-      );
-  
-      // produce two random Fs
-      let t1 = random_tape.random_scalar(b"t1");
-      let t2 = random_tape.random_scalar(b"t2");
-  
-      let C = x.commit(r, gens_n);
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", &C);
-  
-      let alpha = t1.commit(&t2, gens_n);
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
-  
-      let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
-  
-      let z1 = *x * c + t1;
-      let z2 = *r * c + t2;
-  
-      (KnowledgeProof { alpha, z1, z2 }, C)
-    }
-  
-    pub fn verify(
-      &self,
-      gens_n: &MultiCommitGens<G>,
-      transcript: &mut Transcript,
-      C: &G,
-    ) -> Result<(), ProofVerifyError> {
-      <Transcript as ProofTranscript<G>>::append_protocol_name(
-        transcript,
-        KnowledgeProof::<G>::protocol_name(),
-      );
-  
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", C);
-      <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
-  
-      let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
-  
-      let lhs = self.z1.commit(&self.z2, gens_n);
-      let rhs = *C * c + self.alpha;
-  
-      if lhs == rhs {
-        Ok(())
-      } else {
-        Err(ProofVerifyError::InternalError)
-      }
-    }
+  fn protocol_name() -> &'static [u8] {
+    b"knowledge proof"
   }
 
-  #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
+  pub fn prove(
+    gens_n: &MultiCommitGens<G>,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+    x: &G::ScalarField,
+    r: &G::ScalarField,
+  ) -> (KnowledgeProof<G>, G) {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      KnowledgeProof::<G>::protocol_name(),
+    );
+
+    // produce two random Fs
+    let t1 = random_tape.random_scalar(b"t1");
+    let t2 = random_tape.random_scalar(b"t2");
+
+    let C = x.commit(r, gens_n);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", &C);
+
+    let alpha = t1.commit(&t2, gens_n);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &alpha);
+
+    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+
+    let z1 = *x * c + t1;
+    let z2 = *r * c + t2;
+
+    (KnowledgeProof { alpha, z1, z2 }, C)
+  }
+
+  pub fn verify(
+    &self,
+    gens_n: &MultiCommitGens<G>,
+    transcript: &mut Transcript,
+    C: &G,
+  ) -> Result<(), ProofVerifyError> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(
+      transcript,
+      KnowledgeProof::<G>::protocol_name(),
+    );
+
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"C", C);
+    <Transcript as ProofTranscript<G>>::append_point(transcript, b"alpha", &self.alpha);
+
+    let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+
+    let lhs = self.z1.commit(&self.z2, gens_n);
+    let rhs = *C * c + self.alpha;
+
+    (lhs == rhs)
+      .then_some(())
+      .ok_or(ProofVerifyError::InternalError)
+  }
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct EqualityProof<G: CurveGroup> {
   alpha: G,
   z: G::ScalarField,

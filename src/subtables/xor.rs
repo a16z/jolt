@@ -26,7 +26,7 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
     [materialized]
   }
 
-  fn evaluate_subtable_mle(_: usize, point: &Vec<F>) -> F {
+  fn evaluate_subtable_mle(_: usize, point: &[F]) -> F {
     // (1-x)*y + x*(1-y)
     debug_assert!(point.len() % 2 == 0);
     let b = point.len() / 2;
@@ -45,11 +45,11 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
   /// T = T'[0] + 2^16*T'[1] + 2^32*T'[2] + 2^48*T'[3]
   /// T'[3] | T'[2] | T'[1] | T'[0]
   fn combine_lookups(vals: &[F; <Self as SubtableStrategy<F, C, M>>::NUM_MEMORIES]) -> F {
-    let increment = log2(M) as usize;
+    let increment = log2(M) as usize / 2;
     let mut sum = F::zero();
-    for i in 0..C {
+    for (i, val) in vals.iter().enumerate() {
       let weight: u64 = 1u64 << (i * increment);
-      sum += F::from(weight) * vals[i];
+      sum += F::from(weight) * val;
     }
     sum
   }
@@ -103,11 +103,11 @@ mod test {
       Fr::from(400),
     ]);
 
-    // 2^0 * 100 + 2^16 * 200 + 2^32 * 300 + 2^48 * 400
-    let expected = (1u64 * 100u64)
-      + ((1u64 << 16u64) * 200u64)
-      + ((1u64 << 32u64) * 300u64)
-      + ((1u64 << 48u64) * 400u64);
+    // 2^0 * 100 + 2^8 * 200 + 2^16 * 300 + 2^24 * 400
+    let expected = (100u64)
+      + ((1u64 << 8u64) * 200u64)
+      + ((1u64 << 16u64) * 300u64)
+      + ((1u64 << 24u64) * 400u64);
     assert_eq!(combined, Fr::from(expected));
   }
 
@@ -125,7 +125,7 @@ mod test {
     // Real equation here is log2(sparsity) + log2(C)
     let combined_table_index_bits = 2;
 
-    for (x, expected) in vec![
+    for (x, expected) in [
       (0, 0b00), // xor(0) -> 00 | 00 = 00
       (1, 0b10), // xor(2) -> 00 | 10 = 10
       (2, 0b00), // xor(5) -> 01 | 01 = 00

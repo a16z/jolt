@@ -1,25 +1,68 @@
-name: Build and Test Spartan
+name: Build and Test Lasso
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
+
+env:
+  RUSTFLAGS: -D warnings
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  build_nightly:
+  fmt:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Install
-      run: rustup default nightly
-    - name: Install rustfmt Components
-      run: rustup component add rustfmt
-    - name: Install clippy
-      run: rustup component add clippy
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Build examples
-      run: cargo build --examples --verbose
+      - uses: actions/checkout@v3
+      - name: Install toolchain nightly-2022-09-22
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2022-09-22
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install toolchain nightly-2022-09-22
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2022-09-22
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: cargo clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install toolchain nightly-2022-09-22
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2022-09-22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: run test
+        run: cargo nextest run

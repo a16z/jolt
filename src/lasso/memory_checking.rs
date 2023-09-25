@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
@@ -16,13 +18,17 @@ use ark_ff::{Field, PrimeField};
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
+use std::marker::Sync;
+
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<
   G: CurveGroup,
   const C: usize,
   const M: usize,
-  S: SubtableStrategy<G::ScalarField, C, M>,
+  S: SubtableStrategy<G::ScalarField, C, M> + Sync,
 > where
   [(); S::NUM_MEMORIES]: Sized,
 {
@@ -30,7 +36,7 @@ pub struct MemoryCheckingProof<
   proof_hash_layer: HashLayerProof<G, C, M, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M>>
+impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M> + Sync>
   MemoryCheckingProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
@@ -169,7 +175,7 @@ impl<F: PrimeField> GrandProducts<F> {
   pub fn new(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
-    dim_i_usize: &Vec<usize>,
+    dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -230,7 +236,7 @@ impl<F: PrimeField> GrandProducts<F> {
   fn build_grand_product_inputs(
     eval_table: &[F],
     dim_i: &DensePolynomial<F>,
-    dim_i_usize: &Vec<usize>,
+    dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
     r_mem_check: &(F, F),
@@ -270,19 +276,21 @@ impl<F: PrimeField> GrandProducts<F> {
 
     // read: s hash evaluations => log(s)-variate polynomial
     assert_eq!(dim_i.len(), read_i.len());
-    let num_ops = dim_i.len();
+
+    #[cfg(feature = "multicore")]
+    let num_ops = (0..dim_i.len()).into_par_iter();
+    #[cfg(not(feature = "multicore"))]
+    let num_ops = (0..dim_i.len()).iter();
     let grand_product_input_read = DensePolynomial::new(
-      (0..num_ops)
-        .map(|i| {
+      num_ops.clone().map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
           hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])
         })
-        .collect::<Vec<F>>(),
+        .collect::<Vec<F>>()
     );
     // write: s hash evaluation => log(s)-variate polynomial
     let grand_product_input_write = DensePolynomial::new(
-      (0..num_ops)
-        .map(|i| {
+      num_ops.map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by write_ts = read_ts + 1
           hash_func(
             &dim_i[i],
@@ -344,7 +352,7 @@ where
       std::array::from_fn(|i| subtables.lookup_polys[i].evaluate(rand_ops));
     let proof_derefs = CombinedTableEvalProof::prove(
       &subtables.combined_poly,
-      &eval_derefs.to_vec(),
+      eval_derefs.as_ref(),
       rand_ops,
       &gens.gens_derefs,
       transcript,
@@ -493,7 +501,7 @@ where
     let (claim_init, claim_read, claim_write, claim_final) = claims;
 
     // init
-    let hash_init = hash_func(&init_addr, &init_memory, &G::ScalarField::zero());
+    let hash_init = hash_func(init_addr, init_memory, &G::ScalarField::zero());
     assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
     // read
@@ -508,7 +516,7 @@ where
     // final: shares addr and val with init
     let eval_final_addr = init_addr;
     let eval_final_val = init_memory;
-    let hash_final = hash_func(&eval_final_addr, &eval_final_val, eval_final);
+    let hash_final = hash_func(eval_final_addr, eval_final_val, eval_final);
     assert_eq!(hash_final, *claim_final); // verify the last claim of the `final` grand product sumcheck
 
     Ok(())
@@ -619,13 +627,13 @@ where
 
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for i in 0..S::NUM_MEMORIES {
+    for (i, grand_product_claim) in grand_product_claims.iter().enumerate() {
       let j = S::memory_to_dimension_index(i);
       let k = S::memory_to_subtable_index(i);
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
       Self::check_reed_solomon_fingerprints(
-        &grand_product_claims[i],
+        grand_product_claim,
         &self.eval_derefs[i],
         &self.eval_dim[j],
         &self.eval_read[j],
@@ -664,7 +672,7 @@ impl<F: PrimeField, const NUM_MEMORIES: usize> ProductLayerProof<F, NUM_MEMORIES
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G>(
-    grand_products: &mut [GrandProducts<F>; NUM_MEMORIES],
+    grand_products: &mut Vec<GrandProducts<F>>,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
