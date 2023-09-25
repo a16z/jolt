@@ -91,7 +91,7 @@ struct PrimarySumcheck<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
-  proof_derefs: CombinedTableEvalProof<G, S>,
+  proof_derefs: CombinedTableEvalProof<G>,
   _marker: PhantomData<S>,
 }
 

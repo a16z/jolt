@@ -315,7 +315,7 @@ struct HashLayerProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
   proof_ops: PolyEvalProof<G>,
   proof_mem: PolyEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G, S>,
+  proof_derefs: CombinedTableEvalProof<G>,
   _marker: PhantomData<S>,
 }
 

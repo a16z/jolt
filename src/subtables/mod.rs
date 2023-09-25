@@ -30,8 +30,7 @@ pub mod subtable_strategy;
 #[cfg(test)]
 pub mod test;
 
-pub struct Subtables<F: PrimeField, S: JoltStrategy<F>>
-{
+pub struct Subtables<F: PrimeField, S: JoltStrategy<F>> {
   pub subtable_entries: Vec<Vec<F>>,
   pub lookup_polys: Vec<DensePolynomial<F>>,
   pub combined_poly: DensePolynomial<F>,
@@ -150,12 +149,11 @@ pub struct CombinedTableCommitment<G: CurveGroup> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CombinedTableEvalProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
+pub struct CombinedTableEvalProof<G: CurveGroup> {
   proof_table_eval: PolyEvalProof<G>,
-  _marker: PhantomData<S>,
 }
 
-impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S> {
+impl<G: CurveGroup> CombinedTableEvalProof<G> {
   fn prove_single(
     joint_poly: &DensePolynomial<G::ScalarField>,
     r: &[G::ScalarField],
@@ -164,10 +162,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> PolyEvalProof<G> {
-    assert_eq!(
-      joint_poly.get_num_vars(),
-      r.len() + evals.len().log_2() 
-    );
+    assert_eq!(joint_poly.get_num_vars(), r.len() + evals.len().log_2());
 
     // append the claimed evaluations to transcript
     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
@@ -221,7 +216,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      CombinedTableEvalProof::<G, S>::protocol_name(),
+      CombinedTableEvalProof::<G>::protocol_name(),
     );
 
     let evals = {
@@ -229,7 +224,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
       evals
     };
-    let proof_table_eval = CombinedTableEvalProof::<G, S>::prove_single(
+    let proof_table_eval = CombinedTableEvalProof::<G>::prove_single(
       combined_poly,
       r,
       &evals,
@@ -238,10 +233,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
       random_tape,
     );
 
-    CombinedTableEvalProof {
-      proof_table_eval,
-      _marker: PhantomData,
-    }
+    CombinedTableEvalProof { proof_table_eval }
   }
 
   fn verify_single(
@@ -291,12 +283,12 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> CombinedTableEvalProof<G, S
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
-      CombinedTableEvalProof::<G, S>::protocol_name(),
+      CombinedTableEvalProof::<G>::protocol_name(),
     );
     let mut evals = evals.to_owned();
     evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
-    CombinedTableEvalProof::<G, S>::verify_single(
+    CombinedTableEvalProof::<G>::verify_single(
       &self.proof_table_eval,
       &comm.comm_ops_val,
       r,
