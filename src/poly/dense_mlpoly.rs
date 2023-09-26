@@ -515,7 +515,7 @@ mod tests {
     chis
   }
 
-  pub fn compute_outerproduct<F: PrimeField>(L: Vec<F>, R: Vec<F>) -> Vec<F> {
+  pub fn compute_outerproduct<F: PrimeField>(L: &[F], R: &[F]) -> Vec<F> {
     assert_eq!(L.len(), R.len());
     (0..L.len())
       .map(|i| (0..R.len()).map(|j| L[i] * R[j]).collect::<Vec<F>>())
@@ -538,7 +538,7 @@ mod tests {
     for _i in 0..s {
       r.push(G::ScalarField::rand(&mut prng));
     }
-    let chis = tests::compute_chis_at_r::<G::ScalarField>(&r);
+    let chis = compute_chis_at_r::<G::ScalarField>(&r);
     let chis_m = EqPolynomial::<G::ScalarField>::new(r).evals();
     assert_eq!(chis, chis_m);
   }
@@ -558,7 +558,7 @@ mod tests {
     }
     let chis = EqPolynomial::new(r.clone()).evals();
     let (L, R) = EqPolynomial::new(r).compute_factored_evals();
-    let O = compute_outerproduct(L, R);
+    let O = compute_outerproduct(&L, &R);
     assert_eq!(chis, O);
   }
 
@@ -575,7 +575,7 @@ mod tests {
     for _i in 0..s {
       r.push(F::rand(&mut prng));
     }
-    let (L, R) = tests::compute_factored_chis_at_r(&r);
+    let (L, R) = compute_factored_chis_at_r(&r);
     let eq = EqPolynomial::new(r);
     let (L2, R2) = eq.compute_factored_evals();
     assert_eq!(L, L2);

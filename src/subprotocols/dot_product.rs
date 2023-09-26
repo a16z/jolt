@@ -1,4 +1,4 @@
-
+use super::bullet::BulletReductionProof;
 use crate::poly::commitments::{Commitments, MultiCommitGens};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -7,7 +7,6 @@ use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_serialize::*;
 use merlin::Transcript;
-use super::bullet::BulletReductionProof;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DotProductProof<G: CurveGroup> {
@@ -102,8 +101,12 @@ impl<G: CurveGroup> DotProductProof<G> {
     Cx: &G,
     Cy: &G,
   ) -> Result<(), ProofVerifyError> {
-    assert_eq!(gens_n.n, a.len());
-    assert_eq!(gens_1.n, 1);
+    if a.len() != gens_n.n {
+      return Err(ProofVerifyError::InvalidInputLength(gens_n.n, a.len()));
+    }
+    if gens_1.n != 1 {
+      return Err(ProofVerifyError::InvalidInputLength(1, gens_1.n));
+    }
 
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
@@ -287,13 +290,9 @@ impl<G: CurveGroup> DotProductProofLog<G> {
     let lhs = (Gamma_hat * c_s + beta_s) * a_hat_s + delta_s;
     let rhs = (g_hat + gens.gens_1.G[0] * a_hat_s) * z1_s + gens.gens_1.h * z2_s;
 
-    assert_eq!(lhs, rhs);
-
-    if lhs == rhs {
-      Ok(())
-    } else {
-      Err(ProofVerifyError::InternalError)
-    }
+    (lhs == rhs)
+      .then_some(())
+      .ok_or(ProofVerifyError::InternalError)
   }
 }
 

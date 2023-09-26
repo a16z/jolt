@@ -40,7 +40,7 @@ pub trait SubtableStrategy<F: PrimeField, const C: usize, const M: usize> {
   /// Params
   /// - `subtable_index`: Which subtable to evaluate the MLE of. Ranges 0..ALPHA
   /// - `point`: Point at which to evaluate the MLE
-  fn evaluate_subtable_mle(subtable_index: usize, point: &Vec<F>) -> F;
+  fn evaluate_subtable_mle(subtable_index: usize, point: &[F]) -> F;
 
   /// The `g` function that computes T[r] = g(T_1[r_1], ..., T_k[r_1], T_{k+1}[r_2], ..., T_{\alpha}[r_c])
   fn combine_lookups(vals: &[F; Self::NUM_MEMORIES]) -> F;
@@ -284,7 +284,7 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
   #[tracing::instrument(skip_all, name = "CombinedEval.prove")]
   pub fn prove(
     combined_poly: &DensePolynomial<G::ScalarField>,
-    eval_ops_val_vec: &Vec<G::ScalarField>,
+    eval_ops_val_vec: &[G::ScalarField],
     r: &[G::ScalarField],
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
@@ -296,9 +296,9 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
     );
 
     let evals = {
-      let mut evals = eval_ops_val_vec.clone();
+      let mut evals = eval_ops_val_vec.to_vec();
       evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-      evals.to_vec()
+      evals
     };
     let proof_table_eval = CombinedTableEvalProof::<G, C>::prove_single(
       combined_poly,
