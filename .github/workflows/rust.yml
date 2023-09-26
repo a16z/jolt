@@ -55,10 +55,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchain nightly-2022-09-22
+      - name: Install toolchain nightly-2023-09-22
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2022-09-22
+          toolchain: nightly-2023-09-22
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
