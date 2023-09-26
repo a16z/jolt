@@ -47,3 +47,15 @@ impl<F: PrimeField> LassoSubtable<F> for XORSubtable<F> {
     result
   }
 }
+
+#[cfg(test)]
+mod test {
+  use ark_curve25519::Fr;
+
+  use crate::{
+    jolt::subtable::{xor::XORSubtable, LassoSubtable},
+    subtable_materialize_mle_parity_test,
+  };
+
+  subtable_materialize_mle_parity_test!(xor_materialize_mle_parity, XORSubtable<Fr>, Fr, 256);
+}

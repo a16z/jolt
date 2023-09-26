@@ -15,3 +15,6 @@ pub trait LassoSubtable<F: PrimeField>: 'static {
 
 pub mod eq;
 pub mod xor;
+
+#[cfg(test)]
+pub mod test;

@@ -45,3 +45,15 @@ impl<F: PrimeField> LassoSubtable<F> for EQSubtable<F> {
     result
   }
 }
+
+#[cfg(test)]
+mod test {
+  use ark_curve25519::Fr;
+
+  use crate::{
+    jolt::subtable::{eq::EQSubtable, LassoSubtable},
+    subtable_materialize_mle_parity_test,
+  };
+
+  subtable_materialize_mle_parity_test!(eq_materialize_mle_parity, EQSubtable<Fr>, Fr, 256);
+}
