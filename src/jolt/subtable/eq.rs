@@ -40,7 +40,7 @@ impl<F: PrimeField> LassoSubtable<F> for EQSubtable<F> {
 
     let mut result = F::one();
     for i in 0..b {
-      result *= x[i] * y[i] + (F::one() - x[i]) * (F::one() - y[i])
+      result *= x[i] * y[i] + (F::one() - x[i]) * (F::one() - y[i]);
     }
     result
   }

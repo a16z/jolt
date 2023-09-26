@@ -34,7 +34,7 @@ macro_rules! subtable_enum {
                 $enum_name::from(<$struct>::new())
               } else
             )+
-            { panic!("Unexpected subtable id") }
+            { panic!("Unexpected subtable id {:?}", subtable_id) } // TODO(moodlezoup): better error handling
           }
         }
 
@@ -58,7 +58,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
   const M: usize = 1 << 16;
 
   type InstructionSet = TestInstructionSet;
-  type Subtables = TestSubtables<G::ScalarField>;
+  type Subtables = TestSubtables<F>;
 }
 
 // ==================== TEST ====================
@@ -70,9 +70,15 @@ mod tests {
   use ark_std::{log2, test_rng, One, Zero};
   use merlin::Transcript;
   use rand_chacha::rand_core::RngCore;
+  use std::collections::HashSet;
+  use strum::{EnumCount, IntoEnumIterator};
 
   use crate::{
-    jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+    jolt::instruction::JoltInstruction,
+    jolt::{
+      subtable::LassoSubtable,
+      vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+    },
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
   };
 
@@ -106,5 +112,20 @@ mod tests {
     );
   }
 
-  // TODO(moodlezoup): test that union of VM::InstructionSet's subtables = VM::Subtables
+  #[test]
+  fn instruction_set_subtables() {
+    let mut subtable_set: HashSet<_> = HashSet::new();
+    for instruction in <TestJoltVM as Jolt<_, EdwardsProjective>>::InstructionSet::iter() {
+      for subtable in instruction.subtables::<Fr>() {
+        // panics if subtable cannot be cast to enum variant
+        let _ = <TestJoltVM as Jolt<_, EdwardsProjective>>::Subtables::from(subtable.subtable_id());
+        subtable_set.insert(subtable.subtable_id());
+      }
+    }
+    assert_eq!(
+      subtable_set.len(),
+      <TestJoltVM as Jolt<_, EdwardsProjective>>::Subtables::COUNT,
+      "Unused enum variants in Subtables"
+    );
+  }
 }
