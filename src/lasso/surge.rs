@@ -87,7 +87,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for SparsePolynomialCommitment<G> {
 // 2. `DIMS_PER_MEMORY` (C)
 // 3. `TableSizeInfo::C()`
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheck<G: CurveGroup> {
+pub struct PrimarySumcheck<G: CurveGroup> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
@@ -152,7 +152,6 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
       );
 
     // Combined eval proof for E_i(r_z)
-    // TODO: I think this might be broken.
     let eval_derefs: Vec<G::ScalarField> = (0..S::num_memories())
       .map(|i| subtables.lookup_polys[i].evaluate(&r_z))
       .collect();

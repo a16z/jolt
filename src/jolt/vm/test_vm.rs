@@ -74,12 +74,8 @@ mod tests {
   use strum::{EnumCount, IntoEnumIterator};
 
   use crate::{
-    jolt::instruction::JoltInstruction,
-    jolt::{
-      subtable::LassoSubtable,
-      vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
-    },
-    utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
+    jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+    utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits}, subprotocols::sumcheck::SumcheckInstanceProof, poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
   };
 
   pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
@@ -101,15 +97,13 @@ mod tests {
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
-    <TestJoltVM as Jolt<_, EdwardsProjective>>::prove(
-      vec![
-        TestInstructionSet::XOR(XORInstruction(420, 69)),
-        TestInstructionSet::EQ(EQInstruction(420, 69)),
-        TestInstructionSet::EQ(EQInstruction(420, 420)),
-      ],
-      r,
+    let proof = <TestJoltVM as Jolt<_, EdwardsProjective>>::prove(
+      ops,
+      r.clone(),
       &mut prover_transcript,
     );
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(<TestJoltVM as Jolt<_, EdwardsProjective>>::verify(proof, &r, &mut verifier_transcript).is_ok());
   }
 
   #[test]

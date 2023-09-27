@@ -16,16 +16,47 @@ use crate::{
     eq_poly::EqPolynomial,
   },
   subprotocols::sumcheck::SumcheckInstanceProof,
-  utils::{math::Math, random::RandomTape},
+  subtables::{CombinedTableCommitment, CombinedTableEvalProof},
+  utils::{
+    errors::ProofVerifyError,
+    math::Math,
+    random::RandomTape,
+    transcript::{AppendToTranscript, ProofTranscript},
+  },
 };
 
+/// All vectors to be committed in polynomial form.
 pub struct PolynomialRepresentation<F: PrimeField> {
+  /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+  /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
+  /// `sparsity`.
   pub dim: Vec<DensePolynomial<F>>,
+
+  /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+  /// read access counts to the memory. Each `DensePolynomial` has size `sparsity`.
   pub read_cts: Vec<DensePolynomial<F>>,
+
+  /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+  /// final access counts to the memory. Each `DensePolynomial` has size M, AKA subtable size.
   pub final_cts: Vec<DensePolynomial<F>>,
+
+  /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
+  /// the evaluation of memory accessed at each step of the CPU. Each `DensePolynomial` has
+  /// size `sparsity`.
   pub E_polys: Vec<DensePolynomial<F>>,
-  pub flag: DensePolynomial<F>,
+
+  /// Polynomial encodings for flag polynomials for each instruction.
+  /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (sparsity).
+  ///
+  /// Stored independently for use in sumchecking, combined into single DensePolynomial for commitment.
+  pub flag_polys: Vec<DensePolynomial<F>>,
+
+  // TODO(sragss): Storing both the polys and the combined polys may get expensive from a memory
+  // perspective. Consier making an additional datastructure to handle the concept of combined polys
+  // with a single reference to underlying evaluations.
+
   // TODO(moodlezoup): Consider pulling out combined polys into separate struct
+  pub combined_flag_poly: DensePolynomial<F>,
   pub combined_dim_read_poly: DensePolynomial<F>,
   pub combined_final_poly: DensePolynomial<F>,
   pub combined_E_poly: DensePolynomial<F>,
@@ -42,7 +73,9 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     let (final_commitment, _) = self
       .combined_final_poly
       .commit(&generators.final_commitment_gens, None);
-    let (flag_commitment, _) = self.flag.commit(&generators.flag_commitment_gens, None);
+    let (flag_commitment, _) = self
+      .combined_flag_poly
+      .commit(&generators.flag_commitment_gens, None);
     let (E_commitment, _) = self
       .combined_E_poly
       .commit(&generators.E_commitment_gens, None);
@@ -64,11 +97,33 @@ pub struct SurgeCommitment<G: CurveGroup> {
   pub E_commitment: PolyCommitment<G>,
 }
 
+/// Container for generators for polynomial commitments. These preallocate memory 
+/// and allow commitments to `DensePolynomials`.
 pub struct SurgeCommitmentGenerators<G: CurveGroup> {
   pub dim_read_commitment_gens: PolyCommitmentGens<G>,
   pub final_commitment_gens: PolyCommitmentGens<G>,
   pub flag_commitment_gens: PolyCommitmentGens<G>,
   pub E_commitment_gens: PolyCommitmentGens<G>,
+}
+
+/// Proof of a single Jolt execution.
+pub struct JoltProof<G: CurveGroup> {
+  /// Commitments to all polynomials
+  commitments: SurgeCommitment<G>,
+
+  /// Primary collation sumcheck proof
+  primary_sumcheck_proof: PrimarySumcheck<G>,
+
+  /// Sparsity: Total number of operations. AKA 'm'.
+  s: usize,
+}
+
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct PrimarySumcheck<G: CurveGroup> {
+  proof: SumcheckInstanceProof<G::ScalarField>,
+  claimed_evaluation: G::ScalarField,
+  eval_derefs: Vec<G::ScalarField>,
+  proof_derefs: CombinedTableEvalProof<G>,
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -81,33 +136,70 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   const NUM_INSTRUCTIONS: usize = Self::InstructionSet::COUNT;
   const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
-  fn prove(ops: Vec<Self::InstructionSet>, r: Vec<F>, transcript: &mut Transcript) {
+  fn prove(ops: Vec<Self::InstructionSet>, r: Vec<F>, transcript: &mut Transcript) -> JoltProof<G> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
     let m = ops.len().next_power_of_two();
-    // TODO(moodlezoup): transcript stuff
 
-    let materialized_subtables = Self::materialize_subtables();
-    let subtable_lookup_indices = Self::subtable_lookup_indices(&ops);
+    let materialized_subtables: Vec<Vec<F>> = Self::materialize_subtables();
+    let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&ops);
+    let polynomials: PolynomialRepresentation<F> =
+      Self::polynomialize(&ops, &subtable_lookup_indices, &materialized_subtables);
 
-    let polynomials = Self::polynomialize(&ops, &subtable_lookup_indices, &materialized_subtables);
+    let commitment_generators = Self::commitment_generators(m);
+    let commitments = polynomials.commit(&commitment_generators);
 
-    // TODO(moodlezoup): commit to polynomials
+    commitments
+      .E_commitment
+      .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
     let eq = EqPolynomial::new(r.to_vec());
     let sumcheck_claim = Self::compute_sumcheck_claim(&ops, &polynomials.E_polys, &eq);
 
-    // TODO(moodlezoup): jolt-specific sumcheck implementation?
-    let mut sumcheck_polys = polynomials.E_polys.clone();
-    sumcheck_polys.push(DensePolynomial::new(eq.evals()));
-    sumcheck_polys.push(polynomials.flag);
-    let (primary_sumcheck_proof, r_sumcheck, _) =
-      SumcheckInstanceProof::prove_arbitrary::<_, G, Transcript>(
-        &sumcheck_claim,
-        m.log_2(),
-        &mut sumcheck_polys,
-        Self::combine_lookups,
+    // TODO(sragss): rm
+    println!("Jolt::vm::prove() compute_sumcheck_claim result: {sumcheck_claim:?}");
+
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_eval_scalar_product",
+      &sumcheck_claim,
+    );
+
+    let num_rounds = ops.len().log_2();
+    let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
+    let (primary_sumcheck_instance_proof, r_primary_sumcheck, flag_evals) =
+      SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
+        &F::zero(),
+        num_rounds,
+        &mut eq_poly,
+        &mut polynomials.E_polys.clone(),
+        &mut polynomials.flag_polys.clone(),
         Self::sumcheck_poly_degree(),
         transcript,
       );
+
+    let mut random_tape = RandomTape::new(b"proof");
+
+    let eval_derefs: Vec<G::ScalarField> = (0..Self::NUM_MEMORIES)
+      .map(|i| polynomials.E_polys[i].evaluate(&r_primary_sumcheck))
+      .collect();
+    let proof_E = CombinedTableEvalProof::prove(
+      &polynomials.combined_E_poly,
+      &eval_derefs.to_vec(),
+      &r_primary_sumcheck,
+      &commitment_generators.E_commitment_gens, // TODO: Shouldn't this really be a PolyCommitment ?
+      transcript,
+      &mut random_tape,
+    );
+
+    let primary_sumcheck_proof = PrimarySumcheck {
+      proof: primary_sumcheck_instance_proof,
+      claimed_evaluation: sumcheck_claim,
+      eval_derefs,
+      proof_derefs: proof_E,
+    };
+
+    // TODO: Prove memory checking.
 
     // let gamma = F::zero();
     // let tau = F::zero();
@@ -122,6 +214,54 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     //   &mut transcript,
     //   &mut random_tape,
     // );
+
+    JoltProof {
+      commitments,
+      primary_sumcheck_proof,
+      s: ops.len(),
+    }
+  }
+
+  fn verify(
+    proof: JoltProof<G>,
+    r_eq: &[G::ScalarField],
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    // TODO(sragss): rm
+    println!("\n\nVerify");
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+    proof
+      .commitments
+      .E_commitment
+      .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_eval_scalar_product",
+      &proof.primary_sumcheck_proof.claimed_evaluation,
+    );
+
+    let (claim_last, r_primary_sumcheck) =
+      proof.primary_sumcheck_proof.proof.verify::<G, Transcript>(
+        proof.primary_sumcheck_proof.claimed_evaluation,
+        proof.s.log_2(),
+        Self::sumcheck_poly_degree(),
+        transcript,
+      )?;
+
+    // TODO(sragss): rm
+    println!("r_primary_sumcheck {:?}", r_primary_sumcheck);
+
+    // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
+    let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
+    assert_eq!(
+      eq_eval * Self::combine_lookups(&proof.primary_sumcheck_proof.eval_derefs),
+      claim_last,
+      "Primary sumcheck check failed."
+    );
+
+    Ok(())
   }
 
   fn commitment_generators(m: usize) -> SurgeCommitmentGenerators<G> {
@@ -194,16 +334,19 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       }
     }
 
-    let mut flag_bitvectors: Vec<Vec<usize>> = Vec::with_capacity(m);
-    for j in 0..m {
-      let mut opcode_bitvector = vec![0usize, Self::NUM_INSTRUCTIONS.next_power_of_two()];
-      opcode_bitvector[opcodes[j] as usize] = 1;
-      flag_bitvectors.push(opcode_bitvector);
+    let mut flag_bitvectors: Vec<Vec<usize>> = vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
+    for lookup_index in 0..m {
+      let opcode_index = opcodes[lookup_index] as usize;
+      flag_bitvectors[opcode_index][lookup_index] = 1;
     }
-    let flag_bitvectors: Vec<usize> = flag_bitvectors.into_iter().flatten().collect();
-    let flag = DensePolynomial::from_usize(&flag_bitvectors);
+    let flag_polys: Vec<DensePolynomial<F>> = flag_bitvectors
+      .iter()
+      .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
+      .collect();
 
     let dim_read_polys = [dim.as_slice(), read_cts.as_slice()].concat();
+
+    let combined_flag_poly = DensePolynomial::merge(&flag_polys);
     let combined_dim_read_poly = DensePolynomial::merge(&dim_read_polys);
     let combined_final_poly = DensePolynomial::merge(&final_cts);
     let combined_E_poly = DensePolynomial::merge(&E_polys);
@@ -212,8 +355,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       dim,
       read_cts,
       final_cts,
-      flag,
+      flag_polys,
       E_polys,
+      combined_flag_poly,
       combined_dim_read_poly,
       combined_final_poly,
       combined_E_poly,
@@ -233,11 +377,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let mut claim = F::zero();
     for (k, op) in ops.iter().enumerate() {
       let memory_indices = Self::instruction_to_memory_indices(&op);
-      let mut filtered_operands = Vec::with_capacity(memory_indices.len());
-      for index in memory_indices {
-        filtered_operands.push(E_polys[index][k]);
+      let mut filtered_operands: Vec<F> = Vec::with_capacity(memory_indices.len());
+
+      for memory_index in memory_indices {
+        filtered_operands.push(E_polys[memory_index][k]);
       }
-      claim += eq_evals[k] * op.combine_lookups(&filtered_operands, Self::C, Self::M);
+
+      let collation_eval = op.combine_lookups(&filtered_operands, Self::C, Self::M);
+      let combined_eval = eq_evals[k] * collation_eval;
+      claim += combined_eval;
     }
 
     claim
@@ -259,7 +407,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     memory_indices
   }
 
-  fn combine_lookups(vals: &[F]) -> F {
+  /// Similar to combine_lookups but includes spaces in vals for 2 additional terms: eq, flags
+  fn combine_lookups_plus_terms(vals: &[F]) -> F {
     assert_eq!(vals.len(), Self::NUM_MEMORIES + 2);
 
     let mut sum = F::zero();
@@ -273,6 +422,22 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     }
     // eq(...) * flag(...) * g(...)
     vals[vals.len() - 2] * vals[vals.len() - 1] * sum
+  }
+
+  fn combine_lookups(vals: &[F]) -> F {
+    assert_eq!(vals.len(), Self::NUM_MEMORIES);
+
+    let mut sum = F::zero();
+    for instruction in Self::InstructionSet::iter() {
+      let memory_indices = Self::instruction_to_memory_indices(&instruction);
+      let mut filtered_operands = Vec::with_capacity(memory_indices.len());
+      for index in memory_indices {
+        filtered_operands.push(vals[index]);
+      }
+      sum += instruction.combine_lookups(&filtered_operands, Self::C, Self::M);
+    }
+
+    sum
   }
 
   fn sumcheck_poly_degree() -> usize {
@@ -305,6 +470,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       subtable_lookup_indices.push(access_sequence);
     }
     subtable_lookup_indices
+  }
+
+  fn protocol_name() -> &'static [u8] {
+    b"JoltVM_SparsePolynomialEvaluationProof"
   }
 }
 

@@ -12,6 +12,9 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::One;
 use merlin::Transcript;
+use crate::jolt::instruction::{JoltInstruction, Opcode};
+use crate::jolt::vm::Jolt;
+use strum::IntoEnumIterator;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -134,6 +137,213 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
   }
 
+  pub fn prove_jolt<G: CurveGroup, J: Jolt<G::ScalarField, G> + ?Sized, T: ProofTranscript<G>>(
+    _claim: &F,
+    num_rounds: usize,
+    eq_poly: &mut DensePolynomial<F>,
+    memory_polys: &mut Vec<DensePolynomial<F>>,
+    flag_polys: &mut Vec<DensePolynomial<F>>,
+    degree: usize,
+    transcript: &mut T,
+  ) -> (Self, Vec<F>, Vec<F>) {
+    // Check all polys are the same size
+    let poly_len = eq_poly.len();
+    for index in 0..J::NUM_MEMORIES {
+      assert_eq!(memory_polys[index].len(), poly_len);
+    }
+    for index in 0..J::NUM_INSTRUCTIONS {
+      assert_eq!(flag_polys[index].len(), poly_len);
+    }
+
+    let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+
+    let num_eval_points = degree + 1;
+    println!("num_eval_points {num_eval_points}"); // TODO(sragss): rm
+    for _round in 0..num_rounds {
+      println!("\n\n ROUND [{_round}]"); // TODO(sragss): rm
+      let mle_len = eq_poly.len();
+      let mle_half = mle_len / 2;
+
+      println!("poly_len {poly_len}"); // TODO(sragss): rm
+
+      // Store evaluations of each polynomial at all poly_size / 2 points
+      let mut eq_evals: Vec<Vec<F>> = vec![Vec::with_capacity(num_eval_points); mle_half];
+      let mut multi_flag_evals: Vec<Vec<Vec<F>>> =
+        vec![vec![Vec::with_capacity(num_eval_points); mle_half]; J::NUM_INSTRUCTIONS];
+      let mut multi_memory_evals: Vec<Vec<Vec<F>>> =
+        vec![vec![Vec::with_capacity(num_eval_points); mle_half]; J::NUM_MEMORIES];
+
+      let evaluate_mles_iterator = (0..mle_half).into_iter();
+
+      // Loop over half MLE size (size of MLE next round)
+      //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}: 
+      //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
+      // After: Sum over MLE elements (with combine)
+
+      for mle_leaf_index in evaluate_mles_iterator {
+        // 0
+        eq_evals[mle_leaf_index].push(eq_poly[mle_leaf_index]);
+        for flag_instruction_index in 0..multi_flag_evals.len() {
+          multi_flag_evals[flag_instruction_index][mle_leaf_index]
+            .push(flag_polys[flag_instruction_index][mle_leaf_index]);
+        }
+        for memory_index in 0..multi_memory_evals.len() {
+          multi_memory_evals[memory_index][mle_leaf_index]
+            .push(memory_polys[memory_index][mle_leaf_index]);
+        }
+
+        // 1
+        eq_evals[mle_leaf_index].push(eq_poly[mle_half + mle_leaf_index]);
+        for flag_instruction_index in 0..multi_flag_evals.len() {
+          multi_flag_evals[flag_instruction_index][mle_leaf_index]
+            .push(flag_polys[flag_instruction_index][mle_half + mle_leaf_index]);
+        }
+        for memory_index in 0..multi_memory_evals.len() {
+          multi_memory_evals[memory_index][mle_leaf_index]
+            .push(memory_polys[memory_index][mle_half + mle_leaf_index]);
+        }
+
+        // (2, ...)
+        for eval_index in 2..num_eval_points {
+          let eq_eval = eq_evals[mle_leaf_index][eval_index - 1]
+            + eq_poly[mle_half + mle_leaf_index]
+            - eq_poly[mle_leaf_index];
+          eq_evals[mle_leaf_index].push(eq_eval);
+
+          for flag_instruction_index in 0..multi_flag_evals.len() {
+            let flag_eval = multi_flag_evals[flag_instruction_index][mle_leaf_index]
+              [eval_index - 1]
+              + flag_polys[flag_instruction_index][mle_half + mle_leaf_index]
+              - flag_polys[flag_instruction_index][mle_leaf_index];
+            multi_flag_evals[flag_instruction_index][mle_leaf_index].push(flag_eval);
+          }
+          for memory_index in 0..multi_memory_evals.len() {
+            let memory_eval = multi_memory_evals[memory_index][mle_leaf_index][eval_index - 1]
+              + memory_polys[memory_index][mle_half + mle_leaf_index]
+              - memory_polys[memory_index][mle_leaf_index];
+            multi_memory_evals[memory_index][mle_leaf_index].push(memory_eval);
+          }
+        }
+      }
+
+      #[cfg(test)]
+      {
+        // Compute each of these evaluations the slow way to confirm.
+
+        for flag_index in 0..J::NUM_INSTRUCTIONS {
+          for eval_index in 0..num_eval_points {
+            for point_index in 0..mle_half {
+              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
+              if mle_len != 4 {
+                continue;
+              }
+
+              // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
+              let local_eval = flag_polys[flag_index].evaluate(&vec![F::from(eval_index as u64), F::from(point_index as u64)]);
+              let existing_eval = multi_flag_evals[flag_index][point_index][eval_index];
+              assert_eq!(local_eval, existing_eval);
+            }
+          }
+        }
+
+        for memory_index in 0..J::NUM_MEMORIES  {
+          for eval_index in 0..num_eval_points {
+            for point_index in 0..mle_half {
+              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
+              if mle_len != 4 {
+                continue;
+              }
+
+              // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
+              let local_eval = memory_polys[memory_index].evaluate(&vec![F::from(eval_index as u64), F::from(point_index as u64)]);
+              let existing_eval = multi_memory_evals[memory_index][point_index][eval_index];
+              assert_eq!(local_eval, existing_eval);
+
+            }
+          }
+        }
+
+        for eval_index in 0..num_eval_points {
+          for point_index in 0..mle_half {
+              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
+            if mle_len != 4 {
+              continue;
+            }
+
+            let local_eval = eq_poly.evaluate(&vec![F::from(eval_index as u64), F::from(point_index as u64)]);
+            let existing_eval = eq_evals[point_index][eval_index];
+            assert_eq!(local_eval, existing_eval);
+          }
+        }
+      }
+
+      // Accumulate inner terms.
+      // S({0,1,... num_eval_points}) = eq * [ INNER TERMS ] = eq * [ flags_0 * g_0(E_0) + flags_1 * g_1(E_1)]
+      let mut evaluations: Vec<F> = Vec::with_capacity(num_eval_points);
+      for eval_index in 0..num_eval_points {
+        evaluations.push(F::zero());
+        for instruction in J::InstructionSet::iter() {
+          let instruction_index = instruction.to_opcode() as usize;
+          let memory_indices: Vec<usize> = J::instruction_to_memory_indices(&instruction);
+
+          for mle_leaf_index in 0..mle_half {
+            let mut terms = Vec::with_capacity(memory_indices.len());
+            for memory_index in &memory_indices {
+              terms.push(multi_memory_evals[*memory_index][mle_leaf_index][eval_index]);
+            }
+
+            let instruction_collation_eval = instruction.combine_lookups(&terms, J::C, J::M);
+            let flag_eval = multi_flag_evals[instruction_index][mle_leaf_index][eval_index];
+
+            // TODO(sragss): May have an excessive group mul here.
+            evaluations[eval_index] += eq_evals[mle_leaf_index][eval_index] * flag_eval * instruction_collation_eval; 
+          }
+        }
+      } // End accumulation
+
+
+
+      // TODO(sragss): Remove
+      println!("evals:\n {evaluations:?}");
+      println!(
+        "Evaluations (0) + (1) = {:?}",
+        evaluations[0] + evaluations[1]
+      );
+
+      let round_uni_poly = UniPoly::from_evals(&evaluations);
+      compressed_polys.push(round_uni_poly.compress());
+
+      // TODO(sragss): Append to transcript
+
+      // TODO(sragss): Change to scalar collection from transcript
+      let r_j = F::zero();
+      random_vars.push(r_j);
+
+      // Bind all polys
+      eq_poly.bound_poly_var_top(&r_j);
+      for flag_instruction_index in 0..flag_polys.len() {
+        flag_polys[flag_instruction_index].bound_poly_var_top(&r_j);
+      }
+      for memory_index in 0..multi_memory_evals.len() {
+        memory_polys[memory_index].bound_poly_var_top(&r_j);
+      }
+    } // End rounds
+
+    // TODO(sragss): Final evals stuff? Do we use these
+    let final_evals: Vec<F> = Vec::with_capacity(0);
+
+    // TODO(sragss): Compress to single object?
+    // TODO(sragss): Return evaluations of flags, these will be added to the proof raw, then proven by the verifier
+    // with one opening query to the big flags MLE.
+    (
+      SumcheckInstanceProof::new(compressed_polys),
+      random_vars,
+      final_evals,
+    )
+  }
+
   /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
   ///
   /// Params
@@ -169,7 +379,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
       let mle_half = polys[0].len() / 2;
 
-      // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
       #[cfg(feature = "multicore")]
       let iterator = (0..mle_half).into_par_iter();
 
@@ -199,7 +408,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
           accum[1] += comb_func(&params_one);
 
           // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-          // D_n(index, 0) = D_{n-1} +
+          // D_n(index, 0) = D_{n-1}
           // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
           // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
           // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
@@ -316,11 +525,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
       // append the prover's message to the transcript
-      // TODO: Randomness is different!
+      println!("Sumcheck::verify appending UniPoly {:?}", poly);
       <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
       let r_i = transcript.challenge_scalar(b"challenge_nextround");
+      println!("Sumcheck::verify new randomness {:?}", r_i);
 
       r.push(r_i);
 
