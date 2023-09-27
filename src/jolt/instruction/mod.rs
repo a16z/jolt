@@ -19,3 +19,6 @@ pub trait Opcode {
 
 pub mod eq;
 pub mod xor;
+
+#[cfg(test)]
+pub mod test;

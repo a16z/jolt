@@ -4,18 +4,19 @@ use ark_std::log2;
 use super::JoltInstruction;
 use crate::jolt::subtable::{xor::XORSubtable, LassoSubtable};
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct XORInstruction(pub u64, pub u64);
 
 impl JoltInstruction for XORInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     assert_eq!(vals.len(), C);
-    let increment = log2(M) as usize;
 
     let mut sum = F::zero();
+    let mut weight = F::one();
+    let shift = F::from(1u64 << (log2(M) / 2));
     for i in 0..C {
-      let weight: u64 = 1u64 << (i * increment);
-      sum += F::from(weight) * vals[i];
+      sum += weight * vals[C - i - 1];
+      weight *= shift;
     }
     sum
   }
@@ -37,5 +38,28 @@ impl JoltInstruction for XORInstruction {
         (left << operand_bits) | right
       })
       .collect()
+  }
+}
+
+#[cfg(test)]
+mod test {
+  use ark_curve25519::Fr;
+  use ark_std::test_rng;
+  use rand_chacha::rand_core::RngCore;
+
+  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+
+  use super::XORInstruction;
+
+  #[test]
+  fn xor_instruction_e2e() {
+    let mut rng = test_rng();
+    const C: usize = 8;
+    const M: usize = 1 << 16;
+
+    for _ in 0..256 {
+      let (x, y) = (rng.next_u64(), rng.next_u64());
+      jolt_instruction_test!(XORInstruction(x, y), (x ^ y).into());
+    }
   }
 }
