@@ -77,6 +77,7 @@ mod tests {
     jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits}, subprotocols::sumcheck::SumcheckInstanceProof, poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
   };
+  use crate::jolt::instruction::JoltInstruction;
 
   pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
     let mut rng = test_rng();
