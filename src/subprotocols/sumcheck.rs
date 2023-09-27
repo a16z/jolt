@@ -217,7 +217,19 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         })
         .collect();
 
-      // TODO(#31): Parallelize
+      #[cfg(feature = "multicore")]
+      eval_points
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(poly_i, eval_point)| {
+          *eval_point = accum
+            .par_iter()
+            .take(mle_half)
+            .map(|mle| mle[poly_i])
+            .sum::<F>();
+        });
+
+      #[cfg(not(feature = "multicore"))]
       for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
         for mle in accum.iter().take(mle_half) {
           *eval_point += mle[poly_i];

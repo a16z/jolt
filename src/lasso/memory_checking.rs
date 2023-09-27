@@ -280,7 +280,7 @@ impl<F: PrimeField> GrandProducts<F> {
     #[cfg(feature = "multicore")]
     let num_ops = (0..dim_i.len()).into_par_iter();
     #[cfg(not(feature = "multicore"))]
-    let num_ops = (0..dim_i.len()).iter();
+    let num_ops = 0..dim_i.len();
     let grand_product_input_read = DensePolynomial::new(
       num_ops.clone().map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
