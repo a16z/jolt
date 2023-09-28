@@ -50,6 +50,19 @@ tracing-subscriber = "0.3.17"
 tracing-texray = "0.2.0"
 clap = { version = "4.3.10", features = ["derive"] }
 hashbrown = "0.14.0"
+ff = "0.13.0"
+pasta_curves = "0.5.1"
+bellpepper-core = "0.2.1"
+spartan2 = { git = "https://github.com/microsoft/Spartan2.git" }
+# spartan2 = { path = "./spartan2/" }
+bellperson = { version = "0.25", default-features = false }
+# circom-scotia = { path = "./circom-scotia/" }
+circom-scotia = "0.1.2"
+nova-scotia = "0.5.0"
+num-bigint = "0.4.4"
+num-traits = "0.2.16"
+serde = "1.0.188"
+serde_json = "1.0.107"
 
 [dev-dependencies]
 criterion = "0.3.1"
