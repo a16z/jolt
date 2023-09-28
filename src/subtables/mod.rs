@@ -2,15 +2,13 @@ use std::marker::{PhantomData, Sync};
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::Zero;
-use merlin::Transcript;
 
 use crate::{
   jolt::jolt_strategy::JoltStrategy,
   lasso::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
-  poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
+  poly::dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
   poly::eq_poly::EqPolynomial,
+  subprotocols::combined_table_proof::CombinedTableCommitment,
   utils::errors::ProofVerifyError,
   utils::math::Math,
   utils::random::RandomTape,
@@ -106,8 +104,8 @@ impl<F: PrimeField, S: JoltStrategy<F>> Subtables<F, S> {
     &self,
     gens: &PolyCommitmentGens<G>,
   ) -> CombinedTableCommitment<G> {
-    let (comm_ops_val, _blinds) = self.combined_poly.commit(gens, None);
-    CombinedTableCommitment { comm_ops_val }
+    let (joint_commitment, _blinds) = self.combined_poly.commit(gens, None);
+    CombinedTableCommitment::new(joint_commitment)
   }
 
   #[tracing::instrument(skip_all, name = "Subtables.compute_sumcheck_claim")]
@@ -140,179 +138,5 @@ impl<F: PrimeField, S: JoltStrategy<F>> Subtables<F, S> {
       .sum();
 
     claim
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CombinedTableCommitment<G: CurveGroup> {
-  comm_ops_val: PolyCommitment<G>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CombinedTableEvalProof<G: CurveGroup> {
-  proof_table_eval: PolyEvalProof<G>,
-}
-
-impl<G: CurveGroup> CombinedTableEvalProof<G> {
-  fn prove_single(
-    joint_poly: &DensePolynomial<G::ScalarField>,
-    r: &[G::ScalarField],
-    evals: &[G::ScalarField],
-    gens: &PolyCommitmentGens<G>,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> PolyEvalProof<G> {
-    assert_eq!(joint_poly.get_num_vars(), r.len() + evals.len().log_2());
-
-    // append the claimed evaluations to transcript
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
-
-    // n-to-1 reduction
-    let (r_joint, eval_joint) = {
-      let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
-        transcript,
-        b"challenge_combine_n_to_one",
-        evals.len().log_2(),
-      );
-
-      let mut poly_evals = DensePolynomial::new(evals.to_vec());
-      for i in (0..challenges.len()).rev() {
-        poly_evals.bound_poly_var_bot(&challenges[i]);
-      }
-      assert_eq!(poly_evals.len(), 1);
-      let joint_claim_eval = poly_evals[0];
-      let mut r_joint = challenges;
-      r_joint.extend(r);
-
-      debug_assert_eq!(joint_poly.evaluate(&r_joint), joint_claim_eval);
-      (r_joint, joint_claim_eval)
-    };
-    // decommit the joint polynomial at r_joint
-    <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"joint_claim_eval", &eval_joint);
-
-    let (proof_table_eval, _comm_table_eval) = PolyEvalProof::prove(
-      joint_poly,
-      None,
-      &r_joint,
-      &eval_joint,
-      None,
-      gens,
-      transcript,
-      random_tape,
-    );
-
-    proof_table_eval
-  }
-
-  /// evalues both polynomials at r and produces a joint proof of opening
-  #[tracing::instrument(skip_all, name = "CombinedEval.prove")]
-  pub fn prove(
-    combined_poly: &DensePolynomial<G::ScalarField>,
-    eval_ops_val_vec: &[G::ScalarField],
-    r: &[G::ScalarField],
-    gens: &PolyCommitmentGens<G>,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
-      transcript,
-      CombinedTableEvalProof::<G>::protocol_name(),
-    );
-
-    let evals = {
-      let mut evals = eval_ops_val_vec.to_vec();
-      evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-      evals
-    };
-    let proof_table_eval = CombinedTableEvalProof::<G>::prove_single(
-      combined_poly,
-      r,
-      &evals,
-      gens,
-      transcript,
-      random_tape,
-    );
-
-    CombinedTableEvalProof { proof_table_eval }
-  }
-
-  fn verify_single(
-    proof: &PolyEvalProof<G>,
-    comm: &PolyCommitment<G>,
-    r: &[G::ScalarField],
-    evals: &[G::ScalarField],
-    gens: &PolyCommitmentGens<G>,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
-    // append the claimed evaluations to transcript
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
-
-    // n-to-1 reduction
-    let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
-      transcript,
-      b"challenge_combine_n_to_one",
-      evals.len().log_2(),
-    );
-    let mut poly_evals = DensePolynomial::new(evals.to_vec());
-    for i in (0..challenges.len()).rev() {
-      poly_evals.bound_poly_var_bot(&challenges[i]);
-    }
-    assert_eq!(poly_evals.len(), 1);
-    let joint_claim_eval = poly_evals[0];
-    let mut r_joint = challenges;
-    r_joint.extend(r);
-
-    // decommit the joint polynomial at r_joint
-    <Transcript as ProofTranscript<G>>::append_scalar(
-      transcript,
-      b"joint_claim_eval",
-      &joint_claim_eval,
-    );
-
-    proof.verify_plain(gens, transcript, &r_joint, &joint_claim_eval, comm)
-  }
-
-  // verify evaluations of both polynomials at r
-  pub fn verify(
-    &self,
-    r: &[G::ScalarField],
-    evals: &[G::ScalarField],
-    gens: &PolyCommitmentGens<G>,
-    comm: &CombinedTableCommitment<G>,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(
-      transcript,
-      CombinedTableEvalProof::<G>::protocol_name(),
-    );
-    let mut evals = evals.to_owned();
-    evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-
-    CombinedTableEvalProof::<G>::verify_single(
-      &self.proof_table_eval,
-      &comm.comm_ops_val,
-      r,
-      &evals,
-      gens,
-      transcript,
-    )
-  }
-
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso CombinedTableEvalProof"
-  }
-}
-
-impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
-  fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
-    transcript.append_message(
-      b"subtable_evals_commitment",
-      b"begin_subtable_evals_commitment",
-    );
-    self.comm_ops_val.append_to_transcript(label, transcript);
-    transcript.append_message(
-      b"subtable_evals_commitment",
-      b"end_subtable_evals_commitment",
-    );
   }
 }

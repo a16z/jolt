@@ -15,8 +15,10 @@ use crate::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
     eq_poly::EqPolynomial,
   },
-  subprotocols::sumcheck::SumcheckInstanceProof,
-  subtables::{CombinedTableCommitment, CombinedTableEvalProof},
+  subprotocols::{
+    combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+    sumcheck::SumcheckInstanceProof,
+  },
   utils::{
     errors::ProofVerifyError,
     math::Math,
@@ -76,9 +78,11 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     let (flag_commitment, _) = self
       .combined_flag_poly
       .commit(&generators.flag_commitment_gens, None);
+    let flag_commitment = CombinedTableCommitment::new(flag_commitment);
     let (E_commitment, _) = self
       .combined_E_poly
       .commit(&generators.E_commitment_gens, None);
+    let E_commitment = CombinedTableCommitment::new(E_commitment);
 
     SurgeCommitment {
       dim_read_commitment,
@@ -93,8 +97,8 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
 pub struct SurgeCommitment<G: CurveGroup> {
   pub dim_read_commitment: PolyCommitment<G>,
   pub final_commitment: PolyCommitment<G>,
-  pub flag_commitment: PolyCommitment<G>,
-  pub E_commitment: PolyCommitment<G>,
+  pub flag_commitment: CombinedTableCommitment<G>,
+  pub E_commitment: CombinedTableCommitment<G>,
 }
 
 /// Container for generators for polynomial commitments. These preallocate memory
@@ -111,6 +115,9 @@ pub struct JoltProof<G: CurveGroup> {
   /// Commitments to all polynomials
   commitments: SurgeCommitment<G>,
 
+  /// Generators for commitments to polynomials
+  commitment_generators: SurgeCommitmentGenerators<G>,
+
   /// Primary collation sumcheck proof
   primary_sumcheck_proof: PrimarySumcheck<G>,
 
@@ -122,11 +129,14 @@ pub struct JoltProof<G: CurveGroup> {
 pub struct PrimarySumcheck<G: CurveGroup> {
   proof: SumcheckInstanceProof<G::ScalarField>,
   claimed_evaluation: G::ScalarField,
-  eval_derefs: Vec<G::ScalarField>,
-  proof_derefs: CombinedTableEvalProof<G>,
+  memory_evals: Vec<G::ScalarField>,
+  memory_proof: CombinedTableEvalProof<G>,
 
   /// Evaluations of each of the `NUM_INSTRUCTIONS` flags polynomials at the random point.
-  eval_flags: Vec<G::ScalarField>, // TODO: flag proof
+  flag_evals: Vec<G::ScalarField>,
+
+  /// Combined proof of prior evals.
+  flag_proof: CombinedTableEvalProof<G>,
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -171,7 +181,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let num_rounds = ops.len().log_2();
     let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
     // TODO(sragss): Deal with last parameter
-    let (primary_sumcheck_instance_proof, r_primary_sumcheck, _) =
+    let (primary_sumcheck_instance_proof, r_primary_sumcheck, (eq_eval, flag_evals, memory_evals)) =
       SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
         &F::zero(),
         num_rounds,
@@ -184,35 +194,34 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     let mut random_tape = RandomTape::new(b"proof");
 
-    let eval_derefs: Vec<G::ScalarField> = (0..Self::NUM_MEMORIES)
-      .map(|i| polynomials.E_polys[i].evaluate(&r_primary_sumcheck))
-      .collect();
-    let proof_E = CombinedTableEvalProof::prove(
+    // Create a single opening proof for the flag_evals and memory_evals
+    let flag_proof = CombinedTableEvalProof::prove(
+      &polynomials.combined_flag_poly,
+      &flag_evals.to_vec(),
+      &r_primary_sumcheck,
+      &commitment_generators.flag_commitment_gens,
+      transcript,
+      &mut random_tape,
+    );
+    let memory_proof = CombinedTableEvalProof::prove(
       &polynomials.combined_E_poly,
-      &eval_derefs.to_vec(),
+      &memory_evals.to_vec(),
       &r_primary_sumcheck,
       &commitment_generators.E_commitment_gens, // TODO: Shouldn't this really be a PolyCommitment ?
       transcript,
       &mut random_tape,
     );
 
-    let eval_flags: Vec<F> = polynomials
-      .flag_polys
-      .iter()
-      .map(|flag_poly| flag_poly.evaluate(&r_primary_sumcheck))
-      .collect();
-
     let primary_sumcheck_proof = PrimarySumcheck {
       proof: primary_sumcheck_instance_proof,
       claimed_evaluation: sumcheck_claim,
-      eval_derefs,
-      proof_derefs: proof_E,
-      eval_flags,
+      memory_evals,
+      memory_proof,
+      flag_evals,
+      flag_proof,
     };
-    // TODO(sragss): Joint flags proof
 
-    // TODO: Prove memory checking.
-
+    // TODO(sragss): Prove memory checking.
     // let gamma = F::zero();
     // let tau = F::zero();
     // let mut random_tape = RandomTape::new(b"proof");
@@ -229,6 +238,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     JoltProof {
       commitments,
+      commitment_generators, // TODO(sragss): is this necessary?
       primary_sumcheck_proof,
       s: ops.len(),
     }
@@ -262,21 +272,34 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
         transcript,
       )?;
 
-    // TODO(sragss): rm
-    println!("r_primary_sumcheck {:?}", r_primary_sumcheck);
-
-    // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
-    // TODO: Add in the flags
+    // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
     let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
     assert_eq!(
       eq_eval
         * Self::combine_lookups_flags(
-          &proof.primary_sumcheck_proof.eval_derefs,
-          &proof.primary_sumcheck_proof.eval_flags
+          &proof.primary_sumcheck_proof.memory_evals,
+          &proof.primary_sumcheck_proof.flag_evals
         ),
       claim_last,
       "Primary sumcheck check failed."
     );
+
+    // Verify joint opening proofs to flag polynomials
+    proof.primary_sumcheck_proof.flag_proof.verify(
+      &r_primary_sumcheck,
+      &proof.primary_sumcheck_proof.flag_evals,
+      &proof.commitment_generators.flag_commitment_gens,
+      &proof.commitments.flag_commitment,
+      transcript,
+    )?;
+    // Verify joint opening proofs to E polynomials
+    proof.primary_sumcheck_proof.memory_proof.verify(
+      &r_primary_sumcheck,
+      &proof.primary_sumcheck_proof.memory_evals,
+      &proof.commitment_generators.E_commitment_gens,
+      &proof.commitments.E_commitment,
+      transcript,
+    )?;
 
     Ok(())
   }

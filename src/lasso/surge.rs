@@ -2,15 +2,14 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
-use std::marker::PhantomData;
-
 use crate::jolt::jolt_strategy::JoltStrategy;
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::memory_checking::MemoryCheckingProof;
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-use crate::subtables::{CombinedTableCommitment, CombinedTableEvalProof, Subtables};
+use crate::subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof};
+use crate::subtables::Subtables;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;

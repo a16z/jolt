@@ -352,7 +352,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
     // Pass evaluations at point r back in proof:
     // - eq(r)
-    // - flags(r) * NUM_INSTRUCTIONS,
+    // - flags(r) * NUM_INSTRUCTIONS
     // - E(r) * NUM_SUBTABLES
 
     // Polys are fully defined so we can just take the first (and only) evaluation
