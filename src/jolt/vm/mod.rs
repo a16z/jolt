@@ -97,7 +97,7 @@ pub struct SurgeCommitment<G: CurveGroup> {
   pub E_commitment: PolyCommitment<G>,
 }
 
-/// Container for generators for polynomial commitments. These preallocate memory 
+/// Container for generators for polynomial commitments. These preallocate memory
 /// and allow commitments to `DensePolynomials`.
 pub struct SurgeCommitmentGenerators<G: CurveGroup> {
   pub dim_read_commitment_gens: PolyCommitmentGens<G>,
@@ -124,6 +124,9 @@ pub struct PrimarySumcheck<G: CurveGroup> {
   claimed_evaluation: G::ScalarField,
   eval_derefs: Vec<G::ScalarField>,
   proof_derefs: CombinedTableEvalProof<G>,
+
+  /// Evaluations of each of the `NUM_INSTRUCTIONS` flags polynomials at the random point.
+  eval_flags: Vec<G::ScalarField>, // TODO: flag proof
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -167,7 +170,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     let num_rounds = ops.len().log_2();
     let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
-    let (primary_sumcheck_instance_proof, r_primary_sumcheck, flag_evals) =
+    // TODO(sragss): Deal with last parameter
+    let (primary_sumcheck_instance_proof, r_primary_sumcheck, _) =
       SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
         &F::zero(),
         num_rounds,
@@ -192,12 +196,20 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       &mut random_tape,
     );
 
+    let eval_flags: Vec<F> = polynomials
+      .flag_polys
+      .iter()
+      .map(|flag_poly| flag_poly.evaluate(&r_primary_sumcheck))
+      .collect();
+
     let primary_sumcheck_proof = PrimarySumcheck {
       proof: primary_sumcheck_instance_proof,
       claimed_evaluation: sumcheck_claim,
       eval_derefs,
       proof_derefs: proof_E,
+      eval_flags,
     };
+    // TODO(sragss): Joint flags proof
 
     // TODO: Prove memory checking.
 
@@ -254,9 +266,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     println!("r_primary_sumcheck {:?}", r_primary_sumcheck);
 
     // Verify that eq(r, r_z) * g(E_1(r_z) * ... * E_c(r_z)) = claim_last
+    // TODO: Add in the flags
     let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);
     assert_eq!(
-      eq_eval * Self::combine_lookups(&proof.primary_sumcheck_proof.eval_derefs),
+      eq_eval
+        * Self::combine_lookups_flags(
+          &proof.primary_sumcheck_proof.eval_derefs,
+          &proof.primary_sumcheck_proof.eval_flags
+        ),
       claim_last,
       "Primary sumcheck check failed."
     );
@@ -435,6 +452,26 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
         filtered_operands.push(vals[index]);
       }
       sum += instruction.combine_lookups(&filtered_operands, Self::C, Self::M);
+    }
+
+    sum
+  }
+
+  // TODO(sragss): Rename
+  fn combine_lookups_flags(vals: &[F], flags: &[F]) -> F {
+    assert_eq!(vals.len(), Self::NUM_MEMORIES);
+    assert_eq!(flags.len(), Self::NUM_INSTRUCTIONS);
+
+    let mut sum = F::zero();
+    for instruction in Self::InstructionSet::iter() {
+      let instruction_index = instruction.to_opcode() as usize;
+      let memory_indices = Self::instruction_to_memory_indices(&instruction);
+      let mut filtered_operands = Vec::with_capacity(memory_indices.len());
+      for index in memory_indices {
+        filtered_operands.push(vals[index]);
+      }
+      sum += flags[instruction_index]
+        * instruction.combine_lookups(&filtered_operands, Self::C, Self::M);
     }
 
     sum

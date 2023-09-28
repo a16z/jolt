@@ -1,6 +1,8 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::jolt::instruction::{JoltInstruction, Opcode};
+use crate::jolt::vm::Jolt;
 use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -12,8 +14,6 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::One;
 use merlin::Transcript;
-use crate::jolt::instruction::{JoltInstruction, Opcode};
-use crate::jolt::vm::Jolt;
 use strum::IntoEnumIterator;
 
 #[cfg(feature = "ark-msm")]
@@ -137,7 +137,26 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
   }
 
-  pub fn prove_jolt<G: CurveGroup, J: Jolt<G::ScalarField, G> + ?Sized, T: ProofTranscript<G>>(
+  /// Prove Jolt primary sumcheck including instruction collation.
+  ///
+  /// Computes \sum{ eq(r,x) * [ flags_0(x) * g_0(E(x)) + flags_1(x) * g_1(E(x)) + ... + flags_{NUM_INSTRUCTIONS}(E(x)) * g_{NUM_INSTRUCTIONS}(E(x)) ]}
+  /// via the sumcheck protocol.
+  /// Note: These E(x) terms differ from term to term depending on the memories used in the instruction.
+  ///
+  /// Returns: (SumcheckProof, Random evaluation point, claimed evaluations of polynomials)
+  ///
+  /// Params:
+  /// - `claim`: Claimed sumcheck evaluation.
+  /// - `num_rounds`: Number of rounds to run sumcheck. Corresponds to the number of free bits or free variables in the polynomials.
+  /// - `memory_polys`: Each of the `E` polynomials or "dereferenced memory" polynomials.
+  /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
+  /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
+  /// - `transcript`: Fiat-shamir transcript.
+  pub fn prove_jolt<
+    G: CurveGroup<ScalarField = F>,
+    J: Jolt<F, G> + ?Sized,
+    T: ProofTranscript<G>,
+  >(
     _claim: &F,
     num_rounds: usize,
     eq_poly: &mut DensePolynomial<F>,
@@ -145,7 +164,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     flag_polys: &mut Vec<DensePolynomial<F>>,
     degree: usize,
     transcript: &mut T,
-  ) -> (Self, Vec<F>, Vec<F>) {
+  ) -> (Self, Vec<F>, (F, Vec<F>, Vec<F>)) {
     // Check all polys are the same size
     let poly_len = eq_poly.len();
     for index in 0..J::NUM_MEMORIES {
@@ -158,15 +177,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
-
     let num_eval_points = degree + 1;
-    println!("num_eval_points {num_eval_points}"); // TODO(sragss): rm
     for _round in 0..num_rounds {
-      println!("\n\n ROUND [{_round}]"); // TODO(sragss): rm
       let mle_len = eq_poly.len();
       let mle_half = mle_len / 2;
 
-      println!("poly_len {poly_len}"); // TODO(sragss): rm
 
       // Store evaluations of each polynomial at all poly_size / 2 points
       let mut eq_evals: Vec<Vec<F>> = vec![Vec::with_capacity(num_eval_points); mle_half];
@@ -178,7 +193,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let evaluate_mles_iterator = (0..mle_half).into_iter();
 
       // Loop over half MLE size (size of MLE next round)
-      //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}: 
+      //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
       //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
       // After: Sum over MLE elements (with combine)
 
@@ -241,14 +256,17 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               }
 
               // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
-              let local_eval = flag_polys[flag_index].evaluate(&vec![F::from(eval_index as u64), F::from(point_index as u64)]);
+              let local_eval = flag_polys[flag_index].evaluate(&vec![
+                F::from(eval_index as u64),
+                F::from(point_index as u64),
+              ]);
               let existing_eval = multi_flag_evals[flag_index][point_index][eval_index];
               assert_eq!(local_eval, existing_eval);
             }
           }
         }
 
-        for memory_index in 0..J::NUM_MEMORIES  {
+        for memory_index in 0..J::NUM_MEMORIES {
           for eval_index in 0..num_eval_points {
             for point_index in 0..mle_half {
               // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
@@ -257,22 +275,27 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               }
 
               // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
-              let local_eval = memory_polys[memory_index].evaluate(&vec![F::from(eval_index as u64), F::from(point_index as u64)]);
+              let local_eval = memory_polys[memory_index].evaluate(&vec![
+                F::from(eval_index as u64),
+                F::from(point_index as u64),
+              ]);
               let existing_eval = multi_memory_evals[memory_index][point_index][eval_index];
               assert_eq!(local_eval, existing_eval);
-
             }
           }
         }
 
         for eval_index in 0..num_eval_points {
           for point_index in 0..mle_half {
-              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
+            // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
             if mle_len != 4 {
               continue;
             }
 
-            let local_eval = eq_poly.evaluate(&vec![F::from(eval_index as u64), F::from(point_index as u64)]);
+            let local_eval = eq_poly.evaluate(&vec![
+              F::from(eval_index as u64),
+              F::from(point_index as u64),
+            ]);
             let existing_eval = eq_evals[point_index][eval_index];
             assert_eq!(local_eval, existing_eval);
           }
@@ -298,28 +321,24 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let flag_eval = multi_flag_evals[instruction_index][mle_leaf_index][eval_index];
 
             // TODO(sragss): May have an excessive group mul here.
-            evaluations[eval_index] += eq_evals[mle_leaf_index][eval_index] * flag_eval * instruction_collation_eval; 
+            evaluations[eval_index] +=
+              eq_evals[mle_leaf_index][eval_index] * flag_eval * instruction_collation_eval;
           }
         }
       } // End accumulation
 
-
-
-      // TODO(sragss): Remove
-      println!("evals:\n {evaluations:?}");
-      println!(
-        "Evaluations (0) + (1) = {:?}",
-        evaluations[0] + evaluations[1]
-      );
-
       let round_uni_poly = UniPoly::from_evals(&evaluations);
       compressed_polys.push(round_uni_poly.compress());
 
-      // TODO(sragss): Append to transcript
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
+        &round_uni_poly,
+        b"poly",
+        transcript,
+      );
 
-      // TODO(sragss): Change to scalar collection from transcript
-      let r_j = F::zero();
+      let r_j = transcript.challenge_scalar(b"challenge_nextround");
       random_vars.push(r_j);
+      println!("round [{_round}] randomness: {r_j:?}");
 
       // Bind all polys
       eq_poly.bound_poly_var_top(&r_j);
@@ -331,16 +350,23 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       }
     } // End rounds
 
-    // TODO(sragss): Final evals stuff? Do we use these
-    let final_evals: Vec<F> = Vec::with_capacity(0);
+    // Pass evaluations at point r back in proof:
+    // - eq(r)
+    // - flags(r) * NUM_INSTRUCTIONS,
+    // - E(r) * NUM_SUBTABLES
 
-    // TODO(sragss): Compress to single object?
-    // TODO(sragss): Return evaluations of flags, these will be added to the proof raw, then proven by the verifier
-    // with one opening query to the big flags MLE.
+    // Polys are fully defined so we can just take the first (and only) evaluation
+    let eq_eval = eq_poly[0];
+    let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
+    let memory_evals = (0..memory_polys.len())
+      .map(|i| memory_polys[i][0])
+      .collect();
+    let poly_eval_claims = (eq_eval, flag_evals, memory_evals);
+
     (
       SumcheckInstanceProof::new(compressed_polys),
       random_vars,
-      final_evals,
+      poly_eval_claims,
     )
   }
 
