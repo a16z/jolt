@@ -317,10 +317,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let num_vars_flag =
       m.next_power_of_two().log_2() + Self::NUM_INSTRUCTIONS.next_power_of_two().log_2();
 
-    let dim_read_commitment_gens = PolyCommitmentGens::new(num_vars_dim_read, b"asdf");
-    let final_commitment_gens = PolyCommitmentGens::new(num_vars_final, b"asd");
-    let E_commitment_gens = PolyCommitmentGens::new(num_vars_E, b"asdf");
-    let flag_commitment_gens = PolyCommitmentGens::new(num_vars_flag, b"1234");
+    let dim_read_commitment_gens = PolyCommitmentGens::new(num_vars_dim_read, b"dim_read_commitment");
+    let final_commitment_gens = PolyCommitmentGens::new(num_vars_final, b"final_commitment");
+    let E_commitment_gens = PolyCommitmentGens::new(num_vars_E, b"memory_evals_commitment");
+    let flag_commitment_gens = PolyCommitmentGens::new(num_vars_flag, b"flag_evals_commitment");
 
     SurgeCommitmentGenerators {
       dim_read_commitment_gens,
