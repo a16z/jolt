@@ -17,6 +17,10 @@ use circom_scotia::{calculate_witness, r1cs::CircomConfig};
 
 #[derive(Clone, Debug, Default)]
 struct JoltCircuit<F: PrimeField> {
+  /* This is where the transcript should be.
+  transcript: Transcript<F>
+    - This can be easily fed to the circuit pipeline to generate a SNARK proof.
+  */
   _p: PhantomData<F>,
 }
 
