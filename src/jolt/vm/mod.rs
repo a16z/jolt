@@ -139,17 +139,106 @@ pub struct PrimarySumcheck<G: CurveGroup> {
   flag_proof: CombinedTableEvalProof<G>,
 }
 
+pub enum MemoryOp {
+  Read(u64, u64),       // (address, value)
+  Write(u64, u64, u64), // (address, old_value, new_value)
+}
+
+pub struct MemoryTuple<F: PrimeField>(F, F, F);
+
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
+  const MEMORY_OPS_PER_STEP: usize;
   const C: usize;
   const M: usize;
   const NUM_SUBTABLES: usize = Self::Subtables::COUNT;
   const NUM_INSTRUCTIONS: usize = Self::InstructionSet::COUNT;
   const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
-  fn prove(ops: Vec<Self::InstructionSet>, r: Vec<F>, transcript: &mut Transcript) -> JoltProof<G> {
+  fn prove() {
+    // prove_memory
+    // prove_lookups
+    // prove_r1cs
+    unimplemented!("todo");
+  }
+
+  fn prove_memory(
+    memory_trace: Vec<[MemoryOp; Self::MEMORY_OPS_PER_STEP]>,
+    memory_size: usize,
+    r_mem_check: &(F, F),
+    transcript: &mut Transcript,
+  ) {
+    let (gamma, tau) = r_mem_check;
+    let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
+
+    let m: usize = memory_trace.len().next_power_of_two();
+    // TODO(moodlezoup): resize memory_trace
+
+    let mut timestamp: u64 = 0;
+
+    let mut read_set: Vec<(F, F, F)> = Vec::with_capacity(Self::MEMORY_OPS_PER_STEP * m);
+    let mut write_set: Vec<(F, F, F)> = Vec::with_capacity(Self::MEMORY_OPS_PER_STEP * m);
+    let mut final_set: Vec<(F, F, F)> = (0..memory_size)
+      .map(|i| (F::from(i as u64), F::zero(), F::zero()))
+      .collect();
+
+    for memory_access in memory_trace {
+      for memory_op in memory_access {
+        match memory_op {
+          MemoryOp::Read(a, v) => {
+            read_set.push((F::from(a), F::from(v), F::from(timestamp)));
+            write_set.push((F::from(a), F::from(v), F::from(timestamp + 1)));
+            final_set[a as usize] = (F::from(a), F::from(v), F::from(timestamp + 1));
+          }
+          MemoryOp::Write(a, v_old, v_new) => {
+            read_set.push((F::from(a), F::from(v_old), F::from(timestamp)));
+            write_set.push((F::from(a), F::from(v_new), F::from(timestamp + 1)));
+            final_set[a as usize] = (F::from(a), F::from(v_new), F::from(timestamp + 1));
+          }
+        }
+      }
+      timestamp += 1;
+    }
+
+    let init_poly = DensePolynomial::new(
+      (0..memory_size)
+        .map(|i| {
+          // addr is given by i, init value is 0, and ts = 0
+          hash_func(&F::from(i as u64), &F::zero(), &F::zero())
+        })
+        .collect::<Vec<F>>(),
+    );
+    let read_poly = DensePolynomial::new(
+      read_set
+        .iter()
+        .map(|(a, v, t)| hash_func(a, v, t))
+        .collect::<Vec<F>>(),
+    );
+    let write_poly = DensePolynomial::new(
+      write_set
+        .iter()
+        .map(|(a, v, t)| hash_func(a, v, t))
+        .collect::<Vec<F>>(),
+    );
+    let final_poly = DensePolynomial::new(
+      final_set
+        .iter()
+        .map(|(a, v, t)| hash_func(a, v, t))
+        .collect::<Vec<F>>(),
+    );
+
+    // Memory checking
+    // Lasso range cheeck on read timestamps to enforce each timestamp read at step i is less than i
+    unimplemented!("todo");
+  }
+
+  fn prove_lookups(
+    ops: Vec<Self::InstructionSet>,
+    r: Vec<F>,
+    transcript: &mut Transcript,
+  ) -> JoltProof<G> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     let m = ops.len().next_power_of_two();
@@ -244,6 +333,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     }
   }
 
+  fn prove_r1cs() {
+    unimplemented!("todo")
+  }
+
   fn verify(
     proof: JoltProof<G>,
     r_eq: &[G::ScalarField],
@@ -317,7 +410,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let num_vars_flag =
       m.next_power_of_two().log_2() + Self::NUM_INSTRUCTIONS.next_power_of_two().log_2();
 
-    let dim_read_commitment_gens = PolyCommitmentGens::new(num_vars_dim_read, b"dim_read_commitment");
+    let dim_read_commitment_gens =
+      PolyCommitmentGens::new(num_vars_dim_read, b"dim_read_commitment");
     let final_commitment_gens = PolyCommitmentGens::new(num_vars_final, b"final_commitment");
     let E_commitment_gens = PolyCommitmentGens::new(num_vars_E, b"memory_evals_commitment");
     let flag_commitment_gens = PolyCommitmentGens::new(num_vars_flag, b"flag_evals_commitment");

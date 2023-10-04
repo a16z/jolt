@@ -54,6 +54,7 @@ subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
 pub enum TestJoltVM {}
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
+  const MEMORY_OPS_PER_STEP: usize = 10;
   const C: usize = 4;
   const M: usize = 1 << 16;
 
@@ -73,11 +74,13 @@ mod tests {
   use std::collections::HashSet;
   use strum::{EnumCount, IntoEnumIterator};
 
+  use crate::jolt::instruction::JoltInstruction;
   use crate::{
     jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
-    utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits}, subprotocols::sumcheck::SumcheckInstanceProof, poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
+    subprotocols::sumcheck::SumcheckInstanceProof,
+    utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
   };
-  use crate::jolt::instruction::JoltInstruction;
 
   pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
     let mut rng = test_rng();
@@ -98,13 +101,18 @@ mod tests {
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = <TestJoltVM as Jolt<_, EdwardsProjective>>::prove(
+    let proof = <TestJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
       ops,
       r.clone(),
       &mut prover_transcript,
     );
     let mut verifier_transcript = Transcript::new(b"example");
-    assert!(<TestJoltVM as Jolt<_, EdwardsProjective>>::verify(proof, &r, &mut verifier_transcript).is_ok());
+    assert!(<TestJoltVM as Jolt<_, EdwardsProjective>>::verify(
+      proof,
+      &r,
+      &mut verifier_transcript
+    )
+    .is_ok());
   }
 
   #[test]
