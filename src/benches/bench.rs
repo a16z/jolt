@@ -4,7 +4,7 @@ use crate::{
   utils::random::RandomTape,
 };
 use crate::jolt::jolt_strategy::{JoltStrategy, InstructionStrategy};
-use crate::jolt::and::AndInstruction;
+// use crate::jolt::and::AndInstruction;
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_ff::PrimeField;
 use ark_std::{log2, test_rng};
@@ -47,41 +47,41 @@ macro_rules! single_pass_lasso {
       struct TempVM {}
       pub enum Unused{}
 
-      impl<F: PrimeField> JoltStrategy<F> for TempVM {
-        type Instruction = Unused;
+      // impl<F: PrimeField> JoltStrategy<F> for TempVM {
+      //   type Instruction = Unused;
 
-        fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
-          vec![Box::new(AndInstruction::new(C, M))]
-        }
-      }
+      //   fn instructions() -> Vec<Box<dyn InstructionStrategy<F>>> {
+      //     vec![Box::new(AndInstruction::new(C, M))]
+      //   }
+      // }
 
-      type JoltStrat = TempVM;
+      // type JoltStrat = TempVM;
 
-      let log_m = log2(M) as usize;
-      let log_s: usize = log2($sparsity) as usize;
+      // let log_m = log2(M) as usize;
+      // let log_s: usize = log2($sparsity) as usize;
 
-      let r: Vec<F> = gen_random_point::<F>(log_s);
+      // let r: Vec<F> = gen_random_point::<F>(log_s);
 
-      let nz = gen_indices::<C>(S, M);
+      // let nz = gen_indices::<C>(S, M);
 
-      // Prove
-      let mut dense: DensifiedRepresentation<F, JoltStrat> =
-        DensifiedRepresentation::from_lookup_indices(&nz, log_m);
-      let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, S, C, log_m);
-      let commitment = dense.commit::<$group>(&gens);
-      let mut random_tape = RandomTape::new(b"proof");
-      let mut prover_transcript = Transcript::new(b"example");
-      let proof = SparsePolynomialEvaluationProof::<G, JoltStrat>::prove(
-        &mut dense,
-        &r,
-        &gens,
-        &mut prover_transcript,
-        &mut random_tape,
-      );
-      let mut verify_transcript = Transcript::new(b"example");
-      proof
-        .verify(&commitment, &r, &gens, &mut verify_transcript)
-        .expect("should verify");
+      // // Prove
+      // let mut dense: DensifiedRepresentation<F, JoltStrat> =
+      //   DensifiedRepresentation::from_lookup_indices(&nz, log_m);
+      // let gens = SparsePolyCommitmentGens::<G>::new(b"gens_sparse_poly", C, S, C, log_m);
+      // let commitment = dense.commit::<$group>(&gens);
+      // let mut random_tape = RandomTape::new(b"proof");
+      // let mut prover_transcript = Transcript::new(b"example");
+      // let proof = SparsePolynomialEvaluationProof::<G, JoltStrat>::prove(
+      //   &mut dense,
+      //   &r,
+      //   &gens,
+      //   &mut prover_transcript,
+      //   &mut random_tape,
+      // );
+      // let mut verify_transcript = Transcript::new(b"example");
+      // proof
+      //   .verify(&commitment, &r, &gens, &mut verify_transcript)
+      //   .expect("should verify");
     })
   };
 }

@@ -2,13 +2,16 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 
+use std::marker::PhantomData;
+
 use crate::jolt::jolt_strategy::JoltStrategy;
+use crate::jolt::vm::{SurgeCommitment, SurgeCommitmentGenerators};
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::memory_checking::MemoryCheckingProof;
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof};
+use crate::subprotocols::sumcheck::SumcheckInstanceProof;
 use crate::subtables::Subtables;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -20,7 +23,6 @@ use ark_serialize::*;
 
 use ark_std::log2;
 use merlin::Transcript;
-use std::marker::Sync;
 
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
@@ -97,10 +99,15 @@ pub struct PrimarySumcheck<G: CurveGroup> {
 pub struct SparsePolynomialEvaluationProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   comm_derefs: CombinedTableCommitment<G>,
   primary_sumcheck: PrimarySumcheck<G>,
-  memory_check: MemoryCheckingProof<G, S>,
+  memory_check: MemoryCheckingProof<G>,
+  sparsity: usize,
+  memory_size: usize,
+  _marker: PhantomData<S>,
 }
 
-impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationProof<G, S> {
+impl<G: CurveGroup, S: JoltStrategy<G::ScalarField> + 'static>
+  SparsePolynomialEvaluationProof<G, S>
+{
   /// Prove an opening of the Sparse Matrix Polynomial
   /// - `dense`: DensifiedRepresentation
   /// - `r`: log(s) sized coordinates at which to prove the evaluation of eq in the primary sumcheck
@@ -168,43 +175,47 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
       let r_hash_params: Vec<G::ScalarField> =
         <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-      MemoryCheckingProof::prove(
-        dense,
-        &(r_hash_params[0], r_hash_params[1]),
-        &subtables,
-        gens,
-        transcript,
-        random_tape,
-      )
+      let r_mem_check = (r_hash_params[0], r_hash_params[1]);
+      let mut grand_products = subtables.to_grand_products(dense, &r_mem_check);
+      // MemoryCheckingProof::prove(
+      //   &dense.to_polynomial_representation(subtables.lookup_polys, subtables.combined_poly),
+      //   &mut grand_products,
+      //   &gens.to_surge_gens(),
+      //   transcript,
+      //   random_tape,
+      // )
     };
 
-    Self {
-      comm_derefs,
-      primary_sumcheck: PrimarySumcheck {
-        proof: primary_sumcheck_proof,
-        claimed_evaluation: claimed_eval,
-        eval_derefs,
-        proof_derefs,
-      },
-      memory_check,
-    }
+    todo!("memory checking for surge is broken while we refactor commitments and polynomial format");
+
+    // Self {
+    //   comm_derefs,
+    //   primary_sumcheck: PrimarySumcheck {
+    //     proof: primary_sumcheck_proof,
+    //     claimed_evaluation: claimed_eval,
+    //     eval_derefs,
+    //     proof_derefs,
+    //   },
+    //   memory_check,
+    //   _marker: PhantomData,
+    // }
   }
 
   #[tracing::instrument(skip_all, name = "SparsePoly.verify")]
   pub fn verify(
     &self,
-    commitment: &SparsePolynomialCommitment<G>,
+    commitment: &SurgeCommitment<G>,
     eq_randomness: &[G::ScalarField],
-    gens: &SparsePolyCommitmentGens<G>,
+    gens: &SurgeCommitmentGenerators<G>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    debug_assert_eq!(eq_randomness.len(), log2(commitment.s) as usize);
+    debug_assert_eq!(eq_randomness.len(), self.sparsity.log_2() as usize);
 
     // add claims to transcript and obtain challenges for randomized mem-check circuit
-    self
-      .comm_derefs
+   commitment 
+      .E_commitment
       .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
     <Transcript as ProofTranscript<G>>::append_scalar(
@@ -215,7 +226,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
 
     let (claim_last, r_z) = self.primary_sumcheck.proof.verify::<G, Transcript>(
       self.primary_sumcheck.claimed_evaluation,
-      commitment.s.log_2(),
+      self.sparsity.log_2(),
       S::primary_poly_degree(),
       transcript,
     )?;
@@ -231,8 +242,8 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
     self.primary_sumcheck.proof_derefs.verify(
       &r_z,
       &self.primary_sumcheck.eval_derefs,
-      &gens.gens_derefs,
-      &self.comm_derefs,
+      &gens.E_commitment_gens,
+      &commitment.E_commitment,
       transcript,
     )?;
 
@@ -242,10 +253,10 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField>> SparsePolynomialEvaluationP
 
     self.memory_check.verify(
       commitment,
-      &self.comm_derefs,
       gens,
+      S::memory_to_dimension_index,
+      S::evaluate_memory_mle,
       &(r_mem_check[0], r_mem_check[1]),
-      commitment.s,
       transcript,
     )
   }

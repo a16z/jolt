@@ -5,6 +5,7 @@ use ark_ff::PrimeField;
 
 use super::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::jolt::jolt_strategy::JoltStrategy;
+use crate::jolt::vm::PolynomialRepresentation;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::math::Math;
 
@@ -101,6 +102,29 @@ impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
       s: self.s,
       log_m: self.log_m,
       m: self.m,
+    }
+  }
+
+  /// Allows memory checking code to use the Jolt PolynomialRepresentation format by converting from Densified -> PolynomialRepresentation
+  pub fn to_polynomial_representation(&self, E_polys: Vec<DensePolynomial<F>>, combined_E_poly: DensePolynomial<F>) -> PolynomialRepresentation<F> {
+    PolynomialRepresentation { 
+      dim: self.dim.to_owned(), 
+      read_cts: self.read.to_owned(), 
+      final_cts: self.r#final.to_owned(), 
+      E_polys, 
+
+      // Unused 
+      flag_polys: None,
+      combined_flag_poly: None, 
+
+      combined_dim_read_poly: self.combined_l_variate_polys.to_owned(), 
+      combined_final_poly: self.combined_log_m_variate_polys.to_owned(), 
+      combined_E_poly,
+      
+      num_memories: S::num_memories(),
+      C: S::subtable_dimensionality(),
+      memory_size: self.r#final[0].len(),
+      num_ops: self.dim_usize[0].len()
     }
   }
 }

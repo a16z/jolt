@@ -10,7 +10,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking::MemoryCheckingProof,
+  lasso::memory_checking::{MemoryCheckingProof, GrandProducts},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -47,21 +47,27 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   /// size `sparsity`.
   pub E_polys: Vec<DensePolynomial<F>>,
 
-  /// Polynomial encodings for flag polynomials for each instruction.
+  /// Polynomial encodings for flag polynomials for each instruction. 
+  /// If using a single instruction this will be empty.
   /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (sparsity).
   ///
   /// Stored independently for use in sumchecking, combined into single DensePolynomial for commitment.
-  pub flag_polys: Vec<DensePolynomial<F>>,
+  pub flag_polys: Option<Vec<DensePolynomial<F>>>,
 
   // TODO(sragss): Storing both the polys and the combined polys may get expensive from a memory
-  // perspective. Consier making an additional datastructure to handle the concept of combined polys
+  // perspective. Consider making an additional datastructure to handle the concept of combined polys
   // with a single reference to underlying evaluations.
 
   // TODO(moodlezoup): Consider pulling out combined polys into separate struct
-  pub combined_flag_poly: DensePolynomial<F>,
   pub combined_dim_read_poly: DensePolynomial<F>,
   pub combined_final_poly: DensePolynomial<F>,
   pub combined_E_poly: DensePolynomial<F>,
+  pub combined_flag_poly: Option<DensePolynomial<F>>,
+
+  pub num_memories: usize,
+  pub C: usize,
+  pub memory_size: usize,
+  pub num_ops: usize,
 }
 
 impl<F: PrimeField> PolynomialRepresentation<F> {
@@ -75,20 +81,22 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     let (final_commitment, _) = self
       .combined_final_poly
       .commit(&generators.final_commitment_gens, None);
-    let (flag_commitment, _) = self
-      .combined_flag_poly
-      .commit(&generators.flag_commitment_gens, None);
-    let flag_commitment = CombinedTableCommitment::new(flag_commitment);
     let (E_commitment, _) = self
       .combined_E_poly
       .commit(&generators.E_commitment_gens, None);
     let E_commitment = CombinedTableCommitment::new(E_commitment);
+    let (flag_commitment, _) = self
+      .combined_flag_poly
+      .as_ref()
+      .unwrap()
+      .commit(generators.flag_commitment_gens.as_ref().unwrap(), None);
+    let flag_commitment = CombinedTableCommitment::new(flag_commitment);
 
     SurgeCommitment {
       dim_read_commitment,
       final_commitment,
-      flag_commitment,
       E_commitment,
+      flag_commitment: Some(flag_commitment),
     }
   }
 }
@@ -97,8 +105,8 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
 pub struct SurgeCommitment<G: CurveGroup> {
   pub dim_read_commitment: PolyCommitment<G>,
   pub final_commitment: PolyCommitment<G>,
-  pub flag_commitment: CombinedTableCommitment<G>,
   pub E_commitment: CombinedTableCommitment<G>,
+  pub flag_commitment: Option<CombinedTableCommitment<G>>,
 }
 
 /// Container for generators for polynomial commitments. These preallocate memory
@@ -106,8 +114,8 @@ pub struct SurgeCommitment<G: CurveGroup> {
 pub struct SurgeCommitmentGenerators<G: CurveGroup> {
   pub dim_read_commitment_gens: PolyCommitmentGens<G>,
   pub final_commitment_gens: PolyCommitmentGens<G>,
-  pub flag_commitment_gens: PolyCommitmentGens<G>,
   pub E_commitment_gens: PolyCommitmentGens<G>,
+  pub flag_commitment_gens: Option<PolyCommitmentGens<G>>,
 }
 
 /// Proof of a single Jolt execution.
@@ -120,6 +128,8 @@ pub struct JoltProof<G: CurveGroup> {
 
   /// Primary collation sumcheck proof
   primary_sumcheck_proof: PrimarySumcheck<G>,
+
+  memory_checking_proof: MemoryCheckingProof<G>,
 
   /// Sparsity: Total number of operations. AKA 'm'.
   s: usize,
@@ -269,14 +279,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     let num_rounds = ops.len().log_2();
     let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
-    // TODO(sragss): Deal with last parameter
     let (primary_sumcheck_instance_proof, r_primary_sumcheck, (eq_eval, flag_evals, memory_evals)) =
       SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
         &F::zero(),
         num_rounds,
         &mut eq_poly,
         &mut polynomials.E_polys.clone(),
-        &mut polynomials.flag_polys.clone(),
+        &mut polynomials.flag_polys.as_ref().unwrap().clone(),
         Self::sumcheck_poly_degree(),
         transcript,
       );
@@ -285,10 +294,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     // Create a single opening proof for the flag_evals and memory_evals
     let flag_proof = CombinedTableEvalProof::prove(
-      &polynomials.combined_flag_poly,
+      &polynomials.combined_flag_poly.as_ref().unwrap(),
       &flag_evals.to_vec(),
       &r_primary_sumcheck,
-      &commitment_generators.flag_commitment_gens,
+      &commitment_generators.flag_commitment_gens.as_ref().unwrap(),
       transcript,
       &mut random_tape,
     );
@@ -311,24 +320,37 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     };
 
     // TODO(sragss): Prove memory checking.
-    // let gamma = F::zero();
-    // let tau = F::zero();
-    // let mut random_tape = RandomTape::new(b"proof");
-    // let commitment_generators = Self::commitment_generators(m);
-    // MemoryCheckingProof::prove(
-    //   polynomials,
-    //   gamma,
-    //   tau,
-    //   &materialized_subtables,
-    //   &commitment_generators,
-    //   &mut transcript,
-    //   &mut random_tape,
-    // );
+    let r_mem_check =
+      <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
+    let gamma = r_mem_check[0];
+    let tau = r_mem_check[1];
+    let commitment_generators = Self::commitment_generators(m);
+
+    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES).map(|memory_index| {
+      GrandProducts::<F>::new(
+        &materialized_subtables[Self::memory_to_subtable_index(memory_index)], 
+        &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
+        &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)], 
+        &polynomials.read_cts[Self::memory_to_dimension_index(memory_index)], 
+        &polynomials.final_cts[Self::memory_to_dimension_index(memory_index)], 
+        &(gamma, tau)
+      )
+    }).collect();
+
+
+    let memory_checking_proof = MemoryCheckingProof::prove(
+      &polynomials,
+      &mut grand_products,
+      &commitment_generators,
+      transcript,
+      &mut random_tape,
+    );
 
     JoltProof {
       commitments,
       commitment_generators, // TODO(sragss): is this necessary?
       primary_sumcheck_proof,
+      memory_checking_proof,
       s: ops.len(),
     }
   }
@@ -381,8 +403,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     proof.primary_sumcheck_proof.flag_proof.verify(
       &r_primary_sumcheck,
       &proof.primary_sumcheck_proof.flag_evals,
-      &proof.commitment_generators.flag_commitment_gens,
-      &proof.commitments.flag_commitment,
+      &proof.commitment_generators.flag_commitment_gens.as_ref().unwrap(),
+      &proof.commitments.flag_commitment.as_ref().unwrap(),
       transcript,
     )?;
     // Verify joint opening proofs to E polynomials
@@ -392,6 +414,18 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       &proof.commitment_generators.E_commitment_gens,
       &proof.commitments.E_commitment,
       transcript,
+    )?;
+
+    let r_mem_check =
+      <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
+
+    proof.memory_checking_proof.verify(
+      &proof.commitments,
+      &proof.commitment_generators,
+      Self::memory_to_dimension_index,
+      Self::evaluate_memory_mle,
+      &(r_mem_check[0], r_mem_check[1]),
+      transcript
     )?;
 
     Ok(())
@@ -419,8 +453,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     SurgeCommitmentGenerators {
       dim_read_commitment_gens,
       final_commitment_gens,
-      flag_commitment_gens,
       E_commitment_gens,
+      flag_commitment_gens: Some(flag_commitment_gens),
     }
   }
 
@@ -489,12 +523,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       dim,
       read_cts,
       final_cts,
-      flag_polys,
+      flag_polys: Some(flag_polys),
       E_polys,
-      combined_flag_poly,
       combined_dim_read_poly,
       combined_final_poly,
       combined_E_poly,
+      combined_flag_poly: Some(combined_flag_poly),
+      num_memories: Self::NUM_MEMORIES,
+      C: Self::C,
+      memory_size: Self::M,
+      num_ops: m, // TODO(sragss): should this be real num_ops or padded?
     }
   }
 
@@ -624,6 +662,21 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       subtable_lookup_indices.push(access_sequence);
     }
     subtable_lookup_indices
+  }
+
+  fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
+    let subtable = Self::Subtables::iter().nth(Self::memory_to_subtable_index(memory_index)).expect("should exist");
+    subtable.evaluate_mle(point)
+  }
+
+  /// Maps an index [0, num_memories) -> [0, num_subtables)
+  fn memory_to_subtable_index(i: usize) -> usize {
+    i / Self::C
+  }
+  
+  /// Maps an index [0, num_memories) -> [0, subtable_dimensionality]
+  fn memory_to_dimension_index(i: usize) -> usize {
+    i % Self::C
   }
 
   fn protocol_name() -> &'static [u8] {
