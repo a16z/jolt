@@ -8,7 +8,7 @@ use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
 use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
 use crate::poly::identity_poly::IdentityPolynomial;
 use crate::subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof};
-use crate::subprotocols::grand_product::{BatchedGrandProductArgument, GrandProductCircuit};
+use crate::subprotocols::grand_product::{BatchedGrandProductArgument, GrandProductCircuit, GrandProducts};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
@@ -137,175 +137,6 @@ impl<G: CurveGroup> MemoryCheckingProof<G> {
 
   fn protocol_name() -> &'static [u8] {
     b"Lasso MemoryCheckingProof"
-  }
-}
-
-/// Contains grand product circuits to evaluate multi-set checks on memories.
-/// Evaluating each circuit is equivalent to computing the hash/fingerprint
-/// H_{\tau, \gamma} of the corresponding set.
-#[derive(Debug)]
-pub struct GrandProducts<F> {
-  /// Corresponds to the Init_{row/col} hash in the Spartan paper.
-  init: GrandProductCircuit<F>,
-  /// Corresponds to the RS_{row/col} hash in the Spartan paper.
-  read: GrandProductCircuit<F>,
-  /// Corresponds to the WS_{row/col} hash in the Spartan paper.
-  write: GrandProductCircuit<F>,
-  /// Corresponds to the Audit_{row/col} hash in the Spartan paper.
-  r#final: GrandProductCircuit<F>,
-}
-
-impl<F: PrimeField> GrandProducts<F> {
-  /// Creates the grand product circuits used for memory checking.
-  ///
-  /// Params
-  /// - `eval_table`: M-sized list of table entries
-  /// - `dim_i`: log(s)-variate polynomial evaluating to the table index corresponding to each access.
-  /// - `dim_i_usize`: Vector of table indices accessed, as `usize`s.
-  /// - `read_i`: "Counter polynomial" for memory reads.
-  /// - `final_i` "Counter polynomial" for the final memory state.
-  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting.
-  pub fn new(
-    eval_table: &[F],
-    dim_i: &DensePolynomial<F>,
-    dim_i_usize: &[usize],
-    read_i: &DensePolynomial<F>,
-    final_i: &DensePolynomial<F>,
-    r_mem_check: &(F, F),
-  ) -> Self {
-    let (
-      grand_product_input_init,
-      grand_product_input_read,
-      grand_product_input_write,
-      grand_product_input_final,
-    ) = GrandProducts::build_read_only_inputs(
-      eval_table,
-      dim_i,
-      dim_i_usize,
-      read_i,
-      final_i,
-      r_mem_check,
-    );
-
-    let prod_init = GrandProductCircuit::new(&grand_product_input_init);
-    let prod_read = GrandProductCircuit::new(&grand_product_input_read);
-    let prod_write = GrandProductCircuit::new(&grand_product_input_write);
-    let prod_final = GrandProductCircuit::new(&grand_product_input_final);
-
-    #[cfg(debug)]
-    {
-      let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
-      let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
-      // H(Init) * H(WS) ?= H(RS) * H(Audit)
-      // analogous to H(WS) = H(RS) * H(S) in the Lasso paper
-      debug_assert_eq!(hashed_read_set, hashed_write_set);
-    }
-
-    GrandProducts {
-      init: prod_init,
-      read: prod_read,
-      write: prod_write,
-      r#final: prod_final,
-    }
-  }
-
-  /// Builds the multilinear polynomials that will serve as the inputs to the grand product circuits
-  /// used for memory checking. Specifically, this function computes the hash (Reed-Solomon fingerprint)
-  /// for each tuple in the "init", "read", "write", and "final" sets (named "Init", "WS", "RS", "Audit"
-  /// in the Spartan paper).
-  ///
-  /// Params
-  /// - `v_table`: Memory-sized list of 'v' evaluations
-  /// - `a_i`: log(s)-variate polynomial evaluating to the address or table index corresponding to each access.
-  /// - `a_i_usize`: Vector of table indices accessed, as `usize`s.
-  /// - `t_read_i`: "Counter polynomial" for memory reads.
-  /// - `t_final_i` "Counter polynomial" for the final memory state.
-  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
-  ///
-  /// Returns
-  /// - `(init, read, write, final)`: These are the memory polynomials as described in the Spartan paper.
-  /// Note that the Lasso describes using `RS`, `WS`, and `S` (using fewer grand products for efficiency),
-  /// but that they serve the same purpose: to prove/verify memory consistency.
-  fn build_read_only_inputs(
-    v_table: &[F],
-    a_i: &DensePolynomial<F>,
-    a_i_usize: &[usize],
-    t_read_i: &DensePolynomial<F>,
-    t_final_i: &DensePolynomial<F>,
-    r_mem_check: &(F, F),
-  ) -> (
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-  ) {
-    let (gamma, tau) = r_mem_check;
-
-    // TODO(moodlezoup): (t * gamma^2 + v * gamma + a - tau) * flags + (1 - flags)
-    // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
-    let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
-
-    // init: M hash evaluations => log(M)-variate polynomial
-    assert_eq!(v_table.len(), t_final_i.len());
-    let num_mem_cells = v_table.len();
-    let grand_product_input_init = DensePolynomial::new(
-      (0..num_mem_cells)
-        .map(|i| {
-          // addr is given by i, init value is given by eval_table, and ts = 0
-          hash_func(&F::from(i as u64), &v_table[i], &F::zero())
-        })
-        .collect::<Vec<F>>(),
-    );
-
-    // final: M hash evaluations => log(M)-variate polynomial
-    let grand_product_input_final = DensePolynomial::new(
-      (0..num_mem_cells)
-        .map(|i| {
-          // addr is given by i, value is given by eval_table, and ts is given by audit_ts
-          hash_func(&F::from(i as u64), &v_table[i], &t_final_i[i])
-        })
-        .collect::<Vec<F>>(),
-    );
-
-    // TODO(#30): Parallelize
-
-    // read: s hash evaluations => log(s)-variate polynomial
-    assert_eq!(a_i.len(), t_read_i.len());
-
-    #[cfg(feature = "multicore")]
-    let num_ops = (0..a_i.len()).into_par_iter();
-    #[cfg(not(feature = "multicore"))]
-    let num_ops = 0..dim_i.len();
-    let grand_product_input_read = DensePolynomial::new(
-      num_ops
-        .clone()
-        .map(|i| {
-          // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
-          hash_func(&a_i[i], &v_table[a_i_usize[i]], &t_read_i[i])
-        })
-        .collect::<Vec<F>>(),
-    );
-
-    // write: s hash evaluation => log(s)-variate polynomial
-    let grand_product_input_write = DensePolynomial::new(
-      num_ops
-        .map(|i| {
-          // addr is given by dim_i, value is given by eval_table, and ts is given by write_ts = read_ts + 1
-          hash_func(
-            &a_i[i],
-            &v_table[a_i_usize[i]],
-            &(t_read_i[i] + F::one()),
-          )
-        })
-        .collect::<Vec<F>>(),
-    );
-
-    (
-      grand_product_input_init,
-      grand_product_input_read,
-      grand_product_input_write,
-      grand_product_input_final,
-    )
   }
 }
 
@@ -715,7 +546,7 @@ mod test {
     ]);
     let r_mem_check = (Fr::from(100), Fr::from(200));
 
-    let _gp = GrandProducts::new(
+    let _gp = GrandProducts::new_read_only(
       &eval_table,
       &dim_i,
       &dim_i_usize,
@@ -763,7 +594,7 @@ mod test {
 
     let r_mem_check = (Fr::from(100), Fr::from(200));
 
-    let gp = GrandProducts::new(&eval_table, &dim, &dim_usize, &read_cts, &final_cts, &r_mem_check);
+    let gp = GrandProducts::new_read_only(&eval_table, &dim, &dim_usize, &read_cts, &final_cts, &r_mem_check);
 
     let combined_dim_read_poly =
       DensePolynomial::merge(vec![dim.clone(), read_cts.clone()].as_slice());

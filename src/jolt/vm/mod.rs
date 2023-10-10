@@ -10,14 +10,15 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking::{GrandProducts, MemoryCheckingProof},
+  lasso::memory_checking_updated::{MemoryCheckingProofUpdated, HashLayerProof},
   poly::{
-    dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
+    dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     sumcheck::SumcheckInstanceProof,
+    grand_product::GrandProducts
   },
   utils::{
     errors::ProofVerifyError,
@@ -131,7 +132,7 @@ pub struct JoltProof<G: CurveGroup> {
   /// Primary collation sumcheck proof
   primary_sumcheck_proof: PrimarySumcheck<G>,
 
-  memory_checking_proof: MemoryCheckingProof<G>,
+  memory_checking_proof: MemoryCheckingProofUpdated<G, HashLayerProof<G>>,
 
   /// Sparsity: Total number of operations. AKA 'm'.
   s: usize,
@@ -387,7 +388,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       &polynomials.combined_E_poly,
       &memory_evals.to_vec(),
       &r_primary_sumcheck,
-      &commitment_generators.E_commitment_gens, // TODO: Shouldn't this really be a PolyCommitment ?
+      &commitment_generators.E_commitment_gens,
       transcript,
       &mut random_tape,
     );
@@ -401,27 +402,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       flag_proof,
     };
 
-    // TODO(sragss): Prove memory checking.
     let r_mem_check =
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
     let gamma = r_mem_check[0];
     let tau = r_mem_check[1];
     let commitment_generators = Self::commitment_generators(m);
 
-    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES)
-      .map(|memory_index| {
-        GrandProducts::<F>::new(
-          &materialized_subtables[Self::memory_to_subtable_index(memory_index)],
-          &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
-          &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)],
-          &polynomials.read_cts[Self::memory_to_dimension_index(memory_index)],
-          &polynomials.final_cts[Self::memory_to_dimension_index(memory_index)],
-          &(gamma, tau),
-        )
-      })
-      .collect();
+    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES).map(|memory_index| {
+      GrandProducts::<F>::new_read_only(
+        &materialized_subtables[Self::memory_to_subtable_index(memory_index)], 
+        &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
+        &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)], 
+        &polynomials.read_cts[Self::memory_to_dimension_index(memory_index)], 
+        &polynomials.final_cts[Self::memory_to_dimension_index(memory_index)], 
+        &(gamma, tau)
+      )
+    }).collect();
 
-    let memory_checking_proof = MemoryCheckingProof::prove(
+
+    let memory_checking_proof = MemoryCheckingProofUpdated::prove(
       &polynomials,
       &mut grand_products,
       &commitment_generators,
@@ -431,7 +430,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     JoltProof {
       commitments,
-      commitment_generators, // TODO(sragss): is this necessary?
+      commitment_generators,
       primary_sumcheck_proof,
       memory_checking_proof,
       s: ops.len(),
@@ -494,6 +493,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       &proof.commitments.flag_commitment.as_ref().unwrap(),
       transcript,
     )?;
+
     // Verify joint opening proofs to E polynomials
     proof.primary_sumcheck_proof.memory_proof.verify(
       &r_primary_sumcheck,

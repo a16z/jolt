@@ -5,10 +5,10 @@ use ark_ff::PrimeField;
 
 use crate::{
   jolt::jolt_strategy::JoltStrategy,
-  lasso::{densified::DensifiedRepresentation, memory_checking::GrandProducts},
+  lasso::{densified::DensifiedRepresentation},
   poly::dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
   poly::eq_poly::EqPolynomial,
-  subprotocols::combined_table_proof::CombinedTableCommitment,
+  subprotocols::{combined_table_proof::CombinedTableCommitment, grand_product::GrandProducts},
   utils::errors::ProofVerifyError,
   utils::math::Math,
   utils::random::RandomTape,
@@ -69,7 +69,7 @@ impl<F: PrimeField, S: JoltStrategy<F>> Subtables<F, S> {
         .map(|i| {
           let subtable = &self.subtable_entries[S::memory_to_subtable_index(i)];
           let j = S::memory_to_dimension_index(i);
-          GrandProducts::new(
+          GrandProducts::new_read_only(
             subtable,
             &dense.dim[j],
             &dense.dim_usize[j],
