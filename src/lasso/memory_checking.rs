@@ -1,64 +1,84 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
-use std::marker::PhantomData;
 
-use crate::jolt::jolt_strategy::JoltStrategy;
-use crate::jolt::vm::{PolynomialRepresentation, SurgeCommitmentGenerators, SurgeCommitment};
-use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
-use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
+use crate::jolt::vm::{PolynomialRepresentation, SurgeCommitment, SurgeCommitmentGenerators};
 use crate::poly::identity_poly::IdentityPolynomial;
-use crate::subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof};
-use crate::subprotocols::grand_product::{BatchedGrandProductArgument, GrandProductCircuit, GrandProducts};
+use crate::subprotocols::combined_table_proof::CombinedTableEvalProof;
+use crate::subprotocols::grand_product::{
+  BatchedGrandProductArgument, GrandProductCircuit, GrandProducts,
+};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
 use crate::utils::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
-use ark_serialize::*;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
-#[cfg(feature = "multicore")]
-use rayon::prelude::*;
-
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup> {
+pub struct MemoryCheckingProof<G: CurveGroup, S: MemCheckingStrat<G>> {
   proof_prod_layer: ProductLayerProof<G::ScalarField>,
-  proof_hash_layer: HashLayerProof<G>,
+  proof_hash_layer: S,
   num_ops: usize,
   num_memories: usize,
-  memory_size: usize
+  memory_size: usize,
 }
 
-impl<G: CurveGroup> MemoryCheckingProof<G> {
-  /// Proves that E_i polynomials are well-formed, i.e., that E_i(j) equals T_i[dim_i(j)] for all j ∈ {0, 1}^{log(m)},
-  /// using memory-checking techniques as described in Section 5 of the Lasso paper, or Section 7.2 of the Spartan paper.
-  ///
-  /// Params
-  /// - `polynomials`: The polynomial representation of grand product inputs (a,v,t)=(dim,E,counter).
-  /// - `grand_products`: Batch of grand products to evaluate.
-  /// - `gens`: Public generators for polynomial commitments.
-  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  /// - `random_tape`: Randomness for dense polynomial commitments.
-  #[tracing::instrument(skip_all, name = "MemoryChecking.prove")]
+/// Evaluations of a Grand Product Argument for the four required sets.
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct GPEvals<F: PrimeField> {
+  hash_init: F,
+  hash_read: F,
+  hash_write: F,
+  hash_final: F,
+}
+
+impl<F: PrimeField> GPEvals<F> {
+  fn new(hash_init: F, hash_read: F, hash_write: F, hash_final: F) -> Self {
+    Self {
+      hash_init,
+      hash_read,
+      hash_write,
+      hash_final,
+    }
+  }
+
+  /// Flattens a vector of GPEvals to a vector of field elements alternating between init evals and final evals.
+  fn flatten_init_final(evals: &[Self]) -> Vec<F> {
+    evals
+      .iter()
+      .flat_map(|eval| [eval.hash_init, eval.hash_final])
+      .collect()
+  }
+
+  /// Flattens a vector of GPEvals to a vector of field elements alternating between read evals and write evals.
+  fn flatten_read_write(evals: &[Self]) -> Vec<F> {
+    evals
+      .iter()
+      .flat_map(|eval| [eval.hash_read, eval.hash_write])
+      .collect()
+  }
+}
+
+impl<G: CurveGroup, S: MemCheckingStrat<G>> MemoryCheckingProof<G, S> {
   pub fn prove(
-    polynomials: &PolynomialRepresentation<G::ScalarField>,
+    polynomials: &S::Polynomials,
     grand_products: &mut Vec<GrandProducts<G::ScalarField>>,
-    gens: &SurgeCommitmentGenerators<G>,
+    generators: &S::Generators,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     let (proof_prod_layer, rand_mem, rand_ops) =
-      ProductLayerProof::prove::<G>(grand_products, transcript, polynomials.num_memories);
+      ProductLayerProof::prove::<G>(grand_products, transcript);
 
-    let proof_hash_layer = HashLayerProof::prove(
+    let proof_hash_layer = S::prove(
       (&rand_mem, &rand_ops),
-      polynomials,
-      gens,
+      &polynomials,
+      &generators,
       transcript,
       random_tape,
     );
@@ -66,27 +86,16 @@ impl<G: CurveGroup> MemoryCheckingProof<G> {
     MemoryCheckingProof {
       proof_prod_layer,
       proof_hash_layer,
-      num_ops: polynomials.read_cts[0].len(),
-      num_memories: polynomials.num_memories,
-      memory_size: polynomials.memory_size
+      num_ops: S::num_ops(&polynomials),
+      num_memories: S::num_memories(&polynomials),
+      memory_size: S::memory_size(&polynomials),
     }
   }
 
-  /// Verifies that E_i polynomials are well-formed, i.e., that E_i(j) equals T_i[dim_i(j)] for all j ∈ {0, 1}^{log(m)},
-  /// using memory-checking techniques as described in Section 5 of the Lasso paper, or Section 7.2 of the Spartan paper.
-  ///
-  /// Params
-  /// - `commitments`: Commitments to polynomials.
-  /// - `generators`: Generators: public parameters for polynomial commitments.
-  /// - `num_memories`: Number of memories or individual grand product proofs.
-  /// - `memory_to_dimension_index`: Maps [0, NUM_MEMORIES) -> [0, C)
-  /// - `evaluate_memory_mle`: Evaluates the MLE of an indexed memory
-  /// - `r_mem_check`: (gamma, tau) – Parameters for Reed-Solomon fingerprinting (see `hash_func` closure).
-  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   pub fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
     &self,
-    commitments: &SurgeCommitment<G>,
-    generators: &SurgeCommitmentGenerators<G>,
+    commitments: &S::Commitments,
+    generators: &S::Generators,
     // TODO(sragss): Consider hardcoding these params
     memory_to_dimension_index: F1,
     evaluate_memory_mle: F2,
@@ -99,18 +108,14 @@ impl<G: CurveGroup> MemoryCheckingProof<G> {
 
     let num_ops = self.num_ops.next_power_of_two();
 
-    let (claims_mem, rand_mem, claims_ops, rand_ops) = self
-      .proof_prod_layer
-      .verify::<G>(num_ops, self.memory_size, transcript)?;
+    let (claims_mem, rand_mem, claims_ops, rand_ops) =
+      self
+        .proof_prod_layer
+        .verify::<G>(num_ops, self.memory_size, transcript)?;
 
-    let claims: Vec<(
-      G::ScalarField,
-      G::ScalarField,
-      G::ScalarField,
-      G::ScalarField,
-    )> = (0..self.num_memories)
+    let claims: Vec<GPEvals<G::ScalarField>> = (0..self.num_memories)
       .map(|i| {
-        (
+        GPEvals::new(
           claims_mem[2 * i],     // init
           claims_ops[2 * i],     // read
           claims_ops[2 * i + 1], // write
@@ -141,243 +146,14 @@ impl<G: CurveGroup> MemoryCheckingProof<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProof<G: CurveGroup> {
-  eval_dim: Vec<G::ScalarField>,    // C-sized
-  eval_read: Vec<G::ScalarField>,   // C-sized
-  eval_final: Vec<G::ScalarField>,  // C-sized
-  eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
-  proof_ops: CombinedTableEvalProof<G>,
-  proof_mem: CombinedTableEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G>,
-}
-
-impl<G: CurveGroup> HashLayerProof<G> {
-  #[tracing::instrument(skip_all, name = "HashLayer.prove")]
-  fn prove(
-    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    polynomials: &PolynomialRepresentation<G::ScalarField>,
-    gens: &SurgeCommitmentGenerators<G>,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let (rand_mem, rand_ops) = rand;
-
-    // decommit derefs at rand_ops
-    let eval_derefs: Vec<G::ScalarField> = (0..polynomials.num_memories)
-      .map(|i| polynomials.E_polys[i].evaluate(rand_ops))
-      .collect();
-    let proof_derefs = CombinedTableEvalProof::prove(
-      &polynomials.combined_E_poly,
-      eval_derefs.as_ref(),
-      rand_ops,
-      &gens.E_commitment_gens,
-      transcript,
-      random_tape,
-    );
-
-    // form a single decommitment using comm_comb_ops
-    let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
-
-    let eval_dim: Vec<G::ScalarField> = (0..polynomials.C)
-      .map(|i| polynomials.dim[i].evaluate(rand_ops))
-      .collect();
-    let eval_read: Vec<G::ScalarField> = (0..polynomials.C)
-      .map(|i| polynomials.read_cts[i].evaluate(rand_ops))
-      .collect();
-    let eval_final: Vec<G::ScalarField> = (0..polynomials.C)
-      .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
-      .collect();
-
-    evals_ops.extend(eval_dim.clone());
-    evals_ops.extend(eval_read.clone());
-    evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-    let proof_ops = CombinedTableEvalProof::prove(
-      &polynomials.combined_dim_read_poly,
-      &evals_ops,
-      &rand_ops,
-      &gens.dim_read_commitment_gens,
-      transcript,
-      random_tape
-    );
-
-    let proof_mem = CombinedTableEvalProof::prove(
-      &polynomials.combined_final_poly,
-      &eval_final,
-      &rand_mem,
-      &gens.final_commitment_gens,
-      transcript,
-      random_tape
-    );
-
-    HashLayerProof {
-      eval_dim,
-      eval_read,
-      eval_final,
-      proof_ops,
-      proof_mem,
-      eval_derefs,
-      proof_derefs,
-    }
-  }
-
-  /// Checks that the Reed-Solomon fingerprints of init, read, write, and final multisets
-  /// are as claimed by the final sumchecks of their respective grand product arguments.
-  ///
-  /// Params
-  /// - `claims`: Fingerprint values of the init, read, write, and final multisets, as
-  /// as claimed by their respective grand product arguments.
-  /// - `eval_deref`: The evaluation E_i(r'''_i).
-  /// - `eval_dim`: The evaluation dim_i(r'''_i).
-  /// - `eval_read`: The evaluation read_i(r'''_i).
-  /// - `eval_final`: The evaluation final_i(r''_i).
-  /// - `init_addr`: The MLE of the memory addresses, evaluated at r''_i.
-  /// - `init_memory`: The MLE of the initial memory values, evaluated at r''_i.
-  /// - `r_i`: One chunk of the evaluation point at which the Lasso commitment is being opened.
-  /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
-  /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
-  fn check_reed_solomon_fingerprints(
-    claims: &(
-      G::ScalarField,
-      G::ScalarField,
-      G::ScalarField,
-      G::ScalarField,
-    ),
-    eval_deref: &G::ScalarField,
-    eval_dim: &G::ScalarField,
-    eval_read: &G::ScalarField,
-    eval_final: &G::ScalarField,
-    init_addr: &G::ScalarField,
-    init_memory: &G::ScalarField,
-    gamma: &G::ScalarField,
-    tau: &G::ScalarField,
-  ) -> Result<(), ProofVerifyError> {
-    // Computes the Reed-Solomon fingerprint of the tuple (a, v, t)
-    let hash_func = |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField| -> G::ScalarField {
-      t * gamma.square() + v * *gamma + a - tau
-    };
-    // Note: this differs from the Lasso paper a little:
-    // (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
-
-    let (claim_init, claim_read, claim_write, claim_final) = claims;
-
-    // init
-    let hash_init = hash_func(*init_addr, *init_memory, G::ScalarField::zero());
-    assert_eq!(&hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
-
-    // read
-    let hash_read = hash_func(*eval_dim, *eval_deref, *eval_read);
-    assert_eq!(hash_read, *claim_read); // verify the last claim of the `read` grand product sumcheck
-
-    // write: shares addr, val with read
-    let eval_write = *eval_read + G::ScalarField::one();
-    let hash_write = hash_func(*eval_dim, *eval_deref, eval_write);
-    assert_eq!(hash_write, *claim_write); // verify the last claim of the `write` grand product sumcheck
-
-    // final: shares addr and val with init
-    let eval_final_addr = init_addr;
-    let eval_final_val = init_memory;
-    let hash_final = hash_func(*eval_final_addr, *eval_final_val, *eval_final);
-    assert_eq!(hash_final, *claim_final); // verify the last claim of the `final` grand product sumcheck
-
-    Ok(())
-  }
-
-  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
-    &self,
-    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    grand_product_claims: &[(
-      G::ScalarField,
-      G::ScalarField,
-      G::ScalarField,
-      G::ScalarField,
-    )], // NUM_MEMORIES-sized
-    memory_to_dimension_index: F1,
-    evaluate_memory_mle: F2,
-    commitments: &SurgeCommitment<G>,
-    generators: &SurgeCommitmentGenerators<G>,
-    r_hash: &G::ScalarField,
-    r_multiset_check: &G::ScalarField,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let (rand_mem, rand_ops) = rand;
-
-    // verify derefs at rand_ops
-    // E_i(r_i''') ?= v_{E_i}
-    self.proof_derefs.verify(
-      rand_ops,
-      &self.eval_derefs,
-      &generators.E_commitment_gens,
-      &commitments.E_commitment,
-      transcript,
-    )?;
-
-    let mut evals_ops: Vec<G::ScalarField> = Vec::new();
-    evals_ops.extend(self.eval_dim.clone());
-    evals_ops.extend(self.eval_read.clone());
-    evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-
-    // dim_i(r_i''') ?= v_i
-    // read_i(r_i''') ?= v_{read_i}
-    self.proof_ops.verify(
-      rand_ops, 
-      &evals_ops, 
-      &generators.dim_read_commitment_gens, 
-      &commitments.dim_read_commitment, 
-      transcript
-    )?;
-
-    // final_i(r_i'') ?= v_{final_i}
-    self.proof_mem.verify(
-      rand_mem,
-      &self.eval_final,
-      &generators.final_commitment_gens,
-     &commitments.final_commitment,
-      transcript
-    )?;
-
-    // verify the claims from the product layer
-    let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    for i in 0..grand_product_claims.len() {
-      let j = memory_to_dimension_index(i);
-      // Check ALPHA memories / lookup polys / grand products
-      // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
-      Self::check_reed_solomon_fingerprints(
-        &grand_product_claims[i],
-        &self.eval_derefs[i],
-        &self.eval_dim[j],
-        &self.eval_read[j],
-        &self.eval_final[j],
-        &init_addr,
-        &evaluate_memory_mle(i, rand_mem),
-        r_hash,
-        r_multiset_check,
-      )?;
-    }
-    Ok(())
-  }
-
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso HashLayerProof"
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 struct ProductLayerProof<F: PrimeField> {
-  grand_product_evals: Vec<(F, F, F, F)>,
+  grand_product_evals: Vec<GPEvals<F>>,
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
   num_memories: usize,
 }
 
 impl<F: PrimeField> ProductLayerProof<F> {
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso ProductLayerProof"
-  }
-
   /// Performs grand product argument proofs required for memory-checking.
   /// Batches everything into two instances of BatchedGrandProductArgument.
   ///
@@ -388,14 +164,13 @@ impl<F: PrimeField> ProductLayerProof<F> {
   pub fn prove<G>(
     grand_products: &mut [GrandProducts<F>],
     transcript: &mut Transcript,
-    num_memories: usize,
   ) -> (Self, Vec<F>, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let grand_product_evals: Vec<(F, F, F, F)> = (0..num_memories)
+    let grand_product_evals: Vec<GPEvals<F>> = (0..grand_products.len())
       .map(|i| {
         let hash_init = grand_products[i].init.evaluate();
         let hash_read = grand_products[i].read.evaluate();
@@ -425,7 +200,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
           &hash_final,
         );
 
-        (hash_init, hash_read, hash_write, hash_final)
+        GPEvals::new(hash_init, hash_read, hash_write, hash_final)
       })
       .collect();
 
@@ -450,7 +225,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
       grand_product_evals,
       proof_mem,
       proof_ops,
-      num_memories,
+      num_memories: grand_products.len(),
     };
 
     (product_layer_proof, rand_mem_sized_gps, rand_ops_sized_gps)
@@ -467,41 +242,42 @@ impl<F: PrimeField> ProductLayerProof<F> {
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    for (hash_init, hash_read, hash_write, hash_final) in &self.grand_product_evals {
+    for eval in &self.grand_product_evals {
       // Multiset equality check
-      debug_assert_eq!(*hash_init * *hash_write, *hash_read * *hash_final);
+      debug_assert_eq!(
+        eval.hash_init * eval.hash_write,
+        eval.hash_read * eval.hash_final
+      );
 
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_init", hash_init);
-      <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"claim_hash_read", hash_read);
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_hash_init",
+        &eval.hash_init,
+      );
+      <Transcript as ProofTranscript<G>>::append_scalar(
+        transcript,
+        b"claim_hash_read",
+        &eval.hash_read,
+      );
       <Transcript as ProofTranscript<G>>::append_scalar(
         transcript,
         b"claim_hash_write",
-        hash_write,
+        &eval.hash_write,
       );
       <Transcript as ProofTranscript<G>>::append_scalar(
         transcript,
         b"claim_hash_final",
-        hash_final,
+        &eval.hash_final,
       );
     }
 
-    let read_write_claims: Vec<F> = self
-      .grand_product_evals
-      .iter()
-      .flat_map(|(_, hash_read, hash_write, _)| [*hash_read, *hash_write])
-      .collect();
-
+    let read_write_claims = GPEvals::flatten_read_write(&self.grand_product_evals);
     let (claims_ops, rand_ops) =
       self
         .proof_ops
         .verify::<G, Transcript>(&read_write_claims, num_ops, transcript);
 
-    let init_final_claims: Vec<F> = self
-      .grand_product_evals
-      .iter()
-      .flat_map(|(hash_init, _, _, hash_final)| [*hash_init, *hash_final])
-      .collect();
-
+    let init_final_claims = GPEvals::flatten_init_final(&self.grand_product_evals);
     let (claims_mem, rand_mem) =
       self
         .proof_mem
@@ -509,125 +285,336 @@ impl<F: PrimeField> ProductLayerProof<F> {
 
     Ok((claims_mem, rand_mem, claims_ops, rand_ops))
   }
+
+  fn protocol_name() -> &'static [u8] {
+    b"Lasso ProductLayerProof"
+  }
 }
 
-#[cfg(test)]
-mod test {
-  use ark_curve25519::{EdwardsProjective, Fr};
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct HashLayerProof<G: CurveGroup> {
+  eval_dim: Vec<G::ScalarField>,    // C-sized
+  eval_read: Vec<G::ScalarField>,   // C-sized
+  eval_final: Vec<G::ScalarField>,  // C-sized
+  eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
+  proof_ops: CombinedTableEvalProof<G>,
+  proof_mem: CombinedTableEvalProof<G>,
+  proof_derefs: CombinedTableEvalProof<G>,
+}
 
-  use super::*;
+pub trait MemCheckingStrat<G: CurveGroup>:
+  std::marker::Sync + CanonicalSerialize + CanonicalDeserialize
+{
+  type Polynomials;
+  type Generators;
+  type Commitments;
 
-  #[test]
-  fn test() {
-    // Memory size: 8
-    // Sparsity (num-ops): 4
-    let eval_table = vec![
-      Fr::from(10),
-      Fr::from(11),
-      Fr::from(12),
-      Fr::from(13),
-      Fr::from(14),
-      Fr::from(15),
-      Fr::from(16),
-      Fr::from(17),
-    ];
-    let dim_i = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(1), Fr::from(5)]);
-    let dim_i_usize = vec![1usize, 2, 1, 5];
-    let read_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0), Fr::from(1), Fr::from(0)]);
-    let final_i = DensePolynomial::new(vec![
-      Fr::from(0),
-      Fr::from(2),
-      Fr::from(1),
-      Fr::from(0),
-      Fr::from(0),
-      Fr::from(1),
-      Fr::from(0),
-      Fr::from(0),
-    ]);
-    let r_mem_check = (Fr::from(100), Fr::from(200));
+  fn prove(
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    polynomials: &Self::Polynomials,
+    generators: &Self::Generators,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self;
 
-    let _gp = GrandProducts::new_read_only(
-      &eval_table,
-      &dim_i,
-      &dim_i_usize,
-      &read_i,
-      &final_i,
-      &r_mem_check,
+  // TODO(sragss): simplify signature
+  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
+    &self,
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
+    memory_to_dimension_index: F1,
+    evaluate_memory_mle: F2,
+    commitments: &Self::Commitments,
+    generators: &Self::Generators,
+    r_hash: &G::ScalarField,
+    r_multiset_check: &G::ScalarField,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError>;
+
+  fn num_ops(polys: &Self::Polynomials) -> usize;
+  fn num_memories(polys: &Self::Polynomials) -> usize;
+  fn memory_size(polys: &Self::Polynomials) -> usize;
+}
+
+impl<G: CurveGroup> MemCheckingStrat<G> for HashLayerProof<G> {
+  type Polynomials = PolynomialRepresentation<G::ScalarField>;
+  type Generators = SurgeCommitmentGenerators<G>;
+  type Commitments = SurgeCommitment<G>;
+
+  fn prove(
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    polynomials: &Self::Polynomials,
+    generators: &Self::Generators,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+    let (rand_mem, rand_ops) = rand;
+
+    // decommit derefs at rand_ops
+    let eval_derefs: Vec<G::ScalarField> = (0..polynomials.num_memories)
+      .map(|i| polynomials.E_polys[i].evaluate(rand_ops))
+      .collect();
+    let proof_derefs = CombinedTableEvalProof::prove(
+      &polynomials.combined_E_poly,
+      eval_derefs.as_ref(),
+      rand_ops,
+      &generators.E_commitment_gens,
+      transcript,
+      random_tape,
     );
+
+    // form a single decommitment using comm_comb_ops
+    let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
+
+    let eval_dim: Vec<G::ScalarField> = (0..polynomials.C)
+      .map(|i| polynomials.dim[i].evaluate(rand_ops))
+      .collect();
+    let eval_read: Vec<G::ScalarField> = (0..polynomials.C)
+      .map(|i| polynomials.read_cts[i].evaluate(rand_ops))
+      .collect();
+    let eval_final: Vec<G::ScalarField> = (0..polynomials.C)
+      .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
+      .collect();
+
+    evals_ops.extend(eval_dim.clone());
+    evals_ops.extend(eval_read.clone());
+    evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
+    let proof_ops = CombinedTableEvalProof::prove(
+      &polynomials.combined_dim_read_poly,
+      &evals_ops,
+      &rand_ops,
+      &generators.dim_read_commitment_gens,
+      transcript,
+      random_tape,
+    );
+
+    let proof_mem = CombinedTableEvalProof::prove(
+      &polynomials.combined_final_poly,
+      &eval_final,
+      &rand_mem,
+      &generators.final_commitment_gens,
+      transcript,
+      random_tape,
+    );
+
+    HashLayerProof {
+      eval_dim,
+      eval_read,
+      eval_final,
+      proof_ops,
+      proof_mem,
+      eval_derefs,
+      proof_derefs,
+    }
   }
 
-  #[test]
-  fn c_equal_one_no_batch() {
-    // Memory size: 8
-    // Sparisty: 4
-    // C = 1
-    // NUM_MEMORIES = 1
+  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
+    &self,
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
+    memory_to_dimension_index: F1,
+    evaluate_memory_mle: F2,
+    commitments: &Self::Commitments,
+    generators: &Self::Generators,
+    r_hash: &G::ScalarField,
+    r_multiset_check: &G::ScalarField,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let eval_table = vec![
-      Fr::from(10),
-      Fr::from(11),
-      Fr::from(12),
-      Fr::from(13),
-      Fr::from(14),
-      Fr::from(15),
-      Fr::from(16),
-      Fr::from(17),
-    ];
+    let (rand_mem, rand_ops) = rand;
 
+    // verify derefs at rand_ops
+    // E_i(r_i''') ?= v_{E_i}
+    self.proof_derefs.verify(
+      rand_ops,
+      &self.eval_derefs,
+      &generators.E_commitment_gens,
+      &commitments.E_commitment,
+      transcript,
+    )?;
 
-    let dim = DensePolynomial::new(vec![Fr::from(0), Fr::from(2), Fr::from(4), Fr::from(2)]);
-    let dim_usize = vec![0usize, 2, 4, 2];
-    let read_cts = DensePolynomial::new(vec![Fr::from(0), Fr::from(0), Fr::from(0), Fr::from(1)]);
-    let final_cts = DensePolynomial::new(vec![
-      Fr::from(1),
-      Fr::from(0),
-      Fr::from(2),
-      Fr::from(0),
-      Fr::from(1),
-      Fr::from(0),
-      Fr::from(0),
-      Fr::from(0),
-    ]);
-    let E_poly = DensePolynomial::new(
-      dim_usize.iter().map(|dim| eval_table[*dim]).collect()
-    );
+    let mut evals_ops: Vec<G::ScalarField> = Vec::new();
+    evals_ops.extend(self.eval_dim.clone());
+    evals_ops.extend(self.eval_read.clone());
+    evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
 
-    let r_mem_check = (Fr::from(100), Fr::from(200));
+    // dim_i(r_i''') ?= v_i
+    // read_i(r_i''') ?= v_{read_i}
+    self.proof_ops.verify(
+      rand_ops,
+      &evals_ops,
+      &generators.dim_read_commitment_gens,
+      &commitments.dim_read_commitment,
+      transcript,
+    )?;
 
-    let gp = GrandProducts::new_read_only(&eval_table, &dim, &dim_usize, &read_cts, &final_cts, &r_mem_check);
+    // final_i(r_i'') ?= v_{final_i}
+    self.proof_mem.verify(
+      rand_mem,
+      &self.eval_final,
+      &generators.final_commitment_gens,
+      &commitments.final_commitment,
+      transcript,
+    )?;
 
-    let combined_dim_read_poly =
-      DensePolynomial::merge(vec![dim.clone(), read_cts.clone()].as_slice());
+    // verify the claims from the product layer
+    let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
+    for i in 0..grand_product_claims.len() {
+      let j = memory_to_dimension_index(i);
+      // Check ALPHA memories / lookup polys / grand products
+      // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
+      Self::check_reed_solomon_fingerprints(
+        &grand_product_claims[i],
+        &self.eval_derefs[i],
+        &self.eval_dim[j],
+        &self.eval_read[j],
+        &self.eval_final[j],
+        &init_addr,
+        &evaluate_memory_mle(i, rand_mem),
+        r_hash,
+        r_multiset_check,
+      )?;
+    }
+    Ok(())
+  }
 
-    let polynomials = PolynomialRepresentation {
-      dim: vec![dim],
-      read_cts: vec![read_cts],
-      final_cts: vec![final_cts.clone()],
-      E_polys: vec![E_poly.clone()],
-      flag_polys: None,
+  // TODO(sragss): Move these functions onto a trait all the PolynomialRepresentation types must implement
+  fn num_ops(polys: &Self::Polynomials) -> usize {
+    polys.num_ops
+  }
+  fn num_memories(polys: &Self::Polynomials) -> usize {
+    polys.num_memories
+  }
+  fn memory_size(polys: &Self::Polynomials) -> usize {
+    polys.memory_size
+  }
+}
 
-      combined_dim_read_poly,
-      combined_final_poly: final_cts,
-      combined_E_poly: E_poly,
-      combined_flag_poly: None,
-      num_memories: 1,
-      C: 1,
-      memory_size: 8,
-      num_ops: 4
+impl<G: CurveGroup> HashLayerProof<G> {
+  /// Checks that the Reed-Solomon fingerprints of init, read, write, and final multisets
+  /// are as claimed by the final sumchecks of their respective grand product arguments.
+  ///
+  /// Params
+  /// - `claims`: Fingerprint values of the init, read, write, and final multisets, as
+  /// as claimed by their respective grand product arguments.
+  /// - `eval_deref`: The evaluation E_i(r'''_i).
+  /// - `eval_dim`: The evaluation dim_i(r'''_i).
+  /// - `eval_read`: The evaluation read_i(r'''_i).
+  /// - `eval_final`: The evaluation final_i(r''_i).
+  /// - `init_addr`: The MLE of the memory addresses, evaluated at r''_i.
+  /// - `init_memory`: The MLE of the initial memory values, evaluated at r''_i.
+  /// - `r_i`: One chunk of the evaluation point at which the Lasso commitment is being opened.
+  /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
+  /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
+  fn check_reed_solomon_fingerprints(
+    claims: &GPEvals<G::ScalarField>,
+    eval_deref: &G::ScalarField,
+    eval_dim: &G::ScalarField,
+    eval_read: &G::ScalarField,
+    eval_final: &G::ScalarField,
+    init_addr: &G::ScalarField,
+    init_memory: &G::ScalarField,
+    gamma: &G::ScalarField,
+    tau: &G::ScalarField,
+  ) -> Result<(), ProofVerifyError> {
+    // Computes the Reed-Solomon fingerprint of the tuple (a, v, t)
+    let hash_func = |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField| -> G::ScalarField {
+      t * gamma.square() + v * *gamma + a - tau
     };
+    // Note: this differs from the Lasso paper a little:
+    // (t * gamma^2 + v * gamma + a) instead of (a * gamma^2 + v * gamma + t)
 
-    let gens = SparsePolyCommitmentGens::<EdwardsProjective>::new(b"gens", 1, 4, 1, 3);
-    let mut prover_transcript = Transcript::new(b"transcript");
-    // let mut random_tape = RandomTape::new(b"tape");
+    let claim_init = claims.hash_init;
+    let claim_read = claims.hash_read;
+    let claim_write = claims.hash_write;
+    let claim_final = claims.hash_final;
 
-    // let _proof = MemoryCheckingProof::<EdwardsProjective>::prove(
-    //   &polynomials,
-    //   &mut vec![gp],
-    //   &gens.to_surge_gens(),
-    //   &mut prover_transcript,
-    //   &mut random_tape,
-    // );
+    // init
+    let hash_init = hash_func(*init_addr, *init_memory, G::ScalarField::zero());
+    assert_eq!(hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
 
-    // TODO: Verify
+    // read
+    let hash_read = hash_func(*eval_dim, *eval_deref, *eval_read);
+    assert_eq!(hash_read, claim_read); // verify the last claim of the `read` grand product sumcheck
+
+    // write: shares addr, val with read
+    let eval_write = *eval_read + G::ScalarField::one();
+    let hash_write = hash_func(*eval_dim, *eval_deref, eval_write);
+    assert_eq!(hash_write, claim_write); // verify the last claim of the `write` grand product sumcheck
+
+    // final: shares addr and val with init
+    let eval_final_addr = init_addr;
+    let eval_final_val = init_memory;
+    let hash_final = hash_func(*eval_final_addr, *eval_final_val, *eval_final);
+    assert_eq!(hash_final, claim_final); // verify the last claim of the `final` grand product sumcheck
+
+    Ok(())
+  }
+
+  fn protocol_name() -> &'static [u8] {
+    b"Lasso HashLayerProof"
+  }
+}
+
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+struct HashLayerProofFlags<G: CurveGroup> {
+  eval_dim: Vec<G::ScalarField>,    // C-sized
+  eval_read: Vec<G::ScalarField>,   // C-sized
+  eval_final: Vec<G::ScalarField>,  // C-sized
+  eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
+
+  // NEW
+  eval_flags: Vec<G::ScalarField>, // NUM_MEMORIES-sized
+
+  proof_ops: CombinedTableEvalProof<G>,
+  proof_mem: CombinedTableEvalProof<G>,
+  proof_derefs: CombinedTableEvalProof<G>,
+
+  // NEW
+  proof_flags: CombinedTableEvalProof<G>,
+}
+
+impl<G: CurveGroup> MemCheckingStrat<G> for HashLayerProofFlags<G> {
+  type Polynomials = PolynomialRepresentation<G::ScalarField>;
+  type Generators = SurgeCommitmentGenerators<G>;
+  type Commitments = SurgeCommitment<G>;
+
+  fn prove(
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    polynomials: &Self::Polynomials,
+    generators: &Self::Generators,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self {
+    todo!("unimpl") // TODO: Same as before + flags
+  }
+
+  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
+    &self,
+    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+    grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
+    memory_to_dimension_index: F1,
+    evaluate_memory_mle: F2,
+    commitments: &Self::Commitments,
+    generators: &Self::Generators,
+    r_hash: &G::ScalarField,
+    r_multiset_check: &G::ScalarField,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    todo!("unimpl")
+  }
+
+  // TODO(sragss): Move these functions onto a trait all the PolynomialRepresentation types must implement
+  fn num_ops(polys: &Self::Polynomials) -> usize {
+    polys.num_ops
+  }
+  fn num_memories(polys: &Self::Polynomials) -> usize {
+    polys.num_memories
+  }
+  fn memory_size(polys: &Self::Polynomials) -> usize {
+    polys.memory_size
   }
 }

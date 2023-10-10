@@ -10,7 +10,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking_updated::{MemoryCheckingProofUpdated, HashLayerProof},
+  lasso::memory_checking::{MemoryCheckingProof, HashLayerProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -132,7 +132,7 @@ pub struct JoltProof<G: CurveGroup> {
   /// Primary collation sumcheck proof
   primary_sumcheck_proof: PrimarySumcheck<G>,
 
-  memory_checking_proof: MemoryCheckingProofUpdated<G, HashLayerProof<G>>,
+  memory_checking_proof: MemoryCheckingProof<G, HashLayerProof<G>>,
 
   /// Sparsity: Total number of operations. AKA 'm'.
   s: usize,
@@ -420,7 +420,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     }).collect();
 
 
-    let memory_checking_proof = MemoryCheckingProofUpdated::prove(
+    let memory_checking_proof = MemoryCheckingProof::prove(
       &polynomials,
       &mut grand_products,
       &commitment_generators,
