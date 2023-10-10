@@ -52,6 +52,7 @@ Once per $T_i$ we must run memory checking. For each $T_i$ we'll compute a multi
 - read
 - write
 - final
+
 If the prover is honest `H(init) * H(write) = H(read) * H(final)`.
 The multi-set hash is of the following form:
 $$H(a,v,t) = \prod_{i=0}{h_{\gamma, \tau}(a[i],v[i],t[i])}$$
@@ -64,14 +65,19 @@ Each of the entries `(a,v,t)` correspond to:
 
 We'll compute these multi-set hashes via a sumcheck-based Grand Product Argument (an optimized GKR protocol), which will reduce the multi-set hashes from products over `MEMORY_SIZE` or `NUM_OPERATIONS` terms to a single point $H(a(r), v(r), t(r))$. The verifier can then check against an evaluations of commitments to the underlying terms $h(a(r), v(r), t(r))$ 
 
-Naively, we could commit to $a_{init}, a_{read}, a_{write}, a_{final}, v_{init}, v_{read}, v_{write}, v_{final}, t_{init}, t_{read}, t_{write}, t_{final}$. 
+Naively, we could commit to $a_{init}, a_{read}, a_{write}, a_{final}, v_{init}, v_{read}, v_{write}, v_{final}, t_{init}, t_{read}, t_{write}, t_{final}$ for all $alpha$ memories. 
 
-But depending on the context in which we're running memory checking, there would be a lot of wasted commitments and opening proofs. Beyond reuse, some of these items can be computed directly, or derived from other commitments
+But depending on the context in which we're running memory checking, there would be a lot of wasted commitments and opening proofs. Beyond reuse, some of these items can be computed directly by the verifier, or derived from other commitments
 
 ## Surge memory checking
+Memory checking will be executed $\alpha$ times. Or once per $T_i$.
+
+There are $C$ instances of $dim_i$, $a_{init,read,write,final}$, $t_{init,read,write,final}$ and $\alpha$ instances of $E_i$.
+
+Within a given memories a,v,t polynomials, there is reuse across read / write / final:
 - Address
     - $a_{read} = a_{write} = dim_i$
-    - $a_{init} = a_{final} = [0...\text{MEMORY_SIZE}]$
+    - $a_{init} = a_{final} = [0...\text{MEMORY\_SIZE}]$
 - Value
     - $v_{read} = v_{write} = E$
     - $v_{init} = v_{final} = \tilde{T}_i$ 
@@ -80,11 +86,13 @@ But depending on the context in which we're running memory checking, there would
     - $t_{init} = 0$
     - $t_{final}$ 
 
-Required commitments:
+The *only* required commitments / opening proofs:
 - $dim_i$
 - $E$
 - $t_{read}$
 - $t_{final}$
+
+Further, $dim_i$ and $t_{read}$ are both $log(\text{NUM\_OPS})$-variate and their opening proofs can be combined. 
 
 ## General read only memory checking
 $C=1$ `NUM_MEMORIES=1`
