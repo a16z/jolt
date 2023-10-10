@@ -315,8 +315,8 @@ struct HashLayerProof<G: CurveGroup> {
   eval_read: Vec<G::ScalarField>,   // C-sized
   eval_final: Vec<G::ScalarField>,  // C-sized
   eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
-  proof_ops: PolyEvalProof<G>,
-  proof_mem: PolyEvalProof<G>,
+  proof_ops: CombinedTableEvalProof<G>,
+  proof_mem: CombinedTableEvalProof<G>,
   proof_derefs: CombinedTableEvalProof<G>,
 }
 
@@ -359,86 +359,25 @@ impl<G: CurveGroup> HashLayerProof<G> {
       .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
       .collect();
 
-    // TODO(sragss): clones likely unecessary
     evals_ops.extend(eval_dim.clone());
     evals_ops.extend(eval_read.clone());
     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
-
-    let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
-      transcript,
-      b"challenge_combine_n_to_one",
-      evals_ops.len().log_2(),
-    );
-
-    let mut poly_evals_ops = DensePolynomial::new(evals_ops);
-    for i in (0..challenges_ops.len()).rev() {
-      poly_evals_ops.bound_poly_var_bot(&challenges_ops[i]);
-    }
-    assert_eq!(poly_evals_ops.len(), 1);
-
-    let joint_claim_eval_ops = poly_evals_ops[0];
-    let mut r_joint_ops = challenges_ops;
-    r_joint_ops.extend(rand_ops);
-    debug_assert_eq!(
-      polynomials.combined_dim_read_poly.evaluate(&r_joint_ops),
-      joint_claim_eval_ops
-    );
-
-    <Transcript as ProofTranscript<G>>::append_scalar(
-      transcript,
-      b"joint_claim_eval_ops",
-      &joint_claim_eval_ops,
-    );
-
-    let (proof_ops, _) = PolyEvalProof::prove(
+    let proof_ops = CombinedTableEvalProof::prove(
       &polynomials.combined_dim_read_poly,
-      None,
-      &r_joint_ops,
-      &joint_claim_eval_ops,
-      None,
+      &evals_ops,
+      &rand_ops,
       &gens.dim_read_commitment_gens,
       transcript,
-      random_tape,
+      random_tape
     );
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &eval_final);
-    let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
-      transcript,
-      b"challenge_combine_two_to_one",
-      eval_final.len().log_2(),
-    );
-
-    let mut poly_evals_mem = DensePolynomial::new_padded(eval_final.to_vec());
-    for i in (0..challenges_mem.len()).rev() {
-      poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
-    }
-    assert_eq!(poly_evals_mem.len(), 1);
-
-    let joint_claim_eval_mem = poly_evals_mem[0];
-    let mut r_joint_mem = challenges_mem;
-    r_joint_mem.extend(rand_mem);
-    debug_assert_eq!(
-      polynomials.combined_final_poly.evaluate(&r_joint_mem),
-      joint_claim_eval_mem
-    );
-
-    <Transcript as ProofTranscript<G>>::append_scalar(
-      transcript,
-      b"joint_claim_eval_mem",
-      &joint_claim_eval_mem,
-    );
-
-    let (proof_mem, _) = PolyEvalProof::prove(
+    let proof_mem = CombinedTableEvalProof::prove(
       &polynomials.combined_final_poly,
-      None,
-      &r_joint_mem,
-      &joint_claim_eval_mem,
-      None,
+      &eval_final,
+      &rand_mem,
       &gens.final_commitment_gens,
       transcript,
-      random_tape,
+      random_tape
     );
 
     HashLayerProof {
@@ -546,77 +485,27 @@ impl<G: CurveGroup> HashLayerProof<G> {
     )?;
 
     let mut evals_ops: Vec<G::ScalarField> = Vec::new();
-    // TODO(sragss): clones likely unecessary
     evals_ops.extend(self.eval_dim.clone());
     evals_ops.extend(self.eval_read.clone());
     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
 
-    <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_ops", &evals_ops);
-
-    let challenges_ops = <Transcript as ProofTranscript<G>>::challenge_vector(
-      transcript,
-      b"challenge_combine_n_to_one",
-      evals_ops.len().log_2(),
-    );
-
-    let mut poly_evals_ops = DensePolynomial::new(evals_ops);
-    for i in (0..challenges_ops.len()).rev() {
-      poly_evals_ops.bound_poly_var_bot(&challenges_ops[i]);
-    }
-    assert_eq!(poly_evals_ops.len(), 1);
-
-    let joint_claim_eval_ops = poly_evals_ops[0];
-    let mut r_joint_ops = challenges_ops;
-    r_joint_ops.extend(rand_ops);
-    <Transcript as ProofTranscript<G>>::append_scalar(
-      transcript,
-      b"joint_claim_eval_ops",
-      &joint_claim_eval_ops,
-    );
-
     // dim_i(r_i''') ?= v_i
     // read_i(r_i''') ?= v_{read_i}
-    self.proof_ops.verify_plain(
-      &generators.dim_read_commitment_gens,
-      transcript,
-      &r_joint_ops,
-      &joint_claim_eval_ops,
-      &commitments.dim_read_commitment,
+    self.proof_ops.verify(
+      rand_ops, 
+      &evals_ops, 
+      &generators.dim_read_commitment_gens, 
+      &commitments.dim_read_commitment, 
+      transcript
     )?;
 
-    <Transcript as ProofTranscript<G>>::append_scalars(
-      transcript,
-      b"claim_evals_mem",
-      &self.eval_final,
-    );
-    let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
-      transcript,
-      b"challenge_combine_two_to_one",
-      self.eval_final.len().log_2(),
-    );
-
-    let mut poly_evals_mem = DensePolynomial::new_padded(self.eval_final.to_vec());
-    for i in (0..challenges_mem.len()).rev() {
-      poly_evals_mem.bound_poly_var_bot(&challenges_mem[i]);
-    }
-    assert_eq!(poly_evals_mem.len(), 1);
-
-    let joint_claim_eval_mem = poly_evals_mem[0];
-    let mut r_joint_mem = challenges_mem;
-    r_joint_mem.extend(rand_mem);
-    <Transcript as ProofTranscript<G>>::append_scalar(
-      transcript,
-      b"joint_claim_eval_mem",
-      &joint_claim_eval_mem,
-    );
-
     // final_i(r_i'') ?= v_{final_i}
-    self.proof_mem.verify_plain(
+    self.proof_mem.verify(
+      rand_mem,
+      &self.eval_final,
       &generators.final_commitment_gens,
-      transcript,
-      &r_joint_mem,
-      &joint_claim_eval_mem,
-      &commitments.final_commitment,
+     &commitments.final_commitment,
+      transcript
     )?;
 
     // verify the claims from the product layer

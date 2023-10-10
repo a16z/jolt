@@ -78,9 +78,11 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     let (dim_read_commitment, _) = self
       .combined_dim_read_poly
       .commit(&generators.dim_read_commitment_gens, None);
+    let dim_read_commitment = CombinedTableCommitment::new(dim_read_commitment);
     let (final_commitment, _) = self
       .combined_final_poly
       .commit(&generators.final_commitment_gens, None);
+    let final_commitment = CombinedTableCommitment::new(final_commitment);
     let (E_commitment, _) = self
       .combined_E_poly
       .commit(&generators.E_commitment_gens, None);
@@ -103,8 +105,8 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeCommitment<G: CurveGroup> {
-  pub dim_read_commitment: PolyCommitment<G>,
-  pub final_commitment: PolyCommitment<G>,
+  pub dim_read_commitment: CombinedTableCommitment<G>,
+  pub final_commitment: CombinedTableCommitment<G>,
   pub E_commitment: CombinedTableCommitment<G>,
   pub flag_commitment: Option<CombinedTableCommitment<G>>,
 }
