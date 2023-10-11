@@ -10,7 +10,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking::{MemoryCheckingProof, GrandProducts},
+  lasso::memory_checking::{GrandProducts, MemoryCheckingProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -47,7 +47,7 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   /// size `sparsity`.
   pub E_polys: Vec<DensePolynomial<F>>,
 
-  /// Polynomial encodings for flag polynomials for each instruction. 
+  /// Polynomial encodings for flag polynomials for each instruction.
   /// If using a single instruction this will be empty.
   /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (sparsity).
   ///
@@ -170,10 +170,90 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
 
   fn prove() {
+    // prove_program_code
     // prove_memory
     // prove_lookups
     // prove_r1cs
     unimplemented!("todo");
+  }
+
+  fn prove_program_code(
+    program_code: &[u64],
+    access_sequence: &[usize],
+    code_size: usize,
+    contiguous_reads_per_access: usize,
+    r_mem_check: &(F, F),
+    transcript: &mut Transcript,
+  ) {
+    let (gamma, tau) = r_mem_check;
+    let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
+
+    let m: usize = (access_sequence.len() * contiguous_reads_per_access).next_power_of_two();
+    // TODO(moodlezoup): resize access_sequence?
+
+    let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
+    let mut final_cts: Vec<usize> = vec![0; code_size];
+    let mut read_cts: Vec<usize> = Vec::with_capacity(m);
+    let mut read_values: Vec<u64> = Vec::with_capacity(m);
+
+    for (j, code_address) in access_sequence.iter().enumerate() {
+      debug_assert!(code_address + contiguous_reads_per_access <= code_size);
+      debug_assert!(code_address % contiguous_reads_per_access == 0);
+
+      for offset in 0..contiguous_reads_per_access {
+        let addr = code_address + offset;
+        let counter = final_cts[addr];
+        read_addrs.push(addr);
+        read_values.push(program_code[addr]);
+        read_cts.push(counter);
+        final_cts[addr] = counter + 1;
+      }
+    }
+
+    let E_poly: DensePolynomial<F> = DensePolynomial::from_u64(&read_values);
+    let dim: DensePolynomial<F> = DensePolynomial::from_usize(access_sequence);
+    let read_cts: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts);
+    let final_cts: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts);
+    let init_values: DensePolynomial<F> = DensePolynomial::from_u64(program_code);
+    unimplemented!("commit to these polynomials");
+
+    let init_poly = DensePolynomial::new(
+      (0..code_size)
+        .map(|i| {
+          // addr is given by i, init value is given by program_code, and ts = 0
+          hash_func(&F::from(i as u64), &F::from(program_code[i]), &F::zero())
+        })
+        .collect::<Vec<F>>(),
+    );
+
+    let read_poly = DensePolynomial::new(
+      (0..m)
+        .map(|i| hash_func(&F::from(read_addrs[i] as u64), &E_poly[i], &read_cts[i]))
+        .collect::<Vec<F>>(),
+    );
+
+    let write_poly = DensePolynomial::new(
+      (0..m)
+        .map(|i| {
+          hash_func(
+            &F::from(read_addrs[i] as u64),
+            &F::from(read_values[i]),
+            &(read_cts[i] + F::one()),
+          )
+        })
+        .collect::<Vec<F>>(),
+    );
+
+    let final_poly = DensePolynomial::new(
+      (0..code_size)
+        .map(|i| {
+          // addr is given by i, init value is given by program_code, and ts = 0
+          hash_func(&F::from(i as u64), &F::from(program_code[i]), &final_cts[i])
+        })
+        .collect::<Vec<F>>(),
+    );
+
+    unimplemented!("memory checking");
   }
 
   fn prove_memory(
@@ -328,17 +408,18 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let tau = r_mem_check[1];
     let commitment_generators = Self::commitment_generators(m);
 
-    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES).map(|memory_index| {
-      GrandProducts::<F>::new(
-        &materialized_subtables[Self::memory_to_subtable_index(memory_index)], 
-        &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
-        &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)], 
-        &polynomials.read_cts[Self::memory_to_dimension_index(memory_index)], 
-        &polynomials.final_cts[Self::memory_to_dimension_index(memory_index)], 
-        &(gamma, tau)
-      )
-    }).collect();
-
+    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        GrandProducts::<F>::new(
+          &materialized_subtables[Self::memory_to_subtable_index(memory_index)],
+          &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
+          &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)],
+          &polynomials.read_cts[Self::memory_to_dimension_index(memory_index)],
+          &polynomials.final_cts[Self::memory_to_dimension_index(memory_index)],
+          &(gamma, tau),
+        )
+      })
+      .collect();
 
     let memory_checking_proof = MemoryCheckingProof::prove(
       &polynomials,
@@ -405,7 +486,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     proof.primary_sumcheck_proof.flag_proof.verify(
       &r_primary_sumcheck,
       &proof.primary_sumcheck_proof.flag_evals,
-      &proof.commitment_generators.flag_commitment_gens.as_ref().unwrap(),
+      &proof
+        .commitment_generators
+        .flag_commitment_gens
+        .as_ref()
+        .unwrap(),
       &proof.commitments.flag_commitment.as_ref().unwrap(),
       transcript,
     )?;
@@ -427,7 +512,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       Self::memory_to_dimension_index,
       Self::evaluate_memory_mle,
       &(r_mem_check[0], r_mem_check[1]),
-      transcript
+      transcript,
     )?;
 
     Ok(())
@@ -667,7 +752,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   }
 
   fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
-    let subtable = Self::Subtables::iter().nth(Self::memory_to_subtable_index(memory_index)).expect("should exist");
+    let subtable = Self::Subtables::iter()
+      .nth(Self::memory_to_subtable_index(memory_index))
+      .expect("should exist");
     subtable.evaluate_mle(point)
   }
 
@@ -675,7 +762,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   fn memory_to_subtable_index(i: usize) -> usize {
     i / Self::C
   }
-  
+
   /// Maps an index [0, num_memories) -> [0, subtable_dimensionality]
   fn memory_to_dimension_index(i: usize) -> usize {
     i % Self::C

@@ -54,7 +54,7 @@ subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
 pub enum TestJoltVM {}
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
-  const MEMORY_OPS_PER_STEP: usize = 10;
+  const MEMORY_OPS_PER_STEP: usize = 4;
   const C: usize = 4;
   const M: usize = 1 << 16;
 
