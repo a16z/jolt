@@ -75,7 +75,8 @@ impl<F: PrimeField, const C: usize, const M: usize> SubtableStrategy<F, C, M>
 
 #[cfg(test)]
 mod test {
-  use ark_curve25519::Fr;
+  //use ark_curve25519::Fr;
+  use ark_bn254::Fr;
   use ark_std::{One, Zero};
 
   use crate::{materialization_mle_parity_test, utils::index_to_field_bitvector};

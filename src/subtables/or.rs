@@ -66,7 +66,8 @@ mod test {
   };
 
   use super::*;
-  use ark_curve25519::Fr;
+  //use ark_curve25519::Fr;
+  use ark_bn254::Fr;
 
   #[test]
   fn table_materialization_hardcoded() {

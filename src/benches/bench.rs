@@ -4,7 +4,8 @@ use crate::{
   lasso::{densified::DensifiedRepresentation, surge::SparsePolynomialEvaluationProof},
   utils::random::RandomTape,
 };
-use ark_curve25519::{EdwardsProjective, Fr};
+//use ark_curve25519::{EdwardsProjective, Fr};
+use ark_bn254::{G1Projective, Fr};
 use ark_ff::PrimeField;
 use ark_std::{log2, test_rng};
 use merlin::Transcript;
@@ -92,7 +93,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^10)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -101,7 +102,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^12)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -110,7 +111,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^14)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -119,7 +120,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^16)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -128,7 +129,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^18)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -137,7 +138,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^20)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -146,7 +147,7 @@ fn jolt_demo_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^128, 2^22)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 8,
       /* M= */ 1 << 16,
@@ -160,7 +161,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^10)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -169,7 +170,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^12)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -178,7 +179,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^14)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -187,7 +188,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^16)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -196,7 +197,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^18)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -205,7 +206,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^20)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -214,7 +215,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^22)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,
@@ -223,7 +224,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, fn())> {
     single_pass_lasso!(
       "And(2^24)",
       Fr,
-      EdwardsProjective,
+      G1Projective,
       AndSubtableStrategy,
       /* C= */ 1,
       /* M= */ 1 << 16,

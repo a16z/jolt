@@ -95,7 +95,8 @@ mod test {
   use crate::{materialization_mle_parity_test, utils::index_to_field_bitvector};
 
   use super::*;
-  use ark_curve25519::Fr;
+  //use ark_curve25519::Fr;
+  use ark_bn254::Fr;
   use ark_ff::Zero;
 
   #[test]

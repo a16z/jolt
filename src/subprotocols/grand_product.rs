@@ -264,7 +264,9 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 #[cfg(test)]
 mod grand_product_circuit_tests {
   use super::*;
-  use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+  //use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+  use ark_bn254::{G1Projective, Fr};
+
 
   #[test]
   fn prove_verify() {

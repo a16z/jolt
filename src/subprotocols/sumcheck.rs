@@ -217,19 +217,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         })
         .collect();
 
-      #[cfg(feature = "multicore")]
-      eval_points
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(poly_i, eval_point)| {
-          *eval_point = accum
-            .par_iter()
-            .take(mle_half)
-            .map(|mle| mle[poly_i])
-            .sum::<F>();
-        });
-
-      #[cfg(not(feature = "multicore"))]
+      // TODO(#31): Parallelize
       for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
         for mle in accum.iter().take(mle_half) {
           *eval_point += mle[poly_i];
@@ -452,7 +440,8 @@ mod test {
   use super::*;
   use crate::utils::math::Math;
   use crate::utils::test::TestTranscript;
-  use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+  //use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+  use ark_bn254::{G1Projective, Fr};
   use ark_ff::Zero;
 
   #[test]

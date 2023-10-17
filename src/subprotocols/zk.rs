@@ -303,7 +303,8 @@ impl<G: CurveGroup> ProductProof<G> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use ark_curve25519::EdwardsProjective as G1Projective;
+  //use ark_curve25519::EdwardsProjective as G1Projective;
+  use ark_bn254::G1Projective;
   use ark_std::test_rng;
   use ark_std::UniformRand;
 

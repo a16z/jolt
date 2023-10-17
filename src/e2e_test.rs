@@ -1,4 +1,5 @@
-use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+//use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+use ark_bn254::{G1Projective, Fr};
 use merlin::Transcript;
 
 use crate::{

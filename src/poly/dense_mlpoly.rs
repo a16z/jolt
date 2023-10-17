@@ -405,8 +405,9 @@ mod tests {
 
   use super::*;
   use crate::subprotocols::dot_product::DotProductProof;
-  use ark_curve25519::EdwardsProjective as G1Projective;
-  use ark_curve25519::Fr;
+  // use ark_curve25519::EdwardsProjective as G1Projective;
+  // use ark_curve25519::Fr;
+  use ark_bn254::{G1Projective, Fr};
   use ark_std::test_rng;
   use ark_std::One;
   use ark_std::UniformRand;
