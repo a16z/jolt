@@ -751,6 +751,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     subtable_lookup_indices
   }
 
+  fn subtable_to_instruction_indices() -> Vec<Vec<usize>> {
+    let mut indices: Vec<Vec<usize>> =
+      vec![Vec::with_capacity(Self::NUM_INSTRUCTIONS); Self::NUM_SUBTABLES];
+
+    for instruction in Self::InstructionSet::iter() {
+      let instruction_subtables: Vec<Self::Subtables> = instruction
+        .subtables::<F>()
+        .iter()
+        .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
+        .collect();
+      for subtable in instruction_subtables {
+        let subtable_index: usize = subtable.into();
+        indices[subtable_index].push(instruction.to_opcode() as usize);
+      }
+    }
+
+    indices
+  }
+
   fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
     let subtable = Self::Subtables::iter()
       .nth(Self::memory_to_subtable_index(memory_index))
