@@ -17,8 +17,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
+use super::fingerprint_strategy::FingerprintStrategy;
+
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, S: MemCheckingStrat<G>> {
+pub struct MemoryCheckingProof<G: CurveGroup, S: FingerprintStrategy<G>> {
   proof_prod_layer: ProductLayerProof<G::ScalarField>,
   proof_hash_layer: S,
   num_ops: usize,
@@ -62,7 +64,7 @@ impl<F: PrimeField> GPEvals<F> {
   }
 }
 
-impl<G: CurveGroup, S: MemCheckingStrat<G>> MemoryCheckingProof<G, S> {
+impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
   pub fn prove(
     polynomials: &S::Polynomials,
     grand_products: &mut Vec<GrandProducts<G::ScalarField>>,
@@ -302,41 +304,7 @@ pub struct HashLayerProof<G: CurveGroup> {
   proof_derefs: CombinedTableEvalProof<G>,
 }
 
-pub trait MemCheckingStrat<G: CurveGroup>:
-  std::marker::Sync + CanonicalSerialize + CanonicalDeserialize
-{
-  type Polynomials;
-  type Generators;
-  type Commitments;
-
-  fn prove(
-    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    polynomials: &Self::Polynomials,
-    generators: &Self::Generators,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self;
-
-  // TODO(sragss): simplify signature
-  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
-    &self,
-    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
-    memory_to_dimension_index: F1,
-    evaluate_memory_mle: F2,
-    commitments: &Self::Commitments,
-    generators: &Self::Generators,
-    r_hash: &G::ScalarField,
-    r_multiset_check: &G::ScalarField,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError>;
-
-  fn num_ops(polys: &Self::Polynomials) -> usize;
-  fn num_memories(polys: &Self::Polynomials) -> usize;
-  fn memory_size(polys: &Self::Polynomials) -> usize;
-}
-
-impl<G: CurveGroup> MemCheckingStrat<G> for HashLayerProof<G> {
+impl<G: CurveGroup> FingerprintStrategy<G> for HashLayerProof<G> {
   type Polynomials = PolynomialRepresentation<G::ScalarField>;
   type Generators = SurgeCommitmentGenerators<G>;
   type Commitments = SurgeCommitment<G>;
@@ -559,62 +527,62 @@ impl<G: CurveGroup> HashLayerProof<G> {
   }
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct HashLayerProofFlags<G: CurveGroup> {
-  eval_dim: Vec<G::ScalarField>,    // C-sized
-  eval_read: Vec<G::ScalarField>,   // C-sized
-  eval_final: Vec<G::ScalarField>,  // C-sized
-  eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
+// #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+// struct HashLayerProofFlags<G: CurveGroup> {
+//   eval_dim: Vec<G::ScalarField>,    // C-sized
+//   eval_read: Vec<G::ScalarField>,   // C-sized
+//   eval_final: Vec<G::ScalarField>,  // C-sized
+//   eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
 
-  // NEW
-  eval_flags: Vec<G::ScalarField>, // NUM_MEMORIES-sized
+//   // NEW
+//   eval_flags: Vec<G::ScalarField>, // NUM_MEMORIES-sized
 
-  proof_ops: CombinedTableEvalProof<G>,
-  proof_mem: CombinedTableEvalProof<G>,
-  proof_derefs: CombinedTableEvalProof<G>,
+//   proof_ops: CombinedTableEvalProof<G>,
+//   proof_mem: CombinedTableEvalProof<G>,
+//   proof_derefs: CombinedTableEvalProof<G>,
 
-  // NEW
-  proof_flags: CombinedTableEvalProof<G>,
-}
+//   // NEW
+//   proof_flags: CombinedTableEvalProof<G>,
+// }
 
-impl<G: CurveGroup> MemCheckingStrat<G> for HashLayerProofFlags<G> {
-  type Polynomials = PolynomialRepresentation<G::ScalarField>;
-  type Generators = SurgeCommitmentGenerators<G>;
-  type Commitments = SurgeCommitment<G>;
+// impl<G: CurveGroup> FingerprintStrategy<G> for HashLayerProofFlags<G> {
+//   type Polynomials = PolynomialRepresentation<G::ScalarField>;
+//   type Generators = SurgeCommitmentGenerators<G>;
+//   type Commitments = SurgeCommitment<G>;
 
-  fn prove(
-    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    polynomials: &Self::Polynomials,
-    generators: &Self::Generators,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self {
-    todo!("unimpl") // TODO: Same as before + flags
-  }
+//   fn prove(
+//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+//     polynomials: &Self::Polynomials,
+//     generators: &Self::Generators,
+//     transcript: &mut Transcript,
+//     random_tape: &mut RandomTape<G>,
+//   ) -> Self {
+//     todo!("unimpl") // TODO: Same as before + flags
+//   }
 
-  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
-    &self,
-    rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-    grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
-    memory_to_dimension_index: F1,
-    evaluate_memory_mle: F2,
-    commitments: &Self::Commitments,
-    generators: &Self::Generators,
-    r_hash: &G::ScalarField,
-    r_multiset_check: &G::ScalarField,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
-    todo!("unimpl")
-  }
+//   fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
+//     &self,
+//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
+//     grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
+//     memory_to_dimension_index: F1,
+//     evaluate_memory_mle: F2,
+//     commitments: &Self::Commitments,
+//     generators: &Self::Generators,
+//     r_hash: &G::ScalarField,
+//     r_multiset_check: &G::ScalarField,
+//     transcript: &mut Transcript,
+//   ) -> Result<(), ProofVerifyError> {
+//     todo!("unimpl")
+//   }
 
-  // TODO(sragss): Move these functions onto a trait all the PolynomialRepresentation types must implement
-  fn num_ops(polys: &Self::Polynomials) -> usize {
-    polys.num_ops
-  }
-  fn num_memories(polys: &Self::Polynomials) -> usize {
-    polys.num_memories
-  }
-  fn memory_size(polys: &Self::Polynomials) -> usize {
-    polys.memory_size
-  }
-}
+//   // TODO(sragss): Move these functions onto a trait all the PolynomialRepresentation types must implement
+//   fn num_ops(polys: &Self::Polynomials) -> usize {
+//     polys.num_ops
+//   }
+//   fn num_memories(polys: &Self::Polynomials) -> usize {
+//     polys.num_memories
+//   }
+//   fn memory_size(polys: &Self::Polynomials) -> usize {
+//     polys.memory_size
+//   }
+// }
