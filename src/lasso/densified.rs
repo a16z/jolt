@@ -124,7 +124,8 @@ impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
       num_memories: S::num_memories(),
       C: S::subtable_dimensionality(),
       memory_size: self.r#final[0].len(),
-      num_ops: self.dim_usize[0].len()
+      num_ops: self.dim_usize[0].len(),
+      num_instructions: 1
     }
   }
 }

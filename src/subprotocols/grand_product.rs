@@ -196,9 +196,13 @@ impl<F: PrimeField> GrandProducts<F> {
     dim_i_usize: &[usize],
     read_i: &DensePolynomial<F>,
     final_i: &DensePolynomial<F>,
-    flags_i: &DensePolynomial<F>,
+    flag_table_i: &Vec<bool>,
     r_mem_check: &(F, F),
   ) -> Self {
+    debug_assert_eq!(dim_i.len(), dim_i_usize.len());
+    debug_assert_eq!(dim_i.len(), read_i.len());
+    debug_assert_eq!(dim_i.len(), flag_table_i.len());
+
     let (
       grand_product_input_init,
       grand_product_input_read,
@@ -210,7 +214,7 @@ impl<F: PrimeField> GrandProducts<F> {
       dim_i_usize,
       read_i,
       final_i,
-      flags_i,
+      flag_table_i,
       r_mem_check,
     );
 
@@ -221,16 +225,14 @@ impl<F: PrimeField> GrandProducts<F> {
 
     println!("GrandProducts::new_read_only_with_flags");
 
-    // TODO(sragss): Repair
-    // #[cfg(all(debug, test))]
-    // {
-      println!("RUNNING DEBUG");
+    #[cfg(test)]
+    {
       let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
       let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
       // H(Init) * H(WS) ?= H(RS) * H(Audit)
       // analogous to H(WS) = H(RS) * H(S) in the Lasso paper
       debug_assert_eq!(hashed_read_set, hashed_write_set);
-    // }
+    }
 
     GrandProducts {
       init: prod_init,
@@ -263,7 +265,7 @@ impl<F: PrimeField> GrandProducts<F> {
     a_i_usize: &[usize],
     t_read_i: &DensePolynomial<F>,
     t_final_i: &DensePolynomial<F>,
-    flags_i: &DensePolynomial<F>,
+    flag_table_i: &Vec<bool>,
     r_mem_check: &(F, F),
   ) -> (
     DensePolynomial<F>,
@@ -275,8 +277,17 @@ impl<F: PrimeField> GrandProducts<F> {
 
     // TODO(moodlezoup): (t * gamma^2 + v * gamma + a - tau) * flags + (1 - flags)
     // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
-    let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
-    let hash_func_read_write = |a: &F, v: &F, t: &F, flags: &F| -> F { *flags * (*t * gamma.square() + *v * *gamma + *a - tau) + (F::one() - *flags) };
+    let hash_func = |a: &F, v: &F, t: &F| -> F { 
+      *t * gamma.square() + *v * *gamma + *a - tau 
+    };
+    let hash_func_read_write = |a: &F, v: &F, t: &F, flags: bool| -> F { 
+      if flags {
+        *t * gamma.square() + *v * *gamma + *a - tau 
+      } else {
+        // TODO(sragss): Assert other terms 0 for cheap(er) commitment.
+        F::one()
+      }
+    };
 
     // init: M hash evaluations => log(M)-variate polynomial
     assert_eq!(v_table.len(), t_final_i.len());
@@ -314,7 +325,7 @@ impl<F: PrimeField> GrandProducts<F> {
         .clone()
         .map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
-          hash_func_read_write(&a_i[i], &v_table[a_i_usize[i]], &t_read_i[i], &flags_i[i])
+          hash_func_read_write(&a_i[i], &v_table[a_i_usize[i]], &t_read_i[i], flag_table_i[i])
         })
         .collect::<Vec<F>>(),
     );
@@ -328,7 +339,7 @@ impl<F: PrimeField> GrandProducts<F> {
             &a_i[i],
             &v_table[a_i_usize[i]],
             &(t_read_i[i] + F::one()),
-            &flags_i[i]
+        flag_table_i[i]
           )
         })
         .collect::<Vec<F>>(),

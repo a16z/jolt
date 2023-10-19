@@ -10,15 +10,15 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking::{MemoryCheckingProof, HashLayerProof},
+  lasso::memory_checking::{HashLayerProof, MemoryCheckingProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+    grand_product::GrandProducts,
     sumcheck::SumcheckInstanceProof,
-    grand_product::GrandProducts
   },
   utils::{
     errors::ProofVerifyError,
@@ -49,6 +49,7 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   pub E_polys: Vec<DensePolynomial<F>>,
 
   /// Polynomial encodings for flag polynomials for each instruction.
+  /// Polynomial encodings for flag polynomials for each instruction.
   /// If using a single instruction this will be empty.
   /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (sparsity).
   ///
@@ -69,6 +70,7 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   pub C: usize,
   pub memory_size: usize,
   pub num_ops: usize,
+  pub num_instructions: usize,
 }
 
 impl<F: PrimeField> PolynomialRepresentation<F> {
@@ -362,7 +364,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     let num_rounds = ops.len().log_2();
     let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
-    let (primary_sumcheck_instance_proof, r_primary_sumcheck, (eq_eval, flag_evals, memory_evals)) =
+    let (primary_sumcheck_instance_proof, r_primary_sumcheck, (_eq_eval, flag_evals, memory_evals)) =
       SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
         &F::zero(),
         num_rounds,
@@ -408,17 +410,28 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let tau = r_mem_check[1];
     let commitment_generators = Self::commitment_generators(m);
 
-    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES).map(|memory_index| {
-      GrandProducts::<F>::new_read_only(
-        &materialized_subtables[Self::memory_to_subtable_index(memory_index)], 
-        &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
-        &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)], 
-        &polynomials.read_cts[Self::memory_to_dimension_index(memory_index)], 
-        &polynomials.final_cts[Self::memory_to_dimension_index(memory_index)], 
-        &(gamma, tau)
-      )
-    }).collect();
+    let mut flag_map = vec![vec![false; ops.len().next_power_of_two()]; Self::NUM_SUBTABLES];
+    let subtable_map = Self::subtable_map();
+    for (instruction_index, instruction) in ops.iter().enumerate() {
+      let subtable_indices = &subtable_map[instruction.to_opcode() as usize];
+      for subtable_index in subtable_indices {
+        flag_map[*subtable_index][instruction_index] = true;
+      }
+    }
 
+    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        GrandProducts::<F>::new_read_only_with_flags(
+          &materialized_subtables[Self::memory_to_subtable_index(memory_index)],
+          &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
+          &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)],
+          &polynomials.read_cts[memory_index],
+          &polynomials.final_cts[memory_index],
+          &flag_map[Self::memory_to_subtable_index(memory_index)],
+          &(gamma, tau),
+        )
+      })
+      .collect();
 
     let memory_checking_proof = MemoryCheckingProof::prove(
       &polynomials,
@@ -519,14 +532,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   }
 
   fn commitment_generators(m: usize) -> SurgeCommitmentGenerators<G> {
-    // dim_1, ... dim_C, read_1, ..., read_C
-    // log_2(C * m + C * m)
-    let num_vars_dim_read = (2 * Self::C * m).next_power_of_two().log_2();
-    // final_1, ..., final_C
-    // log_2(C * M)
-    let num_vars_final = (Self::C * Self::M).next_power_of_two().log_2();
-    // E_1, ..., E_alpha
-    // log_2(alpha * m)
+    // dim_1, ... dim_C, read_1, ..., read_{NUM_MEMORIES}
+    // log_2(C * m + NUM_MEMORIES * m)
+    let num_vars_dim_read = (Self::C * m + Self::NUM_MEMORIES * m).next_power_of_two().log_2();
+    // final_1, ..., final_{NUM_MEMORIES}
+    // log_2(NUM_MEMORIES * M)
+    let num_vars_final = (Self::NUM_MEMORIES * Self::M).next_power_of_two().log_2();
+    // E_1, ..., E_{NUM_MEMORIES}
+    // log_2(NUM_MEMORIES * m)
     let num_vars_E = (Self::NUM_MEMORIES * m).next_power_of_two().log_2();
     let num_vars_flag =
       m.next_power_of_two().log_2() + Self::NUM_INSTRUCTIONS.next_power_of_two().log_2();
@@ -556,27 +569,39 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     opcodes.resize(m, 0);
 
     let mut dim: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
-    let mut read_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
-    let mut final_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
+    let mut read_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
+    let mut final_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
     let mut E_polys: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
 
-    for i in 0..Self::C {
-      let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
+    let subtable_map = Self::subtable_map();
+    for memory_index in 0..Self::NUM_MEMORIES {
+      let access_sequence: &Vec<usize> =
+        &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)];
 
       let mut final_cts_i = vec![0usize; Self::M];
       let mut read_cts_i = vec![0usize; m];
 
-      for j in 0..m {
-        let memory_address = access_sequence[j];
+      for op_index in 0..m {
+        let memory_address = access_sequence[op_index];
         debug_assert!(memory_address < Self::M);
-        let counter = final_cts_i[memory_address];
-        read_cts_i[j] = counter;
-        final_cts_i[memory_address] = counter + 1;
+
+        // Only increment if the flag is used at this step
+        let subtables = &subtable_map[opcodes[op_index] as usize];
+        if subtables.contains(&Self::memory_to_subtable_index(memory_index)) {
+          let counter = final_cts_i[memory_address];
+          read_cts_i[op_index] = counter;
+          final_cts_i[memory_address] = counter + 1;
+        }
       }
 
-      dim.push(DensePolynomial::from_usize(access_sequence));
       read_cts.push(DensePolynomial::from_usize(&read_cts_i));
       final_cts.push(DensePolynomial::from_usize(&final_cts_i));
+    }
+
+    for i in 0..Self::C {
+      let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
+
+      dim.push(DensePolynomial::from_usize(access_sequence));
     }
 
     for subtable_index in 0..Self::NUM_SUBTABLES {
@@ -620,6 +645,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       C: Self::C,
       memory_size: Self::M,
       num_ops: m, // TODO(sragss): should this be real num_ops or padded?
+      num_instructions: Self::NUM_INSTRUCTIONS,
     }
   }
 
@@ -751,23 +777,21 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     subtable_lookup_indices
   }
 
-  fn subtable_to_instruction_indices() -> Vec<Vec<usize>> {
-    let mut indices: Vec<Vec<usize>> =
-      vec![Vec::with_capacity(Self::NUM_INSTRUCTIONS); Self::NUM_SUBTABLES];
+  /// Computes which subtables indices are active for a given instruction.
+  /// vec[instruction_index] = [subtable_id_a, subtable_id_b, ...]
+  fn subtable_map() -> Vec<Vec<usize>> {
+    return Self::InstructionSet::iter()
+      .map(|instruction| {
+        // TODO(sragss): Box<dyn SubtableTrait>.into() should work via additional functionality on the trait .
+        let instruction_subtable_ids: Vec<usize> = instruction
+          .subtables::<F>()
+          .iter()
+          .map(|subtable| Self::Subtables::from(subtable.subtable_id()).into())
+          .collect();
 
-    for instruction in Self::InstructionSet::iter() {
-      let instruction_subtables: Vec<Self::Subtables> = instruction
-        .subtables::<F>()
-        .iter()
-        .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
-        .collect();
-      for subtable in instruction_subtables {
-        let subtable_index: usize = subtable.into();
-        indices[subtable_index].push(instruction.to_opcode() as usize);
-      }
-    }
-
-    indices
+        instruction_subtable_ids
+      })
+      .collect();
   }
 
   fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {

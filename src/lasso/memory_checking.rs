@@ -339,12 +339,14 @@ impl<G: CurveGroup> FingerprintStrategy<G> for HashLayerProof<G> {
     let eval_dim: Vec<G::ScalarField> = (0..polynomials.C)
       .map(|i| polynomials.dim[i].evaluate(rand_ops))
       .collect();
-    let eval_read: Vec<G::ScalarField> = (0..polynomials.C)
+    let eval_read: Vec<G::ScalarField> = (0..polynomials.num_memories)
       .map(|i| polynomials.read_cts[i].evaluate(rand_ops))
       .collect();
-    let eval_final: Vec<G::ScalarField> = (0..polynomials.C)
+    let eval_final: Vec<G::ScalarField> = (0..polynomials.num_memories)
       .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
       .collect();
+
+    // TODO(sragss): flags?
 
     evals_ops.extend(eval_dim.clone());
     evals_ops.extend(eval_read.clone());
