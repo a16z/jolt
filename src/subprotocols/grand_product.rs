@@ -3,6 +3,7 @@
 use super::sumcheck::{SumcheckInstanceProof, CubicSumcheckParams};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
@@ -60,12 +61,12 @@ impl<F: PrimeField> GrandProducts<F> {
       r_mem_check,
     );
 
-    let prod_init = GrandProductCircuit::new(&grand_product_input_init);
-    let prod_read = GrandProductCircuit::new(&grand_product_input_read);
-    let prod_write = GrandProductCircuit::new(&grand_product_input_write);
-    let prod_final = GrandProductCircuit::new(&grand_product_input_final);
+    let prod_init = GrandProductCircuit::new(grand_product_input_init);
+    let prod_read = GrandProductCircuit::new(grand_product_input_read);
+    let prod_write = GrandProductCircuit::new(grand_product_input_write);
+    let prod_final = GrandProductCircuit::new(grand_product_input_final);
 
-    #[cfg(debug)]
+    #[cfg(test)]
     {
       let hashed_write_set: F = prod_init.evaluate() * prod_write.evaluate();
       let hashed_read_set: F = prod_read.evaluate() * prod_final.evaluate();
@@ -114,7 +115,6 @@ impl<F: PrimeField> GrandProducts<F> {
   ) {
     let (gamma, tau) = r_mem_check;
 
-    // TODO(moodlezoup): (t * gamma^2 + v * gamma + a - tau) * flags + (1 - flags)
     // hash(a, v, t) = t * gamma^2 + v * gamma + a - tau
     let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 
@@ -218,12 +218,10 @@ impl<F: PrimeField> GrandProducts<F> {
       r_mem_check,
     );
 
-    let prod_init = GrandProductCircuit::new(&grand_product_input_init);
-    let prod_read = GrandProductCircuit::new(&grand_product_input_read);
-    let prod_write = GrandProductCircuit::new(&grand_product_input_write);
-    let prod_final = GrandProductCircuit::new(&grand_product_input_final);
-
-    println!("GrandProducts::new_read_only_with_flags");
+    let prod_init = GrandProductCircuit::new(grand_product_input_init);
+    let prod_read = GrandProductCircuit::new(grand_product_input_read);
+    let prod_write = GrandProductCircuit::new(grand_product_input_write);
+    let prod_final = GrandProductCircuit::new(grand_product_input_final);
 
     #[cfg(test)]
     {
@@ -358,6 +356,7 @@ impl<F: PrimeField> GrandProducts<F> {
 pub struct GrandProductCircuit<F> {
   left_vec: Vec<DensePolynomial<F>>,
   right_vec: Vec<DensePolynomial<F>>,
+  leaves: DensePolynomial<F> // TODO(sragss): Wasted RAM for non-flags GPCs. Swap to Option<DensePolynomial<F>>
 }
 
 impl<F: PrimeField> GrandProductCircuit<F> {
@@ -379,12 +378,12 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     )
   }
 
-  pub fn new(poly: &DensePolynomial<F>) -> Self {
+  pub fn new(leaves: DensePolynomial<F>) -> Self {
     let mut left_vec: Vec<DensePolynomial<F>> = Vec::new();
     let mut right_vec: Vec<DensePolynomial<F>> = Vec::new();
 
-    let num_layers = poly.len().log_2();
-    let (outp_left, outp_right) = poly.split(poly.len() / 2);
+    let num_layers = leaves.len().log_2();
+    let (outp_left, outp_right) = leaves.split(leaves.len() / 2);
 
     left_vec.push(outp_left);
     right_vec.push(outp_right);
@@ -398,6 +397,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     GrandProductCircuit {
       left_vec,
       right_vec,
+      leaves
     }
   }
 
@@ -407,25 +407,6 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     assert_eq!(self.right_vec[len - 1].get_num_vars(), 0);
     self.left_vec[len - 1][0] * self.right_vec[len - 1][0]
   }
-
-  pub fn sumcheck_batch(circuits: &Vec<Self>, layer_id: usize, eq: DensePolynomial<F>) -> CubicSumcheckParams<F> {
-    // TODO(sragss): Match by layer type.
-
-    let num_rounds = circuits[0].left_vec[layer_id].get_num_vars();
-
-    // TODO(sragss): rm clone – use remove / take
-    CubicSumcheckParams::new_prod(
-      circuits.iter().map(|circuit| 
-        circuit.left_vec[layer_id].clone()
-      ).collect(),
-      circuits.iter().map(|circuit| 
-        circuit.right_vec[layer_id].clone()
-      ).collect(),
-      eq,
-      num_rounds
-    )
-  }
-  
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -433,6 +414,7 @@ pub struct LayerProofBatched<F: PrimeField> {
   pub proof: SumcheckInstanceProof<F>,
   pub claims_prod_left: Vec<F>,
   pub claims_prod_right: Vec<F>,
+  pub combine_prod: bool // TODO(sragss): Use enum. Sumcheck.rs/CubicType
 }
 
 #[allow(dead_code)]
@@ -454,14 +436,59 @@ impl<F: PrimeField> LayerProofBatched<F> {
   }
 }
 
-struct BatchedGrandProductCircuit<F: PrimeField> {
-  circuits: Vec<GrandProductCircuit<F>>,
+pub struct BatchedGrandProductCircuit<F: PrimeField> {
+  pub circuits: Vec<GrandProductCircuit<F>>,
 
   flags: Option<Vec<DensePolynomial<F>>>,
   flag_map: Option<Vec<usize>>
 }
 
 impl<F: PrimeField> BatchedGrandProductCircuit<F> {
+
+  /// flag_map: [flag_index_0, ... flag_index_NUM_MEMORIES]
+  pub fn new_batches_flags(
+    gps: Vec<GrandProducts<F>>, 
+    flags: Vec<DensePolynomial<F>>, 
+    flag_map: Vec<usize>) -> (Self, Self) {
+      debug_assert_eq!(gps.len(), flag_map.len());
+      let mut read_write_circuits = Vec::with_capacity(gps.len() * 2);
+      let mut init_final_circuits = Vec::with_capacity(gps.len() * 2);
+
+      for gp in gps {
+        read_write_circuits.push(gp.read);
+        read_write_circuits.push(gp.write);
+
+        init_final_circuits.push(gp.init);
+        init_final_circuits.push(gp.r#final);
+      }
+
+      // gps: [mem_0, ... mem_NUM_MEMORIES]
+      // flags: [flag_0, ... flag_NUM_MEMORIES]
+      // flag_map: [flag_index_0, ... flag_index_NUM_MEMORIES]
+      // read_write_circuits: [read_0, write_0, read_NUM_MEMORIES, write_NUM_MEMORIES]
+      // expanded_flag_map[circuit_index] => flag_index
+      let expanded_flag_map = flag_map.iter().flat_map(|&i| vec![i; 2]).collect();
+
+      (Self {
+        circuits: read_write_circuits,
+        flags: Some(flags),
+        flag_map: Some(expanded_flag_map)
+      },
+      Self {
+        circuits: init_final_circuits,
+        flags: None,
+        flag_map: None
+      })
+  }
+
+  pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
+    Self {
+      circuits,
+      flags: None,
+      flag_map: None
+    }
+  }
+
   fn num_layers(&self) -> usize {
     let prod_layers = self.circuits[0].left_vec.len();
 
@@ -472,23 +499,43 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
     }
   }
 
-  // TODO(sragss): Rename
-  fn sumcheck_batch(&self, layer_id: usize, eq: DensePolynomial<F>) -> CubicSumcheckParams<F> {
-    // TODO(sragss): Match by layer type.
+  fn sumcheck_layer_params(&self, layer_id: usize, eq: DensePolynomial<F>) -> CubicSumcheckParams<F> {
+    if self.flags.is_some() && layer_id == 0 {
+      let flags = self.flags.as_ref().unwrap();
+      debug_assert_eq!(self.circuits[0].leaves.len(), flags[0].len());
+      debug_assert_eq!(flags[0].len(), eq.len());
 
-    let num_rounds = self.circuits[0].left_vec[layer_id].get_num_vars();
+      let num_rounds = eq.get_num_vars();
+      // TODO(sragss): Handle .as_ref().unwrap().clone() without cloning.
+      CubicSumcheckParams::new_flags(
+        self.circuits.iter().map(|circuit| circuit.leaves.clone()).collect(),
+        self.flags.as_ref().unwrap().clone(),
+        eq, 
+        self.flag_map.as_ref().unwrap().clone(), 
+        num_rounds
+      )
+    } else {
+      // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
+      let layer_id = if self.flags.is_some() {
+        layer_id - 1
+      } else {
+        layer_id
+      };
 
-    // TODO(sragss): rm clone – use remove / take
-    CubicSumcheckParams::new_prod(
-      self.circuits.iter().map(|circuit| 
-        circuit.left_vec[layer_id].clone()
-      ).collect(),
-      self.circuits.iter().map(|circuit| 
-        circuit.right_vec[layer_id].clone()
-      ).collect(),
-      eq,
-      num_rounds
-    )
+      let num_rounds = self.circuits[0].left_vec[layer_id].get_num_vars();
+
+      // TODO(sragss): rm clone – use remove / take
+      CubicSumcheckParams::new_prod(
+        self.circuits.iter().map(|circuit| 
+          circuit.left_vec[layer_id].clone()
+        ).collect(),
+        self.circuits.iter().map(|circuit| 
+          circuit.right_vec[layer_id].clone()
+        ).collect(),
+        eq,
+        num_rounds
+      )
+    }
   }
 }
 
@@ -500,22 +547,19 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
   #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
   pub fn prove<G>(
-    grand_product_circuits: &mut Vec<&mut GrandProductCircuit<F>>,
+    batch: BatchedGrandProductCircuit<F>,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
-    assert!(!grand_product_circuits.is_empty());
-
     let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
-    let num_layers = grand_product_circuits[0].left_vec.len();
-    let mut claims_to_verify = (0..grand_product_circuits.len())
-      .map(|i| grand_product_circuits[i].evaluate())
+    let mut claims_to_verify = (0..batch.circuits.len())
+      .map(|i| batch.circuits[i].evaluate())
       .collect::<Vec<F>>();
 
     let mut rand = Vec::new();
-    for layer_id in (0..num_layers).rev() {
+    for layer_id in (0..batch.num_layers()).rev() {
       // produce a fresh set of coeffs and a joint claim
       let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(
         transcript,
@@ -527,9 +571,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         .sum();
 
       let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
-      // TODO(sragss): change gp param type to get rid of cloning deref nonsense.
-      let gps: Vec<GrandProductCircuit<F>> = grand_product_circuits.iter_mut().map(|item| (**item).clone()).collect();
-      let params = GrandProductCircuit::sumcheck_batch(&gps, layer_id, eq);
+      let params = batch.sumcheck_layer_params(layer_id, eq);
+      let sumcheck_type = params.sumcheck_type.clone();
       let (proof, rand_prod, claims_prod) = 
         SumcheckInstanceProof::prove_cubic_batched_special::<G>(
           &claim, 
@@ -539,7 +582,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         );
 
       let (claims_prod_left, claims_prod_right, _claims_eq) = claims_prod;
-      for i in 0..grand_product_circuits.len() {
+      for i in 0..batch.circuits.len() {
         <Transcript as ProofTranscript<G>>::append_scalar(
           transcript,
           b"claim_prod_left",
@@ -557,7 +600,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       let r_layer =
         <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_r_layer");
 
-      claims_to_verify = (0..grand_product_circuits.len())
+      claims_to_verify = (0..batch.circuits.len())
         .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))
         .collect::<Vec<F>>();
 
@@ -565,10 +608,17 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       ext.extend(rand_prod);
       rand = ext;
 
+      let combine_prod = match sumcheck_type {
+        CubicSumcheckType::Prod => true,
+        CubicSumcheckType::Flags => false,
+        _ => panic!("ruh roh")
+      };
+
       proof_layers.push(LayerProofBatched {
         proof,
         claims_prod_left,
         claims_prod_right,
+        combine_prod
       });
     }
 
@@ -583,15 +633,13 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
   pub fn verify<G, T: ProofTranscript<G>>(
     &self,
     claims_prod_vec: &Vec<F>,
-    len: usize,
     transcript: &mut T,
   ) -> (Vec<F>, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
-    let num_layers = len.log_2();
     let mut rand: Vec<F> = Vec::new();
-    assert_eq!(self.proof.len(), num_layers);
+    let num_layers = self.proof.len();
 
     let mut claims_to_verify = claims_prod_vec.to_owned();
     for (num_rounds, i) in (0..num_layers).enumerate() {
@@ -620,9 +668,24 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       let eq: F = (0..rand.len())
         .map(|i| rand[i] * rand_prod[i] + (F::one() - rand[i]) * (F::one() - rand_prod[i]))
         .product();
-      let claim_expected: F = (0..claims_prod_vec.len())
-        .map(|i| coeff_vec[i] * (claims_prod_left[i] * claims_prod_right[i] * eq))
-        .sum();
+
+      let claim_expected: F = if self.proof[i].combine_prod {
+        println!("combine_prod");
+        (0..claims_prod_vec.len())
+          .map(|i| coeff_vec[i] * CubicSumcheckParams::combine_prod(
+            &claims_prod_left[i], 
+            &claims_prod_right[i],
+             &eq))
+          .sum()
+      } else {
+        println!("combine_flags");
+        (0..claims_prod_vec.len())
+          .map(|i| coeff_vec[i] * CubicSumcheckParams::combine_flags(
+            &claims_prod_left[i], 
+          &claims_prod_right[i], 
+            &eq))
+          .sum()
+      };
 
       assert_eq!(claim_expected, claim_last);
 
@@ -649,17 +712,49 @@ mod grand_product_circuit_tests {
   #[test]
   fn prove_verify() {
     let factorial = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
-    let mut factorial_circuit = GrandProductCircuit::new(&factorial);
+    let factorial_circuit = GrandProductCircuit::new(factorial);
     let expected_eval = vec![Fr::from(24)];
     assert_eq!(factorial_circuit.evaluate(), Fr::from(24));
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let mut circuits_vec = vec![&mut factorial_circuit];
+    let circuits_vec = vec![factorial_circuit];
+    let batch = BatchedGrandProductCircuit::new_batch(circuits_vec);
     let (proof, _) =
-      BatchedGrandProductArgument::prove::<G1Projective>(&mut circuits_vec, &mut transcript);
+      BatchedGrandProductArgument::prove::<G1Projective>(batch, &mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
-    proof.verify::<G1Projective, _>(&expected_eval, 4, &mut transcript);
+    proof.verify::<G1Projective, _>(&expected_eval, &mut transcript);
+  }
+
+  #[test]
+  fn gp_read_only_trivial_e2e() {
+    let eval_table = vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)];
+    let dim_i = DensePolynomial::new(vec![Fr::from(2), Fr::from(3)]);
+    let dim_i_usize = vec![2, 3];
+    let read_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0)]);
+    let final_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0), Fr::from(1), Fr::from(1)]);
+    let r_mem_check = (Fr::from(12), Fr::from(35));
+
+    let flags = vec![DensePolynomial::new(vec![Fr::from(1), Fr::from(1)])];
+    let flag_map = vec![0];
+
+    let gps = GrandProducts::new_read_only(&eval_table, &dim_i, &dim_i_usize, &read_i, &final_i, &r_mem_check);
+
+    let expected_eval_ops = vec![gps.read.evaluate(), gps.write.evaluate()];
+    let expected_eval_mem = vec![gps.init.evaluate(), gps.r#final.evaluate()];
+
+    let (rw_batch, if_batch) = 
+      BatchedGrandProductCircuit::new_batches_flags(vec![gps], flags, flag_map);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof_ops, _rand_ops_sized_gps) =
+      BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(rw_batch, &mut transcript);
+    let (proof_mem, _rand_mem_sized_gps) =
+      BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(if_batch, &mut transcript);
+
+    let mut verify_transcript = Transcript::new(b"test_transcript");
+    proof_ops.verify::<G1Projective, _>(&expected_eval_ops, &mut verify_transcript);
+    proof_mem.verify::<G1Projective, _>(&expected_eval_mem, &mut verify_transcript);
   }
 
   #[test]
@@ -668,25 +763,36 @@ mod grand_product_circuit_tests {
     let dim_i = DensePolynomial::new(vec![Fr::from(2), Fr::from(3)]);
     let dim_i_usize = vec![2, 3];
     let read_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0)]);
-    let final_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0), Fr::from(1), Fr::from(1)]);
+    let final_i = DensePolynomial::new(vec![Fr::from(0), Fr::from(0), Fr::from(1), Fr::from(0)]);
     let r_mem_check = (Fr::from(12), Fr::from(35));
 
-    let mut gps = GrandProducts::new_read_only(&eval_table, &dim_i, &dim_i_usize, &read_i, &final_i, &r_mem_check);
+    let bool_flags: Vec<bool> = vec![true, false];
+    let flags = vec![DensePolynomial::new(vec![Fr::from(1), Fr::from(0)])];
+    let flag_map = vec![0];
 
-    let mut read_write_grand_products: Vec<&mut GrandProductCircuit<Fr>> = vec![&mut gps.read, &mut gps.write];
-    let mut init_final_grand_products: Vec<&mut GrandProductCircuit<Fr>> = vec![&mut gps.init, &mut gps.r#final];
-
-
-    let mut transcript = Transcript::new(b"test_transcript");
-    let (proof_ops, _rand_ops_sized_gps) =
-      BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(&mut read_write_grand_products, &mut transcript);
-    let (proof_mem, _rand_mem_sized_gps) =
-      BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(&mut init_final_grand_products, &mut transcript);
+    let gps = GrandProducts::new_read_only_with_flags(
+      &eval_table, 
+      &dim_i, 
+      &dim_i_usize, 
+      &read_i, 
+      &final_i, 
+      &bool_flags, 
+      &r_mem_check);
 
     let expected_eval_ops = vec![gps.read.evaluate(), gps.write.evaluate()];
     let expected_eval_mem = vec![gps.init.evaluate(), gps.r#final.evaluate()];
+
+    let (rw_batch, if_batch) = 
+      BatchedGrandProductCircuit::new_batches_flags(vec![gps], flags, flag_map);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof_ops, _rand_ops_sized_gps) =
+      BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(rw_batch, &mut transcript);
+    let (proof_mem, _rand_mem_sized_gps) =
+      BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(if_batch, &mut transcript);
+
     let mut verify_transcript = Transcript::new(b"test_transcript");
-    proof_ops.verify::<G1Projective, _>(&expected_eval_ops, 2, &mut verify_transcript);
-    proof_mem.verify::<G1Projective, _>(&expected_eval_mem, 4, &mut verify_transcript);
+    proof_ops.verify::<G1Projective, _>(&expected_eval_ops, &mut verify_transcript);
+    proof_mem.verify::<G1Projective, _>(&expected_eval_mem, &mut verify_transcript);
   }
 }

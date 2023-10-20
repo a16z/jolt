@@ -2,10 +2,11 @@
 #![allow(clippy::type_complexity)]
 
 use crate::jolt::vm::{PolynomialRepresentation, SurgeCommitment, SurgeCommitmentGenerators};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::identity_poly::IdentityPolynomial;
 use crate::subprotocols::combined_table_proof::CombinedTableEvalProof;
 use crate::subprotocols::grand_product::{
-  BatchedGrandProductArgument, GrandProductCircuit, GrandProducts,
+  BatchedGrandProductArgument, GrandProductCircuit, GrandProducts, BatchedGrandProductCircuit,
 };
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::random::RandomTape;
@@ -67,15 +68,16 @@ impl<F: PrimeField> GPEvals<F> {
 impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
   pub fn prove(
     polynomials: &S::Polynomials,
-    grand_products: &mut Vec<GrandProducts<G::ScalarField>>,
+    grand_products: Vec<GrandProducts<G::ScalarField>>,
     generators: &S::Generators,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
+    // TODO: Wire up flags here
     let (proof_prod_layer, rand_mem, rand_ops) =
-      ProductLayerProof::prove::<G>(grand_products, transcript);
+      ProductLayerProof::prove::<G>(grand_products, vec![], vec![], transcript);
 
     let proof_hash_layer = S::prove(
       (&rand_mem, &rand_ops),
@@ -108,12 +110,10 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
 
     let (r_hash, r_multiset_check) = r_mem_check;
 
-    let num_ops = self.num_ops.next_power_of_two();
-
     let (claims_mem, rand_mem, claims_ops, rand_ops) =
       self
         .proof_prod_layer
-        .verify::<G>(num_ops, self.memory_size, transcript)?;
+        .verify::<G>(transcript)?;
 
     let claims: Vec<GPEvals<G::ScalarField>> = (0..self.num_memories)
       .map(|i| {
@@ -164,13 +164,17 @@ impl<F: PrimeField> ProductLayerProof<F> {
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G>(
-    grand_products: &mut [GrandProducts<F>],
+    grand_products: Vec<GrandProducts<F>>,
+    flags: Vec<DensePolynomial<F>>,
+    flag_map: Vec<usize>,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
   where
     G: CurveGroup<ScalarField = F>,
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+    let num_memories = grand_products.len();
 
     let grand_product_evals: Vec<GPEvals<F>> = (0..grand_products.len())
       .map(|i| {
@@ -206,28 +210,21 @@ impl<F: PrimeField> ProductLayerProof<F> {
       })
       .collect();
 
-    let mut read_write_grand_products: Vec<&mut GrandProductCircuit<F>> = grand_products
-      .iter_mut()
-      .flat_map(|grand_product| [&mut grand_product.read, &mut grand_product.write])
-      .collect();
+    let (read_write_batch, init_final_batch) = 
+      BatchedGrandProductCircuit::new_batches_flags(grand_products, flags, flag_map);
 
     let (proof_ops, rand_ops_sized_gps) =
-      BatchedGrandProductArgument::<F>::prove::<G>(&mut read_write_grand_products, transcript);
-
-    let mut init_final_grand_products: Vec<&mut GrandProductCircuit<F>> = grand_products
-      .iter_mut()
-      .flat_map(|grand_product| [&mut grand_product.init, &mut grand_product.r#final])
-      .collect();
+      BatchedGrandProductArgument::<F>::prove::<G>(read_write_batch, transcript);
 
     // produce a batched proof of memory-related product circuits
     let (proof_mem, rand_mem_sized_gps) =
-      BatchedGrandProductArgument::<F>::prove::<G>(&mut init_final_grand_products, transcript);
+      BatchedGrandProductArgument::<F>::prove::<G>(init_final_batch, transcript);
 
     let product_layer_proof = ProductLayerProof {
       grand_product_evals,
       proof_mem,
       proof_ops,
-      num_memories: grand_products.len(),
+      num_memories,
     };
 
     (product_layer_proof, rand_mem_sized_gps, rand_ops_sized_gps)
@@ -235,8 +232,6 @@ impl<F: PrimeField> ProductLayerProof<F> {
 
   pub fn verify<G>(
     &self,
-    num_ops: usize,
-    num_cells: usize,
     transcript: &mut Transcript,
   ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
   where
@@ -277,13 +272,13 @@ impl<F: PrimeField> ProductLayerProof<F> {
     let (claims_ops, rand_ops) =
       self
         .proof_ops
-        .verify::<G, Transcript>(&read_write_claims, num_ops, transcript);
+        .verify::<G, Transcript>(&read_write_claims, transcript);
 
     let init_final_claims = GPEvals::flatten_init_final(&self.grand_product_evals);
     let (claims_mem, rand_mem) =
       self
         .proof_mem
-        .verify::<G, Transcript>(&init_final_claims, num_cells, transcript);
+        .verify::<G, Transcript>(&init_final_claims, transcript);
 
     Ok((claims_mem, rand_mem, claims_ops, rand_ops))
   }

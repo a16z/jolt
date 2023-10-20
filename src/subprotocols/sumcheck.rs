@@ -25,7 +25,8 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-enum CubicSumcheckType {
+#[derive(Clone)]
+pub enum CubicSumcheckType {
   Prod,
   Flags
 }
@@ -40,7 +41,7 @@ pub struct CubicSumcheckParams<F: PrimeField> {
 
   pub num_rounds: usize,
 
-  sumcheck_type: CubicSumcheckType 
+  pub sumcheck_type: CubicSumcheckType 
 }
 
 impl<F: PrimeField> CubicSumcheckParams<F> {
@@ -95,11 +96,11 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
   }
 
-  fn combine_prod(l: &F, r: &F, eq: &F) -> F {
+  pub fn combine_prod(l: &F, r: &F, eq: &F) -> F {
     *l * r * eq
   }
 
-  fn combine_flags(h: &F, flag: &F, eq: &F) -> F {
+  pub fn combine_flags(h: &F, flag: &F, eq: &F) -> F {
     *eq * (*flag * h + (F::one() - flag))
   }
 

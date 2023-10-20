@@ -435,7 +435,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     let memory_checking_proof = MemoryCheckingProof::prove(
       &polynomials,
-      &mut grand_products,
+      grand_products,
       &commitment_generators,
       transcript,
       &mut random_tape,
