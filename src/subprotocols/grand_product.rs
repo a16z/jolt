@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use super::sumcheck::{SumcheckInstanceProof, CubicSumcheckParams};
+use crate::jolt::vm::PolynomialRepresentation;
+use crate::lasso::gp_evals::GPEvals;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
@@ -436,6 +438,178 @@ impl<F: PrimeField> LayerProofBatched<F> {
   }
 }
 
+/// BatchedGrandProductCircuitInterpretable
+pub trait BGPCInterpretable<F: PrimeField> {
+  	// a for init, final
+	fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
+    F::from(leaf_index as u64)
+	}
+	// a for read, write
+	fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F;
+
+	// v for init, final
+	fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F;
+	// v for read, write
+	fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F;
+
+	// t for init, final
+  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
+    F::zero()
+  }
+	fn t_final(&self, memory_index: usize, leaf_index: usize) -> F;
+	// t for read, write
+	fn t_read(&self, memory_index: usize, leaf_index: usize) -> F;
+	fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
+		self.t_read(memory_index, leaf_index) + F::one()
+	}
+
+	/// M
+	fn mem_size(&self) -> usize;
+	/// NUM_OP
+	fn ops_size(&self) -> usize;
+  fn num_memories(&self) -> usize;
+
+	fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_ops(memory_index, leaf_index), 
+      self.v_ops(memory_index, leaf_index), 
+      self.t_read(memory_index, leaf_index),
+      gamma,
+      tau
+    )
+	}
+
+	fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_ops(memory_index, leaf_index), 
+      self.v_ops(memory_index, leaf_index), 
+      self.t_write(memory_index, leaf_index),
+      gamma,
+      tau
+    )
+	}
+
+	fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_mem(memory_index, leaf_index), 
+      self.v_mem(memory_index, leaf_index), 
+      self.t_init(memory_index, leaf_index),
+      gamma,
+      tau
+    )
+	}
+
+	fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_mem(memory_index, leaf_index), 
+      self.v_mem(memory_index, leaf_index), 
+      self.t_final(memory_index, leaf_index),
+      gamma,
+      tau
+    )
+	}
+
+  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
+    t * gamma.square() + v * gamma + a - tau 
+  }
+
+	fn compute_leaves(&self, memory_index: usize, r_hash: (&F, &F)) -> (
+		DensePolynomial<F>, 
+		DensePolynomial<F>, 
+		DensePolynomial<F>, 
+		DensePolynomial<F>) {
+      println!("BGPCInterpable::compute_leaves()");
+			let init_evals = (0..self.mem_size()).map(|i| 
+        self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1)
+      ).collect();
+			let read_evals = (0..self.ops_size()).map(|i| 
+        self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1)
+      ).collect();
+			let write_evals = (0..self.ops_size()).map(|i| 
+        self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1)
+      ).collect();
+			let final_evals = (0..self.mem_size()).map(|i| 
+        self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1)
+      ).collect();
+      println!("inits {:?}", init_evals);
+      println!("reads {:?}", read_evals);
+      println!("writes {:?}", write_evals);
+      println!("finals {:?}", final_evals);
+			(
+        DensePolynomial::new(init_evals), 
+        DensePolynomial::new(read_evals), 
+        DensePolynomial::new(write_evals), 
+        DensePolynomial::new(final_evals)
+      )
+	}
+
+	fn construct_batched_read_write(&self, reads: Vec<GrandProductCircuit<F>>, writes: Vec<GrandProductCircuit<F>>) -> BatchedGrandProductCircuit<F> {
+    debug_assert_eq!(reads.len(), writes.len());
+    let interleaves = reads.into_iter().zip(writes).flat_map(|(read, write)| [read, write]).collect();
+
+		BatchedGrandProductCircuit::new_batch(interleaves)	
+  }
+	fn construct_batched_init_final(&self, inits: Vec<GrandProductCircuit<F>>, finals: Vec<GrandProductCircuit<F>>) -> BatchedGrandProductCircuit<F> {
+    debug_assert_eq!(inits.len(), finals.len());
+    let interleaves = inits.into_iter().zip(finals).flat_map(|(init, fin)| [init, fin]).collect();
+
+		BatchedGrandProductCircuit::new_batch(interleaves)	
+	}
+}
+
+impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
+    fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
+      self.dim[memory_index % self.C][leaf_index]
+    }
+
+    fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
+        todo!("PolynomialRepresentation needs the v_table")
+    }
+
+    fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F {
+      self.E_polys[memory_index][leaf_index]
+    }
+
+    fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
+      self.final_cts[memory_index][leaf_index]
+    }
+
+    fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
+      self.read_cts[memory_index][leaf_index]
+    }
+
+    fn mem_size(&self) -> usize {
+      self.memory_size
+    }
+
+    fn ops_size(&self) -> usize {
+      self.num_ops
+    }
+
+    fn num_memories(&self) -> usize {
+        self.num_memories
+    }
+
+    fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+      todo!("flags")
+    }
+  
+    fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+      todo!("flags")
+    }
+
+    fn construct_batched_read_write(
+      &self, 
+      reads: Vec<GrandProductCircuit<F>>, 
+      writes: Vec<GrandProductCircuit<F>>) -> BatchedGrandProductCircuit<F> {
+        debug_assert_eq!(reads.len(), writes.len());
+        let interleaves = reads.into_iter().zip(writes).flat_map(|(read, write)| [read, write]).collect();
+    
+        let flag_map = vec![]; // TODO: Flag map
+        BatchedGrandProductCircuit::new_batch_flags(interleaves, self.flag_polys.as_ref().unwrap().clone(), flag_map)	
+    }
+}
+
 pub struct BatchedGrandProductCircuit<F: PrimeField> {
   pub circuits: Vec<GrandProductCircuit<F>>,
 
@@ -444,6 +618,42 @@ pub struct BatchedGrandProductCircuit<F: PrimeField> {
 }
 
 impl<F: PrimeField> BatchedGrandProductCircuit<F> {
+
+  pub fn construct<P: BGPCInterpretable<F>>(polys: P, r_fingerprint: (&F, &F)) -> (Self, Self, Vec<GPEvals<F>>) {
+    let mut gp_evals = Vec::with_capacity(polys.num_memories());
+    let mut read_circuits: Vec<GrandProductCircuit<F>> = Vec::with_capacity(polys.num_memories());
+    let mut write_circuits: Vec<GrandProductCircuit<F>> = Vec::with_capacity(polys.num_memories());
+    let mut init_circuits: Vec<GrandProductCircuit<F>> = Vec::with_capacity(polys.num_memories());
+    let mut final_circuits: Vec<GrandProductCircuit<F>> = Vec::with_capacity(polys.num_memories());
+
+    // For each: Compute leaf hash, compute GrandProductCircuit
+    for memory_index in 0..polys.num_memories() {
+      let (init_leaves, read_leaves, write_leaves, final_leaves) 
+        = polys.compute_leaves(memory_index, r_fingerprint);
+      let init_circuit = GrandProductCircuit::new(init_leaves);
+      let read_circuit = GrandProductCircuit::new(read_leaves);
+      let write_circuit = GrandProductCircuit::new(write_leaves);
+      let final_circuit = GrandProductCircuit::new(final_leaves);
+
+      gp_evals.push(
+        GPEvals::new(
+          init_circuit.evaluate(), 
+          read_circuit.evaluate(), 
+          write_circuit.evaluate(), 
+          final_circuit.evaluate()
+        )
+      );
+
+      init_circuits.push(init_circuit);
+      read_circuits.push(read_circuit);
+      write_circuits.push(write_circuit);
+      final_circuits.push(final_circuit);
+    }
+	
+    let batched_read_write = polys.construct_batched_read_write(read_circuits, write_circuits);
+    let batched_init_final = polys.construct_batched_init_final(init_circuits, final_circuits);
+    (batched_read_write, batched_init_final, gp_evals)
+  }
 
   /// flag_map: [flag_index_0, ... flag_index_NUM_MEMORIES]
   pub fn new_batches_flags(
@@ -486,6 +696,21 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
       circuits,
       flags: None,
       flag_map: None
+    }
+  }
+
+  pub fn new_batch_flags(
+    circuits: Vec<GrandProductCircuit<F>>,
+    flags: Vec<DensePolynomial<F>>,
+    flag_map: Vec<usize>
+  ) -> Self {
+    assert_eq!(flag_map.len(), circuits.len());
+    flag_map.iter().for_each(|i| assert!(*i < flags.len()));
+
+    Self {
+      circuits,
+      flags: Some(flags),
+      flag_map: Some(flag_map)
     }
   }
 
@@ -553,10 +778,12 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
   where
     G: CurveGroup<ScalarField = F>,
   {
+    println!("BatchedGrandProductArgument::prove()");
     let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
     let mut claims_to_verify = (0..batch.circuits.len())
       .map(|i| batch.circuits[i].evaluate())
       .collect::<Vec<F>>();
+    println!("claims_to_verify {claims_to_verify:?}");
 
     let mut rand = Vec::new();
     for layer_id in (0..batch.num_layers()).rev() {

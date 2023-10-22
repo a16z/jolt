@@ -4,7 +4,7 @@ use merlin::Transcript;
 
 use crate::{utils::{random::RandomTape, errors::ProofVerifyError}, poly::dense_mlpoly::DensePolynomial};
 
-use super::memory_checking::GPEvals;
+use super::gp_evals::GPEvals;
 
 /// Trait which defines a strategy for creating opening proofs for multi-set fingerprints and verifies.
 pub trait FingerprintStrategy<G: CurveGroup>:

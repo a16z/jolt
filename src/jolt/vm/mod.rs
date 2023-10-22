@@ -404,38 +404,36 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       flag_proof,
     };
 
-    let r_mem_check =
+    let r_fingerprints: Vec<G::ScalarField>=
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
-    let gamma = r_mem_check[0];
-    let tau = r_mem_check[1];
-    let commitment_generators = Self::commitment_generators(m);
+    let r_fingerprint = (&r_fingerprints[0], &r_fingerprints[1]);
 
-    let mut flag_map = vec![vec![false; ops.len().next_power_of_two()]; Self::NUM_SUBTABLES];
-    let subtable_map = Self::subtable_map();
-    for (instruction_index, instruction) in ops.iter().enumerate() {
-      let subtable_indices = &subtable_map[instruction.to_opcode() as usize];
-      for subtable_index in subtable_indices {
-        flag_map[*subtable_index][instruction_index] = true;
-      }
-    }
+    // let mut flag_map = vec![vec![false; ops.len().next_power_of_two()]; Self::NUM_SUBTABLES];
+    // let subtable_map = Self::subtable_map();
+    // for (instruction_index, instruction) in ops.iter().enumerate() {
+    //   let subtable_indices = &subtable_map[instruction.to_opcode() as usize];
+    //   for subtable_index in subtable_indices {
+    //     flag_map[*subtable_index][instruction_index] = true;
+    //   }
+    // }
 
-    let mut grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES)
-      .map(|memory_index| {
-        GrandProducts::<F>::new_read_only_with_flags(
-          &materialized_subtables[Self::memory_to_subtable_index(memory_index)],
-          &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
-          &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)],
-          &polynomials.read_cts[memory_index],
-          &polynomials.final_cts[memory_index],
-          &flag_map[Self::memory_to_subtable_index(memory_index)],
-          &(gamma, tau),
-        )
-      })
-      .collect();
+    // let grand_products: Vec<GrandProducts<F>> = (0..Self::NUM_MEMORIES)
+    //   .map(|memory_index| {
+    //     GrandProducts::<F>::new_read_only_with_flags(
+    //       &materialized_subtables[Self::memory_to_subtable_index(memory_index)],
+    //       &polynomials.dim[Self::memory_to_dimension_index(memory_index)],
+    //       &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)],
+    //       &polynomials.read_cts[memory_index],
+    //       &polynomials.final_cts[memory_index],
+    //       &flag_map[Self::memory_to_subtable_index(memory_index)],
+    //       &(gamma, tau),
+    //     )
+    //   })
+    //   .collect();
 
     let memory_checking_proof = MemoryCheckingProof::prove(
       &polynomials,
-      grand_products,
+      r_fingerprint,
       &commitment_generators,
       transcript,
       &mut random_tape,
