@@ -1,18 +1,38 @@
 use ark_ec::CurveGroup;
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
-use crate::{utils::{random::RandomTape, errors::ProofVerifyError, transcript::ProofTranscript}, poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial}, subprotocols::combined_table_proof::CombinedTableEvalProof, jolt::vm::{PolynomialRepresentation, SurgeCommitmentGenerators, SurgeCommitment}};
+use crate::{utils::{random::RandomTape, errors::ProofVerifyError, transcript::ProofTranscript}, poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial}, subprotocols::{combined_table_proof::CombinedTableEvalProof, grand_product::BGPCInterpretable}, jolt::vm::{PolynomialRepresentation, SurgeCommitmentGenerators, SurgeCommitment}};
 
 use super::gp_evals::GPEvals;
+
+pub trait MemBatchInfo {
+  fn ops_size(&self) -> usize;
+  fn mem_size(&self) -> usize;
+  fn num_memories(&self) -> usize;
+}
+
+impl<F: PrimeField> MemBatchInfo for PolynomialRepresentation<F> {
+    fn ops_size(&self) -> usize {
+      self.num_ops
+    }
+
+    fn mem_size(&self) -> usize {
+      self.memory_size
+    }
+
+    fn num_memories(&self) -> usize {
+      self.num_memories
+    }
+}
 
 /// Trait which defines a strategy for creating opening proofs for multi-set fingerprints and verifies.
 pub trait FingerprintStrategy<G: CurveGroup>:
   std::marker::Sync + CanonicalSerialize + CanonicalDeserialize
 {
-  type Polynomials;
+  type Polynomials: BGPCInterpretable<G::ScalarField> + MemBatchInfo;
   type Generators;
   type Commitments;
 
@@ -37,27 +57,22 @@ pub trait FingerprintStrategy<G: CurveGroup>:
     r_multiset_check: &G::ScalarField,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError>;
-
-  fn num_ops(polys: &Self::Polynomials) -> usize;
-  fn num_memories(polys: &Self::Polynomials) -> usize;
-  fn memory_size(polys: &Self::Polynomials) -> usize;
-
-  // TODO(sragss): Move flags to grand products with a GrandProductCircuitLayer trait. Remove these from interfaces.
-  // fn get_flags(polys: &Self::Polynomials) -> Option<Vec<DensePolynomial<G::ScalarField>>>;
 }
 
+/// Read Only Fingerprint Proof.
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HashLayerProof<G: CurveGroup> {
+pub struct ROFingerprintProof<G: CurveGroup> {
   eval_dim: Vec<G::ScalarField>,    // C-sized
-  eval_read: Vec<G::ScalarField>,   // C-sized
-  eval_final: Vec<G::ScalarField>,  // C-sized
+  eval_read: Vec<G::ScalarField>,   // NUM_MEMORIES-sized
+  eval_final: Vec<G::ScalarField>,  // NUM_MEMORIES-sized
   eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
+
   proof_ops: CombinedTableEvalProof<G>,
   proof_mem: CombinedTableEvalProof<G>,
   proof_derefs: CombinedTableEvalProof<G>,
 }
 
-impl<G: CurveGroup> FingerprintStrategy<G> for HashLayerProof<G> {
+impl<G: CurveGroup> FingerprintStrategy<G> for ROFingerprintProof<G> {
   type Polynomials = PolynomialRepresentation<G::ScalarField>;
   type Generators = SurgeCommitmentGenerators<G>;
   type Commitments = SurgeCommitment<G>;
@@ -122,7 +137,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for HashLayerProof<G> {
       random_tape,
     );
 
-    HashLayerProof {
+    ROFingerprintProof {
       eval_dim,
       eval_read,
       eval_final,
@@ -203,20 +218,9 @@ impl<G: CurveGroup> FingerprintStrategy<G> for HashLayerProof<G> {
     }
     Ok(())
   }
-
-  // TODO(sragss): Move these functions onto a trait all the PolynomialRepresentation types must implement
-  fn num_ops(polys: &Self::Polynomials) -> usize {
-    polys.num_ops
-  }
-  fn num_memories(polys: &Self::Polynomials) -> usize {
-    polys.num_memories
-  }
-  fn memory_size(polys: &Self::Polynomials) -> usize {
-    polys.memory_size
-  }
 }
 
-impl<G: CurveGroup> HashLayerProof<G> {
+impl<G: CurveGroup> ROFingerprintProof<G> {
   /// Checks that the Reed-Solomon fingerprints of init, read, write, and final multisets
   /// are as claimed by the final sumchecks of their respective grand product arguments.
   ///

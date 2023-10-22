@@ -2,6 +2,7 @@
 
 use super::sumcheck::{SumcheckInstanceProof, CubicSumcheckParams};
 use crate::jolt::vm::PolynomialRepresentation;
+use crate::lasso::fingerprint_strategy::MemBatchInfo;
 use crate::lasso::gp_evals::GPEvals;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -439,7 +440,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
 }
 
 /// BatchedGrandProductCircuitInterpretable
-pub trait BGPCInterpretable<F: PrimeField> {
+pub trait BGPCInterpretable<F: PrimeField> : MemBatchInfo {
   	// a for init, final
 	fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
     F::from(leaf_index as u64)
@@ -462,12 +463,6 @@ pub trait BGPCInterpretable<F: PrimeField> {
 	fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
 		self.t_read(memory_index, leaf_index) + F::one()
 	}
-
-	/// M
-	fn mem_size(&self) -> usize;
-	/// NUM_OP
-	fn ops_size(&self) -> usize;
-  fn num_memories(&self) -> usize;
 
 	fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
     Self::fingerprint(
@@ -578,18 +573,6 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
       self.read_cts[memory_index][leaf_index]
     }
 
-    fn mem_size(&self) -> usize {
-      self.memory_size
-    }
-
-    fn ops_size(&self) -> usize {
-      self.num_ops
-    }
-
-    fn num_memories(&self) -> usize {
-        self.num_memories
-    }
-
     fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
       todo!("flags")
     }
@@ -619,7 +602,7 @@ pub struct BatchedGrandProductCircuit<F: PrimeField> {
 
 impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
-  pub fn construct<P: BGPCInterpretable<F>>(polys: P, r_fingerprint: (&F, &F)) -> (Self, Self, Vec<GPEvals<F>>) {
+  pub fn construct<P: BGPCInterpretable<F>>(polys: &P, r_fingerprint: (&F, &F)) -> (Self, Self, Vec<GPEvals<F>>) {
     let mut gp_evals = Vec::with_capacity(polys.num_memories());
     let mut read_circuits: Vec<GrandProductCircuit<F>> = Vec::with_capacity(polys.num_memories());
     let mut write_circuits: Vec<GrandProductCircuit<F>> = Vec::with_capacity(polys.num_memories());

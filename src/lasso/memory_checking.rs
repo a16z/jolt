@@ -19,7 +19,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
-use super::fingerprint_strategy::FingerprintStrategy;
+use super::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo};
 use super::gp_evals::GPEvals;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -41,26 +41,24 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
   ) -> Self {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    // TODO(sragss): Wire up flags here
-    panic!("");
-    // let (proof_prod_layer, rand_mem, rand_ops) =
-    //   ProductLayerProof::prove::<G, BGPCInterpretable<G::ScalarField>>(polynomials, r_fingerprint, transcript);
+    let (proof_prod_layer, rand_mem, rand_ops) =
+      ProductLayerProof::prove::<G, S::Polynomials>(polynomials, r_fingerprint, transcript);
 
-    // let proof_hash_layer = S::prove(
-    //   (&rand_mem, &rand_ops),
-    //   &polynomials,
-    //   &generators,
-    //   transcript,
-    //   random_tape,
-    // );
+    let proof_hash_layer = S::prove(
+      (&rand_mem, &rand_ops),
+      &polynomials,
+      &generators,
+      transcript,
+      random_tape,
+    );
 
-    // MemoryCheckingProof {
-    //   proof_prod_layer,
-    //   proof_hash_layer,
-    //   num_ops: S::num_ops(&polynomials),
-    //   num_memories: S::num_memories(&polynomials),
-    //   memory_size: S::memory_size(&polynomials),
-    // }
+    MemoryCheckingProof {
+      proof_prod_layer,
+      proof_hash_layer,
+      num_ops: polynomials.ops_size(),
+      num_memories: polynomials.num_memories(),
+      memory_size: polynomials.mem_size(),
+    }
   }
 
   pub fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
@@ -129,7 +127,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G, P>(
-    polys: P,
+    polys: &P,
     r_fingerprint: (&G::ScalarField, &G::ScalarField),
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
@@ -205,7 +203,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
 
 #[cfg(test)]
 mod tests {
-  use crate::{subprotocols::grand_product::{BGPCInterpretable, GrandProductCircuit, BatchedGrandProductCircuit}, poly::dense_mlpoly::DensePolynomial};
+  use crate::{subprotocols::grand_product::{BGPCInterpretable, GrandProductCircuit, BatchedGrandProductCircuit}, poly::dense_mlpoly::DensePolynomial, lasso::fingerprint_strategy::MemBatchInfo};
   use ark_curve25519::{EdwardsProjective, Fr};
   use ark_std::{One, Zero};
   use merlin::Transcript;
@@ -223,6 +221,23 @@ mod tests {
 
       t_reads: Vec<Fr>,
       t_finals: Vec<Fr>,
+    }
+
+    impl MemBatchInfo for NormalMems {
+      fn mem_size(&self) -> usize {
+        assert_eq!(self.v_mems.len(), self.t_finals.len());
+        self.v_mems.len()
+      }
+
+      fn ops_size(&self) -> usize {
+        assert_eq!(self.a_ops.len(), self.v_ops.len());
+        assert_eq!(self.a_ops.len(), self.t_reads.len());
+        self.a_ops.len()
+      }
+
+      fn num_memories(&self) -> usize {
+        1
+      }
     }
 
     impl BGPCInterpretable<Fr> for NormalMems {
@@ -249,21 +264,6 @@ mod tests {
       fn t_read(&self, memory_index: usize, leaf_index: usize) -> Fr {
         assert_eq!(memory_index, 0);
         self.t_reads[leaf_index]
-      }
-
-      fn mem_size(&self) -> usize {
-        assert_eq!(self.v_mems.len(), self.t_finals.len());
-        self.v_mems.len()
-      }
-
-      fn ops_size(&self) -> usize {
-        assert_eq!(self.a_ops.len(), self.v_ops.len());
-        assert_eq!(self.a_ops.len(), self.t_reads.len());
-        self.a_ops.len()
-      }
-
-      fn num_memories(&self) -> usize {
-        1
       }
     }
 
@@ -306,7 +306,7 @@ mod tests {
     let mut transcript = Transcript::new(b"test_transcript");
     let r_fingerprints = (&Fr::from(12), &Fr::from(35));
     let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(polys, r_fingerprints, &mut transcript);
+      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
     proof
@@ -330,6 +330,29 @@ mod tests {
 
       t_0_finals: Vec<Fr>,
       t_1_finals: Vec<Fr>,
+    }
+
+    impl MemBatchInfo for NormalMems {
+      fn mem_size(&self) -> usize {
+        assert_eq!(self.v_mems.len(), self.t_0_finals.len());
+        assert_eq!(self.v_mems.len(), self.t_1_finals.len());
+        self.v_mems.len()
+      }
+
+      fn ops_size(&self) -> usize {
+        let ops_len = self.a_0_ops.len();
+        assert_eq!(ops_len, self.a_1_ops.len());
+        assert_eq!(ops_len, self.v_0_ops.len());
+        assert_eq!(ops_len, self.v_1_ops.len());
+        assert_eq!(ops_len, self.t_0_reads.len());
+        assert_eq!(ops_len, self.t_1_reads.len());
+
+        ops_len
+      }
+
+      fn num_memories(&self) -> usize {
+        2
+      }
     }
 
     impl BGPCInterpretable<Fr> for NormalMems {
@@ -374,26 +397,6 @@ mod tests {
         }
       }
 
-      fn mem_size(&self) -> usize {
-        assert_eq!(self.v_mems.len(), self.t_0_finals.len());
-        assert_eq!(self.v_mems.len(), self.t_1_finals.len());
-        self.v_mems.len()
-      }
-
-      fn ops_size(&self) -> usize {
-        let ops_len = self.a_0_ops.len();
-        assert_eq!(ops_len, self.a_1_ops.len());
-        assert_eq!(ops_len, self.v_0_ops.len());
-        assert_eq!(ops_len, self.v_1_ops.len());
-        assert_eq!(ops_len, self.t_0_reads.len());
-        assert_eq!(ops_len, self.t_1_reads.len());
-
-        ops_len
-      }
-
-      fn num_memories(&self) -> usize {
-        2
-      }
     }
 
     // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
@@ -452,7 +455,7 @@ mod tests {
     let mut transcript = Transcript::new(b"test_transcript");
     let r_fingerprints = (&Fr::from(12), &Fr::from(35));
     let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(polys, r_fingerprints, &mut transcript);
+      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
     proof
@@ -479,6 +482,31 @@ mod tests {
 
       flags_0: Vec<Fr>,
       flags_1: Vec<Fr>,
+    }
+
+    impl MemBatchInfo for FlagMems {
+      fn mem_size(&self) -> usize {
+        assert_eq!(self.v_mems.len(), self.t_0_finals.len());
+        assert_eq!(self.v_mems.len(), self.t_1_finals.len());
+        self.v_mems.len()
+      }
+
+      fn ops_size(&self) -> usize {
+        let ops_len = self.a_0_ops.len();
+        assert_eq!(ops_len, self.a_1_ops.len());
+        assert_eq!(ops_len, self.v_0_ops.len());
+        assert_eq!(ops_len, self.v_1_ops.len());
+        assert_eq!(ops_len, self.t_0_reads.len());
+        assert_eq!(ops_len, self.t_1_reads.len());
+        assert_eq!(ops_len, self.flags_0.len());
+        assert_eq!(ops_len, self.flags_1.len());
+
+        ops_len
+      }
+
+      fn num_memories(&self) -> usize {
+        2
+      }
     }
 
     impl BGPCInterpretable<Fr> for FlagMems {
@@ -521,29 +549,6 @@ mod tests {
           1 => self.t_1_reads[leaf_index],
           _ => panic!("waaa"),
         }
-      }
-
-      fn mem_size(&self) -> usize {
-        assert_eq!(self.v_mems.len(), self.t_0_finals.len());
-        assert_eq!(self.v_mems.len(), self.t_1_finals.len());
-        self.v_mems.len()
-      }
-
-      fn ops_size(&self) -> usize {
-        let ops_len = self.a_0_ops.len();
-        assert_eq!(ops_len, self.a_1_ops.len());
-        assert_eq!(ops_len, self.v_0_ops.len());
-        assert_eq!(ops_len, self.v_1_ops.len());
-        assert_eq!(ops_len, self.t_0_reads.len());
-        assert_eq!(ops_len, self.t_1_reads.len());
-        assert_eq!(ops_len, self.flags_0.len());
-        assert_eq!(ops_len, self.flags_1.len());
-
-        ops_len
-      }
-
-      fn num_memories(&self) -> usize {
-        2
       }
 
       // FLAGS OVERRIDES
@@ -672,7 +677,7 @@ mod tests {
     let mut transcript = Transcript::new(b"test_transcript");
     let r_fingerprints = (&Fr::from(12), &Fr::from(35));
     let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(polys, r_fingerprints, &mut transcript);
+      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
     proof

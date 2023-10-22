@@ -24,7 +24,7 @@ use ark_serialize::*;
 use ark_std::log2;
 use merlin::Transcript;
 
-use super::fingerprint_strategy::HashLayerProof;
+use super::fingerprint_strategy::ROFingerprintProof;
 
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
@@ -101,7 +101,7 @@ pub struct PrimarySumcheck<G: CurveGroup> {
 pub struct SparsePolynomialEvaluationProof<G: CurveGroup, S: JoltStrategy<G::ScalarField>> {
   comm_derefs: CombinedTableCommitment<G>,
   primary_sumcheck: PrimarySumcheck<G>,
-  memory_check: MemoryCheckingProof<G, HashLayerProof<G>>,
+  memory_check: MemoryCheckingProof<G, ROFingerprintProof<G>>,
   sparsity: usize,
   memory_size: usize,
   _marker: PhantomData<S>,
