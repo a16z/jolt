@@ -24,7 +24,7 @@ use ark_serialize::*;
 use ark_std::log2;
 use merlin::Transcript;
 
-use super::memory_checking::HashLayerProof;
+use super::fingerprint_strategy::HashLayerProof;
 
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,

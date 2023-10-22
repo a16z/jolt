@@ -10,7 +10,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking::{HashLayerProof, MemoryCheckingProof},
+  lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::HashLayerProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
