@@ -258,7 +258,7 @@ impl<G: CurveGroup, S: JoltStrategy<G::ScalarField> + 'static>
       gens,
       S::memory_to_dimension_index,
       S::evaluate_memory_mle,
-      &(r_mem_check[0], r_mem_check[1]),
+      (&r_mem_check[0], &r_mem_check[1]),
       transcript,
     )
   }

@@ -54,7 +54,7 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (sparsity).
   ///
   /// Stored independently for use in sumchecking, combined into single DensePolynomial for commitment.
-  pub flag_polys: Option<Vec<DensePolynomial<F>>>,
+  pub flag_polys: Vec<DensePolynomial<F>>,
 
   // TODO(sragss): Storing both the polys and the combined polys may get expensive from a memory
   // perspective. Consider making an additional datastructure to handle the concept of combined polys
@@ -64,17 +64,19 @@ pub struct PolynomialRepresentation<F: PrimeField> {
   pub combined_dim_read_poly: DensePolynomial<F>,
   pub combined_final_poly: DensePolynomial<F>,
   pub combined_E_poly: DensePolynomial<F>,
-  pub combined_flag_poly: Option<DensePolynomial<F>>,
+  pub combined_flag_poly: DensePolynomial<F>,
 
   pub num_memories: usize,
   pub C: usize,
   pub memory_size: usize,
   pub num_ops: usize,
   pub num_instructions: usize,
+
+  pub materialized_subtables: Vec<Vec<F>> // NUM_SUBTABLES sized
 }
 
 impl<F: PrimeField> PolynomialRepresentation<F> {
-  fn commit<G: CurveGroup<ScalarField = F>>(
+  pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
     generators: &SurgeCommitmentGenerators<G>,
   ) -> SurgeCommitment<G> {
@@ -92,8 +94,6 @@ impl<F: PrimeField> PolynomialRepresentation<F> {
     let E_commitment = CombinedTableCommitment::new(E_commitment);
     let (flag_commitment, _) = self
       .combined_flag_poly
-      .as_ref()
-      .unwrap()
       .commit(generators.flag_commitment_gens.as_ref().unwrap(), None);
     let flag_commitment = CombinedTableCommitment::new(flag_commitment);
 
@@ -341,7 +341,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let materialized_subtables: Vec<Vec<F>> = Self::materialize_subtables();
     let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&ops);
     let polynomials: PolynomialRepresentation<F> =
-      Self::polynomialize(&ops, &subtable_lookup_indices, &materialized_subtables);
+      Self::polynomialize(&ops, &subtable_lookup_indices, materialized_subtables);
 
     let commitment_generators = Self::commitment_generators(m);
     let commitments = polynomials.commit(&commitment_generators);
@@ -370,7 +370,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
         num_rounds,
         &mut eq_poly,
         &mut polynomials.E_polys.clone(),
-        &mut polynomials.flag_polys.as_ref().unwrap().clone(),
+        &mut polynomials.flag_polys.clone(),
         Self::sumcheck_poly_degree(),
         transcript,
       );
@@ -379,7 +379,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     // Create a single opening proof for the flag_evals and memory_evals
     let flag_proof = CombinedTableEvalProof::prove(
-      &polynomials.combined_flag_poly.as_ref().unwrap(),
+      &polynomials.combined_flag_poly,
       &flag_evals.to_vec(),
       &r_primary_sumcheck,
       &commitment_generators.flag_commitment_gens.as_ref().unwrap(),
@@ -522,7 +522,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       &proof.commitment_generators,
       Self::memory_to_dimension_index,
       Self::evaluate_memory_mle,
-      &(r_mem_check[0], r_mem_check[1]),
+      (&r_mem_check[0], &r_mem_check[1]),
       transcript,
     )?;
 
@@ -559,7 +559,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   fn polynomialize(
     ops: &Vec<Self::InstructionSet>,
     subtable_lookup_indices: &Vec<Vec<usize>>,
-    materialized_subtables: &Vec<Vec<F>>,
+    materialized_subtables: Vec<Vec<F>>,
   ) -> PolynomialRepresentation<F> {
     let m: usize = ops.len().next_power_of_two();
 
@@ -633,17 +633,18 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       dim,
       read_cts,
       final_cts,
-      flag_polys: Some(flag_polys),
+      flag_polys,
       E_polys,
       combined_dim_read_poly,
       combined_final_poly,
       combined_E_poly,
-      combined_flag_poly: Some(combined_flag_poly),
+      combined_flag_poly,
       num_memories: Self::NUM_MEMORIES,
       C: Self::C,
       memory_size: Self::M,
       num_ops: m, // TODO(sragss): should this be real num_ops or padded?
       num_instructions: Self::NUM_INSTRUCTIONS,
+      materialized_subtables
     }
   }
 

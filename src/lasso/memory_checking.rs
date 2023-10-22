@@ -68,7 +68,7 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
     // TODO(sragss): Consider hardcoding these params
     memory_to_dimension_index: F1,
     evaluate_memory_mle: F2,
-    r_mem_check: &(G::ScalarField, G::ScalarField),
+    r_mem_check: (&G::ScalarField, &G::ScalarField),
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());

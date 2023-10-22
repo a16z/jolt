@@ -558,7 +558,7 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
     }
 
     fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
-        todo!("PolynomialRepresentation needs the v_table")
+      self.materialized_subtables[memory_index][leaf_index]
     }
 
     fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F {
@@ -573,24 +573,25 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
       self.read_cts[memory_index][leaf_index]
     }
 
-    fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-      todo!("flags")
-    }
+    // TODO(sragss): Flags overrides
+    // fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    //   todo!("flags")
+    // }
   
-    fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-      todo!("flags")
-    }
+    // fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    //   todo!("flags")
+    // }
 
-    fn construct_batched_read_write(
-      &self, 
-      reads: Vec<GrandProductCircuit<F>>, 
-      writes: Vec<GrandProductCircuit<F>>) -> BatchedGrandProductCircuit<F> {
-        debug_assert_eq!(reads.len(), writes.len());
-        let interleaves = reads.into_iter().zip(writes).flat_map(|(read, write)| [read, write]).collect();
+    // fn construct_batched_read_write(
+    //   &self, 
+    //   reads: Vec<GrandProductCircuit<F>>, 
+    //   writes: Vec<GrandProductCircuit<F>>) -> BatchedGrandProductCircuit<F> {
+    //     debug_assert_eq!(reads.len(), writes.len());
+    //     let interleaves = reads.into_iter().zip(writes).flat_map(|(read, write)| [read, write]).collect();
     
-        let flag_map = vec![]; // TODO: Flag map
-        BatchedGrandProductCircuit::new_batch_flags(interleaves, self.flag_polys.as_ref().unwrap().clone(), flag_map)	
-    }
+    //     let flag_map = vec![]; // TODO: Flag map
+    //     BatchedGrandProductCircuit::new_batch_flags(interleaves, self.flag_polys.clone(), flag_map)	
+    // }
 }
 
 pub struct BatchedGrandProductCircuit<F: PrimeField> {

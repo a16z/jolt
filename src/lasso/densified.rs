@@ -114,8 +114,8 @@ impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
       E_polys, 
 
       // Unused 
-      flag_polys: None,
-      combined_flag_poly: None, 
+      flag_polys: vec![],
+      combined_flag_poly: DensePolynomial::new(vec![]), 
 
       combined_dim_read_poly: self.combined_l_variate_polys.to_owned(), 
       combined_final_poly: self.combined_log_m_variate_polys.to_owned(), 
@@ -125,7 +125,8 @@ impl<F: PrimeField, S: JoltStrategy<F>> DensifiedRepresentation<F, S> {
       C: S::subtable_dimensionality(),
       memory_size: self.r#final[0].len(),
       num_ops: self.dim_usize[0].len(),
-      num_instructions: 1
+      num_instructions: 1,
+      materialized_subtables: vec![]
     }
   }
 }
