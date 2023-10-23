@@ -13,6 +13,7 @@ pub trait LassoSubtable<F: PrimeField>: 'static {
   fn evaluate_mle(&self, point: &[F]) -> F;
 }
 
+pub mod and;
 pub mod eq;
 pub mod xor;
 

@@ -1,7 +1,10 @@
 use ark_ff::PrimeField;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{eq::EQSubtable, LassoSubtable};
+use crate::{
+  jolt::subtable::{eq::EQSubtable, LassoSubtable},
+  utils::instruction_utils::chunk_and_concatenate_operands,
+};
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct EQInstruction(pub u64, pub u64);
@@ -20,15 +23,7 @@ impl JoltInstruction for EQInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    let operand_bits: usize = log_M / 2;
-    let operand_bit_mask: usize = (1 << operand_bits) - 1;
-    (0..C)
-      .map(|i| {
-        let left: usize = (self.0 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
-        let right: usize = (self.1 as usize >> ((C - i - 1) * operand_bits)) & operand_bit_mask;
-        (left << operand_bits) | right
-      })
-      .collect()
+    chunk_and_concatenate_operands(self.0, self.1, C, log_M)
   }
 }
 

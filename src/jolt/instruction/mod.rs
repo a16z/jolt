@@ -17,6 +17,7 @@ pub trait Opcode {
   }
 }
 
+pub mod and;
 pub mod eq;
 pub mod xor;
 
