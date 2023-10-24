@@ -22,6 +22,8 @@ pub mod lt_abs;
 pub mod ltu;
 pub mod or;
 pub mod xor;
+pub mod iden;
+pub mod lower9;
 
 #[cfg(test)]
 pub mod test;
