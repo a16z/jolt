@@ -19,8 +19,10 @@ pub trait Opcode {
 
 pub mod and;
 pub mod beq;
+pub mod bltu;
 pub mod bne;
 pub mod or;
+pub mod sltu;
 pub mod xor;
 
 #[cfg(test)]
