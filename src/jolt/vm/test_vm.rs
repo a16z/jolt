@@ -6,7 +6,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
-use crate::jolt::instruction::{eq::EQInstruction, xor::XORInstruction, JoltInstruction, Opcode};
+use crate::jolt::instruction::{bne::BNEInstruction, xor::XORInstruction, JoltInstruction, Opcode};
 use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
@@ -46,7 +46,7 @@ macro_rules! subtable_enum {
     };
 }
 
-instruction_set!(TestInstructionSet, XOR: XORInstruction, EQ: EQInstruction);
+instruction_set!(TestInstructionSet, XOR: XORInstruction, BNE: BNEInstruction);
 subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
 
 // ==================== JOLT ====================
@@ -76,7 +76,7 @@ mod tests {
 
   use crate::jolt::instruction::JoltInstruction;
   use crate::{
-    jolt::vm::test_vm::{EQInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+    jolt::vm::test_vm::{BNEInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
@@ -95,8 +95,8 @@ mod tests {
   fn e2e() {
     let ops: Vec<TestInstructionSet> = vec![
       TestInstructionSet::XOR(XORInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 420)),
+      TestInstructionSet::BNE(BNEInstruction(420, 69)),
+      TestInstructionSet::BNE(BNEInstruction(420, 420)),
     ];
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
