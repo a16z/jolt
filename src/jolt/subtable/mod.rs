@@ -23,7 +23,7 @@ pub mod ltu;
 pub mod or;
 pub mod xor;
 pub mod iden;
-pub mod lower9;
+pub mod lowerk;
 
 #[cfg(test)]
 pub mod test;

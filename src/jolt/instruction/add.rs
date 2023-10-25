@@ -3,7 +3,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{iden::IDENSubtable, lower9::LOWER9Subtable, LassoSubtable};
+use crate::jolt::subtable::{iden::IDENSubtable, lowerk::LOWERKSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups, add_and_chunk_operands};
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -23,7 +23,7 @@ impl JoltInstruction for ADDInstruction {
   }
 
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
-    vec![Box::new(IDENSubtable::new()), Box::new(LOWER9Subtable::new())]
+    vec![Box::new(IDENSubtable::new()), Box::new(LOWERKSubtable::new(9))]
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
