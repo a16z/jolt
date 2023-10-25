@@ -19,13 +19,7 @@ impl<F: PrimeField> IDENSubtable<F> {
 
 impl<F: PrimeField> LassoSubtable<F> for IDENSubtable<F> {
   fn materialize(&self, M: usize) -> Vec<F> {
-    let mut entries: Vec<F> = Vec::with_capacity(M);
-
-    for idx in 0..M {
-      let row = F::from(idx as u64);
-      entries.push(row);
-    }
-    entries
+    (0..M).map(|i| F::from(i as u64)).collect()
   }
 
   fn evaluate_mle(&self, point: &[F]) -> F {
