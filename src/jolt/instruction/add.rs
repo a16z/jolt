@@ -47,11 +47,9 @@ mod test {
     const C: usize = 8;
     const M: usize = 1 << 16;
 
-    let u64_mask: u64 = 0xffffffffffffffff;
-
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
-      jolt_instruction_test!(ADDInstruction(x, y), ((x+y) & u64_mask).into());
+        jolt_instruction_test!(ADDInstruction(x, y), (x.overflowing_add(y)).0.into());
     }
   }
 }
