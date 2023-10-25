@@ -10,14 +10,13 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::{ROFingerprintProof, ROFlagsFingerprintProof}},
+  lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::{ROFlagsFingerprintProof}},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::GrandProducts,
     sumcheck::SumcheckInstanceProof,
   },
   utils::{
@@ -865,3 +864,4 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 pub mod test_vm;
+pub mod memory;
