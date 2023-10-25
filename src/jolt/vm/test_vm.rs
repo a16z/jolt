@@ -94,11 +94,14 @@ mod tests {
   #[test]
   fn e2e() {
     let ops: Vec<TestInstructionSet> = vec![
-      // TestInstructionSet::XOR(XORInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 420)),
-      TestInstructionSet::EQ(EQInstruction(420, 420)),
+      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      // TestInstructionSet::EQ(EQInstruction(420, 69)),
+      // TestInstructionSet::EQ(EQInstruction(420, 69)),
+      // TestInstructionSet::EQ(EQInstruction(420, 420)),
+      // TestInstructionSet::EQ(EQInstruction(420, 420)),
     ];
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());

@@ -25,7 +25,7 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum CubicSumcheckType {
   Prod,
   Flags
@@ -104,7 +104,6 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     *eq * (*flag * h + (F::one() - flag))
   }
 
-  // Add a method to return the iterator
   pub fn pairs_iter(&self) -> impl Iterator<Item = (&DensePolynomial<F>, &DensePolynomial<F>, &DensePolynomial<F>)> {
     self.poly_As.iter().enumerate().map(move |(i, a)| {
         let b_idx = match self.sumcheck_type {
@@ -738,7 +737,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
   /// - `transcript`: Fiat-shamir transcript
   ///
-  /// Returns (e, r)1
+  /// Returns (e, r)
   /// - `e`: Claimed evaluation at random point
   /// - `r`: Evaluation point
   pub fn verify<G, T: ProofTranscript<G>>(
@@ -980,7 +979,7 @@ mod test {
     let eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
 
     let claim = Fr::from(4); // r points eq to the 1,1 eval // TODO(sragss): Where do I get this claim in the case of GPs?
-    let coeffs = vec![Fr::one()];
+    let coeffs = vec![Fr::one()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficient
 
     let mut poly_A = factorial.clone();
     let mut poly_B = flags.clone();
@@ -1048,5 +1047,82 @@ mod test {
     let eq_eval = eq.evaluate(prove_randomness.as_slice());
     let oracle_query = comb_func(&factorial_eval, &flag_eval, &eq_eval);
     assert_eq!(verify_evaluation, oracle_query);
+  }
+
+  #[test]
+  fn flags_special_non_trivial() {
+    // H(r_0, r_1, r_2) = sum_{x \in {0,1} ^ 3}{ eq(r, x) \cdot [flags(x) * h(x) + 1 - flags(x)]}
+    // Inside the boolean hypercube H(i) = flags(i) * h(i) + 1 - flags(i)
+    // Which means if flags(i) = 1, H(i) = h(i)
+    //             if flags(i) = 0, H(i) = 1
+    // In reality we'll perform sumcheck to transform H(r_0, r_1, r_2) to evaluations of eq(r_0, r_1, r_2, r_3, r_4, r_5), h(r_3, r_4, r_5), flags(r_3, r_4, r_5)
+    // where (r_3, r_4, r_5) are generated over the course of sumcheck.
+    // The verifier can check this by computing eq(...), h(...), flags(...) on their own.
+
+    let h = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+    let flags = DensePolynomial::new(vec![Fr::one(), Fr::zero(), Fr::one(), Fr::one()]);
+    let r = vec![Fr::from(100), Fr::from(200)];
+    let eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
+    let num_rounds = 2;
+
+    let mut claim = Fr::zero();
+    let num_evals = 4;
+    let num_vars = 2;
+    for i in 0..num_evals{
+      use crate::utils::index_to_field_bitvector;
+
+      let h_eval = h.evaluate(&index_to_field_bitvector(i, num_vars));
+      let flag_eval = flags.evaluate(&index_to_field_bitvector(i, num_vars));
+      let eq_eval = eq.evaluate(&index_to_field_bitvector(i, num_vars));
+
+      claim += eq_eval * (flag_eval * h_eval + Fr::one() - flag_eval);
+    }
+
+    let coeffs = vec![Fr::one()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
+
+    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+
+    let cubic_sumcheck_params = 
+      CubicSumcheckParams::new_flags(
+        vec![h.clone()], 
+        vec![flags.clone()],
+        eq.clone(), 
+        vec![0], 
+        num_rounds);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof, prove_randomness, prove_evals) = 
+      SumcheckInstanceProof::prove_cubic_batched_special::<G1Projective>(
+        &claim, 
+        cubic_sumcheck_params, 
+        &coeffs, 
+        &mut transcript
+      );
+
+    // Prover eval: unwrap and combine
+    let (leaf_eval, flag_eval, eq_eval) = prove_evals;
+    assert_eq!(leaf_eval.len(), 1);
+    assert_eq!(flag_eval.len(), 1);
+    let leaf_eval = leaf_eval[0];
+    let flag_eval = flag_eval[0];
+    let prove_fingerprint_eval = flag_eval * leaf_eval + Fr::one() - flag_eval;
+    let prove_eval = eq_eval * (flag_eval * leaf_eval + Fr::one() - flag_eval);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
+    assert!(verify_result.is_ok());
+
+    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+    assert_eq!(verify_evaluation, prove_eval);
+
+    let h_eval = h.evaluate(prove_randomness.as_slice());
+    let flag_eval = flags.evaluate(prove_randomness.as_slice());
+    let eq_eval = eq.evaluate(prove_randomness.as_slice());
+    let oracle_query = comb_func(&h_eval, &flag_eval, &eq_eval);
+    assert_eq!(verify_evaluation, oracle_query);
+
+    let fingerprint_oracle_query = flag_eval * h_eval + Fr::one() - flag_eval;
+    assert_eq!(prove_fingerprint_eval, fingerprint_oracle_query);
   }
 }
