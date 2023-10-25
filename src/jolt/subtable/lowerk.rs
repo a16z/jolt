@@ -54,8 +54,8 @@ mod test {
 
   use crate::{
     jolt::subtable::{lowerk::LOWERKSubtable, LassoSubtable},
-    subtable_materialize_mle_parity_test_with_arg,
+    subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test_with_arg!(lowerk_materialize_mle_parity, LOWERKSubtable<Fr>, Fr, 256, 9);
+  subtable_materialize_mle_parity_test!(lowerk_materialize_mle_parity, LOWERKSubtable<Fr>, Fr, 256, 9);
 }

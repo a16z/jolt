@@ -18,10 +18,6 @@ macro_rules! subtable_materialize_mle_parity_test {
       }
     }
   };
-}
-
-#[macro_export]
-macro_rules! subtable_materialize_mle_parity_test_with_arg {
   ($test_name:ident, $subtable_type:ty, $F:ty, $M:expr, $A:expr) => {
     #[test]
     fn $test_name() {
@@ -41,4 +37,3 @@ macro_rules! subtable_materialize_mle_parity_test_with_arg {
     }
   };
 }
-
