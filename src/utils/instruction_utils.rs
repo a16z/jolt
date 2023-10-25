@@ -25,3 +25,15 @@ pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) ->
     })
     .collect()
 }
+
+pub fn add_and_chunk_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
+  let sum_chunk_bits: usize = log_M/2;
+  let sum_chunk_bit_mask: usize = (1 << sum_chunk_bits) - 1;
+  let z: u128 = (x as u128) + (y as u128);
+  (0..C)
+    .map(|i| {
+      let chunk = (z >> ((C - i - 1) * sum_chunk_bits)) as usize & sum_chunk_bit_mask;
+      chunk 
+    })
+    .collect()
+}
