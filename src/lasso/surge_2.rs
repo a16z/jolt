@@ -10,8 +10,6 @@ use crate::{poly::{dense_mlpoly::{DensePolynomial, PolyCommitmentGens}, identity
 
 use super::{gp_evals::GPEvals, fingerprint_strategy::FingerprintStrategy, memory_checking::MemoryCheckingProof};
 
-
-
 pub struct SurgePolys<F: PrimeField> {
     pub dim_i_usize: Vec<Vec<usize>>,
     pub dim_i: Vec<DensePolynomial<F>>,
