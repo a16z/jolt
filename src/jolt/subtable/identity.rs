@@ -5,11 +5,11 @@ use std::marker::PhantomData;
 use super::LassoSubtable;
 
 #[derive(Default)]
-pub struct IDENSubtable<F: PrimeField> {
+pub struct IdentitySubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> IDENSubtable<F> {
+impl<F: PrimeField> IdentitySubtable<F> {
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
@@ -17,7 +17,7 @@ impl<F: PrimeField> IDENSubtable<F> {
   }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for IDENSubtable<F> {
+impl<F: PrimeField> LassoSubtable<F> for IdentitySubtable<F> {
   fn materialize(&self, M: usize) -> Vec<F> {
     (0..M).map(|i| F::from(i as u64)).collect()
   }
@@ -36,9 +36,9 @@ mod test {
   use ark_curve25519::Fr;
 
   use crate::{
-    jolt::subtable::{iden::IDENSubtable, LassoSubtable},
+    jolt::subtable::{identity::IdentitySubtable, LassoSubtable},
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(iden_materialize_mle_parity, IDENSubtable<Fr>, Fr, 256);
+  subtable_materialize_mle_parity_test!(iden_materialize_mle_parity, IdentitySubtable<Fr>, Fr, 256);
 }

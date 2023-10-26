@@ -6,11 +6,11 @@ use super::LassoSubtable;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct LTABSSubtable<F: PrimeField> {
+pub struct LtAbsSubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> LTABSSubtable<F> {
+impl<F: PrimeField> LtAbsSubtable<F> {
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
@@ -18,7 +18,7 @@ impl<F: PrimeField> LTABSSubtable<F> {
   }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for LTABSSubtable<F> {
+impl<F: PrimeField> LassoSubtable<F> for LtAbsSubtable<F> {
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
     let bits_per_operand = (log2(M) / 2) as usize;
@@ -60,9 +60,9 @@ mod test {
   use ark_curve25519::Fr;
 
   use crate::{
-    jolt::subtable::{lt_abs::LTABSSubtable, LassoSubtable},
+    jolt::subtable::{lt_abs::LtAbsSubtable, LassoSubtable},
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(lt_abs_materialize_mle_parity, LTABSSubtable<Fr>, Fr, 256);
+  subtable_materialize_mle_parity_test!(lt_abs_materialize_mle_parity, LtAbsSubtable<Fr>, Fr, 256);
 }

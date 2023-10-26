@@ -7,7 +7,7 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
 use crate::jolt::instruction::{bne::BNEInstruction, xor::XORInstruction, JoltInstruction, Opcode};
-use crate::jolt::subtable::{eq::EQSubtable, xor::XORSubtable, LassoSubtable};
+use crate::jolt::subtable::{eq::EqSubtable, xor::XorSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
@@ -47,7 +47,7 @@ macro_rules! subtable_enum {
 }
 
 instruction_set!(TestInstructionSet, XOR: XORInstruction, BNE: BNEInstruction);
-subtable_enum!(TestSubtables, XOR: XORSubtable<F>, EQ: EQSubtable<F>);
+subtable_enum!(TestSubtables, XOR: XorSubtable<F>, EQ: EqSubtable<F>);
 
 // ==================== JOLT ====================
 

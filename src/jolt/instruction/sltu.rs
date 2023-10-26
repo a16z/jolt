@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 
 use super::JoltInstruction;
 use crate::{
-  jolt::subtable::{eq::EQSubtable, ltu::LTUSubtable, LassoSubtable},
+  jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
   utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -26,7 +26,7 @@ impl JoltInstruction for SLTUInstruction {
   }
 
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
-    vec![Box::new(LTUSubtable::new()), Box::new(EQSubtable::new())]
+    vec![Box::new(LtuSubtable::new()), Box::new(EqSubtable::new())]
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {

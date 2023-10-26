@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{and::ANDSubtable, LassoSubtable};
+use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -10,7 +10,7 @@ pub struct ANDInstruction(pub u64, pub u64);
 
 impl JoltInstruction for ANDInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    concatenate_lookups(vals, C, log2(M) as usize/ 2)
+    concatenate_lookups(vals, C, log2(M) as usize / 2)
   }
 
   fn g_poly_degree(&self, _: usize) -> usize {
@@ -18,7 +18,7 @@ impl JoltInstruction for ANDInstruction {
   }
 
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
-    vec![Box::new(ANDSubtable::new())]
+    vec![Box::new(AndSubtable::new())]
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -39,8 +39,8 @@ mod test {
   #[test]
   fn and_instruction_e2e() {
     let mut rng = test_rng();
-    const C: usize = 9;
-    const M: usize = 1 << 18;
+    const C: usize = 8;
+    const M: usize = 1 << 16;
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());

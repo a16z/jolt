@@ -4,7 +4,7 @@ use ark_std::log2;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
-  iden::IDENSubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
+  identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
 use crate::utils::instruction_utils::{
   add_and_chunk_operands, chunk_and_concatenate_operands, concatenate_lookups,
@@ -44,7 +44,7 @@ impl JoltInstruction for ADDInstruction {
 
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![
-      Box::new(IDENSubtable::new()),
+      Box::new(IdentitySubtable::new()),
       Box::new(TruncateOverflowSubtable::new()),
     ]
   }

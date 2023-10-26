@@ -6,11 +6,11 @@ use super::LassoSubtable;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct ORSubtable<F: PrimeField> {
+pub struct OrSubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> ORSubtable<F> {
+impl<F: PrimeField> OrSubtable<F> {
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
@@ -18,7 +18,7 @@ impl<F: PrimeField> ORSubtable<F> {
   }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for ORSubtable<F> {
+impl<F: PrimeField> LassoSubtable<F> for OrSubtable<F> {
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
     let bits_per_operand = (log2(M) / 2) as usize;
@@ -53,9 +53,9 @@ mod test {
   use ark_curve25519::Fr;
 
   use crate::{
-    jolt::subtable::{or::ORSubtable, LassoSubtable},
+    jolt::subtable::{or::OrSubtable, LassoSubtable},
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(or_materialize_mle_parity, ORSubtable<Fr>, Fr, 256);
+  subtable_materialize_mle_parity_test!(or_materialize_mle_parity, OrSubtable<Fr>, Fr, 256);
 }

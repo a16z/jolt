@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{or::ORSubtable, LassoSubtable};
+use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -18,7 +18,7 @@ impl JoltInstruction for ORInstruction {
   }
 
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
-    vec![Box::new(ORSubtable::new())]
+    vec![Box::new(OrSubtable::new())]
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
