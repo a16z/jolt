@@ -630,6 +630,24 @@ mod tests {
         EQInstruction(12, 82),
         EQInstruction(12, 12),
         EQInstruction(25, 12),
+      ];
+      let C = 8;
+      let M = 1 << 8;
+
+      let mut transcript = Transcript::new(b"test_transcript");
+      let proof: SurgeProof<EdwardsProjective, _> = SurgeProof::prove(ops, C, M, &mut transcript);
+
+      let mut transcript = Transcript::new(b"test_transcript");
+      proof.verify(&mut transcript).expect("should work");
+    }
+
+    #[test]
+    fn e2e_non_pow_2() {
+      let ops = vec![
+        EQInstruction(12, 12),
+        EQInstruction(12, 82),
+        EQInstruction(12, 12),
+        EQInstruction(25, 12),
         EQInstruction(25, 12),
       ];
       let C = 8;
