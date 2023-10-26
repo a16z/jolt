@@ -557,7 +557,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
       let r_j = transcript.challenge_scalar(b"challenge_nextround");
       random_vars.push(r_j);
-      println!("round [{_round}] randomness: {r_j:?}");
 
       // Bind all polys
       eq_poly.bound_poly_var_top(&r_j);
@@ -770,12 +769,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
       // append the prover's message to the transcript
-      println!("Sumcheck::verify appending UniPoly {:?}", poly);
       <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
       let r_i = transcript.challenge_scalar(b"challenge_nextround");
-      println!("Sumcheck::verify new randomness {:?}", r_i);
 
       r.push(r_i);
 

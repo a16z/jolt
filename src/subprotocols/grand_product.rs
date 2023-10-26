@@ -799,7 +799,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
     let mut claims_to_verify = (0..batch.circuits.len())
       .map(|i| batch.circuits[i].evaluate())
       .collect::<Vec<F>>();
-    println!("claims_to_verify {claims_to_verify:?}");
 
     let mut rand = Vec::new();
     for layer_id in (0..batch.num_layers()).rev() {
@@ -848,7 +847,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         claims_to_verify = (0..batch.circuits.len())
           .map(|i| claims_poly_A[i] + r_layer * (claims_poly_B[i] - claims_poly_A[i]))
           .collect::<Vec<F>>();
-        println!("BatchedGPA::prove prod claims_to_verify: {claims_to_verify:?}");
 
         let mut ext = vec![r_layer];
         ext.extend(rand_prod);
@@ -869,7 +867,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         claims_to_verify = (0..batch.circuits.len())
           .map(|i| claims_poly_A[i] * claims_poly_B[i] + (F::one() - claims_poly_B[i] ))
           .collect::<Vec<F>>();
-        println!("BatchedGPA::prove flags claims_to_verify: {claims_to_verify:?}");
 
         proof_layers.push(LayerProofBatched {
           proof,
@@ -929,7 +926,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
       // TODO(sragss): Comment about what is going on here.
       let claim_expected = if self.proof[i].combine_prod {
-        println!("combine_prod");
         let claim_expected: F = (0..claims_prod_vec.len())
           .map(|i| {
             coeff_vec[i]
@@ -943,7 +939,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         claims_to_verify = (0..claims_prod_left.len())
           .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))
           .collect::<Vec<F>>();
-        println!("BatchedGPA::verify prod claims_to_verify: {claims_to_verify:?}");
 
         let mut ext = vec![r_layer];
         ext.extend(rand_prod);
@@ -951,7 +946,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
         claim_expected
       } else {
-        println!("combine_flags");
         let claim_expected: F = (0..claims_prod_vec.len())
           .map(|i| {
             coeff_vec[i]
@@ -962,10 +956,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         rand = rand_prod;
 
         claims_to_verify = (0..claims_prod_left.len())
-          // .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))
           .map(|i| claims_prod_left[i] * claims_prod_right[i] + (F::one() - claims_prod_right[i]))
           .collect::<Vec<F>>();
-        println!("BatchedGPA::verify flags claims_to_verify: {claims_to_verify:?}");
 
         claim_expected
       };

@@ -131,7 +131,7 @@ impl<F: PrimeField, S: JoltStrategy<F>> Subtables<F, S> {
     #[cfg(not(feature = "multicore"))]
     let claim = (0..hypercube_size)
       .map(|k| {
-        let g_operands: Vec<F> = (0..S::num_memories())(|j| g_operands[j][k]).collect();
+        let g_operands: Vec<F> = (0..S::num_memories()).map(|j| g_operands[j][k]).collect();
         // eq * g(T_1[k], ..., T_\alpha[k])
         eq_evals[k] * S::combine_lookups(&g_operands)
       })
