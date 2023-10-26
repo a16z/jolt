@@ -10,7 +10,7 @@ pub struct ANDInstruction(pub u64, pub u64);
 
 impl JoltInstruction for ANDInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    concatenate_lookups(vals, C, M)
+    concatenate_lookups(vals, C, log2(M) as usize/ 2)
   }
 
   fn g_poly_degree(&self, _: usize) -> usize {
@@ -39,8 +39,8 @@ mod test {
   #[test]
   fn and_instruction_e2e() {
     let mut rng = test_rng();
-    const C: usize = 8;
-    const M: usize = 1 << 16;
+    const C: usize = 9;
+    const M: usize = 1 << 18;
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());

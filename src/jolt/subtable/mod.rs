@@ -23,7 +23,7 @@ pub mod ltu;
 pub mod or;
 pub mod xor;
 pub mod iden;
-pub mod lowerk;
+pub mod truncate_overflow;
 
 #[cfg(test)]
 pub mod test;

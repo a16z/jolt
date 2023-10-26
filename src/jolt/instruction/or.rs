@@ -10,7 +10,7 @@ pub struct ORInstruction(pub u64, pub u64);
 
 impl JoltInstruction for ORInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    concatenate_lookups(vals, C, M)
+    concatenate_lookups(vals, C, log2(M) as usize / 2)
   }
 
   fn g_poly_degree(&self, _: usize) -> usize {

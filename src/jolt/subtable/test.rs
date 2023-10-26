@@ -1,12 +1,12 @@
 #[macro_export]
 macro_rules! subtable_materialize_mle_parity_test {
-  ($test_name:ident, $subtable_type:ty, $F:ty, $M:expr $(, $constructor_args:expr)*) => {
+  ($test_name:ident, $subtable_type:ty, $F:ty, $M:expr) => {
     #[test]
     fn $test_name() {
       const M: usize = $M;
       let log_M = ark_std::log2(M) as usize;
 
-      let subtable = <$subtable_type>::new($($constructor_args)?);
+      let subtable = <$subtable_type>::new();
       let materialized: Vec<_> = subtable.materialize(M);
       for i in 0..M {
         assert_eq!(
