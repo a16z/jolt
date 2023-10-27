@@ -1,4 +1,4 @@
-use crate::jolt::instruction::eq::EQInstruction;
+use crate::jolt::instruction::xor::XORInstruction;
 use crate::lasso::surge_2::SurgeProof;
 use ark_curve25519::EdwardsProjective;
 use ark_std::test_rng;
@@ -48,12 +48,12 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 fn random_surge_2_test(num_ops: usize, C: usize, M: usize) -> Box<dyn FnOnce()> {
   let mut rng = test_rng();
 
-  let mut ops: Vec<EQInstruction> = Vec::with_capacity(num_ops);
+  let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
   let operand_max: u64 = M as u64;
   for _ in 0..num_ops {
     let a = rng.next_u64() % operand_max;
     let b = rng.next_u64() % operand_max;
-    ops.push(EQInstruction(a, b));
+    ops.push(XORInstruction(a, b));
   }
 
   let func = move || {

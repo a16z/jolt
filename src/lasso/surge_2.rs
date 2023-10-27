@@ -614,7 +614,7 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
 mod tests {
     use merlin::Transcript;
 
-    use crate::{jolt::instruction::eq::EQInstruction, lasso::surge_2::SurgeProof};
+    use crate::{jolt::instruction::xor::XORInstruction, lasso::surge_2::SurgeProof};
     use ark_curve25519::EdwardsProjective;
 
     #[test]
@@ -624,10 +624,10 @@ mod tests {
     #[test]
     fn e2e() {
       let ops = vec![
-        EQInstruction(12, 12),
-        EQInstruction(12, 82),
-        EQInstruction(12, 12),
-        EQInstruction(25, 12),
+        XORInstruction(12, 12),
+        XORInstruction(12, 82),
+        XORInstruction(12, 12),
+        XORInstruction(25, 12),
       ];
       let C = 8;
       let M = 1 << 8;
@@ -642,11 +642,11 @@ mod tests {
     #[test]
     fn e2e_non_pow_2() {
       let ops = vec![
-        EQInstruction(12, 12),
-        EQInstruction(12, 82),
-        EQInstruction(12, 12),
-        EQInstruction(25, 12),
-        EQInstruction(25, 12),
+        XORInstruction(12, 12),
+        XORInstruction(12, 82),
+        XORInstruction(12, 12),
+        XORInstruction(25, 12),
+        XORInstruction(25, 12),
       ];
       let C = 8;
       let M = 1 << 8;

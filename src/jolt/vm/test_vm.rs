@@ -96,10 +96,10 @@ mod tests {
     let ops: Vec<TestInstructionSet> = vec![
       TestInstructionSet::XOR(XORInstruction(420, 69)),
       TestInstructionSet::XOR(XORInstruction(420, 420)),
-      // TestInstructionSet::XOR(XORInstruction(420, 69)),
-      // TestInstructionSet::XOR(XORInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 69)),
-      TestInstructionSet::EQ(EQInstruction(420, 420)),
+      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      // TestInstructionSet::EQ(EQInstruction(420, 69)),
+      // TestInstructionSet::EQ(EQInstruction(420, 420)),
       // TestInstructionSet::EQ(EQInstruction(420, 420)),
       // TestInstructionSet::EQ(EQInstruction(420, 420)),
     ];
