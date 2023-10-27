@@ -28,6 +28,7 @@ pub mod or;
 pub mod slt;
 pub mod sltu;
 pub mod xor;
+pub mod add; 
 
 #[cfg(test)]
 pub mod test;

@@ -6,11 +6,11 @@ use super::LassoSubtable;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct EQMSBSubtable<F: PrimeField> {
+pub struct EqMSBSubtable<F: PrimeField> {
   _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> EQMSBSubtable<F> {
+impl<F: PrimeField> EqMSBSubtable<F> {
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
@@ -18,7 +18,7 @@ impl<F: PrimeField> EQMSBSubtable<F> {
   }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for EQMSBSubtable<F> {
+impl<F: PrimeField> LassoSubtable<F> for EqMSBSubtable<F> {
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
     let bits_per_operand = (log2(M) / 2) as usize;
@@ -47,9 +47,9 @@ mod test {
   use ark_curve25519::Fr;
 
   use crate::{
-    jolt::subtable::{eq_msb::EQMSBSubtable, LassoSubtable},
+    jolt::subtable::{eq_msb::EqMSBSubtable, LassoSubtable},
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(eq_msb_materialize_mle_parity, EQMSBSubtable<Fr>, Fr, 256);
+  subtable_materialize_mle_parity_test!(eq_msb_materialize_mle_parity, EqMSBSubtable<Fr>, Fr, 256);
 }

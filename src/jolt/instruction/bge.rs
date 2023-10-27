@@ -3,8 +3,8 @@ use ark_ff::PrimeField;
 use super::{slt::SLTInstruction, JoltInstruction};
 use crate::{
   jolt::subtable::{
-    eq::EQSubtable, eq_abs::EQABSSubtable, eq_msb::EQMSBSubtable, gt_msb::GTMSBSubtable,
-    lt_abs::LTABSSubtable, ltu::LTUSubtable, LassoSubtable,
+    eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
+    lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
   },
   utils::instruction_utils::chunk_and_concatenate_operands,
 };
@@ -24,12 +24,12 @@ impl JoltInstruction for BGEInstruction {
 
   fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![
-      Box::new(GTMSBSubtable::new()),
-      Box::new(EQMSBSubtable::new()),
-      Box::new(LTUSubtable::new()),
-      Box::new(EQSubtable::new()),
-      Box::new(LTABSSubtable::new()),
-      Box::new(EQABSSubtable::new()),
+      Box::new(GtMSBSubtable::new()),
+      Box::new(EqMSBSubtable::new()),
+      Box::new(LtuSubtable::new()),
+      Box::new(EqSubtable::new()),
+      Box::new(LtAbsSubtable::new()),
+      Box::new(EqAbsSubtable::new()),
     ]
   }
 
