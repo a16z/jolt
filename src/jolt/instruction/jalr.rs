@@ -56,7 +56,7 @@ impl JoltInstruction for JALRInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    add_and_chunk_operands(self.0, self.1+4, C, log_M)
+    add_and_chunk_operands(self.0, self.1.overflowing_add(4).0, C, log_M)
   }
 }
 
@@ -78,7 +78,7 @@ mod test {
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
-      let z = x.overflowing_add(y+4).0;
+      let z = x.overflowing_add(y.overflowing_add(4).0).0;
       jolt_instruction_test!(JALRInstruction(x, y), (z - z%2).into());
     }
   }
