@@ -25,20 +25,18 @@ impl<F: PrimeField> SllSubtable<F> {
 impl<F: PrimeField> LassoSubtable<F> for SllSubtable<F> {
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
-    let bits_per_operand = (log2(M) / 2) as usize;
 
-    // Materialize table entries in order where (x | y) ranges 0..M
+    let operand_chunk_width: usize = (log2(M) / 2) as usize;
+    let suffix_length = operand_chunk_width * self.chunk_idx;
+
     for idx in 0..M {
-      let (x, y) = split_bits(idx, bits_per_operand);
-      let x_in_position = x << (bits_per_operand * self.chunk_idx);
+      let (x, y) = split_bits(idx, operand_chunk_width);
 
-      // shift x by the length represented by the lower 6 bits of y
-      let row = match x_in_position.checked_shl((y as u32) %64 as u32) {
-        None => F::zero(),
-        Some(x_shifted) => F::from((x_shifted >> (bits_per_operand * self.chunk_idx)) as u64),
-      };
+      let row = x
+        .checked_shl((y as u32) %64 + suffix_length as u32).unwrap_or(0)
+        .checked_shr(suffix_length as u32).unwrap_or(0);
 
-      entries.push(row );
+      entries.push(F::from(row as u64));
     }
     entries
   }
@@ -64,23 +62,22 @@ impl<F: PrimeField> LassoSubtable<F> for SllSubtable<F> {
         .collect::<Vec<F>>(); // big-endian
 
       let mut eq_term = F::one();
-
       // again, min with b is included when subtables of bit-length less than 6 are used 
       for i in 0..std::cmp::min(log_MAX_SHIFT, b) {
         eq_term *= k_bits[log_MAX_SHIFT-1-i] * y[b-1-i] + (F::one() - k_bits[log_MAX_SHIFT-1-i]) * (F::one() - y[b-1-i]);
       }
-
-      let mut shift_x_by_k = F::zero();
 
       let m = if (k + b * (self.chunk_idx+1)) > 64 {
         std::cmp::min(b, (k + b * (self.chunk_idx+1)) - 64)
       } else {
         0
       };
+
       let m_prime = b - (m as usize);
-      for j in 0..m_prime {
-        shift_x_by_k += F::from((1_u64 << (j+k)) as u64) * x[b-1-j];
-      }
+      
+      let shift_x_by_k = (0..m_prime).enumerate()
+        .map(|(j, _)| F::from(1_u64 << (j + k)) * x[b - 1 - j])
+        .fold(F::zero(), |acc, val| acc + val);
 
       result += eq_term * shift_x_by_k;
     }
@@ -97,5 +94,5 @@ mod test {
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr>, Fr, 256, 16);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr>, Fr, 256, 0);
 }

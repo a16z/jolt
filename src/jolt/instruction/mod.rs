@@ -17,6 +17,7 @@ pub trait Opcode {
   }
 }
 
+pub mod add;
 pub mod and;
 pub mod beq;
 pub mod bge;
@@ -24,12 +25,12 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
+pub mod jalr;
 pub mod or;
+pub mod sll;
 pub mod slt;
 pub mod sltu;
 pub mod xor;
-pub mod add; 
-pub mod jalr; 
 
 #[cfg(test)]
 pub mod test;
