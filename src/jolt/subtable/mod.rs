@@ -24,6 +24,7 @@ pub mod or;
 pub mod xor;
 pub mod identity;
 pub mod truncate_overflow;
+pub mod zero_lsb;
 
 #[cfg(test)]
 pub mod test;

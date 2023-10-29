@@ -29,6 +29,7 @@ pub mod slt;
 pub mod sltu;
 pub mod xor;
 pub mod add; 
+pub mod jalr; 
 
 #[cfg(test)]
 pub mod test;
