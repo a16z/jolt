@@ -30,56 +30,58 @@ impl<F: PrimeField> LassoSubtable<F> for SllSubtable<F> {
     // Materialize table entries in order where (x | y) ranges 0..M
     for idx in 0..M {
       let (x, y) = split_bits(idx, bits_per_operand);
+      let x_in_position = x << (bits_per_operand * self.chunk_idx);
+
       // shift x by the length represented by the lower 6 bits of y
-      let row = F::from((x << (y % 64)) as u64);
-      entries.push(row);
+      let row = match x_in_position.checked_shl((y as u32) %64 as u32) {
+        None => F::zero(),
+        Some(x_shifted) => F::from((x_shifted >> (bits_per_operand * self.chunk_idx)) as u64),
+      };
+
+      entries.push(row );
     }
     entries
   }
 
   fn evaluate_mle(&self, point: &[F]) -> F {
+    // first half is chunk X_i 
+    // and second half is always chunk Y_0
     debug_assert!(point.len() % 2 == 0);
-    let b = point.len() / 2;
 
     let MAX_SHIFT= 64;
-    let log_MAX_SHIFT: usize= log2(MAX_SHIFT) as usize;
+    let log_MAX_SHIFT = log2(MAX_SHIFT) as usize;
 
+    let b = point.len() / 2;
     let (x, y) = point.split_at(b);
 
-    println!("x: {:?}, y: {:?}", x, y);
-
     let mut result = F::zero();
+
+    // min with 1 << b is included for test cases with subtables of bit-length smaller than 6 
     for k in 0..std::cmp::min(MAX_SHIFT, 1<<b) {
       let k_bits = (k as usize)
         .get_bits(log_MAX_SHIFT).iter()
         .map(|bit| F::from(*bit as u64))
         .collect::<Vec<F>>(); // big-endian
+
       let mut eq_term = F::one();
+
+      // again, min with b is included when subtables of bit-length less than 6 are used 
       for i in 0..std::cmp::min(log_MAX_SHIFT, b) {
         eq_term *= k_bits[log_MAX_SHIFT-1-i] * y[b-1-i] + (F::one() - k_bits[log_MAX_SHIFT-1-i]) * (F::one() - y[b-1-i]);
       }
 
       let mut shift_x_by_k = F::zero();
-      // let m = std::cmp::min(
-      //   b as i32, 
-      //   std::cmp::max(
-      //     0_i32, 
-      //     (k + b * (self.chunk_idx+1) - 64) as i32 
-      //   )
-      // );
 
       let m = if (k + b * (self.chunk_idx+1)) > 64 {
         std::cmp::min(b, (k + b * (self.chunk_idx+1)) - 64)
       } else {
         0
       };
-
-      let m_prime = b - (m as usize) - 1;
-      println!("k: {}, m_prime: {}", k, m_prime);
-      for j in 0..m_prime+1 {
+      let m_prime = b - (m as usize);
+      for j in 0..m_prime {
         shift_x_by_k += F::from((1_u64 << (j+k)) as u64) * x[b-1-j];
-        println!("k: {}, eq_term: {}, j: {}, x[j]: {}", k, eq_term, j, x[j]);
       }
+
       result += eq_term * shift_x_by_k;
     }
     result
@@ -95,5 +97,5 @@ mod test {
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr>, Fr, 256, 0);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr>, Fr, 256, 16);
 }
