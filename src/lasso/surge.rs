@@ -103,8 +103,12 @@ pub struct SparsePolynomialEvaluationProof<
   memory_check: MemoryCheckingProof<G, C, M, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M> + Sync>
-  SparsePolynomialEvaluationProof<G, C, M, S>
+impl<
+    G: CurveGroup,
+    const C: usize,
+    const M: usize,
+    S: SubtableStrategy<G::ScalarField, C, M> + Sync,
+  > SparsePolynomialEvaluationProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,

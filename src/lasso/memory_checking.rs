@@ -36,8 +36,12 @@ pub struct MemoryCheckingProof<
   proof_hash_layer: HashLayerProof<G, C, M, S>,
 }
 
-impl<G: CurveGroup, const C: usize, const M: usize, S: SubtableStrategy<G::ScalarField, C, M> + Sync>
-  MemoryCheckingProof<G, C, M, S>
+impl<
+    G: CurveGroup,
+    const C: usize,
+    const M: usize,
+    S: SubtableStrategy<G::ScalarField, C, M> + Sync,
+  > MemoryCheckingProof<G, C, M, S>
 where
   [(); S::NUM_SUBTABLES]: Sized,
   [(); S::NUM_MEMORIES]: Sized,
@@ -282,15 +286,18 @@ impl<F: PrimeField> GrandProducts<F> {
     #[cfg(not(feature = "multicore"))]
     let num_ops = 0..dim_i.len();
     let grand_product_input_read = DensePolynomial::new(
-      num_ops.clone().map(|i| {
+      num_ops
+        .clone()
+        .map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by read_ts
           hash_func(&dim_i[i], &eval_table[dim_i_usize[i]], &read_i[i])
         })
-        .collect::<Vec<F>>()
+        .collect::<Vec<F>>(),
     );
     // write: s hash evaluation => log(s)-variate polynomial
     let grand_product_input_write = DensePolynomial::new(
-      num_ops.map(|i| {
+      num_ops
+        .map(|i| {
           // addr is given by dim_i, value is given by eval_table, and ts is given by write_ts = read_ts + 1
           hash_func(
             &dim_i[i],
