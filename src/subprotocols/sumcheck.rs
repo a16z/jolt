@@ -35,6 +35,7 @@ pub struct CubicSumcheckParams<F: PrimeField> {
   poly_As: Vec<DensePolynomial<F>>,
   poly_Bs: Vec<DensePolynomial<F>>,
 
+  // TODO(JOLT-41): Consider swapping to iterator references for `poly_As` / `poly_Bs`
   a_to_b: Vec<usize>,
 
   poly_eq: DensePolynomial<F>,
@@ -87,12 +88,10 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
       }
   }
 
-  // TODO(sragss): Due to inlining this may be more efficient with a lambda. Test with benchmarking.
   pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
     match self.sumcheck_type {
       CubicSumcheckType::Prod => Self::combine_prod(a, b, c),
       CubicSumcheckType::Flags => Self::combine_flags(a, b, c),
-      _ => panic!("Unimpl")
     }
   }
 
@@ -458,65 +457,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               + memory_polys[memory_index][mle_half + mle_leaf_index]
               - memory_polys[memory_index][mle_leaf_index];
             multi_memory_evals[memory_index][mle_leaf_index].push(memory_eval);
-          }
-        }
-      }
-
-      #[cfg(test)]
-      {
-        // Compute each of these evaluations the slow way to confirm.
-
-        for flag_index in 0..J::NUM_INSTRUCTIONS {
-          for eval_index in 0..num_eval_points {
-            for point_index in 0..mle_half {
-              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
-              if mle_len != 4 {
-                continue;
-              }
-
-              // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
-              let local_eval = flag_polys[flag_index].evaluate(&vec![
-                F::from(eval_index as u64),
-                F::from(point_index as u64),
-              ]);
-              let existing_eval = multi_flag_evals[flag_index][point_index][eval_index];
-              assert_eq!(local_eval, existing_eval);
-            }
-          }
-        }
-
-        for memory_index in 0..J::NUM_MEMORIES {
-          for eval_index in 0..num_eval_points {
-            for point_index in 0..mle_half {
-              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
-              if mle_len != 4 {
-                continue;
-              }
-
-              // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
-              let local_eval = memory_polys[memory_index].evaluate(&vec![
-                F::from(eval_index as u64),
-                F::from(point_index as u64),
-              ]);
-              let existing_eval = multi_memory_evals[memory_index][point_index][eval_index];
-              assert_eq!(local_eval, existing_eval);
-            }
-          }
-        }
-
-        for eval_index in 0..num_eval_points {
-          for point_index in 0..mle_half {
-            // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
-            if mle_len != 4 {
-              continue;
-            }
-
-            let local_eval = eq_poly.evaluate(&vec![
-              F::from(eval_index as u64),
-              F::from(point_index as u64),
-            ]);
-            let existing_eval = eq_evals[point_index][eval_index];
-            assert_eq!(local_eval, existing_eval);
           }
         }
       }
@@ -1010,7 +950,7 @@ mod test {
     let eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
     let num_rounds = 2;
 
-    let claim = Fr::from(4); // r points eq to the 1,1 eval // TODO(sragss): Where do I get this claim in the case of GPs?
+    let claim = Fr::from(4); // r points eq to the 1,1 eval
     let coeffs = vec![Fr::one()];
 
     let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};

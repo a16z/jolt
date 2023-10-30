@@ -49,7 +49,7 @@ fn random_surge_2_test(num_ops: usize, C: usize, M: usize) -> Box<dyn FnOnce()> 
   let mut rng = test_rng();
 
   let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
-  let operand_max: u64 = M as u64;
+  let operand_max: u64 = ((M * C) / 2).try_into().unwrap();
   for _ in 0..num_ops {
     let a = rng.next_u64() % operand_max;
     let b = rng.next_u64() % operand_max;

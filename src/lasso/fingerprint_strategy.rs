@@ -693,7 +693,4 @@ mod tests {
     };
     proof.verify(&commitments, &generators, memory_to_dimension_index, evaluate_memory_mle, r_fingerprint, &mut transcript).expect("should work");
   }
-
-  // TODO: Incorporate flags next.
-  // TODO: Non flags version
 }

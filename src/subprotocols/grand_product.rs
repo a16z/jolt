@@ -812,7 +812,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
       let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
       let params = batch.sumcheck_layer_params(layer_id, eq);
-      // TODO(sragss): Are these params constructed properly?
       let sumcheck_type = params.sumcheck_type.clone();
       let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched_special::<G>(
         &claim, params, &coeff_vec, transcript,
@@ -861,11 +860,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         // Flag layers do not need the additional bit as the randomness from the previous layers have already fully determined
         assert_eq!(layer_id, 0);
         rand = rand_prod;
-
-        // TODO(sragss): Only needed for debugging
-        claims_to_verify = (0..batch.circuits.len())
-          .map(|i| claims_poly_A[i] * claims_poly_B[i] + (F::one() - claims_poly_B[i]))
-          .collect::<Vec<F>>();
 
         proof_layers.push(LayerProofBatched {
           proof,
@@ -923,7 +917,10 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         .map(|i| rand[i] * rand_prod[i] + (F::one() - rand[i]) * (F::one() - rand_prod[i]))
         .product();
 
-      // TODO(sragss): Comment about what is going on here.
+      // Compute the claim_expected which is a random linear combination of the batched evaluations.
+      // The evaluation is the combination of eq / A / B depending on the cubic layer type (flags / prod).
+      // We also compute claims_to_verify which computes sumcheck_cubic_poly(r, r') from 
+      // sumcheck_cubic_poly(r, 0), sumcheck_subic_poly(r, 1)
       let claim_expected = if self.proof[i].combine_prod {
         let claim_expected: F = (0..claims_prod_vec.len())
           .map(|i| {

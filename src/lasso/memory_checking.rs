@@ -1,22 +1,16 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::jolt::vm::{PolynomialRepresentation, SurgeCommitment, SurgeCommitmentGenerators};
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::identity_poly::IdentityPolynomial;
-use crate::subprotocols::combined_table_proof::CombinedTableEvalProof;
 use crate::subprotocols::grand_product::{
-  BGPCInterpretable, BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
-  GrandProducts,
+  BGPCInterpretable, BatchedGrandProductArgument,
 };
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::random::RandomTape;
 use crate::utils::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use super::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo};
@@ -123,7 +117,8 @@ impl<F: PrimeField> ProductLayerProof<F> {
   /// Batches everything into two instances of BatchedGrandProductArgument.
   ///
   /// Params
-  /// - `grand_products`: The grand product circuits whose evaluations are proven.
+  /// - `polys`: The grand product circuits whose evaluations are proven.
+  /// - `r_fingerprint`: The random values used for fingerprinting.
   /// - `transcript`: The proof transcript, used for Fiat-Shamir.
   #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
   pub fn prove<G, P>(
@@ -175,7 +170,7 @@ impl<F: PrimeField> ProductLayerProof<F> {
 
     for eval in &self.grand_product_evals {
       // Multiset equality check
-      debug_assert_eq!(
+      assert_eq!(
         eval.hash_init * eval.hash_write,
         eval.hash_read * eval.hash_final
       );

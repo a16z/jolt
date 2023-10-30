@@ -10,7 +10,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::{ROFlagsFingerprintProof}},
+  lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::ROFlagsFingerprintProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -27,6 +27,7 @@ use crate::{
   },
 };
 
+// TODO(65): Refactor to make more specific.
 /// All vectors to be committed in polynomial form.
 pub struct PolynomialRepresentation<F: PrimeField> {
   /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
@@ -570,7 +571,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
         let memory_address = access_sequence[op_index];
         debug_assert!(memory_address < Self::M);
 
-        // TODO(sragss): Can be simplified with machinery below.
+        // TODO(JOLT-11): Simplify using subtable map + instruction_map
         // Only increment if the flag is used at this step
         let subtables = &subtable_map[opcodes[op_index] as usize];
         if subtables.contains(&Self::memory_to_subtable_index(memory_index)) {
@@ -600,6 +601,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       }
     }
 
+    // TODO(JOLT-11)
     let mut instruction_flag_bitvectors: Vec<Vec<usize>> = vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
     let mut subtable_flag_bitvectors: Vec<Vec<usize>> = vec![vec![0usize; m]; Self::NUM_SUBTABLES];
     for lookup_index in 0..m {
@@ -842,3 +844,4 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
 pub mod test_vm;
 pub mod memory;
+// pub mod pc;

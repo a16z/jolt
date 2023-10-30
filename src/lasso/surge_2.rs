@@ -338,7 +338,7 @@ impl<G: CurveGroup> SurgeFingerprintProof<G> {
   }
 
   fn protocol_name() -> &'static [u8] {
-    b"Surge FingprintProof"
+    b"Surge FingerprintProof"
   }
 }
 
@@ -616,10 +616,6 @@ mod tests {
 
     use crate::{jolt::instruction::xor::XORInstruction, lasso::surge_2::SurgeProof};
     use ark_curve25519::EdwardsProjective;
-
-    #[test]
-    fn prod_layer_proof() {
-    }
 
     #[test]
     fn e2e() {
