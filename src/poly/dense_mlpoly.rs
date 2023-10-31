@@ -238,6 +238,10 @@ impl<F: PrimeField> DensePolynomial<F> {
     &self.Z
   }
 
+  pub fn evals(&self) -> Vec<F> {
+    self.Z.clone()
+  }
+
   pub fn extend(&mut self, other: &DensePolynomial<F>) {
     assert_eq!(self.Z.len(), self.len);
     let other_vec = other.vec();

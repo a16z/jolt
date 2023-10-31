@@ -19,7 +19,7 @@ fn main() {
   let args = Cli::parse();
   if args.chart {
     tracing_texray::init();
-    for (span, bench) in benchmarks(args.name).iter() {
+    for (span, bench) in benchmarks(args.name).into_iter() {
       tracing_texray::examine(span.to_owned()).in_scope(bench);
     }
   } else {
@@ -28,7 +28,7 @@ fn main() {
       .with_span_events(FmtSpan::CLOSE)
       .finish();
     tracing::subscriber::set_global_default(collector).expect("setting tracing default failed");
-    for (span, bench) in benchmarks(args.name).iter() {
+    for (span, bench) in benchmarks(args.name).into_iter() {
       span.to_owned().in_scope(|| {
         bench();
         tracing::info!("Bench Complete");

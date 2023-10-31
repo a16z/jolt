@@ -25,6 +25,132 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
+#[derive(Clone, PartialEq)]
+pub enum CubicSumcheckType {
+  Prod,
+  Flags
+}
+
+pub struct CubicSumcheckParams<F: PrimeField> {
+  poly_As: Vec<DensePolynomial<F>>,
+  poly_Bs: Vec<DensePolynomial<F>>,
+
+  // TODO(JOLT-41): Consider swapping to iterator references for `poly_As` / `poly_Bs`
+  a_to_b: Vec<usize>,
+
+  poly_eq: DensePolynomial<F>,
+
+  pub num_rounds: usize,
+
+  pub sumcheck_type: CubicSumcheckType 
+}
+
+impl<F: PrimeField> CubicSumcheckParams<F> {
+  pub fn new_prod(
+    poly_lefts: Vec<DensePolynomial<F>>, 
+    poly_rights: Vec<DensePolynomial<F>>, 
+    poly_eq: DensePolynomial<F>, 
+    num_rounds: usize) -> Self {
+      debug_assert_eq!(poly_lefts.len(), poly_rights.len());
+      debug_assert_eq!(poly_lefts[0].len(), poly_rights[0].len());
+      debug_assert_eq!(poly_lefts[0].len(), poly_eq.len());
+
+      let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
+
+      CubicSumcheckParams {
+        poly_As: poly_lefts,
+        poly_Bs: poly_rights,
+        a_to_b,
+        poly_eq,
+        num_rounds,
+        sumcheck_type: CubicSumcheckType::Prod
+      }
+  }
+
+  /// flag_map: poly_leaves length vector mapping between poly_leaves indices and flag indices.
+  pub fn new_flags(
+    poly_leaves: Vec<DensePolynomial<F>>, 
+    poly_flags: Vec<DensePolynomial<F>>, 
+    poly_eq: DensePolynomial<F>, 
+    flag_map: Vec<usize>,
+    num_rounds: usize) -> Self {
+      debug_assert_eq!(poly_leaves.len(), flag_map.len());
+      debug_assert_eq!(poly_leaves[0].len(), poly_flags[0].len());
+      debug_assert_eq!(poly_leaves[0].len(), poly_eq.len());
+
+      CubicSumcheckParams { 
+        poly_As: poly_leaves, 
+        poly_Bs: poly_flags, 
+        a_to_b: flag_map, 
+        poly_eq, 
+        num_rounds, 
+        sumcheck_type: CubicSumcheckType::Flags 
+      }
+  }
+
+  pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
+    match self.sumcheck_type {
+      CubicSumcheckType::Prod => Self::combine_prod(a, b, c),
+      CubicSumcheckType::Flags => Self::combine_flags(a, b, c),
+    }
+  }
+
+  pub fn combine_prod(l: &F, r: &F, eq: &F) -> F {
+    *l * r * eq
+  }
+
+  pub fn combine_flags(h: &F, flag: &F, eq: &F) -> F {
+    *eq * (*flag * h + (F::one() - flag))
+  }
+
+  pub fn pairs_iter(&self) -> impl Iterator<Item = (&DensePolynomial<F>, &DensePolynomial<F>, &DensePolynomial<F>)> {
+    self.poly_As.iter().enumerate().map(move |(i, a)| {
+        let b_idx = match self.sumcheck_type {
+          CubicSumcheckType::Prod => i,
+          CubicSumcheckType::Flags => self.a_to_b[i],
+          _ => panic!("uh oh")
+        };
+
+        let b = &self.poly_Bs[b_idx];
+        let c = &self.poly_eq;
+        (a, b, c)
+    })
+  }
+
+  pub fn apply_bound_poly_var_top(&mut self, r_j: &F) {
+    // Apply on poly_As
+    for poly in &mut self.poly_As {
+        poly.bound_poly_var_top(r_j);
+    }
+
+    // Apply on poly_Bs
+    for poly in &mut self.poly_Bs {
+        poly.bound_poly_var_top(r_j);
+    }
+
+    // Apply on poly_eq
+    self.poly_eq.bound_poly_var_top(r_j);
+  }
+
+  pub fn get_final_evals(&self) -> (Vec<F>, Vec<F>, F) {
+    debug_assert_eq!(self.poly_As[0].len(), 1);
+    debug_assert_eq!(self.poly_Bs[0].len(), 1);
+    debug_assert_eq!(self.poly_eq.len(), 1);
+
+    let poly_A_final: Vec<F> = (0..self.poly_As.len())
+      .map(|i| self.poly_As[i][0])
+      .collect();
+
+    let poly_B_final: Vec<F> = (0..self.poly_As.len())
+      .map(|i| self.poly_Bs[self.a_to_b[i]][0])
+      .collect();
+
+    let poly_eq_final = self.poly_eq[0];
+
+    (poly_A_final, poly_B_final, poly_eq_final)
+  }
+}
+
 impl<F: PrimeField> SumcheckInstanceProof<F> {
   #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched")]
   pub fn prove_cubic_batched<Func, G>(
@@ -137,6 +263,98 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
   }
 
+
+  #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched")]
+  pub fn prove_cubic_batched_special<G>(
+    claim: &F,
+    params: CubicSumcheckParams<F>,
+    coeffs: &[F],
+    transcript: &mut Transcript,
+  ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
+  where
+    G: CurveGroup<ScalarField = F>,
+  {
+    let mut params = params;
+
+    let mut e = *claim;
+    let mut r: Vec<F> = Vec::new();
+    let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+    for _j in 0..params.num_rounds {
+
+      let iterator = params.pairs_iter();
+
+      let evals: Vec<(F, F, F)> = iterator
+        .map(|(poly_A, poly_B, eq)| {
+          let mut eval_point_0 = F::zero();
+          let mut eval_point_2 = F::zero();
+          let mut eval_point_3 = F::zero();
+
+          let len = poly_A.len() / 2;
+          for i in 0..len {
+            // TODO(#28): Optimize
+
+            // eval 0: bound_func is A(low)
+            eval_point_0 += params.combine(&poly_A[i], &poly_B[i], &eq[i]);
+
+            // eval 2: bound_func is -A(low) + 2*A(high)
+            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+            let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
+            let poly_C_bound_point = eq[len + i] + eq[len + i] - eq[i];
+            eval_point_2 += params.combine(
+              &poly_A_bound_point,
+              &poly_B_bound_point,
+              &poly_C_bound_point,
+            );
+
+            // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
+            let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
+            let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
+            let poly_C_bound_point = poly_C_bound_point + eq[len + i] - eq[i];
+
+            eval_point_3 += params.combine(
+              &poly_A_bound_point,
+              &poly_B_bound_point,
+              &poly_C_bound_point,
+            );
+          }
+
+          (eval_point_0, eval_point_2, eval_point_3)
+        })
+        .collect();
+
+      let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
+      let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
+      let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
+
+      let evals = vec![
+        evals_combined_0,
+        e - evals_combined_0,
+        evals_combined_2,
+        evals_combined_3,
+      ];
+      let poly = UniPoly::from_evals(&evals);
+
+      // append the prover's message to the transcript
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+
+      //derive the verifier's challenge for the next round
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+      r.push(r_j);
+
+      // bound all tables to the verifier's challenege
+      params.apply_bound_poly_var_top(&r_j);
+
+      e = poly.evaluate(&r_j);
+      cubic_polys.push(poly.compress());
+    }
+
+    let claims_prod = params.get_final_evals();
+
+    (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
+  }
+
   /// Prove Jolt primary sumcheck including instruction collation.
   ///
   /// Computes \sum{ eq(r,x) * [ flags_0(x) * g_0(E(x)) + flags_1(x) * g_1(E(x)) + ... + flags_{NUM_INSTRUCTIONS}(E(x)) * g_{NUM_INSTRUCTIONS}(E(x)) ]}
@@ -243,65 +461,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         }
       }
 
-      #[cfg(test)]
-      {
-        // Compute each of these evaluations the slow way to confirm.
-
-        for flag_index in 0..J::NUM_INSTRUCTIONS {
-          for eval_index in 0..num_eval_points {
-            for point_index in 0..mle_half {
-              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
-              if mle_len != 4 {
-                continue;
-              }
-
-              // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
-              let local_eval = flag_polys[flag_index].evaluate(&vec![
-                F::from(eval_index as u64),
-                F::from(point_index as u64),
-              ]);
-              let existing_eval = multi_flag_evals[flag_index][point_index][eval_index];
-              assert_eq!(local_eval, existing_eval);
-            }
-          }
-        }
-
-        for memory_index in 0..J::NUM_MEMORIES {
-          for eval_index in 0..num_eval_points {
-            for point_index in 0..mle_half {
-              // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
-              if mle_len != 4 {
-                continue;
-              }
-
-              // expected evals: f(p, 0, 0), f(p, 0, 1), f(p, 1, 0), f(p, 1, 1)
-              let local_eval = memory_polys[memory_index].evaluate(&vec![
-                F::from(eval_index as u64),
-                F::from(point_index as u64),
-              ]);
-              let existing_eval = multi_memory_evals[memory_index][point_index][eval_index];
-              assert_eq!(local_eval, existing_eval);
-            }
-          }
-        }
-
-        for eval_index in 0..num_eval_points {
-          for point_index in 0..mle_half {
-            // TODO: concat: index_to_field_bitvector::<F>(point_index, mle_half.log_2()) for other sizes
-            if mle_len != 4 {
-              continue;
-            }
-
-            let local_eval = eq_poly.evaluate(&vec![
-              F::from(eval_index as u64),
-              F::from(point_index as u64),
-            ]);
-            let existing_eval = eq_evals[point_index][eval_index];
-            assert_eq!(local_eval, existing_eval);
-          }
-        }
-      }
-
       // Accumulate inner terms.
       // S({0,1,... num_eval_points}) = eq * [ INNER TERMS ] = eq * [ flags_0 * g_0(E_0) + flags_1 * g_1(E_1)]
       let mut evaluations: Vec<F> = Vec::with_capacity(num_eval_points);
@@ -338,7 +497,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
       let r_j = transcript.challenge_scalar(b"challenge_nextround");
       random_vars.push(r_j);
-      println!("round [{_round}] randomness: {r_j:?}");
 
       // Bind all polys
       eq_poly.bound_poly_var_top(&r_j);
@@ -518,7 +676,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   /// - `degree_bound`: Maximum allowed degree of the combined univariate polynomial
   /// - `transcript`: Fiat-shamir transcript
   ///
-  /// Returns (e, r)1
+  /// Returns (e, r)
   /// - `e`: Claimed evaluation at random point
   /// - `r`: Evaluation point
   pub fn verify<G, T: ProofTranscript<G>>(
@@ -551,12 +709,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
       // append the prover's message to the transcript
-      println!("Sumcheck::verify appending UniPoly {:?}", poly);
       <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
       let r_i = transcript.challenge_scalar(b"challenge_nextround");
-      println!("Sumcheck::verify new randomness {:?}", r_i);
 
       r.push(r_i);
 
@@ -690,7 +846,7 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::utils::math::Math;
+  use crate::{utils::math::Math, poly::eq_poly::EqPolynomial};
   use crate::utils::test::TestTranscript;
   use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
   use ark_ff::Zero;
@@ -750,5 +906,160 @@ mod test {
 
     let oracle_query = a * b * c;
     assert_eq!(verify_evaluation, oracle_query);
+  }
+
+  #[test]
+  fn flags_unbatched_trivial() {
+    let factorial = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+    let flags = DensePolynomial::new(vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()]);
+    let r = vec![Fr::one(), Fr::one()];
+    let eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
+
+    let claim = Fr::from(4); // r points eq to the 1,1 eval // TODO(sragss): Where do I get this claim in the case of GPs?
+    let coeffs = vec![Fr::one()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficient
+
+    let mut poly_A = factorial.clone();
+    let mut poly_B = flags.clone();
+    let mut poly_C = eq.clone();
+    let poly_vec_par = (&mut vec![&mut poly_A], &mut vec![&mut poly_B], &mut poly_C);
+
+    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof, prove_randomness, _evals) = SumcheckInstanceProof::prove_cubic_batched::<_, G1Projective>(&claim, 2, poly_vec_par, &coeffs, comb_func, &mut transcript);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
+    assert!(verify_result.is_ok());
+
+    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+
+    let factorial_eval = factorial.evaluate(prove_randomness.as_slice());
+    let flag_eval = flags.evaluate(prove_randomness.as_slice());
+    let eq_eval = eq.evaluate(prove_randomness.as_slice());
+    let oracle_query = comb_func(&factorial_eval, &flag_eval, &eq_eval);
+    assert_eq!(verify_evaluation, oracle_query);
+  }
+
+  #[test]
+  fn flags_special_trivial() {
+    let factorial = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+    let flags = DensePolynomial::new(vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()]);
+    let r = vec![Fr::one(), Fr::one()];
+    let eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
+    let num_rounds = 2;
+
+    let claim = Fr::from(4); // r points eq to the 1,1 eval
+    let coeffs = vec![Fr::one()];
+
+    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+
+    let cubic_sumcheck_params = 
+      CubicSumcheckParams::new_flags(
+        vec![factorial.clone()], 
+        vec![flags.clone()],
+        eq.clone(), 
+        vec![0], 
+        num_rounds);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof, prove_randomness, _evals) = 
+      SumcheckInstanceProof::prove_cubic_batched_special::<G1Projective>(
+        &claim, 
+        cubic_sumcheck_params, 
+        &coeffs, 
+        &mut transcript
+      );
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
+    assert!(verify_result.is_ok());
+
+    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+
+    let factorial_eval = factorial.evaluate(prove_randomness.as_slice());
+    let flag_eval = flags.evaluate(prove_randomness.as_slice());
+    let eq_eval = eq.evaluate(prove_randomness.as_slice());
+    let oracle_query = comb_func(&factorial_eval, &flag_eval, &eq_eval);
+    assert_eq!(verify_evaluation, oracle_query);
+  }
+
+  #[test]
+  fn flags_special_non_trivial() {
+    // H(r_0, r_1, r_2) = sum_{x \in {0,1} ^ 3}{ eq(r, x) \cdot [flags(x) * h(x) + 1 - flags(x)]}
+    // Inside the boolean hypercube H(i) = flags(i) * h(i) + 1 - flags(i)
+    // Which means if flags(i) = 1, H(i) = h(i)
+    //             if flags(i) = 0, H(i) = 1
+    // In reality we'll perform sumcheck to transform H(r_0, r_1, r_2) to evaluations of eq(r_0, r_1, r_2, r_3, r_4, r_5), h(r_3, r_4, r_5), flags(r_3, r_4, r_5)
+    // where (r_3, r_4, r_5) are generated over the course of sumcheck.
+    // The verifier can check this by computing eq(...), h(...), flags(...) on their own.
+
+    let h = DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
+    let flags = DensePolynomial::new(vec![Fr::one(), Fr::zero(), Fr::one(), Fr::one()]);
+    let r = vec![Fr::from(100), Fr::from(200)];
+    let eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
+    let num_rounds = 2;
+
+    let mut claim = Fr::zero();
+    let num_evals = 4;
+    let num_vars = 2;
+    for i in 0..num_evals{
+      use crate::utils::index_to_field_bitvector;
+
+      let h_eval = h.evaluate(&index_to_field_bitvector(i, num_vars));
+      let flag_eval = flags.evaluate(&index_to_field_bitvector(i, num_vars));
+      let eq_eval = eq.evaluate(&index_to_field_bitvector(i, num_vars));
+
+      claim += eq_eval * (flag_eval * h_eval + Fr::one() - flag_eval);
+    }
+
+    let coeffs = vec![Fr::one()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
+
+    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+
+    let cubic_sumcheck_params = 
+      CubicSumcheckParams::new_flags(
+        vec![h.clone()], 
+        vec![flags.clone()],
+        eq.clone(), 
+        vec![0], 
+        num_rounds);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof, prove_randomness, prove_evals) = 
+      SumcheckInstanceProof::prove_cubic_batched_special::<G1Projective>(
+        &claim, 
+        cubic_sumcheck_params, 
+        &coeffs, 
+        &mut transcript
+      );
+
+    // Prover eval: unwrap and combine
+    let (leaf_eval, flag_eval, eq_eval) = prove_evals;
+    assert_eq!(leaf_eval.len(), 1);
+    assert_eq!(flag_eval.len(), 1);
+    let leaf_eval = leaf_eval[0];
+    let flag_eval = flag_eval[0];
+    let prove_fingerprint_eval = flag_eval * leaf_eval + Fr::one() - flag_eval;
+    let prove_eval = eq_eval * (flag_eval * leaf_eval + Fr::one() - flag_eval);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
+    assert!(verify_result.is_ok());
+
+    let (verify_evaluation, verify_randomness) = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+    assert_eq!(verify_evaluation, prove_eval);
+
+    let h_eval = h.evaluate(prove_randomness.as_slice());
+    let flag_eval = flags.evaluate(prove_randomness.as_slice());
+    let eq_eval = eq.evaluate(prove_randomness.as_slice());
+    let oracle_query = comb_func(&h_eval, &flag_eval, &eq_eval);
+    assert_eq!(verify_evaluation, oracle_query);
+
+    let fingerprint_oracle_query = flag_eval * h_eval + Fr::one() - flag_eval;
+    assert_eq!(prove_fingerprint_eval, fingerprint_oracle_query);
   }
 }
