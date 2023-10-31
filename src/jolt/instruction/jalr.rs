@@ -4,10 +4,8 @@ use ark_std::log2;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
-  identity::IdentitySubtable, 
-  truncate_overflow::TruncateOverflowSubtable, 
-  zero_lsb::ZeroLSBSubtable, 
-  LassoSubtable,
+  identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable,
+  zero_lsb::ZeroLSBSubtable, LassoSubtable,
 };
 use crate::utils::instruction_utils::{
   add_and_chunk_operands, chunk_and_concatenate_operands, concatenate_lookups,
@@ -33,8 +31,8 @@ impl JoltInstruction for JALRInstruction {
     concatenate_lookups(
       [
         &truncate_overflow[0..=msb_chunk_index],
-        &identity[msb_chunk_index + 1..C-1],
-        &zero_lsb[C-1..C],
+        &identity[msb_chunk_index + 1..C - 1],
+        &zero_lsb[C - 1..C],
       ]
       .concat()
       .as_slice(),
@@ -56,7 +54,7 @@ impl JoltInstruction for JALRInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    add_and_chunk_operands(self.0, self.1.overflowing_add(4).0, C, log_M)
+    add_and_chunk_operands(self.0 as u128, self.1 as u128 + 4, C, log_M)
   }
 }
 
@@ -79,7 +77,7 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
       let z = x.overflowing_add(y.overflowing_add(4).0).0;
-      jolt_instruction_test!(JALRInstruction(x, y), (z - z%2).into());
+      jolt_instruction_test!(JALRInstruction(x, y), (z - z % 2).into());
     }
   }
 }

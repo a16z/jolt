@@ -11,9 +11,9 @@ use crate::utils::instruction_utils::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct ADDInstruction(pub u64, pub u64);
+pub struct SUBInstruction(pub u64, pub u64);
 
-impl JoltInstruction for ADDInstruction {
+impl JoltInstruction for SUBInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // The first C are from IDEN and the last C are from LOWER9
     assert!(vals.len() == 2 * C);
@@ -50,7 +50,7 @@ impl JoltInstruction for ADDInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
+    add_and_chunk_operands(self.0 as u128, (1u128 << 64) - self.1 as u128, C, log_M)
   }
 }
 
@@ -62,17 +62,17 @@ mod test {
 
   use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-  use super::ADDInstruction;
+  use super::SUBInstruction;
 
   #[test]
-  fn add_instruction_e2e() {
+  fn sub_instruction_e2e() {
     let mut rng = test_rng();
     const C: usize = 8;
     const M: usize = 1 << 16;
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
-      jolt_instruction_test!(ADDInstruction(x, y), (x.overflowing_add(y)).0.into());
+      jolt_instruction_test!(SUBInstruction(x, y), (x.overflowing_sub(y)).0.into());
     }
   }
 }
