@@ -6,8 +6,10 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
-use crate::jolt::instruction::{bne::BNEInstruction, xor::XORInstruction, JoltInstruction, Opcode};
-use crate::jolt::subtable::{eq::EqSubtable, xor::XorSubtable, LassoSubtable};
+use crate::jolt::instruction::{
+  bne::BNEInstruction, sll::SLLInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+};
+use crate::jolt::subtable::{eq::EqSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
@@ -46,8 +48,18 @@ macro_rules! subtable_enum {
     };
 }
 
-instruction_set!(TestInstructionSet, XOR: XORInstruction, BNE: BNEInstruction);
-subtable_enum!(TestSubtables, XOR: XorSubtable<F>, EQ: EqSubtable<F>);
+instruction_set!(TestInstructionSet, XOR: XORInstruction, BNE: BNEInstruction, SLL: SLLInstruction);
+subtable_enum!(
+  TestSubtables,
+  XOR: XorSubtable<F>,
+  EQ: EqSubtable<F>,
+  SLL0: SllSubtable<F, 0>,
+  SLL1: SllSubtable<F, 1>,
+  SLL2: SllSubtable<F, 2>,
+  SLL3: SllSubtable<F, 3>,
+  SLL4: SllSubtable<F, 4>,
+  SLL5: SllSubtable<F, 5>
+);
 
 // ==================== JOLT ====================
 
