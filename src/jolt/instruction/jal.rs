@@ -11,12 +11,12 @@ use crate::utils::instruction_utils::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct JALRInstruction(pub u64, pub u64);
+pub struct JALInstruction(pub u64, pub u64);
 
-impl JoltInstruction for JALRInstruction {
+impl JoltInstruction for JALInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    // C from IDEN, C from TruncateOverflow, C from ZeroLSB
-    assert!(vals.len() == 3 * C);
+    // C from IDEN, C from TruncateOverflow
+    assert!(vals.len() == 2 * C);
 
     const WORD_SIZE: usize = 64;
     let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
@@ -24,14 +24,12 @@ impl JoltInstruction for JALRInstruction {
     let mut vals_by_subtable = vals.chunks_exact(C);
     let identity = vals_by_subtable.next().unwrap();
     let truncate_overflow = vals_by_subtable.next().unwrap();
-    let zero_lsb = vals_by_subtable.next().unwrap();
 
     // The output is the LOWER9(most significant chunk) || IDEN of other chunks
     concatenate_lookups(
       [
         &truncate_overflow[0..=msb_chunk_index],
-        &identity[msb_chunk_index + 1..C - 1],
-        &zero_lsb[C - 1..C],
+        &identity[msb_chunk_index + 1..C],
       ]
       .concat()
       .as_slice(),
@@ -48,7 +46,6 @@ impl JoltInstruction for JALRInstruction {
     vec![
       Box::new(IdentitySubtable::new()),
       Box::new(TruncateOverflowSubtable::new()),
-      Box::new(ZeroLSBSubtable::new()),
     ]
   }
 
@@ -65,10 +62,10 @@ mod test {
 
   use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-  use super::JALRInstruction;
+  use super::JALInstruction;
 
   #[test]
-  fn jalr_instruction_e2e() {
+  fn jal_instruction_e2e() {
     let mut rng = test_rng();
     const C: usize = 8;
     const M: usize = 1 << 16;
@@ -76,7 +73,7 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
       let z = x.overflowing_add(y.overflowing_add(4).0).0;
-      jolt_instruction_test!(JALRInstruction(x, y), (z - z % 2).into());
+      jolt_instruction_test!(JALInstruction(x, y), z.into());
     }
   }
 }
