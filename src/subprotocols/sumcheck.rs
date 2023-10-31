@@ -28,7 +28,7 @@ use rayon::prelude::*;
 #[derive(Clone, PartialEq)]
 pub enum CubicSumcheckType {
   Prod,
-  Flags
+  Flags,
 }
 
 pub struct CubicSumcheckParams<F: PrimeField> {
@@ -42,50 +42,52 @@ pub struct CubicSumcheckParams<F: PrimeField> {
 
   pub num_rounds: usize,
 
-  pub sumcheck_type: CubicSumcheckType 
+  pub sumcheck_type: CubicSumcheckType,
 }
 
 impl<F: PrimeField> CubicSumcheckParams<F> {
   pub fn new_prod(
-    poly_lefts: Vec<DensePolynomial<F>>, 
-    poly_rights: Vec<DensePolynomial<F>>, 
-    poly_eq: DensePolynomial<F>, 
-    num_rounds: usize) -> Self {
-      debug_assert_eq!(poly_lefts.len(), poly_rights.len());
-      debug_assert_eq!(poly_lefts[0].len(), poly_rights[0].len());
-      debug_assert_eq!(poly_lefts[0].len(), poly_eq.len());
+    poly_lefts: Vec<DensePolynomial<F>>,
+    poly_rights: Vec<DensePolynomial<F>>,
+    poly_eq: DensePolynomial<F>,
+    num_rounds: usize,
+  ) -> Self {
+    debug_assert_eq!(poly_lefts.len(), poly_rights.len());
+    debug_assert_eq!(poly_lefts[0].len(), poly_rights[0].len());
+    debug_assert_eq!(poly_lefts[0].len(), poly_eq.len());
 
-      let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
+    let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
 
-      CubicSumcheckParams {
-        poly_As: poly_lefts,
-        poly_Bs: poly_rights,
-        a_to_b,
-        poly_eq,
-        num_rounds,
-        sumcheck_type: CubicSumcheckType::Prod
-      }
+    CubicSumcheckParams {
+      poly_As: poly_lefts,
+      poly_Bs: poly_rights,
+      a_to_b,
+      poly_eq,
+      num_rounds,
+      sumcheck_type: CubicSumcheckType::Prod,
+    }
   }
 
   /// flag_map: poly_leaves length vector mapping between poly_leaves indices and flag indices.
   pub fn new_flags(
-    poly_leaves: Vec<DensePolynomial<F>>, 
-    poly_flags: Vec<DensePolynomial<F>>, 
-    poly_eq: DensePolynomial<F>, 
+    poly_leaves: Vec<DensePolynomial<F>>,
+    poly_flags: Vec<DensePolynomial<F>>,
+    poly_eq: DensePolynomial<F>,
     flag_map: Vec<usize>,
-    num_rounds: usize) -> Self {
-      debug_assert_eq!(poly_leaves.len(), flag_map.len());
-      debug_assert_eq!(poly_leaves[0].len(), poly_flags[0].len());
-      debug_assert_eq!(poly_leaves[0].len(), poly_eq.len());
+    num_rounds: usize,
+  ) -> Self {
+    debug_assert_eq!(poly_leaves.len(), flag_map.len());
+    debug_assert_eq!(poly_leaves[0].len(), poly_flags[0].len());
+    debug_assert_eq!(poly_leaves[0].len(), poly_eq.len());
 
-      CubicSumcheckParams { 
-        poly_As: poly_leaves, 
-        poly_Bs: poly_flags, 
-        a_to_b: flag_map, 
-        poly_eq, 
-        num_rounds, 
-        sumcheck_type: CubicSumcheckType::Flags 
-      }
+    CubicSumcheckParams {
+      poly_As: poly_leaves,
+      poly_Bs: poly_flags,
+      a_to_b: flag_map,
+      poly_eq,
+      num_rounds,
+      sumcheck_type: CubicSumcheckType::Flags,
+    }
   }
 
   pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
@@ -103,29 +105,37 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     *eq * (*flag * h + (F::one() - flag))
   }
 
-  pub fn pairs_iter(&self) -> impl Iterator<Item = (&DensePolynomial<F>, &DensePolynomial<F>, &DensePolynomial<F>)> {
+  pub fn pairs_iter(
+    &self,
+  ) -> impl Iterator<
+    Item = (
+      &DensePolynomial<F>,
+      &DensePolynomial<F>,
+      &DensePolynomial<F>,
+    ),
+  > {
     self.poly_As.iter().enumerate().map(move |(i, a)| {
-        let b_idx = match self.sumcheck_type {
-          CubicSumcheckType::Prod => i,
-          CubicSumcheckType::Flags => self.a_to_b[i],
-          _ => panic!("uh oh")
-        };
+      let b_idx = match self.sumcheck_type {
+        CubicSumcheckType::Prod => i,
+        CubicSumcheckType::Flags => self.a_to_b[i],
+        _ => panic!("uh oh"),
+      };
 
-        let b = &self.poly_Bs[b_idx];
-        let c = &self.poly_eq;
-        (a, b, c)
+      let b = &self.poly_Bs[b_idx];
+      let c = &self.poly_eq;
+      (a, b, c)
     })
   }
 
   pub fn apply_bound_poly_var_top(&mut self, r_j: &F) {
     // Apply on poly_As
     for poly in &mut self.poly_As {
-        poly.bound_poly_var_top(r_j);
+      poly.bound_poly_var_top(r_j);
     }
 
     // Apply on poly_Bs
     for poly in &mut self.poly_Bs {
-        poly.bound_poly_var_top(r_j);
+      poly.bound_poly_var_top(r_j);
     }
 
     // Apply on poly_eq
@@ -263,7 +273,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
   }
 
-
   #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched")]
   pub fn prove_cubic_batched_special<G>(
     claim: &F,
@@ -281,7 +290,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _j in 0..params.num_rounds {
-
       let iterator = params.pairs_iter();
 
       let evals: Vec<(F, F, F)> = iterator
@@ -400,7 +408,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       let mle_len = eq_poly.len();
       let mle_half = mle_len / 2;
 
-
       // Store evaluations of each polynomial at all poly_size / 2 points
       let mut eq_evals: Vec<Vec<F>> = vec![Vec::with_capacity(num_eval_points); mle_half];
       let mut multi_flag_evals: Vec<Vec<Vec<F>>> =
@@ -476,7 +483,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               terms.push(multi_memory_evals[*memory_index][mle_leaf_index][eval_index]);
             }
 
-            let instruction_collation_eval = instruction.combine_lookups(&terms, J::C, J::M);
+            let instruction_collation_eval = instruction.combine_lookups(&terms);
             let flag_eval = multi_flag_evals[instruction_index][mle_leaf_index][eval_index];
 
             // TODO(sragss): May have an excessive group mul here.
@@ -846,8 +853,8 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{utils::math::Math, poly::eq_poly::EqPolynomial};
   use crate::utils::test::TestTranscript;
+  use crate::{poly::eq_poly::EqPolynomial, utils::math::Math};
   use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
   use ark_ff::Zero;
 
@@ -923,10 +930,18 @@ mod test {
     let mut poly_C = eq.clone();
     let poly_vec_par = (&mut vec![&mut poly_A], &mut vec![&mut poly_B], &mut poly_C);
 
-    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+    let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let (proof, prove_randomness, _evals) = SumcheckInstanceProof::prove_cubic_batched::<_, G1Projective>(&claim, 2, poly_vec_par, &coeffs, comb_func, &mut transcript);
+    let (proof, prove_randomness, _evals) =
+      SumcheckInstanceProof::prove_cubic_batched::<_, G1Projective>(
+        &claim,
+        2,
+        poly_vec_par,
+        &coeffs,
+        comb_func,
+        &mut transcript,
+      );
 
     let mut transcript = Transcript::new(b"test_transcript");
     let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
@@ -953,23 +968,23 @@ mod test {
     let claim = Fr::from(4); // r points eq to the 1,1 eval
     let coeffs = vec![Fr::one()];
 
-    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+    let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
 
-    let cubic_sumcheck_params = 
-      CubicSumcheckParams::new_flags(
-        vec![factorial.clone()], 
-        vec![flags.clone()],
-        eq.clone(), 
-        vec![0], 
-        num_rounds);
+    let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
+      vec![factorial.clone()],
+      vec![flags.clone()],
+      eq.clone(),
+      vec![0],
+      num_rounds,
+    );
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let (proof, prove_randomness, _evals) = 
+    let (proof, prove_randomness, _evals) =
       SumcheckInstanceProof::prove_cubic_batched_special::<G1Projective>(
-        &claim, 
-        cubic_sumcheck_params, 
-        &coeffs, 
-        &mut transcript
+        &claim,
+        cubic_sumcheck_params,
+        &coeffs,
+        &mut transcript,
       );
 
     let mut transcript = Transcript::new(b"test_transcript");
@@ -1005,7 +1020,7 @@ mod test {
     let mut claim = Fr::zero();
     let num_evals = 4;
     let num_vars = 2;
-    for i in 0..num_evals{
+    for i in 0..num_evals {
       use crate::utils::index_to_field_bitvector;
 
       let h_eval = h.evaluate(&index_to_field_bitvector(i, num_vars));
@@ -1017,23 +1032,23 @@ mod test {
 
     let coeffs = vec![Fr::one()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
 
-    let comb_func = | h: &Fr, f: &Fr, eq: &Fr | { eq * &(h * f + (&Fr::one() - f))};
+    let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
 
-    let cubic_sumcheck_params = 
-      CubicSumcheckParams::new_flags(
-        vec![h.clone()], 
-        vec![flags.clone()],
-        eq.clone(), 
-        vec![0], 
-        num_rounds);
+    let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
+      vec![h.clone()],
+      vec![flags.clone()],
+      eq.clone(),
+      vec![0],
+      num_rounds,
+    );
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let (proof, prove_randomness, prove_evals) = 
+    let (proof, prove_randomness, prove_evals) =
       SumcheckInstanceProof::prove_cubic_batched_special::<G1Projective>(
-        &claim, 
-        cubic_sumcheck_params, 
-        &coeffs, 
-        &mut transcript
+        &claim,
+        cubic_sumcheck_params,
+        &coeffs,
+        &mut transcript,
       );
 
     // Prover eval: unwrap and combine

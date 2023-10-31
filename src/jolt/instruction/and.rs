@@ -1,28 +1,50 @@
+use std::marker::PhantomData;
+
 use ark_ff::PrimeField;
 use ark_std::log2;
+use typenum::Unsigned;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
+use crate::utils::math::Math;
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct ANDInstruction(pub u64, pub u64);
+pub struct ANDInstruction<F: PrimeField, C: Unsigned, M: Unsigned> {
+  pub rs1: u64,
+  pub rs2: u64,
+  _field: PhantomData<F>,
+  _C: PhantomData<C>,
+  _M: PhantomData<M>,
+}
 
-impl JoltInstruction for ANDInstruction {
-  fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    concatenate_lookups(vals, C, log2(M) as usize / 2)
+impl<F: PrimeField, C: Unsigned, M: Unsigned> ANDInstruction<F, C, M> {
+  pub fn new(rs1: u64, rs2: u64) -> Self {
+    Self {
+      rs1,
+      rs2,
+      _field: PhantomData,
+      _C: PhantomData,
+      _M: PhantomData,
+    }
+  }
+}
+
+impl<F: PrimeField, C: Unsigned, M: Unsigned> JoltInstruction<F, C, M> for ANDInstruction<F, C, M> {
+  fn combine_lookups(&self, vals: &[F]) -> F {
+    concatenate_lookups(vals, C::to_usize(), M::to_usize().log_2() / 2)
   }
 
-  fn g_poly_degree(&self, _: usize) -> usize {
+  fn g_poly_degree(&self) -> usize {
     1
   }
 
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+  fn subtables(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![Box::new(AndSubtable::new())]
   }
 
-  fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+  fn to_indices(&self) -> Vec<usize> {
+    chunk_and_concatenate_operands(self.rs1, self.rs2, C::to_usize(), M::to_usize().log_2())
   }
 }
 

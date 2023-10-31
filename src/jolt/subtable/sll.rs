@@ -3,29 +3,33 @@ use ark_std::log2;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use typenum::Unsigned;
+
 use super::LassoSubtable;
 use crate::utils::math::Math;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct SllSubtable<F: PrimeField, const CHUNK_INDEX: usize> {
+pub struct SllSubtable<F: PrimeField, ChunkIndex: Unsigned> {
   _field: PhantomData<F>,
+  _chunk_index: PhantomData<ChunkIndex>,
 }
 
-impl<F: PrimeField, const CHUNK_INDEX: usize> SllSubtable<F, CHUNK_INDEX> {
+impl<F: PrimeField, ChunkIndex: Unsigned> SllSubtable<F, ChunkIndex> {
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
+      _chunk_index: PhantomData,
     }
   }
 }
 
-impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SllSubtable<F, CHUNK_INDEX> {
+impl<F: PrimeField, ChunkIndex: Unsigned> LassoSubtable<F> for SllSubtable<F, ChunkIndex> {
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
 
     let operand_chunk_width: usize = (log2(M) / 2) as usize;
-    let suffix_length = operand_chunk_width * CHUNK_INDEX;
+    let suffix_length = operand_chunk_width * ChunkIndex::to_usize();
 
     for idx in 0..M {
       let (x, y) = split_bits(idx, operand_chunk_width);
@@ -69,8 +73,8 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SllSubtable<F
           + (F::one() - k_bits[log_MAX_SHIFT - 1 - i]) * (F::one() - y[b - 1 - i]);
       }
 
-      let m = if (k + b * (CHUNK_INDEX + 1)) > 64 {
-        std::cmp::min(b, (k + b * (CHUNK_INDEX + 1)) - 64)
+      let m = if (k + b * (ChunkIndex::to_usize() + 1)) > 64 {
+        std::cmp::min(b, (k + b * (ChunkIndex::to_usize() + 1)) - 64)
       } else {
         0
       };
@@ -91,11 +95,12 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SllSubtable<F
 #[cfg(test)]
 mod test {
   use ark_curve25519::Fr;
+  use typenum::U0;
 
   use crate::{
     jolt::subtable::{sll::SllSubtable, LassoSubtable},
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr, 0>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr, U0>, Fr, 256);
 }

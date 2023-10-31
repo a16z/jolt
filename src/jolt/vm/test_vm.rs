@@ -4,20 +4,19 @@ use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use typenum::{Logarithm2, Unsigned, U0, U1, U2, U3, U4, U5, U65536};
 
 use super::Jolt;
-use crate::jolt::instruction::{
-  bne::BNEInstruction, sll::SLLInstruction, xor::XORInstruction, JoltInstruction, Opcode,
-};
-use crate::jolt::subtable::{eq::EqSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable};
+use crate::jolt::instruction::{and::ANDInstruction, JoltInstruction, Opcode};
+use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(u8)]
+        #[enum_dispatch(JoltInstruction<F, C, M>)]
         #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-        #[enum_dispatch(JoltInstruction)]
-        pub enum $enum_name { $($alias($struct)),+ }
-        impl Opcode for $enum_name {}
+        pub enum $enum_name<F: PrimeField, C: Unsigned, M: Unsigned + Logarithm2> { $($alias($struct)),+ }
+        impl<F: PrimeField, C: Unsigned, M: Unsigned + Logarithm2> Opcode for $enum_name<F, C, M> {}
     };
 }
 
@@ -48,17 +47,10 @@ macro_rules! subtable_enum {
     };
 }
 
-instruction_set!(TestInstructionSet, XOR: XORInstruction, BNE: BNEInstruction, SLL: SLLInstruction);
+instruction_set!(TestInstructionSet, AND: ANDInstruction<F, C, M>);
 subtable_enum!(
   TestSubtables,
-  XOR: XorSubtable<F>,
-  EQ: EqSubtable<F>,
-  SLL0: SllSubtable<F, 0>,
-  SLL1: SllSubtable<F, 1>,
-  SLL2: SllSubtable<F, 2>,
-  SLL3: SllSubtable<F, 3>,
-  SLL4: SllSubtable<F, 4>,
-  SLL5: SllSubtable<F, 5>
+  AND: AndSubtable<F>
 );
 
 // ==================== JOLT ====================
@@ -67,11 +59,11 @@ pub enum TestJoltVM {}
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
   const MEMORY_OPS_PER_STEP: usize = 4;
-  const C: usize = 4;
-  const M: usize = 1 << 16;
-
-  type InstructionSet = TestInstructionSet;
+  type InstructionSet = TestInstructionSet<F, Self::C, Self::M>;
   type Subtables = TestSubtables<F>;
+
+  type C = U4;
+  type M = U65536; // 2^16
 }
 
 // ==================== TEST ====================
@@ -87,6 +79,7 @@ mod tests {
   use strum::{EnumCount, IntoEnumIterator};
 
   use crate::jolt::instruction::JoltInstruction;
+  use crate::jolt::subtable::LassoSubtable;
   use crate::{
     jolt::vm::test_vm::{BNEInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
