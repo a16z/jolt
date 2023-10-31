@@ -787,7 +787,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   /// Computes which subtables indices are active for a given instruction.
   /// vec[instruction_index] = [subtable_id_a, subtable_id_b, ...]
   fn instruction_to_subtable_map() -> Vec<Vec<usize>> {
-    return Self::InstructionSet::iter()
+    Self::InstructionSet::iter()
       .map(|instruction| {
         // TODO(sragss): Box<dyn SubtableTrait>.into() should work via additional functionality on the trait .
         let instruction_subtable_ids: Vec<usize> = instruction
@@ -798,7 +798,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
         instruction_subtable_ids
       })
-      .collect();
+      .collect()
   }
 
   fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
