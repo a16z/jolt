@@ -18,12 +18,14 @@ pub mod eq;
 pub mod eq_abs;
 pub mod eq_msb;
 pub mod gt_msb;
+pub mod identity;
 pub mod lt_abs;
 pub mod ltu;
 pub mod or;
-pub mod xor;
-pub mod identity;
+pub mod sll;
 pub mod truncate_overflow;
+pub mod xor;
+pub mod zero_lsb;
 
 #[cfg(test)]
 pub mod test;

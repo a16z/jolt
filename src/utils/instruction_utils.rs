@@ -27,15 +27,30 @@ pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) ->
     .collect()
 }
 
-pub fn add_and_chunk_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
+pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<usize> {
   let sum_chunk_bits: usize = log_M;
   let sum_chunk_bit_mask: usize = (1 << sum_chunk_bits) - 1;
-  let z: u128 = (x as u128) + (y as u128);
+  let z: u128 = x + y;
   (0..C)
     .map(|i| {
       let shift = ((C - i - 1) * sum_chunk_bits) as u32;
       let chunk = z.checked_shr(shift).unwrap_or(0) as usize & sum_chunk_bit_mask;
       chunk
+    })
+    .collect()
+}
+
+pub fn chunk_and_concatenate_for_shift(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
+  let operand_bits: usize = log_M / 2;
+  let operand_bit_mask: usize = (1 << operand_bits) - 1;
+
+  let y_lowest_chunk: usize = y as usize & operand_bit_mask;
+
+  (0..C)
+    .map(|i| {
+      let shift = ((C - i - 1) * operand_bits) as u32;
+      let left = x.checked_shr(shift).unwrap_or(0) as usize & operand_bit_mask;
+      (left << operand_bits) | y_lowest_chunk
     })
     .collect()
 }

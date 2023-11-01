@@ -1,21 +1,21 @@
-// use core::slice::SlicePattern;
 use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
-  identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
+  identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable,
+  zero_lsb::ZeroLSBSubtable, LassoSubtable,
 };
 use crate::utils::instruction_utils::{
   add_and_chunk_operands, chunk_and_concatenate_operands, concatenate_lookups,
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct ADDInstruction(pub u64, pub u64);
+pub struct JALInstruction(pub u64, pub u64);
 
-impl JoltInstruction for ADDInstruction {
+impl JoltInstruction for JALInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    // The first C are from IDEN and the last C are from LOWER9
+    // C from IDEN, C from TruncateOverflow
     assert!(vals.len() == 2 * C);
 
     const WORD_SIZE: usize = 64;
@@ -50,7 +50,7 @@ impl JoltInstruction for ADDInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
+    add_and_chunk_operands(self.0 as u128, self.1 as u128 + 4, C, log_M)
   }
 }
 
@@ -62,17 +62,18 @@ mod test {
 
   use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-  use super::ADDInstruction;
+  use super::JALInstruction;
 
   #[test]
-  fn add_instruction_e2e() {
+  fn jal_instruction_e2e() {
     let mut rng = test_rng();
     const C: usize = 8;
     const M: usize = 1 << 16;
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
-      jolt_instruction_test!(ADDInstruction(x, y), (x.overflowing_add(y)).0.into());
+      let z = x.overflowing_add(y.overflowing_add(4).0).0;
+      jolt_instruction_test!(JALInstruction(x, y), z.into());
     }
   }
 }
