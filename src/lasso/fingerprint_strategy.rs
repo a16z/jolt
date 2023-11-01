@@ -457,20 +457,15 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       transcript
     )?;
 
-    // TODO(sragss): Sum the relevant flags and check the corresponding fingerprints!
-    // memory_to_flag_indices -- runtime param as it's constructed from JoltVM
-    // TODO: hardcode into verifier for now
-
     // verify the claims from the product layer
     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
     for memory_index in 0..grand_product_claims.len() {
       let dimension_index = memory_to_dimension_index(memory_index);
 
-      // Compute the flag eval from opening proofs
-      let flag_indices = &self.memory_to_flag_indices[memory_index];
-      // TODO(sragss): This is incomplete for subtable reuse
-      assert_eq!(flag_indices.len(), 1);
-      let flag_index = flag_indices[0];
+      // Compute the flag eval from opening proofs.
+      // We need the subtable_flags evaluation, which can be derived from instruction_flags, by summing
+      // the relevant indices from memory_to_flag_indices.
+      let instruction_flag_eval = self.memory_to_flag_indices[memory_index].iter().map(|flag_index| self.eval_flags[*flag_index]).sum();
 
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
@@ -480,7 +475,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
         &self.eval_dim[dimension_index],
         &self.eval_read[memory_index],
         &self.eval_final[memory_index],
-        &self.eval_flags[flag_index],
+        &instruction_flag_eval,
         &init_addr,
         &evaluate_memory_mle(memory_index, rand_mem),
         r_hash,

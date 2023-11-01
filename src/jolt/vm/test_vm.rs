@@ -6,9 +6,12 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
+use crate::jolt::instruction::bge::BGEInstruction;
+use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::{
   bne::BNEInstruction, sll::SLLInstruction, xor::XORInstruction, JoltInstruction, Opcode,
 };
+use crate::jolt::subtable::ltu::LtuSubtable;
 use crate::jolt::subtable::{eq::EqSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
@@ -48,7 +51,12 @@ macro_rules! subtable_enum {
     };
 }
 
-instruction_set!(TestInstructionSet, XOR: XORInstruction, BNE: BNEInstruction, SLL: SLLInstruction);
+instruction_set!(
+  TestInstructionSet,
+  XOR: XORInstruction,
+  BNE: BNEInstruction,
+  SLL: SLLInstruction
+);
 subtable_enum!(
   TestSubtables,
   XOR: XorSubtable<F>,
@@ -79,20 +87,30 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
 #[cfg(test)]
 mod tests {
   use ark_curve25519::{EdwardsProjective, Fr};
+  use ark_ec::CurveGroup;
   use ark_ff::PrimeField;
   use ark_std::{log2, test_rng, One, Zero};
+  use enum_dispatch::enum_dispatch;
   use merlin::Transcript;
   use rand_chacha::rand_core::RngCore;
   use std::collections::HashSet;
-  use strum::{EnumCount, IntoEnumIterator};
 
-  use crate::jolt::instruction::JoltInstruction;
+  use crate::jolt::instruction::bge::BGEInstruction;
+  use crate::jolt::instruction::bgeu::BGEUInstruction;
+  use crate::jolt::instruction::sll::SLLInstruction;
+  use crate::jolt::instruction::{JoltInstruction, Opcode};
+  use crate::jolt::subtable::eq::EqSubtable;
+  use crate::jolt::subtable::ltu::LtuSubtable;
+  use crate::jolt::subtable::LassoSubtable;
   use crate::{
     jolt::vm::test_vm::{BNEInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
   };
+  use std::any::TypeId;
+  use strum::{EnumCount, IntoEnumIterator};
+  use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
   pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
     let mut rng = test_rng();
@@ -109,7 +127,7 @@ mod tests {
       TestInstructionSet::XOR(XORInstruction(420, 69)),
       TestInstructionSet::XOR(XORInstruction(420, 420)),
       TestInstructionSet::XOR(XORInstruction(420, 69)),
-      TestInstructionSet::XOR(XORInstruction(420, 69)),
+      TestInstructionSet::SLL(SLLInstruction(100, 100)),
       // TestInstructionSet::EQ(EQInstruction(420, 69)),
       // TestInstructionSet::EQ(EQInstruction(420, 420)),
       // TestInstructionSet::EQ(EQInstruction(420, 420)),
@@ -147,5 +165,57 @@ mod tests {
       <TestJoltVM as Jolt<_, EdwardsProjective>>::Subtables::COUNT,
       "Unused enum variants in Subtables"
     );
+  }
+
+  #[test]
+  fn subtable_reuse() {
+    // Setup VM / Instructions / Subtables
+    #[repr(u8)]
+    #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
+    #[enum_dispatch(JoltInstruction)]
+    pub enum ReuseInstructionSet {
+      BNE(BNEInstruction),
+      BGEU(BGEUInstruction),
+    }
+    impl Opcode for ReuseInstructionSet {}
+
+    subtable_enum!(
+      ReuseSubtables,
+      EQ: EqSubtable<F>,
+      LT: LtuSubtable<F>
+    );
+
+    let ops: Vec<ReuseInstructionSet> = vec![
+      ReuseInstructionSet::BNE(BNEInstruction(100, 100)),
+      ReuseInstructionSet::BGEU(BGEUInstruction(100, 100)),
+    ];
+
+    pub enum ReuseJoltVM {}
+
+    impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for ReuseJoltVM {
+      const MEMORY_OPS_PER_STEP: usize = 4;
+      const C: usize = 4;
+      const M: usize = 1 << 16;
+
+      type InstructionSet = ReuseInstructionSet;
+      type Subtables = ReuseSubtables<F>;
+    }
+
+    // e2e test
+
+    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = <ReuseJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
+      ops,
+      r.clone(),
+      &mut prover_transcript,
+    );
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(<ReuseJoltVM as Jolt<_, EdwardsProjective>>::verify(
+      proof,
+      &r,
+      &mut verifier_transcript
+    )
+    .is_ok());
   }
 }
