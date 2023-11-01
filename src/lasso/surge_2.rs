@@ -376,7 +376,7 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
 
     let num_ops: usize = ops.len();
     let log_num_ops: usize = num_ops.log_2();
-    let num_memories: usize = instruction.subtables::<G::ScalarField>().len() * C; // alpha // TODO(sragss): Could move to JoltInstruction trait
+    let num_memories: usize = instruction.subtables::<G::ScalarField>(C).len() * C; // alpha // TODO(sragss): Could move to JoltInstruction trait
     let memory_size: usize = M; // M
 
     let generators: SurgeCommitmentGens<G> = SurgeCommitmentGens::new(C, memory_size, num_ops, num_memories);
@@ -499,7 +499,7 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
     let memory_to_dimension_index = | memory_index: usize | { memory_index % self.C };
     let evaluate_memory_mle = | memory_index: usize, vals: &[G::ScalarField]| { 
         let subtable_index = memory_index / self.C;
-        instruction.subtables()[subtable_index].evaluate_mle(vals)
+        instruction.subtables(self.C)[subtable_index].evaluate_mle(vals)
       };
     
     self.memory_check.verify(
@@ -517,7 +517,7 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
   fn construct_polys(ops: &Vec<I>, C: usize, M: usize) -> SurgePolys<G::ScalarField> {
     let num_ops = ops.len().next_power_of_two();
     let instruction = I::default();
-    let num_unique_subtables = instruction.subtables::<G::ScalarField>().len();
+    let num_unique_subtables = instruction.subtables::<G::ScalarField>(C).len();
     let alpha = C * num_unique_subtables;
 
     let mut dim_i_usize: Vec<Vec<usize>> = vec![vec![0; num_ops]; C];
@@ -563,7 +563,7 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
 
     // Construct E
     let mut E_i_evals = Vec::with_capacity(alpha);
-    let materialized_subtables: Vec<Vec<G::ScalarField>> = instruction.subtables::<G::ScalarField>().iter().map(|subtable| subtable.materialize(M)).collect();
+    let materialized_subtables: Vec<Vec<G::ScalarField>> = instruction.subtables::<G::ScalarField>(C).iter().map(|subtable| subtable.materialize(M)).collect();
     for E_index in 0..alpha {
       let mut E_evals = Vec::with_capacity(num_ops);
       for op_index in 0..num_ops {

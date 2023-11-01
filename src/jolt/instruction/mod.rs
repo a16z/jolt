@@ -7,7 +7,7 @@ use crate::jolt::{subtable::LassoSubtable, vm::test_vm::TestInstructionSet};
 pub trait JoltInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F;
   fn g_poly_degree(&self, C: usize) -> usize;
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>>;
+  fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
 }
 

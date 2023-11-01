@@ -17,7 +17,7 @@ impl JoltInstruction for ANDInstruction {
     1
   }
 
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+  fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![Box::new(AndSubtable::new())]
   }
 
