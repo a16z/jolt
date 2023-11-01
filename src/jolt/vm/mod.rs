@@ -8,7 +8,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use crate::{
   jolt::{
     instruction::{JoltInstruction, Opcode},
-    subtable::LassoSubtable,
+    subtable::LassoSubtable, vm::pc::PCPolys,
   },
   lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::ROFlagsFingerprintProof},
   poly::{
@@ -26,6 +26,8 @@ use crate::{
     transcript::{AppendToTranscript, ProofTranscript},
   },
 };
+
+use self::pc::{PCProof, PCFingerprintProof};
 
 // TODO(65): Refactor to make more specific.
 /// All vectors to be committed in polynomial form.
@@ -198,7 +200,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     contiguous_reads_per_access: usize,
     r_mem_check: &(F, F),
     transcript: &mut Transcript,
-  ) {
+  ) -> MemoryCheckingProof::<G, PCFingerprintProof<G>> {
     let (gamma, tau) = r_mem_check;
     let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 
@@ -224,50 +226,23 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       }
     }
 
-    let E_poly: DensePolynomial<F> = DensePolynomial::from_u64(&read_values);
-    let dim: DensePolynomial<F> = DensePolynomial::from_usize(access_sequence);
-    let read_cts: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts);
-    let final_cts: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts);
-    let init_values: DensePolynomial<F> = DensePolynomial::from_u64(program_code);
-    unimplemented!("commit to these polynomials");
+    let E_poly: DensePolynomial<F> = DensePolynomial::from_u64(&read_values); // v_ops
+    let dim: DensePolynomial<F> = DensePolynomial::from_usize(access_sequence); // a_ops
+    let read_cts: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts); // t_read
+    let final_cts: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts); // t_final
+    let init_values: DensePolynomial<F> = DensePolynomial::from_u64(program_code); // v_mem
 
-    let init_poly = DensePolynomial::new(
-      (0..code_size)
-        .map(|i| {
-          // addr is given by i, init value is given by program_code, and ts = 0
-          hash_func(&F::from(i as u64), &F::from(program_code[i]), &F::zero())
-        })
-        .collect::<Vec<F>>(),
-    );
+    let polys = PCPolys::new(dim, E_poly, init_values, read_cts, final_cts, 0);
+    let (gens, commitments) = polys.commit::<G>();
 
-    let read_poly = DensePolynomial::new(
-      (0..m)
-        .map(|i| hash_func(&F::from(read_addrs[i] as u64), &E_poly[i], &read_cts[i]))
-        .collect::<Vec<F>>(),
-    );
-
-    let write_poly = DensePolynomial::new(
-      (0..m)
-        .map(|i| {
-          hash_func(
-            &F::from(read_addrs[i] as u64),
-            &F::from(read_values[i]),
-            &(read_cts[i] + F::one()),
-          )
-        })
-        .collect::<Vec<F>>(),
-    );
-
-    let final_poly = DensePolynomial::new(
-      (0..code_size)
-        .map(|i| {
-          // addr is given by i, init value is given by program_code, and ts = 0
-          hash_func(&F::from(i as u64), &F::from(program_code[i]), &final_cts[i])
-        })
-        .collect::<Vec<F>>(),
-    );
-
-    unimplemented!("memory checking");
+    todo!("decide how to represent nested proofs, gens, commitments");
+    // MemoryCheckingProof::<G, PCFingerprintProof<G>>::prove(
+    //   &polys,
+    //   r_fingerprints,
+    //   &gens,
+    //   &mut transcript,
+    //   &mut random_tape,
+    // )
   }
 
   fn prove_memory(
@@ -844,4 +819,4 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
 pub mod test_vm;
 pub mod memory;
-// pub mod pc;
+pub mod pc;

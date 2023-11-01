@@ -105,7 +105,7 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField> {
+pub struct ProductLayerProof<F: PrimeField> {
   grand_product_evals: Vec<GPEvals<F>>,
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
