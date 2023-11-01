@@ -136,7 +136,7 @@ mod tests {
   fn instruction_set_subtables() {
     let mut subtable_set: HashSet<_> = HashSet::new();
     for instruction in <TestJoltVM as Jolt<_, EdwardsProjective>>::InstructionSet::iter() {
-      for subtable in instruction.subtables::<Fr>() {
+      for subtable in instruction.subtables::<Fr>(<TestJoltVM as Jolt<_, EdwardsProjective>>::C) {
         // panics if subtable cannot be cast to enum variant
         let _ = <TestJoltVM as Jolt<_, EdwardsProjective>>::Subtables::from(subtable.subtable_id());
         subtable_set.insert(subtable.subtable_id());

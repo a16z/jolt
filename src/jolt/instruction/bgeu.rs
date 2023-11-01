@@ -19,7 +19,7 @@ impl JoltInstruction for BGEUInstruction {
     C
   }
 
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+  fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![Box::new(LtuSubtable::new()), Box::new(EqSubtable::new())]
   }
 

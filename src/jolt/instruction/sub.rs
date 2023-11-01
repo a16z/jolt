@@ -42,7 +42,7 @@ impl JoltInstruction for SUBInstruction {
     1
   }
 
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+  fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![
       Box::new(IdentitySubtable::new()),
       Box::new(TruncateOverflowSubtable::new()),

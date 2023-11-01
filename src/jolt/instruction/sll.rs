@@ -13,9 +13,8 @@ pub struct SLLInstruction(pub u64, pub u64);
 
 impl JoltInstruction for SLLInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-    // TODO(JOLT-45): make this more robust
-    assert!(C <= 6);
-    assert!(vals.len() == 6 * C);
+    assert!(C <= 10);
+    assert!(vals.len() == C * C);
 
     let mut subtable_vals = vals.chunks_exact(C);
     let mut vals_filtered: Vec<F> = Vec::with_capacity(C);
@@ -31,15 +30,22 @@ impl JoltInstruction for SLLInstruction {
     1
   }
 
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
-    vec![
-      Box::new(SllSubtable::<F, 5>::new()),
-      Box::new(SllSubtable::<F, 4>::new()),
-      Box::new(SllSubtable::<F, 3>::new()),
-      Box::new(SllSubtable::<F, 2>::new()),
-      Box::new(SllSubtable::<F, 1>::new()),
+  fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
       Box::new(SllSubtable::<F, 0>::new()),
-    ]
+      Box::new(SllSubtable::<F, 1>::new()),
+      Box::new(SllSubtable::<F, 2>::new()),
+      Box::new(SllSubtable::<F, 3>::new()),
+      Box::new(SllSubtable::<F, 4>::new()),
+      Box::new(SllSubtable::<F, 5>::new()),
+      Box::new(SllSubtable::<F, 6>::new()),
+      Box::new(SllSubtable::<F, 7>::new()),
+      Box::new(SllSubtable::<F, 8>::new()),
+      Box::new(SllSubtable::<F, 9>::new()),
+    ];
+    subtables.truncate(C);
+    subtables.reverse();
+    subtables
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {

@@ -685,7 +685,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
   fn instruction_to_memory_indices(op: &Self::InstructionSet) -> Vec<usize> {
     let instruction_subtables: Vec<Self::Subtables> = op
-      .subtables::<F>()
+      .subtables::<F>(Self::C)
       .iter()
       .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
       .collect();
@@ -791,7 +791,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       .map(|instruction| {
         // TODO(sragss): Box<dyn SubtableTrait>.into() should work via additional functionality on the trait .
         let instruction_subtable_ids: Vec<usize> = instruction
-          .subtables::<F>()
+          .subtables::<F>(Self::C)
           .iter()
           .map(|subtable| Self::Subtables::from(subtable.subtable_id()).into())
           .collect();
@@ -814,7 +814,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     for instruction in Self::InstructionSet::iter() {
       let instruction_subtables: Vec<Self::Subtables> = instruction
-        .subtables::<F>()
+        .subtables::<F>(Self::C)
         .iter()
         .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
         .collect();

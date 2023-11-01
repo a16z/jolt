@@ -41,7 +41,7 @@ impl JoltInstruction for SLTInstruction {
     C
   }
 
-  fn subtables<F: PrimeField>(&self) -> Vec<Box<dyn LassoSubtable<F>>> {
+  fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![
       Box::new(GtMSBSubtable::new()),
       Box::new(EqMSBSubtable::new()),
