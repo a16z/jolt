@@ -6,7 +6,7 @@ use merlin::Transcript;
 
 use crate::{
   jolt::vm::{PolynomialRepresentation, SurgeCommitment, SurgeCommitmentGenerators},
-  poly::{dense_mlpoly::DensePolynomial, identity_poly::IdentityPolynomial},
+  poly::identity_poly::IdentityPolynomial,
   subprotocols::{combined_table_proof::CombinedTableEvalProof, grand_product::BGPCInterpretable},
   utils::{errors::ProofVerifyError, random::RandomTape, transcript::ProofTranscript},
 };
@@ -49,7 +49,7 @@ pub trait FingerprintStrategy<G: CurveGroup>:
     random_tape: &mut RandomTape<G>,
   ) -> Self;
 
-  // TODO(sragss): simplify signature
+  // TODO(JOLT-47): simplify signature
   fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
     &self,
     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
