@@ -1,7 +1,7 @@
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::lasso::surge_2::SurgeProof;
 use ark_curve25519::EdwardsProjective;
-use ark_std::test_rng;
+use ark_std::{test_rng, log2};
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
 
@@ -49,7 +49,7 @@ fn random_surge_2_test(num_ops: usize, C: usize, M: usize) -> Box<dyn FnOnce()> 
   let mut rng = test_rng();
 
   let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
-  let operand_max: u64 = (1 << (log2(M) * C - 1)).try_into().unwrap();
+  let operand_max: u64 = (1 << ((log2(M) as usize) * C - 1)).try_into().unwrap();
   for _ in 0..num_ops {
     let a = rng.next_u64() % operand_max;
     let b = rng.next_u64() % operand_max;

@@ -48,7 +48,7 @@ impl<F: PrimeField> PCPolys<F> {
     t_final: DensePolynomial<F>,
     address_offset: usize,
   ) -> Self {
-    // TODO(sragss): DensePolynomial::merge should be parameterized with  Vec<&DensePolynomial> given it is read only. Avoids clones.
+    // TODO(JOLT-48): DensePolynomial::merge should be parameterized with  Vec<&DensePolynomial> given it is read only. Avoids clones.
     let ops = [a_ops.clone(), v_ops.clone(), t_read.clone()];
     let combined_ops = DensePolynomial::merge(&ops);
     let mems = [v_mem.clone(), t_final.clone()];
@@ -241,7 +241,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for PCFingerprintProof<G> {
     &self,
     rand: (&Vec<<G>::ScalarField>, &Vec<<G>::ScalarField>),
     grand_product_claims: &[GPEvals<<G>::ScalarField>],
-    // TODO(sragss): Refactor from interface
+    // TODO(JOLT-47): Refactor from interface
     _memory_to_dimension_index: F1,
     _evaluate_memory_mle: F2,
     commitments: &Self::Commitments,
@@ -266,7 +266,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for PCFingerprintProof<G> {
 
     debug_assert_eq!(grand_product_claims.len(), 1);
     let claim = &grand_product_claims[0];
-    // TODO(sragss): Doesn't work for offsets
+    // TODO(JOLT-46): Doesn't work for offsets
     let a_mem = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
     let hash_init = hash(a_mem, self.eval_v_mem, G::ScalarField::zero());
     assert_eq!(claim.hash_init, hash_init);
