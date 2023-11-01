@@ -543,6 +543,20 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
       }
     }
 
+    // num_ops is padded to the nearest power of 2 for the usage of DensePolynomial. We cannot just fill
+    // in zeros for read_cts and final_cts as this implicitly specifies a read at address 0. The prover 
+    // and verifier plumbing assume write_ts(r) = read_ts(r) + 1. This will not hold unless we update
+    // the final_cts for these phantom reads.
+    for fake_ops_index in ops.len()..num_ops {
+      for dimension_index in 0..C {
+        let memory_address = 0;
+        let ts = final_cts[dimension_index][memory_address];
+        read_cts[dimension_index][fake_ops_index] = ts;
+        let write_timestamp = ts + 1;
+        final_cts[dimension_index][memory_address] = write_timestamp;
+      }
+    }
+
     let dim_i: Vec<DensePolynomial<G::ScalarField>> = dim_i_usize.iter().map(|dim| DensePolynomial::from_usize(dim)).collect();
     let read_i: Vec<DensePolynomial<G::ScalarField>> = read_cts.iter().map(|read| DensePolynomial::from_usize(read)).collect();
     let final_i: Vec<DensePolynomial<G::ScalarField>> = final_cts.iter().map(|fin| DensePolynomial::from_usize(fin)).collect();
@@ -638,13 +652,13 @@ mod tests {
     #[test]
     fn e2e_non_pow_2() {
       let ops = vec![
-        XORInstruction(12, 12),
-        XORInstruction(12, 82),
-        XORInstruction(12, 12),
-        XORInstruction(25, 12),
-        XORInstruction(25, 12),
+        XORInstruction(0, 1),
+        XORInstruction(101, 101),
+        XORInstruction(202, 1),
+        XORInstruction(220, 1),
+        XORInstruction(220, 1),
       ];
-      let C = 8;
+      let C = 2;
       let M = 1 << 8;
 
       let mut transcript = Transcript::new(b"test_transcript");
