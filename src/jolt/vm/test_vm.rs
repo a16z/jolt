@@ -95,14 +95,22 @@ mod tests {
   use rand_chacha::rand_core::RngCore;
   use std::collections::HashSet;
 
-  use crate::jolt::instruction::bge::BGEInstruction;
+  use crate::jolt::instruction::and::ANDInstruction;
+use crate::jolt::instruction::bge::BGEInstruction;
   use crate::jolt::instruction::bgeu::BGEUInstruction;
-  use crate::jolt::instruction::sll::SLLInstruction;
-  use crate::jolt::instruction::{JoltInstruction, Opcode};
-  use crate::jolt::subtable::eq::EqSubtable;
-  use crate::jolt::subtable::ltu::LtuSubtable;
+  use crate::jolt::instruction::jal::JALInstruction;
+use crate::jolt::instruction::jalr::JALRInstruction;
+use crate::jolt::instruction::sll::SLLInstruction;
+  use crate::jolt::instruction::sub::SUBInstruction;
+use crate::jolt::instruction::{JoltInstruction, Opcode};
+  use crate::jolt::subtable::and::AndSubtable;
+use crate::jolt::subtable::eq::EqSubtable;
+  use crate::jolt::subtable::identity::IdentitySubtable;
+use crate::jolt::subtable::ltu::LtuSubtable;
   use crate::jolt::subtable::LassoSubtable;
-  use crate::{
+  use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
+use crate::jolt::subtable::zero_lsb::ZeroLSBSubtable;
+use crate::{
     jolt::vm::test_vm::{BNEInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -202,7 +210,88 @@ mod tests {
     }
 
     // e2e test
+ 
+    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof = <ReuseJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
+      ops,
+      r.clone(),
+      &mut prover_transcript,
+    );
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(<ReuseJoltVM as Jolt<_, EdwardsProjective>>::verify(
+      proof,
+      &r,
+      &mut verifier_transcript
+    )
+    .is_ok());
+  }
 
+  #[test]
+  fn subtable_reuse_increased_complication() {
+    // Setup VM / Instructions / Subtables
+    #[repr(u8)]
+    #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
+    #[enum_dispatch(JoltInstruction)]
+    pub enum ReuseInstructionSet {
+      AND(ANDInstruction),
+      SUB(SUBInstruction),
+      JAL(JALInstruction),
+      JALR(JALRInstruction)
+    }
+    impl Opcode for ReuseInstructionSet {}
+
+    #[repr(usize)]
+    #[enum_dispatch(LassoSubtable<F>)]
+    #[derive(EnumCountMacro, EnumIter)]
+    pub enum ReuseCSubtables<F: PrimeField> { 
+      AND(AndSubtable<F>),
+      ID(IdentitySubtable<F>),
+      TRUNC(TruncateOverflowSubtable<F>),
+      ZERO(ZeroLSBSubtable<F>)
+    }
+    impl<F: PrimeField> From<TypeId> for ReuseCSubtables<F> {
+      fn from(subtable_id: TypeId) -> Self {
+        if subtable_id == TypeId::of::<AndSubtable<F>>() {
+          ReuseCSubtables::<F>::from(AndSubtable::new())
+        } else if subtable_id == TypeId::of::<IdentitySubtable<F>>() {
+          ReuseCSubtables::<F>::from(IdentitySubtable::new())
+        } else if subtable_id == TypeId::of::<TruncateOverflowSubtable<F>>() {
+          ReuseCSubtables::<F>::from(TruncateOverflowSubtable::new())
+        } else if subtable_id == TypeId::of::<ZeroLSBSubtable<F>>() {
+          ReuseCSubtables::<F>::from(ZeroLSBSubtable::new())
+        } else { 
+          panic!("Unexpected subtable id {:?}", subtable_id) 
+        }
+      }
+    }
+
+    impl<F: PrimeField> Into<usize> for ReuseCSubtables<F> {
+      fn into(self) -> usize {
+        unsafe { *<*const _>::from(&self).cast::<usize>() }
+      }
+    }
+
+    let ops: Vec<ReuseInstructionSet> = vec![
+      ReuseInstructionSet::AND(ANDInstruction(100, 100)),
+      ReuseInstructionSet::SUB(SUBInstruction(100, 100)),
+      ReuseInstructionSet::JAL(JALInstruction(100, 100)),
+      ReuseInstructionSet::JALR(JALRInstruction(100, 100)),
+    ];
+
+    pub enum ReuseJoltVM {}
+
+    impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for ReuseJoltVM {
+      const MEMORY_OPS_PER_STEP: usize = 4;
+      const C: usize = 8;
+      const M: usize = 1 << 16;
+
+      type InstructionSet = ReuseInstructionSet;
+      type Subtables = ReuseCSubtables<F>;
+    }
+
+    // e2e test
+ 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
     let proof = <ReuseJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
