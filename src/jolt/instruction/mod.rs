@@ -29,7 +29,7 @@ pub mod and;
 // pub mod jal;
 // pub mod jalr;
 // pub mod or;
-// pub mod sll;
+pub mod sll;
 // pub mod slt;
 // pub mod sltu;
 // pub mod sub;

@@ -7,8 +7,8 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use typenum::{Logarithm2, Unsigned, U0, U1, U2, U3, U4, U5, U65536};
 
 use super::Jolt;
-use crate::jolt::instruction::{and::ANDInstruction, JoltInstruction, Opcode};
-use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
+use crate::jolt::instruction::{and::ANDInstruction, sll::SLLInstruction, JoltInstruction, Opcode};
+use crate::jolt::subtable::{and::AndSubtable, sll::SllSubtable, LassoSubtable};
 
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {

@@ -9,7 +9,7 @@ use super::LassoSubtable;
 use crate::utils::math::Math;
 use crate::utils::split_bits;
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct SllSubtable<F: PrimeField, ChunkIndex: Unsigned> {
   _field: PhantomData<F>,
   _chunk_index: PhantomData<ChunkIndex>,
