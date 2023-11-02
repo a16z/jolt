@@ -19,7 +19,7 @@ use crate::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     grand_product::BGPCInterpretable,
   },
-  utils::{self, errors::ProofVerifyError, math::Math, transcript::ProofTranscript},
+  utils::{self, errors::ProofVerifyError, math::Math, transcript::ProofTranscript, is_power_of_two},
 };
 
 pub struct ELFRow {
@@ -139,6 +139,9 @@ pub struct PCPolys<F: PrimeField> {
 impl<F: PrimeField> PCPolys<F> {
   // TODO(sragss): precommit PC strategy
   pub fn new_program(program: Vec<ELFRow>, trace: Vec<ELFRow>) -> Self {
+	assert!(is_power_of_two(program.len()));
+	assert!(is_power_of_two(trace.len()));
+
     let num_ops = trace.len().next_power_of_two();
     let code_size = program.len().next_power_of_two();
 
@@ -532,7 +535,6 @@ mod tests {
     utils::random::RandomTape,
   };
   use ark_curve25519::{EdwardsProjective, Fr};
-  use ark_std::{One, Zero};
   use merlin::Transcript;
 
   use super::{ELFRow, FiveTuplePoly, PCFingerprintProof, PCPolys};
@@ -609,7 +611,6 @@ mod tests {
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
     ];
     let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-    // let (gens, commitments) = polys.commit::<EdwardsProjective>();
     let mut transcript = Transcript::new(b"test_transcript");
     let r_fingerprints = (&Fr::from(12), &Fr::from(35));
     let (proof, _, _) =
@@ -622,6 +623,7 @@ mod tests {
   }
 
   #[test]
+  #[should_panic]
   fn product_layer_proof_non_pow_two() {
     let program = vec![
       ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
@@ -635,17 +637,17 @@ mod tests {
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
       ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
     ];
-    let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
+    let _polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
     // let (gens, commitments) = polys.commit::<EdwardsProjective>();
-    let mut transcript = Transcript::new(b"test_transcript");
-    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    // let mut transcript = Transcript::new(b"test_transcript");
+    // let r_fingerprints = (&Fr::from(12), &Fr::from(35));
+    // let (proof, _, _) =
+    //   ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
 
-    let mut transcript = Transcript::new(b"test_transcript");
-    proof
-      .verify::<EdwardsProjective>(&mut transcript)
-      .expect("proof should work");
+    // let mut transcript = Transcript::new(b"test_transcript");
+    // proof
+    //   .verify::<EdwardsProjective>(&mut transcript)
+    //   .expect("proof should work");
   }
 
   #[test]
