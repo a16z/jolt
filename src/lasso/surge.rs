@@ -614,7 +614,7 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
 mod tests {
     use merlin::Transcript;
 
-    use crate::{jolt::instruction::xor::XORInstruction, lasso::surge_2::SurgeProof};
+    use crate::{jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof};
     use ark_curve25519::EdwardsProjective;
 
     #[test]
