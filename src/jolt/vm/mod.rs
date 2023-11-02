@@ -232,8 +232,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let final_cts: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts); // t_final
     let init_values: DensePolynomial<F> = DensePolynomial::from_u64(program_code); // v_mem
 
-    let polys = PCPolys::new(dim, E_poly, init_values, read_cts, final_cts, 0);
-    let (gens, commitments) = polys.commit::<G>();
+    // let polys = PCPolys::new(dim, E_poly, init_values, read_cts, final_cts, 0);
+    // let (gens, commitments) = polys.commit::<G>();
 
     todo!("decide how to represent nested proofs, gens, commitments");
     // MemoryCheckingProof::<G, PCFingerprintProof<G>>::prove(

@@ -24,7 +24,7 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DensePolynomial<F> {
   num_vars: usize, // the number of variables in the multilinear polynomial
   len: usize,
