@@ -54,6 +54,9 @@ pasta_curves = "0.5.1"
 bellpepper-core = "0.2.1"
 circom-scotia = "0.1.2"
 spartan2 = "0.1.0"
+strum = "0.25.0"
+strum_macros = "0.25.2"
+enum_dispatch = "0.3.12"
 
 [dev-dependencies]
 criterion = "0.3.1"
@@ -63,13 +66,7 @@ name = "liblasso"
 path = "src/lib.rs"
 
 [features]
-default = [
-    "ark-ec/parallel",
-    "ark-ff/parallel",
-    "ark-std/parallel",
-    "ark-ff/asm",
-    "multicore",
-]
+default = ["ark-ec/parallel", "ark-ff/parallel", "ark-std/parallel", "ark-ff/asm", "multicore"]
 multicore = ["rayon"]
 ark-msm = [] # run with arkworks MSM without small field element optimization
 

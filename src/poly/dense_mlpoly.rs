@@ -24,7 +24,7 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DensePolynomial<F> {
   num_vars: usize, // the number of variables in the multilinear polynomial
   len: usize,
@@ -66,7 +66,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     );
 
     DensePolynomial {
-      num_vars: Z.len().log_2() as usize,
+      num_vars: Z.len().log_2(),
       len: Z.len(),
       Z,
     }
@@ -80,7 +80,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     DensePolynomial {
-      num_vars: poly_evals.len().log_2() as usize,
+      num_vars: poly_evals.len().log_2(),
       len: poly_evals.len(),
       Z: poly_evals,
     }
@@ -238,6 +238,10 @@ impl<F: PrimeField> DensePolynomial<F> {
     &self.Z
   }
 
+  pub fn evals(&self) -> Vec<F> {
+    self.Z.clone()
+  }
+
   pub fn extend(&mut self, other: &DensePolynomial<F>) {
     assert_eq!(self.Z.len(), self.len);
     let other_vec = other.vec();
@@ -266,6 +270,10 @@ impl<F: PrimeField> DensePolynomial<F> {
         .map(|i| F::from(Z[i] as u64))
         .collect::<Vec<F>>(),
     )
+  }
+
+  pub fn from_u64(Z: &[u64]) -> Self {
+    DensePolynomial::new((0..Z.len()).map(|i| F::from(Z[i])).collect::<Vec<F>>())
   }
 }
 
@@ -372,7 +380,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     );
 
     // compute L and R
-    let eq = EqPolynomial::new(r.to_vec());
+    let eq: EqPolynomial<_> = EqPolynomial::new(r.to_vec());
     let (L, R) = eq.compute_factored_evals();
 
     // compute a weighted sum of commitments and L
