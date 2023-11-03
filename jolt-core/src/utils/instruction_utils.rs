@@ -2,17 +2,10 @@ use ark_ff::PrimeField;
 
 /// Concatenates `C` `vals` field elements each of max size 2^`operand_bits`-1
 /// into a single field element. `operand_bits` is the number of bits required to represent
-/// each element in `vals`. If an element of `vals` is larger it will not be truncated, and
-/// the result will be incorrect.
+/// each element in `vals`. If an element of `vals` is larger it will not be truncated, which
+/// is commonly used by the collation functions of instructions.
 pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: usize) -> F {
   assert_eq!(vals.len(), C);
-  #[cfg(test)]
-  {
-    // Panic if any element of vals is larger than that described by `operand_bits`
-    vals
-      .iter()
-      .for_each(|val| assert!(*val < F::from(1u64 << (operand_bits))));
-  }
 
   let mut sum = F::zero();
   let mut weight = F::one();
@@ -98,14 +91,6 @@ mod tests {
     let vals = vec![Fr::from(7), Fr::from(1), Fr::from(2), Fr::from(3)];
     let concat = concatenate_lookups(&vals, 4, 3);
     assert_eq!(concat, Fr::from(0b111_001_010_011));
-  }
-
-  #[test]
-  #[should_panic]
-  fn concatenate_lookups_panics_too_large() {
-    let vals = vec![Fr::from(1), Fr::from(2), Fr::from(4)];
-    let concat = concatenate_lookups(&vals, 3, 2);
-    assert_eq!(concat, Fr::from(0b01_10_11));
   }
 
   #[test]
