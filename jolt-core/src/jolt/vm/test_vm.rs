@@ -5,7 +5,7 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::Jolt;
+use super::{instruction_lookups::InstructionLookups, Jolt};
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::{
@@ -73,14 +73,18 @@ subtable_enum!(
 
 pub enum TestJoltVM {}
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {
-  const MEMORY_OPS_PER_STEP: usize = 4;
-  const C: usize = 4;
+impl<F, G> InstructionLookups<F, G> for TestJoltVM
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  const C: usize = 8;
   const M: usize = 1 << 16;
 
   type InstructionSet = TestInstructionSet;
   type Subtables = TestSubtables<F>;
 }
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {}
 
 // ==================== TEST ====================
 
@@ -96,22 +100,25 @@ mod tests {
   use std::collections::HashSet;
 
   use crate::jolt::instruction::and::ANDInstruction;
-use crate::jolt::instruction::bge::BGEInstruction;
+  use crate::jolt::instruction::bge::BGEInstruction;
   use crate::jolt::instruction::bgeu::BGEUInstruction;
   use crate::jolt::instruction::jal::JALInstruction;
-use crate::jolt::instruction::jalr::JALRInstruction;
-use crate::jolt::instruction::sll::SLLInstruction;
+  use crate::jolt::instruction::jalr::JALRInstruction;
+  use crate::jolt::instruction::sll::SLLInstruction;
   use crate::jolt::instruction::sub::SUBInstruction;
-use crate::jolt::instruction::{JoltInstruction, Opcode};
+  use crate::jolt::instruction::{JoltInstruction, Opcode};
   use crate::jolt::subtable::and::AndSubtable;
-use crate::jolt::subtable::eq::EqSubtable;
+  use crate::jolt::subtable::eq::EqSubtable;
   use crate::jolt::subtable::identity::IdentitySubtable;
-use crate::jolt::subtable::ltu::LtuSubtable;
-  use crate::jolt::subtable::LassoSubtable;
+  use crate::jolt::subtable::ltu::LtuSubtable;
   use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
-use crate::jolt::subtable::zero_lsb::ZeroLSBSubtable;
-use crate::{
-    jolt::vm::test_vm::{BNEInstruction, Jolt, TestInstructionSet, TestJoltVM, XORInstruction},
+  use crate::jolt::subtable::zero_lsb::ZeroLSBSubtable;
+  use crate::jolt::subtable::LassoSubtable;
+  use crate::jolt::vm::instruction_lookups::JoltProof;
+  use crate::{
+    jolt::vm::test_vm::{
+      BNEInstruction, InstructionLookups, Jolt, TestInstructionSet, TestJoltVM, XORInstruction,
+    },
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
@@ -146,33 +153,41 @@ use crate::{
 
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = <TestJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
+    let proof = <TestJoltVM as InstructionLookups<_, EdwardsProjective>>::prove_lookups(
       ops,
       r.clone(),
       &mut prover_transcript,
     );
     let mut verifier_transcript = Transcript::new(b"example");
-    assert!(<TestJoltVM as Jolt<_, EdwardsProjective>>::verify(
-      proof,
-      &r,
-      &mut verifier_transcript
-    )
-    .is_ok());
+    assert!(
+      <TestJoltVM as InstructionLookups<_, EdwardsProjective>>::verify(
+        proof,
+        &r,
+        &mut verifier_transcript
+      )
+      .is_ok()
+    );
   }
 
   #[test]
   fn instruction_set_subtables() {
     let mut subtable_set: HashSet<_> = HashSet::new();
-    for instruction in <TestJoltVM as Jolt<_, EdwardsProjective>>::InstructionSet::iter() {
-      for subtable in instruction.subtables::<Fr>(<TestJoltVM as Jolt<_, EdwardsProjective>>::C) {
+    for instruction in
+      <TestJoltVM as InstructionLookups<_, EdwardsProjective>>::InstructionSet::iter()
+    {
+      for subtable in
+        instruction.subtables::<Fr>(<TestJoltVM as InstructionLookups<_, EdwardsProjective>>::C)
+      {
         // panics if subtable cannot be cast to enum variant
-        let _ = <TestJoltVM as Jolt<_, EdwardsProjective>>::Subtables::from(subtable.subtable_id());
+        let _ = <TestJoltVM as InstructionLookups<_, EdwardsProjective>>::Subtables::from(
+          subtable.subtable_id(),
+        );
         subtable_set.insert(subtable.subtable_id());
       }
     }
     assert_eq!(
       subtable_set.len(),
-      <TestJoltVM as Jolt<_, EdwardsProjective>>::Subtables::COUNT,
+      <TestJoltVM as InstructionLookups<_, EdwardsProjective>>::Subtables::COUNT,
       "Unused enum variants in Subtables"
     );
   }
@@ -202,9 +217,12 @@ use crate::{
 
     pub enum ReuseJoltVM {}
 
-    impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for ReuseJoltVM {
-      const MEMORY_OPS_PER_STEP: usize = 4;
-      const C: usize = 4;
+    impl<F, G> InstructionLookups<F, G> for ReuseJoltVM
+    where
+      F: PrimeField,
+      G: CurveGroup<ScalarField = F>,
+    {
+      const C: usize = 8;
       const M: usize = 1 << 16;
 
       type InstructionSet = ReuseInstructionSet;
@@ -212,21 +230,13 @@ use crate::{
     }
 
     // e2e test
- 
+
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = <ReuseJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
-      ops,
-      r.clone(),
-      &mut prover_transcript,
-    );
+    let instruction_lookups_proof: JoltProof<EdwardsProjective> =
+      ReuseJoltVM::prove_lookups(ops, r.clone(), &mut prover_transcript);
     let mut verifier_transcript = Transcript::new(b"example");
-    assert!(<ReuseJoltVM as Jolt<_, EdwardsProjective>>::verify(
-      proof,
-      &r,
-      &mut verifier_transcript
-    )
-    .is_ok());
+    assert!(ReuseJoltVM::verify(instruction_lookups_proof, &r, &mut verifier_transcript).is_ok());
   }
 
   #[test]
@@ -239,18 +249,18 @@ use crate::{
       AND(ANDInstruction),
       SUB(SUBInstruction),
       JAL(JALInstruction),
-      JALR(JALRInstruction)
+      JALR(JALRInstruction),
     }
     impl Opcode for ReuseInstructionSet {}
 
     #[repr(usize)]
     #[enum_dispatch(LassoSubtable<F>)]
     #[derive(EnumCountMacro, EnumIter)]
-    pub enum ReuseCSubtables<F: PrimeField> { 
+    pub enum ReuseCSubtables<F: PrimeField> {
       AND(AndSubtable<F>),
       ID(IdentitySubtable<F>),
       TRUNC(TruncateOverflowSubtable<F>),
-      ZERO(ZeroLSBSubtable<F>)
+      ZERO(ZeroLSBSubtable<F>),
     }
     impl<F: PrimeField> From<TypeId> for ReuseCSubtables<F> {
       fn from(subtable_id: TypeId) -> Self {
@@ -262,8 +272,8 @@ use crate::{
           ReuseCSubtables::<F>::from(TruncateOverflowSubtable::new())
         } else if subtable_id == TypeId::of::<ZeroLSBSubtable<F>>() {
           ReuseCSubtables::<F>::from(ZeroLSBSubtable::new())
-        } else { 
-          panic!("Unexpected subtable id {:?}", subtable_id) 
+        } else {
+          panic!("Unexpected subtable id {:?}", subtable_id)
         }
       }
     }
@@ -283,8 +293,11 @@ use crate::{
 
     pub enum ReuseJoltVM {}
 
-    impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for ReuseJoltVM {
-      const MEMORY_OPS_PER_STEP: usize = 4;
+    impl<F, G> InstructionLookups<F, G> for ReuseJoltVM
+    where
+      F: PrimeField,
+      G: CurveGroup<ScalarField = F>,
+    {
       const C: usize = 8;
       const M: usize = 1 << 16;
 
@@ -293,20 +306,12 @@ use crate::{
     }
 
     // e2e test
- 
+
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
-    let proof = <ReuseJoltVM as Jolt<_, EdwardsProjective>>::prove_lookups(
-      ops,
-      r.clone(),
-      &mut prover_transcript,
-    );
+    let instruction_lookups_proof: JoltProof<EdwardsProjective> =
+      ReuseJoltVM::prove_lookups(ops, r.clone(), &mut prover_transcript);
     let mut verifier_transcript = Transcript::new(b"example");
-    assert!(<ReuseJoltVM as Jolt<_, EdwardsProjective>>::verify(
-      proof,
-      &r,
-      &mut verifier_transcript
-    )
-    .is_ok());
+    assert!(ReuseJoltVM::verify(instruction_lookups_proof, &r, &mut verifier_transcript).is_ok());
   }
 }

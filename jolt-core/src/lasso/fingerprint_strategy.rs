@@ -5,7 +5,8 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use crate::{
-  jolt::vm::{PolynomialRepresentation, SurgeCommitment, SurgeCommitmentGenerators},
+  jolt::vm::instruction_lookups::PolynomialRepresentation,
+  lasso::surge::{SurgeCommitment, SurgeCommitmentGenerators},
   poly::identity_poly::IdentityPolynomial,
   subprotocols::{combined_table_proof::CombinedTableEvalProof, grand_product::BGPCInterpretable},
   utils::{errors::ProofVerifyError, random::RandomTape, transcript::ProofTranscript},
@@ -296,7 +297,7 @@ pub struct ROFlagsFingerprintProof<G: CurveGroup> {
   eval_read: Vec<G::ScalarField>,   // NUM_MEMORIES-sized
   eval_final: Vec<G::ScalarField>,  // NUM_MEMORIES-sized
   eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
-  eval_flags: Vec<G::ScalarField>, // NUM_INSTRUCTIONS-sized
+  eval_flags: Vec<G::ScalarField>,  // NUM_INSTRUCTIONS-sized
 
   proof_ops: CombinedTableEvalProof<G>,
   proof_mem: CombinedTableEvalProof<G>,
@@ -305,7 +306,7 @@ pub struct ROFlagsFingerprintProof<G: CurveGroup> {
 
   /// Maps memory_index to relevant instruction_flag indices.
   /// Used by verifier to construct subtable_flag from instruction_flags.
-  memory_to_flag_indices: Vec<Vec<usize>>
+  memory_to_flag_indices: Vec<Vec<usize>>,
 }
 
 impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
@@ -381,7 +382,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       &rand_ops,
       &generators.flag_commitment_gens.as_ref().unwrap(),
       transcript,
-      random_tape
+      random_tape,
     );
 
     ROFlagsFingerprintProof {
@@ -395,7 +396,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       proof_derefs,
       proof_flags,
 
-      memory_to_flag_indices: polynomials.memory_to_instructions_map.clone() // TODO(sragss): Would be better as static
+      memory_to_flag_indices: polynomials.memory_to_instructions_map.clone(), // TODO(sragss): Would be better as static
     }
   }
 
@@ -454,7 +455,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       &self.eval_flags,
       &generators.flag_commitment_gens.as_ref().unwrap(),
       &commitments.instruction_flag_commitment.as_ref().unwrap(),
-      transcript
+      transcript,
     )?;
 
     // verify the claims from the product layer
@@ -465,7 +466,10 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       // Compute the flag eval from opening proofs.
       // We need the subtable_flags evaluation, which can be derived from instruction_flags, by summing
       // the relevant indices from memory_to_flag_indices.
-      let instruction_flag_eval = self.memory_to_flag_indices[memory_index].iter().map(|flag_index| self.eval_flags[*flag_index]).sum();
+      let instruction_flag_eval = self.memory_to_flag_indices[memory_index]
+        .iter()
+        .map(|flag_index| self.eval_flags[*flag_index])
+        .sum();
 
       // Check ALPHA memories / lookup polys / grand products
       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
@@ -519,7 +523,11 @@ impl<G: CurveGroup> ROFlagsFingerprintProof<G> {
     let hash_func = |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField| -> G::ScalarField {
       t * gamma.square() + v * *gamma + a - tau
     };
-    let hash_func_flag= |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField, flag: G::ScalarField| -> G::ScalarField {
+    let hash_func_flag = |a: G::ScalarField,
+                          v: G::ScalarField,
+                          t: G::ScalarField,
+                          flag: G::ScalarField|
+     -> G::ScalarField {
       flag * (t * gamma.square() + v * *gamma + a - tau) + G::ScalarField::one() - flag
     };
 
@@ -562,10 +570,13 @@ mod tests {
   use merlin::Transcript;
 
   use crate::{
-    jolt::vm::{PolynomialRepresentation, SurgeCommitmentGenerators},
-    lasso::memory_checking::MemoryCheckingProof,
-    poly::{dense_mlpoly::{DensePolynomial, PolyCommitmentGens}, identity_poly::IdentityPolynomial},
-    utils::{random::RandomTape, math::Math},
+    jolt::vm::instruction_lookups::PolynomialRepresentation,
+    lasso::{memory_checking::MemoryCheckingProof, surge::SurgeCommitmentGenerators},
+    poly::{
+      dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+      identity_poly::IdentityPolynomial,
+    },
+    utils::{math::Math, random::RandomTape},
   };
 
   use super::ROFingerprintProof;
@@ -630,7 +641,7 @@ mod tests {
       Fr::from(4),
       Fr::from(5),
       Fr::from(6),
-      Fr::from(7)
+      Fr::from(7),
     ];
 
     // Shared between instructions and subtables given single memory
@@ -657,7 +668,7 @@ mod tests {
       materialized_subtables: vec![materialized_subtable],
       subtable_flag_polys: vec![flag_poly.clone()],
       memory_to_subtable_map: vec![0],
-      memory_to_instructions_map: vec![vec![0]]
+      memory_to_instructions_map: vec![vec![0]],
     };
 
     let r_fingerprint = (&Fr::from(12), &Fr::from(35));
@@ -666,13 +677,14 @@ mod tests {
 
     let mut transcript = Transcript::new(b"test_transcript");
     let mut random_tape = RandomTape::<EdwardsProjective>::new(b"proof");
-    let proof = MemoryCheckingProof::<EdwardsProjective, ROFingerprintProof<EdwardsProjective>>::prove(
-      &polys,
-      r_fingerprint,
-      &generators,
-      &mut transcript,
-      &mut random_tape,
-    );
+    let proof =
+      MemoryCheckingProof::<EdwardsProjective, ROFingerprintProof<EdwardsProjective>>::prove(
+        &polys,
+        r_fingerprint,
+        &generators,
+        &mut transcript,
+        &mut random_tape,
+      );
 
     let mut transcript = Transcript::new(b"test_transcript");
 
@@ -686,6 +698,15 @@ mod tests {
       let iden = IdentityPolynomial::new(3);
       iden.evaluate(point)
     };
-    proof.verify(&commitments, &generators, memory_to_dimension_index, evaluate_memory_mle, r_fingerprint, &mut transcript).expect("should work");
+    proof
+      .verify(
+        &commitments,
+        &generators,
+        memory_to_dimension_index,
+        evaluate_memory_mle,
+        r_fingerprint,
+        &mut transcript,
+      )
+      .expect("should work");
   }
 }

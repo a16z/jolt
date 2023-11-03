@@ -1,5 +1,5 @@
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
-use crate::jolt::vm::PolynomialRepresentation;
+use crate::jolt::vm::instruction_lookups::PolynomialRepresentation;
 use crate::lasso::fingerprint_strategy::MemBatchInfo;
 use crate::lasso::gp_evals::GPEvals;
 use crate::poly::dense_mlpoly::DensePolynomial;

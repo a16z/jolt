@@ -27,6 +27,23 @@ use super::{
   memory_checking::MemoryCheckingProof,
 };
 
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct SurgeCommitment<G: CurveGroup> {
+  pub dim_read_commitment: CombinedTableCommitment<G>,
+  pub final_commitment: CombinedTableCommitment<G>,
+  pub E_commitment: CombinedTableCommitment<G>,
+  pub instruction_flag_commitment: Option<CombinedTableCommitment<G>>,
+}
+
+/// Container for generators for polynomial commitments. These preallocate memory
+/// and allow commitments to `DensePolynomials`.
+pub struct SurgeCommitmentGenerators<G: CurveGroup> {
+  pub dim_read_commitment_gens: PolyCommitmentGens<G>,
+  pub final_commitment_gens: PolyCommitmentGens<G>,
+  pub E_commitment_gens: PolyCommitmentGens<G>,
+  pub flag_commitment_gens: Option<PolyCommitmentGens<G>>,
+}
+
 pub struct SurgePolys<F: PrimeField> {
   pub dim_i_usize: Vec<Vec<usize>>,
   pub dim_i: Vec<DensePolynomial<F>>,
@@ -64,7 +81,7 @@ impl<F: PrimeField> MemBatchInfo for SurgePolys<F> {
 impl<F: PrimeField> SurgePolys<F> {
   fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
-    generators: &SurgeCommitmentGens<G>,
+    generators: &SurgeCommitmentGenerators<G>,
   ) -> SurgeCommitment<G> {
     let (dim_read_commitment, _) = self
       .combined_dim_read_polys
@@ -80,23 +97,12 @@ impl<F: PrimeField> SurgePolys<F> {
       dim_read_commitment: CombinedTableCommitment::new(dim_read_commitment),
       final_commitment: CombinedTableCommitment::new(final_commitment),
       E_commitment: CombinedTableCommitment::new(E_commitment),
+      instruction_flag_commitment: None,
     }
   }
 }
 
-pub struct SurgeCommitment<G: CurveGroup> {
-  pub dim_read_commitment: CombinedTableCommitment<G>,
-  pub final_commitment: CombinedTableCommitment<G>,
-  pub E_commitment: CombinedTableCommitment<G>,
-}
-
-pub struct SurgeCommitmentGens<G: CurveGroup> {
-  pub dim_read_commitment_gens: PolyCommitmentGens<G>,
-  pub final_commitment_gens: PolyCommitmentGens<G>,
-  pub E_commitment_gens: PolyCommitmentGens<G>,
-}
-
-impl<G: CurveGroup> SurgeCommitmentGens<G> {
+impl<G: CurveGroup> SurgeCommitmentGenerators<G> {
   pub fn new(dimensions: usize, memory_size: usize, num_ops: usize, alpha: usize) -> Self {
     // dim_1, ... dim_C, read_1, ... read_C
     let num_vars_dim_read = (2 * num_ops * dimensions).next_power_of_two().log_2();
@@ -112,10 +118,11 @@ impl<G: CurveGroup> SurgeCommitmentGens<G> {
     let final_commitment_gens = PolyCommitmentGens::new(num_vars_final, b"final_commitment");
     let E_commitment_gens = PolyCommitmentGens::new(num_vars_E, b"memory_evals_commitment");
 
-    SurgeCommitmentGens {
+    SurgeCommitmentGenerators {
       dim_read_commitment_gens,
       final_commitment_gens,
       E_commitment_gens,
+      flag_commitment_gens: None,
     }
   }
 }
@@ -176,7 +183,7 @@ pub struct SurgeFingerprintProof<G: CurveGroup> {
 
 impl<G: CurveGroup> FingerprintStrategy<G> for SurgeFingerprintProof<G> {
   type Polynomials = SurgePolys<G::ScalarField>;
-  type Generators = SurgeCommitmentGens<G>;
+  type Generators = SurgeCommitmentGenerators<G>;
   type Commitments = SurgeCommitment<G>;
 
   fn prove(
@@ -376,7 +383,7 @@ pub struct SurgePrimarySumcheck<G: CurveGroup> {
 // #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeProof<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> {
   // TODO(sragss): JoltInstruction trait add Default
-  generators: SurgeCommitmentGens<G>,
+  generators: SurgeCommitmentGenerators<G>,
   commitments: SurgeCommitment<G>,
   primary_sumcheck: SurgePrimarySumcheck<G>,
   memory_check: MemoryCheckingProof<G, SurgeFingerprintProof<G>>,
@@ -405,8 +412,8 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
     let num_memories: usize = instruction.subtables::<G::ScalarField>(C).len() * C; // alpha // TODO(sragss): Could move to JoltInstruction trait
     let memory_size: usize = M; // M
 
-    let generators: SurgeCommitmentGens<G> =
-      SurgeCommitmentGens::new(C, memory_size, num_ops, num_memories);
+    let generators: SurgeCommitmentGenerators<G> =
+      SurgeCommitmentGenerators::new(C, memory_size, num_ops, num_memories);
     let polynomials: SurgePolys<G::ScalarField> = Self::construct_polys(&ops, C, M);
     let commitments: SurgeCommitment<G> = polynomials.commit(&generators);
     let mut random_tape = RandomTape::new(b"proof");
