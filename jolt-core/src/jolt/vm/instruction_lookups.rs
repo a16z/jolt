@@ -9,7 +9,6 @@ use crate::{
   jolt::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
-    vm::pc::PCPolys,
   },
   lasso::{
     fingerprint_strategy::{FingerprintStrategy, MemBatchInfo},
@@ -670,6 +669,10 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
+  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
+    F::from(leaf_index as u64)
+  }
+
   fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
     self.dim[memory_index % self.C][leaf_index]
   }
@@ -682,12 +685,94 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
     self.E_polys[memory_index][leaf_index]
   }
 
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.final_cts[memory_index][leaf_index]
+  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
+    F::zero()
   }
 
   fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
     self.read_cts[memory_index][leaf_index]
+  }
+
+  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.t_read(memory_index, leaf_index) + F::one()
+  }
+
+  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.final_cts[memory_index][leaf_index]
+  }
+
+  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_ops(memory_index, leaf_index),
+      self.v_ops(memory_index, leaf_index),
+      self.t_read(memory_index, leaf_index),
+      gamma,
+      tau,
+    )
+  }
+
+  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_ops(memory_index, leaf_index),
+      self.v_ops(memory_index, leaf_index),
+      self.t_write(memory_index, leaf_index),
+      gamma,
+      tau,
+    )
+  }
+
+  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_mem(memory_index, leaf_index),
+      self.v_mem(memory_index, leaf_index),
+      self.t_init(memory_index, leaf_index),
+      gamma,
+      tau,
+    )
+  }
+
+  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
+    Self::fingerprint(
+      self.a_mem(memory_index, leaf_index),
+      self.v_mem(memory_index, leaf_index),
+      self.t_final(memory_index, leaf_index),
+      gamma,
+      tau,
+    )
+  }
+
+  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
+    t * gamma.square() + v * gamma + a - tau
+  }
+
+  fn compute_leaves(
+    &self,
+    memory_index: usize,
+    r_hash: (&F, &F),
+  ) -> (
+    DensePolynomial<F>,
+    DensePolynomial<F>,
+    DensePolynomial<F>,
+    DensePolynomial<F>,
+  ) {
+    let init_evals = (0..self.mem_size())
+      .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
+      .collect();
+    let read_evals = (0..self.ops_size())
+      .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
+      .collect();
+    let write_evals = (0..self.ops_size())
+      .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
+      .collect();
+    let final_evals = (0..self.mem_size())
+      .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
+      .collect();
+    (
+      DensePolynomial::new(init_evals),
+      DensePolynomial::new(read_evals),
+      DensePolynomial::new(write_evals),
+      DensePolynomial::new(final_evals),
+    )
   }
 
   // TODO(sragss): Some if this logic is sharable.

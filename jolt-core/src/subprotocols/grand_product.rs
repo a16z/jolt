@@ -157,9 +157,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
 /// BatchedGrandProductCircuitInterpretable
 pub trait BGPCInterpretable<F: PrimeField>: MemBatchInfo {
   // a for init, final
-  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
-    F::from(leaf_index as u64)
-  }
+  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F;
   // a for read, write
   fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F;
 
@@ -169,59 +167,21 @@ pub trait BGPCInterpretable<F: PrimeField>: MemBatchInfo {
   fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F;
 
   // t for init, final
-  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    F::zero()
-  }
+  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F;
   fn t_final(&self, memory_index: usize, leaf_index: usize) -> F;
   // t for read, write
   fn t_read(&self, memory_index: usize, leaf_index: usize) -> F;
-  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.t_read(memory_index, leaf_index) + F::one()
-  }
+  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F;
 
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_ops(memory_index, leaf_index),
-      self.v_ops(memory_index, leaf_index),
-      self.t_read(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
+  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
 
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_ops(memory_index, leaf_index),
-      self.v_ops(memory_index, leaf_index),
-      self.t_write(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
+  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
 
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_mem(memory_index, leaf_index),
-      self.v_mem(memory_index, leaf_index),
-      self.t_init(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
+  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
 
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_mem(memory_index, leaf_index),
-      self.v_mem(memory_index, leaf_index),
-      self.t_final(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
+  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
 
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
-    t * gamma.square() + v * gamma + a - tau
-  }
+  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F;
 
   fn compute_leaves(
     &self,
@@ -232,26 +192,7 @@ pub trait BGPCInterpretable<F: PrimeField>: MemBatchInfo {
     DensePolynomial<F>,
     DensePolynomial<F>,
     DensePolynomial<F>,
-  ) {
-    let init_evals = (0..self.mem_size())
-      .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
-      .collect();
-    let read_evals = (0..self.ops_size())
-      .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
-      .collect();
-    let write_evals = (0..self.ops_size())
-      .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
-      .collect();
-    let final_evals = (0..self.mem_size())
-      .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
-      .collect();
-    (
-      DensePolynomial::new(init_evals),
-      DensePolynomial::new(read_evals),
-      DensePolynomial::new(write_evals),
-      DensePolynomial::new(final_evals),
-    )
-  }
+  );
 
   fn construct_batches(
     &self,
@@ -260,38 +201,7 @@ pub trait BGPCInterpretable<F: PrimeField>: MemBatchInfo {
     BatchedGrandProductCircuit<F>,
     BatchedGrandProductCircuit<F>,
     Vec<GPEvals<F>>,
-  ) {
-    let mut rw_circuits = Vec::with_capacity(self.num_memories() * 2);
-    let mut if_circuits = Vec::with_capacity(self.num_memories() * 2);
-    let mut gp_evals = Vec::with_capacity(self.num_memories());
-    for memory_index in 0..self.num_memories() {
-      let (init_leaves, read_leaves, write_leaves, final_leaves) =
-        self.compute_leaves(memory_index, r_hash);
-      let (init_gpc, read_gpc, write_gpc, final_gpc) = (
-        GrandProductCircuit::new(&init_leaves),
-        GrandProductCircuit::new(&read_leaves),
-        GrandProductCircuit::new(&write_leaves),
-        GrandProductCircuit::new(&final_leaves),
-      );
-
-      gp_evals.push(GPEvals::new(
-        init_gpc.evaluate(),
-        read_gpc.evaluate(),
-        write_gpc.evaluate(),
-        final_gpc.evaluate(),
-      ));
-
-      rw_circuits.push(read_gpc);
-      rw_circuits.push(write_gpc);
-      if_circuits.push(init_gpc);
-      if_circuits.push(final_gpc);
-    }
-    (
-      BatchedGrandProductCircuit::new_batch(rw_circuits),
-      BatchedGrandProductCircuit::new_batch(if_circuits),
-      gp_evals,
-    )
-  }
+  );
 }
 
 pub struct BatchedGrandProductCircuit<F: PrimeField> {
