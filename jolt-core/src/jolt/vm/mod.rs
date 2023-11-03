@@ -11,7 +11,7 @@ use crate::{
     subtable::LassoSubtable,
     vm::pc::PCPolys,
   },
-  lasso::{fingerprint_strategy::ROFlagsFingerprintProof, memory_checking::MemoryCheckingProof},
+  lasso::memory_checking::MemoryCheckingProof,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
