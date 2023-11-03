@@ -8,11 +8,12 @@ use crate::{
   jolt::vm::instruction_lookups::PolynomialRepresentation,
   lasso::surge::{SurgeCommitment, SurgeCommitmentGenerators},
   poly::identity_poly::IdentityPolynomial,
-  subprotocols::{combined_table_proof::CombinedTableEvalProof, grand_product::BGPCInterpretable},
+  subprotocols::{
+    combined_table_proof::CombinedTableEvalProof,
+    grand_product::{BGPCInterpretable, GPEvals},
+  },
   utils::{errors::ProofVerifyError, random::RandomTape, transcript::ProofTranscript},
 };
-
-use super::gp_evals::GPEvals;
 
 pub trait MemBatchInfo {
   fn ops_size(&self) -> usize;

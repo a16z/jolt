@@ -22,6 +22,7 @@ use crate::{
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+    grand_product::{BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit},
     sumcheck::SumcheckInstanceProof,
   },
   utils::{
@@ -664,5 +665,108 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
   fn protocol_name() -> &'static [u8] {
     b"Jolt instruction lookups"
+  }
+}
+
+impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
+  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.dim[memory_index % self.C][leaf_index]
+  }
+
+  fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.materialized_subtables[self.memory_to_subtable_map[memory_index]][leaf_index]
+  }
+
+  fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.E_polys[memory_index][leaf_index]
+  }
+
+  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.final_cts[memory_index][leaf_index]
+  }
+
+  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
+    self.read_cts[memory_index][leaf_index]
+  }
+
+  // TODO(sragss): Some if this logic is sharable.
+  fn construct_batches(
+    &self,
+    r_hash: (&F, &F),
+  ) -> (
+    BatchedGrandProductCircuit<F>,
+    BatchedGrandProductCircuit<F>,
+    Vec<GPEvals<F>>,
+  ) {
+    // compute leaves for all the batches                     (shared)
+    // convert the rw leaves to flagged leaves                (custom)
+    // create GPCs for each of the leaves (&leaves)           (custom)
+    // evaluate the GPCs                                      (shared)
+    // construct 1x batch with flags, 1x batch without flags  (custom)
+
+    let mut rw_circuits = Vec::with_capacity(self.num_memories * 2);
+    let mut if_circuits = Vec::with_capacity(self.num_memories * 2);
+    let mut gp_evals = Vec::with_capacity(self.num_memories);
+
+    // Stores the initial fingerprinted values for read and write memories. GPC stores the upper portion of the tree after the fingerprints at the leaves
+    // experience flagging (toggling based on the flag value at that leaf).
+    let mut rw_fingerprints: Vec<DensePolynomial<F>> = Vec::with_capacity(self.num_memories * 2);
+    for memory_index in 0..self.num_memories {
+      let (init_fingerprints, read_fingerprints, write_fingerprints, final_fingerprints) =
+        self.compute_leaves(memory_index, r_hash);
+
+      let (mut read_leaves, mut write_leaves) =
+        (read_fingerprints.evals(), write_fingerprints.evals());
+      rw_fingerprints.push(read_fingerprints);
+      rw_fingerprints.push(write_fingerprints);
+      for leaf_index in 0..self.num_ops {
+        // TODO(sragss): Would be faster if flags were non-FF repr
+        let flag = self.subtable_flag_polys[self.memory_to_subtable_map[memory_index]][leaf_index];
+        if flag == F::zero() {
+          read_leaves[leaf_index] = F::one();
+          write_leaves[leaf_index] = F::one();
+        }
+      }
+
+      let (init_gpc, final_gpc) = (
+        GrandProductCircuit::new(&init_fingerprints),
+        GrandProductCircuit::new(&final_fingerprints),
+      );
+      let (read_gpc, write_gpc) = (
+        GrandProductCircuit::new(&DensePolynomial::new(read_leaves)),
+        GrandProductCircuit::new(&DensePolynomial::new(write_leaves)),
+      );
+
+      gp_evals.push(GPEvals::new(
+        init_gpc.evaluate(),
+        read_gpc.evaluate(),
+        write_gpc.evaluate(),
+        final_gpc.evaluate(),
+      ));
+
+      rw_circuits.push(read_gpc);
+      rw_circuits.push(write_gpc);
+      if_circuits.push(init_gpc);
+      if_circuits.push(final_gpc);
+    }
+
+    // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
+    let expanded_flag_map: Vec<usize> = self
+      .memory_to_subtable_map
+      .iter()
+      .flat_map(|subtable_index| [*subtable_index, *subtable_index])
+      .collect();
+
+    // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
+    let rw_batch = BatchedGrandProductCircuit::new_batch_flags(
+      rw_circuits,
+      self.subtable_flag_polys.clone(),
+      expanded_flag_map,
+      rw_fingerprints,
+    );
+
+    let if_batch = BatchedGrandProductCircuit::new_batch(if_circuits);
+
+    (rw_batch, if_batch, gp_evals)
   }
 }

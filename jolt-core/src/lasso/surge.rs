@@ -16,16 +16,13 @@ use crate::{
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::BGPCInterpretable,
+    grand_product::{BGPCInterpretable, GPEvals},
     sumcheck::SumcheckInstanceProof,
   },
   utils::{errors::ProofVerifyError, math::Math, random::RandomTape, transcript::ProofTranscript},
 };
 
-use super::{
-  fingerprint_strategy::FingerprintStrategy, gp_evals::GPEvals,
-  memory_checking::MemoryCheckingProof,
-};
+use super::{fingerprint_strategy::FingerprintStrategy, memory_checking::MemoryCheckingProof};
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeCommitment<G: CurveGroup> {
@@ -258,7 +255,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for SurgeFingerprintProof<G> {
   fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[<G>::ScalarField]) -> <G>::ScalarField>(
     &self,
     rand: (&Vec<<G>::ScalarField>, &Vec<<G>::ScalarField>),
-    grand_product_claims: &[super::gp_evals::GPEvals<<G>::ScalarField>], // NUM_MEMORIES-sized
+    grand_product_claims: &[GPEvals<<G>::ScalarField>], // NUM_MEMORIES-sized
     memory_to_dimension_index: F1,
     evaluate_memory_mle: F2,
     commitments: &Self::Commitments,

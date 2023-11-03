@@ -1,9 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::subprotocols::grand_product::{
-  BGPCInterpretable, BatchedGrandProductArgument,
-};
+use crate::subprotocols::grand_product::{BGPCInterpretable, BatchedGrandProductArgument, GPEvals};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::random::RandomTape;
 use crate::utils::transcript::ProofTranscript;
@@ -14,7 +12,6 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
 
 use super::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo};
-use super::gp_evals::GPEvals;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<G: CurveGroup, S: FingerprintStrategy<G>> {
@@ -133,14 +130,13 @@ impl<F: PrimeField> ProductLayerProof<F> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     let num_memories = polys.num_memories();
-    let (batched_rw, batched_if, grand_product_evals) =
-      polys.construct_batches(r_fingerprint);
+    let (batched_rw, batched_if, grand_product_evals) = polys.construct_batches(r_fingerprint);
 
     grand_product_evals.iter().for_each(|gp_eval| {
       assert_eq!(
         gp_eval.hash_init * gp_eval.hash_write,
         gp_eval.hash_final * gp_eval.hash_read,
-		"Grand Products: Multi-set hashes don't match"
+        "Grand Products: Multi-set hashes don't match"
       );
       gp_eval.append_to_transcript::<G>(transcript);
     });
@@ -199,7 +195,13 @@ impl<F: PrimeField> ProductLayerProof<F> {
 
 #[cfg(test)]
 mod tests {
-  use crate::{subprotocols::grand_product::{BGPCInterpretable, GrandProductCircuit, BatchedGrandProductCircuit}, poly::dense_mlpoly::DensePolynomial, lasso::{fingerprint_strategy::MemBatchInfo, gp_evals::GPEvals}};
+  use crate::{
+    lasso::fingerprint_strategy::MemBatchInfo,
+    poly::dense_mlpoly::DensePolynomial,
+    subprotocols::grand_product::{
+      BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit,
+    },
+  };
   use ark_curve25519::{EdwardsProjective, Fr};
   use ark_std::{One, Zero};
   use merlin::Transcript;
@@ -392,7 +394,6 @@ mod tests {
           _ => panic!("waaa"),
         }
       }
-
     }
 
     // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
@@ -549,32 +550,41 @@ mod tests {
 
       // FLAGS OVERRIDES
 
-      fn construct_batches(&self, r_hash: (&Fr, &Fr)) -> (BatchedGrandProductCircuit<Fr>, BatchedGrandProductCircuit<Fr>, Vec<GPEvals<Fr>>) {
+      fn construct_batches(
+        &self,
+        r_hash: (&Fr, &Fr),
+      ) -> (
+        BatchedGrandProductCircuit<Fr>,
+        BatchedGrandProductCircuit<Fr>,
+        Vec<GPEvals<Fr>>,
+      ) {
         // compute leaves for all the batches                     (shared)
         // convert the rw leaves to flagged leaves                (custom)
         // create GPCs for each of the leaves (&leaves)           (custom)
         // evaluate the GPCs                                      (shared)
         // construct 1x batch with flags, 1x batch without flags  (custom)
-    
+
         let mut rw_circuits = Vec::with_capacity(self.num_memories() * 2);
         let mut if_circuits = Vec::with_capacity(self.num_memories() * 2);
         let mut gp_evals = Vec::with_capacity(self.num_memories());
-    
-        // Stores the initial fingerprinted values for read and write memories. GPC stores the upper portion of the tree after the fingerprints at the leaves 
+
+        // Stores the initial fingerprinted values for read and write memories. GPC stores the upper portion of the tree after the fingerprints at the leaves
         // experience flagging (toggling based on the flag value at that leaf).
-        let mut rw_fingerprints: Vec<DensePolynomial<Fr>> = Vec::with_capacity(self.num_memories() * 2);
+        let mut rw_fingerprints: Vec<DensePolynomial<Fr>> =
+          Vec::with_capacity(self.num_memories() * 2);
         for memory_index in 0..self.num_memories() {
-          let (init_fingerprints, read_fingerprints, write_fingerprints, final_fingerprints) = 
+          let (init_fingerprints, read_fingerprints, write_fingerprints, final_fingerprints) =
             self.compute_leaves(memory_index, r_hash);
-    
-          let (mut read_leaves, mut write_leaves) = (read_fingerprints.evals(), write_fingerprints.evals());
+
+          let (mut read_leaves, mut write_leaves) =
+            (read_fingerprints.evals(), write_fingerprints.evals());
           rw_fingerprints.push(read_fingerprints);
           rw_fingerprints.push(write_fingerprints);
           for leaf_index in 0..self.ops_size() {
             let flag = match memory_index {
               0 => self.flags_0[leaf_index],
               1 => self.flags_1[leaf_index],
-              _ => panic!("waa")
+              _ => panic!("waa"),
             };
             // TODO(sragss): Would be faster if flags were non-FF repr
             if flag == Fr::zero() {
@@ -582,37 +592,45 @@ mod tests {
               write_leaves[leaf_index] = Fr::one();
             }
           }
-    
-          let (init_gpc, final_gpc) = 
-            (GrandProductCircuit::new(&init_fingerprints), GrandProductCircuit::new(&final_fingerprints));
-          let (read_gpc, write_gpc) = 
-            (GrandProductCircuit::new(&DensePolynomial::new(read_leaves)), GrandProductCircuit::new(&DensePolynomial::new(write_leaves)));
-    
+
+          let (init_gpc, final_gpc) = (
+            GrandProductCircuit::new(&init_fingerprints),
+            GrandProductCircuit::new(&final_fingerprints),
+          );
+          let (read_gpc, write_gpc) = (
+            GrandProductCircuit::new(&DensePolynomial::new(read_leaves)),
+            GrandProductCircuit::new(&DensePolynomial::new(write_leaves)),
+          );
+
           gp_evals.push(GPEvals::new(
-              init_gpc.evaluate(),
-              read_gpc.evaluate(),
-              write_gpc.evaluate(),
-              final_gpc.evaluate(),
+            init_gpc.evaluate(),
+            read_gpc.evaluate(),
+            write_gpc.evaluate(),
+            final_gpc.evaluate(),
           ));
-    
+
           rw_circuits.push(read_gpc);
           rw_circuits.push(write_gpc);
           if_circuits.push(init_gpc);
           if_circuits.push(final_gpc);
         }
-    
+
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMORIES, write_NUM_MEMORIES]
         let expanded_flag_map = vec![0, 0, 1, 1];
-    
+
         // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
         let rw_batch = BatchedGrandProductCircuit::new_batch_flags(
-          rw_circuits, 
-          vec![DensePolynomial::new(self.flags_0.clone()), DensePolynomial::new(self.flags_1.clone())], 
-          expanded_flag_map, 
-          rw_fingerprints);
-    
+          rw_circuits,
+          vec![
+            DensePolynomial::new(self.flags_0.clone()),
+            DensePolynomial::new(self.flags_1.clone()),
+          ],
+          expanded_flag_map,
+          rw_fingerprints,
+        );
+
         let if_batch = BatchedGrandProductCircuit::new_batch(if_circuits);
-    
+
         (rw_batch, if_batch, gp_evals)
       }
     }
@@ -635,18 +653,13 @@ mod tests {
     let v_0_ops = a_0_ops.clone();
     let v_1_ops = a_1_ops.clone();
 
-    let flags_0 = vec![
-      Fr::one(), 
-      Fr::one(), 
-      Fr::one(), 
-      Fr::one()
-    ];
+    let flags_0 = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
     let flags_1 = vec![
-      Fr::one(), 
+      Fr::one(),
       Fr::zero(), // Flagged off!
-      Fr::one(), 
-      Fr::one()
-      ];
+      Fr::one(),
+      Fr::one(),
+    ];
 
     let t_0_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::one()];
     let t_1_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()];
@@ -682,7 +695,7 @@ mod tests {
       t_0_finals,
       t_1_finals,
       flags_0,
-      flags_1
+      flags_1,
     };
 
     let mut transcript = Transcript::new(b"test_transcript");

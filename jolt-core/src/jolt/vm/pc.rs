@@ -7,19 +7,18 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use crate::{
-  lasso::{
-    fingerprint_strategy::{FingerprintStrategy, MemBatchInfo},
-    gp_evals::GPEvals,
-  },
+  lasso::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::BGPCInterpretable,
+    grand_product::{BGPCInterpretable, GPEvals},
   },
-  utils::{self, errors::ProofVerifyError, math::Math, transcript::ProofTranscript, is_power_of_two},
+  utils::{
+    self, errors::ProofVerifyError, is_power_of_two, math::Math, transcript::ProofTranscript,
+  },
 };
 
 pub struct ELFRow {
@@ -55,28 +54,28 @@ pub struct FiveTuplePoly<F: PrimeField> {
 
 impl<F: PrimeField> FiveTuplePoly<F> {
   fn from_elf(elf: &Vec<ELFRow>) -> Self {
-	let len = elf.len().next_power_of_two();
-	let mut opcodes = Vec::with_capacity(len);
-	let mut rds = Vec::with_capacity(len);
-	let mut rs1s = Vec::with_capacity(len);
-	let mut rs2s = Vec::with_capacity(len);
-	let mut imms = Vec::with_capacity(len);
+    let len = elf.len().next_power_of_two();
+    let mut opcodes = Vec::with_capacity(len);
+    let mut rds = Vec::with_capacity(len);
+    let mut rs1s = Vec::with_capacity(len);
+    let mut rs2s = Vec::with_capacity(len);
+    let mut imms = Vec::with_capacity(len);
 
-	for row in elf {
-		opcodes.push(F::from(row.opcode));
-		rds.push(F::from(row.rd));
-		rs1s.push(F::from(row.rs1));
-		rs2s.push(F::from(row.rs2));
-		imms.push(F::from(row.imm));
-	}
-	// Padding
-	for _ in elf.len()..len {
-		opcodes.push(F::zero());
-		rds.push(F::zero());
-		rs1s.push(F::zero());
-		rs2s.push(F::zero());
-		imms.push(F::zero());
-	}
+    for row in elf {
+      opcodes.push(F::from(row.opcode));
+      rds.push(F::from(row.rd));
+      rs1s.push(F::from(row.rs1));
+      rs2s.push(F::from(row.rs2));
+      imms.push(F::from(row.imm));
+    }
+    // Padding
+    for _ in elf.len()..len {
+      opcodes.push(F::zero());
+      rds.push(F::zero());
+      rs1s.push(F::zero());
+      rs2s.push(F::zero());
+      imms.push(F::zero());
+    }
 
     let opcode = DensePolynomial::new(opcodes);
     let rd = DensePolynomial::new(rds);
@@ -139,22 +138,22 @@ pub struct PCPolys<F: PrimeField> {
 impl<F: PrimeField> PCPolys<F> {
   // TODO(sragss): precommit PC strategy
   pub fn new_program(program: Vec<ELFRow>, trace: Vec<ELFRow>) -> Self {
-	assert!(is_power_of_two(program.len()));
-	assert!(is_power_of_two(trace.len()));
+    assert!(is_power_of_two(program.len()));
+    assert!(is_power_of_two(trace.len()));
 
     let num_ops = trace.len().next_power_of_two();
     let code_size = program.len().next_power_of_two();
 
     println!("PCPolys::new_program num_ops {num_ops} code_size {code_size}");
 
-	// Note: a_read_write and read_cts have been implicitly padded with 0s
-	// to the nearest power of 2
+    // Note: a_read_write and read_cts have been implicitly padded with 0s
+    // to the nearest power of 2
     let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
     let mut read_cts: Vec<usize> = vec![0; num_ops];
     let mut final_cts: Vec<usize> = vec![0; code_size];
 
-	// TODO(sragss): Current padding strategy doesn't work. As it adds phantom
-	// reads, but no corresponding writes to final.
+    // TODO(sragss): Current padding strategy doesn't work. As it adds phantom
+    // reads, but no corresponding writes to final.
     for (trace_index, trace) in trace.iter().enumerate() {
       let address = trace.address;
       debug_assert!(address < code_size);
