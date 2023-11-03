@@ -25,6 +25,16 @@ pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: us
 /// chunks to `vec![x_0|x_1|y_0|y_1,   x_2|x_3|y_2|y_3]`.
 pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
   let operand_bits: usize = log_M / 2;
+
+  #[cfg(test)] {
+    let max_operand_bits = C * log_M / 2;
+    if max_operand_bits != 64 { // if 64, handled by normal overflow checking
+      let max_operand: u64 = (1 << max_operand_bits) - 1;
+      assert!(x <= max_operand);
+      assert!(y <= max_operand);
+    }
+  }
+
   let operand_bit_mask: usize = (1 << operand_bits) - 1;
   (0..C)
     .map(|i| {
@@ -100,6 +110,20 @@ mod tests {
 
     let chunks = chunk_and_concatenate_operands(0b11_00_11, 0b10_01_10, 3, 4);
     assert_eq!(chunks, vec![0b11_10, 0b00_01, 0b_11_10]);
+  }
+
+  #[test]
+  #[should_panic]
+  fn chunk_and_concatenate_operands_too_large() {
+    // Fail to split 2 integers of length 3-bits in to 2 chunks of length 2-bits
+    chunk_and_concatenate_operands(0b111, 0b101, 2, 2);
+  }
+
+  #[test]
+  #[should_panic]
+  fn chunk_and_concatenate_operands_too_large_2() {
+    // Fail to split 2 integers of length 6-bits into 3 chunks or length 3-bits
+    chunk_and_concatenate_operands(0b11_11_11, 0b10_10_10, 3, 3);
   }
 
   #[test]
