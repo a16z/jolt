@@ -105,7 +105,7 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct ProductLayerProof<F: PrimeField> {
+pub struct ProductLayerProof<F: PrimeField> {
   grand_product_evals: Vec<GPEvals<F>>,
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
@@ -139,7 +139,8 @@ impl<F: PrimeField> ProductLayerProof<F> {
     grand_product_evals.iter().for_each(|gp_eval| {
       assert_eq!(
         gp_eval.hash_init * gp_eval.hash_write,
-        gp_eval.hash_final * gp_eval.hash_read
+        gp_eval.hash_final * gp_eval.hash_read,
+		"Grand Products: Multi-set hashes don't match"
       );
       gp_eval.append_to_transcript::<G>(transcript);
     });
