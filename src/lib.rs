@@ -10,6 +10,7 @@ pub mod benches;
 pub mod lasso;
 mod msm;
 mod poly;
+pub mod r1cs;
 mod subprotocols;
 pub mod jolt;
 mod utils;
