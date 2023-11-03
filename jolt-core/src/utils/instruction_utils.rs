@@ -1,12 +1,22 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 
-pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, shift_bits: usize) -> F {
+/// Concatenates `C` `vals` field elements each of max size 2^`operand_bits`-1
+/// into a single field element. `operand_bits` is the number of bits required to represent
+/// each element in `vals`. If an element of `vals` is larger it will not be truncated, and
+/// the result will be incorrect.
+pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: usize) -> F {
   assert_eq!(vals.len(), C);
+  #[cfg(test)]
+  {
+    // Panic if any element of vals is larger than that described by `operand_bits`
+    vals
+      .iter()
+      .for_each(|val| assert!(*val < F::from(1u64 << (operand_bits))));
+  }
 
   let mut sum = F::zero();
   let mut weight = F::one();
-  let shift = F::from(1u64 << shift_bits);
+  let shift = F::from(1u64 << operand_bits);
   for i in 0..C {
     sum += weight * vals[C - i - 1];
     weight *= shift;
@@ -14,6 +24,12 @@ pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, shift_bits: usiz
   sum
 }
 
+/// Chunks `x` | `y` into `C` chunks bitwise.
+/// `log_M` is the number of bits of each of the `C` expected results.
+/// `log_M = num_bits(x | y) / C`
+///
+/// Given the operation x_0, x_1, x_2, x_3 | y_0, y_1, y_2, y_3 with C=2, log_M =4
+/// chunks to `vec![x_0|x_1|y_0|y_1,   x_2|x_3|y_2|y_3]`.
 pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
   let operand_bits: usize = log_M / 2;
   let operand_bit_mask: usize = (1 << operand_bits) - 1;
@@ -27,7 +43,20 @@ pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) ->
     .collect()
 }
 
+/// Chunks `z` into `C` chunks bitwise where `z = x + y`.
+/// `log_M` is the number of bits for each of the `C` chunks of `z`.
 pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<usize> {
+  #[cfg(test)]
+  {
+    // Panic if the sum is too large
+    let output_num_bits = C * log_M;
+    if output_num_bits != 128 {
+      // if 128, handeled by normal overflow checking
+      let max_z = 1 << (C * log_M);
+      assert!(x + y < max_z);
+    }
+  }
+
   let sum_chunk_bits: usize = log_M;
   let sum_chunk_bit_mask: usize = (1 << sum_chunk_bits) - 1;
   let z: u128 = x + y;
@@ -53,4 +82,68 @@ pub fn chunk_and_concatenate_for_shift(x: u64, y: u64, C: usize, log_M: usize) -
       (left << operand_bits) | y_lowest_chunk
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use ark_curve25519::Fr;
+
+  #[test]
+  fn concatenate_lookups_test() {
+    let vals = vec![Fr::from(1), Fr::from(2), Fr::from(3)];
+    let concat = concatenate_lookups(&vals, 3, 2);
+    assert_eq!(concat, Fr::from(0b01_10_11));
+
+    let vals = vec![Fr::from(7), Fr::from(1), Fr::from(2), Fr::from(3)];
+    let concat = concatenate_lookups(&vals, 4, 3);
+    assert_eq!(concat, Fr::from(0b111_001_010_011));
+  }
+
+  #[test]
+  #[should_panic]
+  fn concatenate_lookups_panics_too_large() {
+    let vals = vec![Fr::from(1), Fr::from(2), Fr::from(4)];
+    let concat = concatenate_lookups(&vals, 3, 2);
+    assert_eq!(concat, Fr::from(0b01_10_11));
+  }
+
+  #[test]
+  fn chunk_and_concatenate_operands_test() {
+    let chunks = chunk_and_concatenate_operands(0b11, 0b10, 2, 2);
+    assert_eq!(chunks, vec![0b11, 0b10]);
+
+    let chunks = chunk_and_concatenate_operands(0b11_00_11, 0b10_01_10, 3, 4);
+    assert_eq!(chunks, vec![0b11_10, 0b00_01, 0b_11_10]);
+  }
+
+  #[test]
+  fn add_and_chunk_operands_test() {
+    // x = 0b0011
+    // y = 0b1100
+    // z = 0b1111
+    let chunks = add_and_chunk_operands(0b0011, 0b1100, 2, 2);
+    assert_eq!(chunks, vec![0b11, 0b11]);
+
+    // x = 20
+    // y = 30
+    // z = 50 = 0b11_00_10
+    let chunks = add_and_chunk_operands(20u128, 30u128, 3, 2);
+    assert_eq!(chunks, vec![0b11, 0b00, 0b10]);
+  }
+
+  #[test]
+  #[should_panic]
+  fn add_and_chunk_operands_too_large() {
+    // x = 10
+    // y = 7
+    // z = 17 = 0b01_00_01
+    // 17 > (1 << (2 * 2))
+    add_and_chunk_operands(10, 7, 2, 2);
+  }
+
+  #[test]
+  fn chunk_and_concatenate_for_shift_test() {
+    todo!("write test and doc comment");
+  }
 }
