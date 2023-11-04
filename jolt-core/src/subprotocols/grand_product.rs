@@ -155,33 +155,6 @@ impl<F: PrimeField> LayerProofBatched<F> {
 
 /// BatchedGrandProductCircuitInterpretable
 pub trait BGPCInterpretable<F: PrimeField> {
-  // a for init, final
-  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F;
-  // a for read, write
-  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F;
-
-  // v for init, final
-  fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F;
-  // v for read, write
-  fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F;
-
-  // t for init, final
-  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F;
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F;
-  // t for read, write
-  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F;
-  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F;
-
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
-
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
-
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
-
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F;
-
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F;
-
   fn compute_leaves(
     &self,
     memory_index: usize,

@@ -669,82 +669,6 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
-  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
-    F::from(leaf_index as u64)
-  }
-
-  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.dim[memory_index % self.C][leaf_index]
-  }
-
-  fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.materialized_subtables[self.memory_to_subtable_map[memory_index]][leaf_index]
-  }
-
-  fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.E_polys[memory_index][leaf_index]
-  }
-
-  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    F::zero()
-  }
-
-  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.read_cts[memory_index][leaf_index]
-  }
-
-  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.t_read(memory_index, leaf_index) + F::one()
-  }
-
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.final_cts[memory_index][leaf_index]
-  }
-
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_ops(memory_index, leaf_index),
-      self.v_ops(memory_index, leaf_index),
-      self.t_read(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_ops(memory_index, leaf_index),
-      self.v_ops(memory_index, leaf_index),
-      self.t_write(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_mem(memory_index, leaf_index),
-      self.v_mem(memory_index, leaf_index),
-      self.t_init(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_mem(memory_index, leaf_index),
-      self.v_mem(memory_index, leaf_index),
-      self.t_final(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
-    t * gamma.square() + v * gamma + a - tau
-  }
-
   fn compute_leaves(
     &self,
     memory_index: usize,
@@ -755,23 +679,53 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
     DensePolynomial<F>,
     DensePolynomial<F>,
   ) {
-    let init_evals = (0..self.memory_size)
-      .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
+    let (gamma, tau) = r_hash;
+    let fingerprint = |a: F, v: F, t: F| -> F { t * gamma.square() + v * gamma + a - tau };
+
+    let dimension_index = memory_index % self.C;
+
+    let init_leaves = (0..self.memory_size)
+      .map(|i| {
+        fingerprint(
+          F::from(i as u64),
+          self.materialized_subtables[self.memory_to_subtable_map[memory_index]][i],
+          F::zero(),
+        )
+      })
       .collect();
-    let read_evals = (0..self.num_ops)
-      .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
+    let final_leaves = (0..self.memory_size)
+      .map(|i| {
+        fingerprint(
+          F::from(i as u64),
+          self.materialized_subtables[self.memory_to_subtable_map[memory_index]][i],
+          self.final_cts[memory_index][i],
+        )
+      })
       .collect();
-    let write_evals = (0..self.num_ops)
-      .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
+    let read_leaves = (0..self.num_ops)
+      .map(|i| {
+        fingerprint(
+          self.dim[dimension_index][i],
+          self.E_polys[memory_index][i],
+          self.read_cts[memory_index][i],
+        )
+      })
       .collect();
-    let final_evals = (0..self.memory_size)
-      .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
+    let write_leaves = (0..self.num_ops)
+      .map(|i| {
+        fingerprint(
+          self.dim[dimension_index][i],
+          self.E_polys[memory_index][i],
+          self.read_cts[memory_index][i] + F::one(),
+        )
+      })
       .collect();
+
     (
-      DensePolynomial::new(init_evals),
-      DensePolynomial::new(read_evals),
-      DensePolynomial::new(write_evals),
-      DensePolynomial::new(final_evals),
+      DensePolynomial::new(init_leaves),
+      DensePolynomial::new(read_leaves),
+      DensePolynomial::new(write_leaves),
+      DensePolynomial::new(final_leaves),
     )
   }
 

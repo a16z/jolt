@@ -261,84 +261,9 @@ impl<G: CurveGroup> ProgramCommitmentGens<G> {
 }
 
 impl<F: PrimeField> BGPCInterpretable<F> for PCPolys<F> {
-  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    self.a_read_write[leaf_index]
-  }
-
-  fn a_mem(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    F::from(leaf_index as u64)
-  }
-
-  fn v_mem(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    unimplemented!("should not be called by fingerprinting functions");
-  }
-
-  fn v_ops(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    unimplemented!("should not be called by fingerprinting functions");
-  }
-
-  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    F::zero()
-  }
-
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    self.t_final[leaf_index]
-  }
-
-  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    self.t_read[leaf_index]
-  }
-
-  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.t_read(memory_index, leaf_index) + F::one()
-  }
-
-  // Overrides
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_mem(memory_index, leaf_index);
-    let v = self.v_init_final.fingerprint_term(leaf_index, gamma);
-    let t = self.t_init(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_mem(memory_index, leaf_index);
-    let v = self.v_init_final.fingerprint_term(leaf_index, gamma);
-    let t = self.t_final(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_ops(memory_index, leaf_index);
-    let v = self.v_read_write.fingerprint_term(leaf_index, gamma);
-    let t = self.t_read(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_ops(memory_index, leaf_index);
-    let v = self.v_read_write.fingerprint_term(leaf_index, gamma);
-    let t = self.t_write(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
-    // Assumes the v passed in is v.opcode * gamma + v.rd * gamma^2 + ... + v.imm * gamma^5
-    let t_gamma: F = *gamma * gamma * gamma * gamma * gamma * gamma;
-    t * t_gamma + v + a - tau
-  }
-
   fn compute_leaves(
     &self,
-    memory_index: usize,
+    _memory_index: usize,
     r_hash: (&F, &F),
   ) -> (
     DensePolynomial<F>,
@@ -346,23 +271,60 @@ impl<F: PrimeField> BGPCInterpretable<F> for PCPolys<F> {
     DensePolynomial<F>,
     DensePolynomial<F>,
   ) {
-    let init_evals = (0..self.v_init_final.opcode.len())
-      .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
+    debug_assert_eq!(_memory_index, 0);
+
+    let (gamma, tau) = r_hash;
+    let fingerprint = |a: F, v: F, t: F| -> F {
+      // Assumes the v passed in is v.opcode * gamma + v.rd * gamma^2 + ... + v.imm * gamma^5
+      let t_gamma = *gamma * gamma * gamma * gamma * gamma * gamma;
+      t * t_gamma + v + a - tau
+    };
+
+    let memory_size = self.v_init_final.opcode.len();
+    let num_ops = self.a_read_write.len();
+
+    let init_leaves = (0..memory_size)
+      .map(|i| {
+        fingerprint(
+          F::from(i as u64),
+          self.v_init_final.fingerprint_term(i, gamma),
+          F::zero(),
+        )
+      })
       .collect();
-    let read_evals = (0..self.a_read_write.len())
-      .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
+    let final_leaves = (0..memory_size)
+      .map(|i| {
+        fingerprint(
+          F::from(i as u64),
+          self.v_init_final.fingerprint_term(i, gamma),
+          self.t_final[i],
+        )
+      })
       .collect();
-    let write_evals = (0..self.a_read_write.len())
-      .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
+    let read_leaves = (0..num_ops)
+      .map(|i| {
+        fingerprint(
+          self.a_read_write[i],
+          self.v_read_write.fingerprint_term(i, gamma),
+          self.t_read[i],
+        )
+      })
       .collect();
-    let final_evals = (0..self.v_init_final.opcode.len())
-      .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
+    let write_leaves = (0..num_ops)
+      .map(|i| {
+        fingerprint(
+          self.a_read_write[i],
+          self.v_read_write.fingerprint_term(i, gamma),
+          self.t_read[i] + F::one(),
+        )
+      })
       .collect();
+
     (
-      DensePolynomial::new(init_evals),
-      DensePolynomial::new(read_evals),
-      DensePolynomial::new(write_evals),
-      DensePolynomial::new(final_evals),
+      DensePolynomial::new(init_leaves),
+      DensePolynomial::new(read_leaves),
+      DensePolynomial::new(write_leaves),
+      DensePolynomial::new(final_leaves),
     )
   }
 
@@ -479,8 +441,8 @@ impl<G: CurveGroup> FingerprintStrategy<G> for PCFingerprintProof<G> {
     _evaluate_memory_mle: F2,
     commitments: &Self::Commitments,
     generators: &Self::Generators,
-    r_hash: &<G>::ScalarField,
-    r_multiset_check: &<G>::ScalarField,
+    gamma: &<G>::ScalarField,
+    tau: &<G>::ScalarField,
     transcript: &mut merlin::Transcript,
   ) -> Result<(), ProofVerifyError> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
@@ -510,59 +472,45 @@ impl<G: CurveGroup> FingerprintStrategy<G> for PCFingerprintProof<G> {
     debug_assert_eq!(self.eval_v_read_write.len(), 5);
     debug_assert_eq!(self.eval_v_init_final.len(), 5);
     // compute v.opcode * gamma + v.rd * gamma^2 + v.rs1 * gamma^3 + v.rs2 * gamma^4 + v.imm * gamma^5
-    let mut gamma_term = r_hash.clone();
+    let mut gamma_term = gamma.clone();
     let mut eval_v_read_write = self.eval_v_read_write[0] * gamma_term;
     let mut eval_v_init_final = self.eval_v_init_final[0] * gamma_term;
-    gamma_term *= r_hash;
+    gamma_term *= gamma;
     eval_v_read_write += self.eval_v_read_write[1] * gamma_term;
     eval_v_init_final += self.eval_v_init_final[1] * gamma_term;
-    gamma_term *= r_hash;
+    gamma_term *= gamma;
     eval_v_read_write += self.eval_v_read_write[2] * gamma_term;
     eval_v_init_final += self.eval_v_init_final[2] * gamma_term;
-    gamma_term *= r_hash;
+    gamma_term *= gamma;
     eval_v_read_write += self.eval_v_read_write[3] * gamma_term;
     eval_v_init_final += self.eval_v_init_final[3] * gamma_term;
-    gamma_term *= r_hash;
+    gamma_term *= gamma;
     eval_v_read_write += self.eval_v_read_write[4] * gamma_term;
     eval_v_init_final += self.eval_v_init_final[4] * gamma_term;
-    gamma_term *= r_hash;
+    gamma_term *= gamma;
+
+    let fingerprint = |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField| -> G::ScalarField {
+      // Assumes the v passed in is v.opcode * gamma + v.rd * gamma^2 + ... + v.imm * gamma^5
+      let t_gamma = *gamma * gamma * gamma * gamma * gamma * gamma;
+      t * t_gamma + v + a - tau
+    };
 
     debug_assert_eq!(grand_product_claims.len(), 1);
     let claim = &grand_product_claims[0];
     let a_init_final = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    let hash_init = Self::Polynomials::fingerprint(
-      a_init_final,
-      eval_v_init_final,
-      G::ScalarField::zero(),
-      r_hash,
-      r_multiset_check,
-    );
+    let hash_init = fingerprint(a_init_final, eval_v_init_final, G::ScalarField::zero());
     assert_eq!(claim.hash_init, hash_init);
 
-    let hash_read = Self::Polynomials::fingerprint(
-      self.eval_a_read_write,
-      eval_v_read_write,
-      self.eval_t_read,
-      r_hash,
-      r_multiset_check,
-    );
+    let hash_read = fingerprint(self.eval_a_read_write, eval_v_read_write, self.eval_t_read);
     assert_eq!(claim.hash_read, hash_read);
-    let hash_write = Self::Polynomials::fingerprint(
+    let hash_write = fingerprint(
       self.eval_a_read_write,
       eval_v_read_write,
       self.eval_t_read + G::ScalarField::one(),
-      r_hash,
-      r_multiset_check,
     );
     assert_eq!(claim.hash_write, hash_write);
 
-    let hash_final = Self::Polynomials::fingerprint(
-      a_init_final,
-      eval_v_init_final,
-      self.eval_t_final,
-      r_hash,
-      r_multiset_check,
-    );
+    let hash_final = fingerprint(a_init_final, eval_v_init_final, self.eval_t_final);
     assert_eq!(claim.hash_final, hash_final);
 
     Ok(())

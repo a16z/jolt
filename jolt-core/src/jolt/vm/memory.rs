@@ -24,58 +24,6 @@ impl<F: PrimeField> Memory<F> {
 }
 
 impl<F: PrimeField> BGPCInterpretable<F> for Memory<F> {
-  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
-    todo!()
-  }
-
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    todo!()
-  }
-
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    todo!()
-  }
-
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    todo!()
-  }
-
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    todo!()
-  }
-
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
-    todo!()
-  }
-
   fn compute_leaves(
     &self,
     memory_index: usize,

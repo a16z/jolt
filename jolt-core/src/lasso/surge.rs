@@ -110,102 +110,6 @@ impl<G: CurveGroup> SurgeCommitmentGenerators<G> {
 }
 
 impl<F: PrimeField> BGPCInterpretable<F> for SurgePolys<F> {
-  fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F {
-    F::from(leaf_index as u64)
-  }
-
-  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.num_ops);
-
-    let dimension_index = memory_index % self.dimensions;
-    self.dim_i[dimension_index][leaf_index]
-  }
-
-  fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.m);
-
-    let subtable_index = memory_index / self.dimensions;
-    self.materialized_subtables[subtable_index][leaf_index]
-  }
-
-  fn v_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.num_ops);
-
-    let dimension_index = memory_index % self.dimensions;
-    self.E_poly_i[dimension_index][leaf_index]
-  }
-
-  fn t_init(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    F::zero()
-  }
-
-  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.num_ops);
-
-    let dimension_index = memory_index % self.dimensions;
-    self.read_i[dimension_index][leaf_index]
-  }
-
-  fn t_write(&self, memory_index: usize, leaf_index: usize) -> F {
-    self.t_read(memory_index, leaf_index) + F::one()
-  }
-
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.m);
-
-    let dimension_index = memory_index % self.dimensions;
-    self.final_i[dimension_index][leaf_index]
-  }
-
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_ops(memory_index, leaf_index),
-      self.v_ops(memory_index, leaf_index),
-      self.t_read(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_ops(memory_index, leaf_index),
-      self.v_ops(memory_index, leaf_index),
-      self.t_write(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_mem(memory_index, leaf_index),
-      self.v_mem(memory_index, leaf_index),
-      self.t_init(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    Self::fingerprint(
-      self.a_mem(memory_index, leaf_index),
-      self.v_mem(memory_index, leaf_index),
-      self.t_final(memory_index, leaf_index),
-      gamma,
-      tau,
-    )
-  }
-
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
-    t * gamma.square() + v * gamma + a - tau
-  }
-
   fn compute_leaves(
     &self,
     memory_index: usize,
@@ -216,23 +120,54 @@ impl<F: PrimeField> BGPCInterpretable<F> for SurgePolys<F> {
     DensePolynomial<F>,
     DensePolynomial<F>,
   ) {
-    let init_evals = (0..self.m)
-      .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
+    let (gamma, tau) = r_hash;
+    let fingerprint = |a: F, v: F, t: F| -> F { t * gamma.square() + v * gamma + a - tau };
+
+    let dimension_index = memory_index % self.dimensions;
+    let subtable_index = memory_index / self.dimensions;
+
+    let init_leaves = (0..self.m)
+      .map(|i| {
+        fingerprint(
+          F::from(i as u64),
+          self.materialized_subtables[subtable_index][i],
+          F::zero(),
+        )
+      })
       .collect();
-    let read_evals = (0..self.num_ops)
-      .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
+    let final_leaves = (0..self.m)
+      .map(|i| {
+        fingerprint(
+          F::from(i as u64),
+          self.materialized_subtables[subtable_index][i],
+          self.final_i[dimension_index][i],
+        )
+      })
       .collect();
-    let write_evals = (0..self.num_ops)
-      .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
+    let read_leaves = (0..self.num_ops)
+      .map(|i| {
+        fingerprint(
+          self.dim_i[dimension_index][i],
+          self.E_poly_i[dimension_index][i],
+          self.read_i[dimension_index][i],
+        )
+      })
       .collect();
-    let final_evals = (0..self.m)
-      .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
+    let write_leaves = (0..self.num_ops)
+      .map(|i| {
+        fingerprint(
+          self.dim_i[dimension_index][i],
+          self.E_poly_i[dimension_index][i],
+          self.read_i[dimension_index][i] + F::one(),
+        )
+      })
       .collect();
+
     (
-      DensePolynomial::new(init_evals),
-      DensePolynomial::new(read_evals),
-      DensePolynomial::new(write_evals),
-      DensePolynomial::new(final_evals),
+      DensePolynomial::new(init_leaves),
+      DensePolynomial::new(read_leaves),
+      DensePolynomial::new(write_leaves),
+      DensePolynomial::new(final_leaves),
     )
   }
 
