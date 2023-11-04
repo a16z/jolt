@@ -1,30 +1,17 @@
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use crate::{
-  lasso::surge::{SurgeCommitment, SurgeCommitmentGenerators},
-  poly::identity_poly::IdentityPolynomial,
-  subprotocols::{
-    combined_table_proof::CombinedTableEvalProof,
-    grand_product::{BGPCInterpretable, GPEvals},
-  },
-  utils::{errors::ProofVerifyError, random::RandomTape, transcript::ProofTranscript},
+  subprotocols::grand_product::{BGPCInterpretable, GPEvals},
+  utils::{errors::ProofVerifyError, random::RandomTape},
 };
-
-pub trait MemBatchInfo {
-  fn ops_size(&self) -> usize;
-  fn mem_size(&self) -> usize;
-  fn num_memories(&self) -> usize;
-}
 
 /// Trait which defines a strategy for creating opening proofs for multi-set fingerprints and verifies.
 pub trait FingerprintStrategy<G: CurveGroup>:
   std::marker::Sync + CanonicalSerialize + CanonicalDeserialize
 {
-  type Polynomials: BGPCInterpretable<G::ScalarField> + MemBatchInfo;
+  type Polynomials: BGPCInterpretable<G::ScalarField>;
   type Generators;
   type Commitments;
 

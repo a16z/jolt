@@ -1,7 +1,6 @@
 use ark_ff::PrimeField;
 
 use crate::{
-  lasso::fingerprint_strategy::MemBatchInfo,
   poly::dense_mlpoly::DensePolynomial,
   subprotocols::grand_product::{BGPCInterpretable, BatchedGrandProductCircuit, GPEvals},
 };
@@ -21,20 +20,6 @@ pub struct Memory<F: PrimeField> {
 impl<F: PrimeField> Memory<F> {
   fn new(read_set: Vec<(F, F, F)>, write_set: Vec<(F, F, F)>, final_set: Vec<(F, F, F)>) -> Self {
     todo!("construct")
-  }
-}
-
-impl<F: PrimeField> MemBatchInfo for Memory<F> {
-  fn ops_size(&self) -> usize {
-    todo!()
-  }
-
-  fn mem_size(&self) -> usize {
-    todo!()
-  }
-
-  fn num_memories(&self) -> usize {
-    todo!()
   }
 }
 

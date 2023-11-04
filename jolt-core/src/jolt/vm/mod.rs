@@ -1,36 +1,12 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
-use std::any::TypeId;
-use strum::{EnumCount, IntoEnumIterator};
 
-use crate::{
-  jolt::{
-    instruction::{JoltInstruction, Opcode},
-    subtable::LassoSubtable,
-    vm::pc::PCPolys,
-  },
-  lasso::memory_checking::MemoryCheckingProof,
-  poly::{
-    dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
-    eq_poly::EqPolynomial,
-  },
-  subprotocols::{
-    combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    sumcheck::SumcheckInstanceProof,
-  },
-  utils::{
-    errors::ProofVerifyError,
-    math::Math,
-    random::RandomTape,
-    transcript::{AppendToTranscript, ProofTranscript},
-  },
-};
+use crate::lasso::memory_checking::MemoryCheckingProof;
 
 use self::instruction_lookups::InstructionLookups;
 use self::memory::MemoryOp;
-use self::pc::{PCFingerprintProof, PCProof};
+use self::pc::PCFingerprintProof;
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>>: InstructionLookups<F, G> {
   fn prove() {

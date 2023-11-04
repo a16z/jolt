@@ -11,15 +11,12 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
 
-use super::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo};
+use super::fingerprint_strategy::FingerprintStrategy;
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<G: CurveGroup, S: FingerprintStrategy<G>> {
   proof_prod_layer: ProductLayerProof<G::ScalarField>,
   proof_hash_layer: S,
-  num_ops: usize,
-  num_memories: usize,
-  memory_size: usize,
 }
 
 impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
@@ -46,9 +43,6 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
     MemoryCheckingProof {
       proof_prod_layer,
       proof_hash_layer,
-      num_ops: polynomials.ops_size(),
-      num_memories: polynomials.num_memories(),
-      memory_size: polynomials.mem_size(),
     }
   }
 
@@ -69,7 +63,11 @@ impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
     let (claims_mem, rand_mem, claims_ops, rand_ops) =
       self.proof_prod_layer.verify::<G>(transcript)?;
 
-    let claims: Vec<GPEvals<G::ScalarField>> = (0..self.num_memories)
+    assert_eq!(claims_mem.len(), claims_ops.len());
+    assert!(claims_mem.len() % 2 == 0);
+    let num_memories = claims_mem.len() / 2;
+
+    let claims: Vec<GPEvals<G::ScalarField>> = (0..num_memories)
       .map(|i| {
         GPEvals::new(
           claims_mem[2 * i],     // init
@@ -106,7 +104,6 @@ pub struct ProductLayerProof<F: PrimeField> {
   grand_product_evals: Vec<GPEvals<F>>,
   proof_mem: BatchedGrandProductArgument<F>,
   proof_ops: BatchedGrandProductArgument<F>,
-  num_memories: usize,
 }
 
 impl<F: PrimeField> ProductLayerProof<F> {
@@ -129,7 +126,6 @@ impl<F: PrimeField> ProductLayerProof<F> {
   {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let num_memories = polys.num_memories();
     let (batched_rw, batched_if, grand_product_evals) = polys.construct_batches(r_fingerprint);
 
     grand_product_evals.iter().for_each(|gp_eval| {
@@ -150,7 +146,6 @@ impl<F: PrimeField> ProductLayerProof<F> {
       grand_product_evals,
       proof_mem,
       proof_ops,
-      num_memories,
     };
 
     (product_layer_proof, rand_mem_sized_gps, rand_ops_sized_gps)
@@ -196,7 +191,6 @@ impl<F: PrimeField> ProductLayerProof<F> {
 #[cfg(test)]
 mod tests {
   use crate::{
-    lasso::fingerprint_strategy::MemBatchInfo,
     poly::dense_mlpoly::DensePolynomial,
     subprotocols::grand_product::{
       BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit,

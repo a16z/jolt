@@ -1,5 +1,4 @@
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
-use crate::lasso::fingerprint_strategy::MemBatchInfo;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
@@ -155,7 +154,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
 }
 
 /// BatchedGrandProductCircuitInterpretable
-pub trait BGPCInterpretable<F: PrimeField>: MemBatchInfo {
+pub trait BGPCInterpretable<F: PrimeField> {
   // a for init, final
   fn a_mem(&self, _memory_index: usize, leaf_index: usize) -> F;
   // a for read, write

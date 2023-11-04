@@ -11,7 +11,7 @@ use crate::{
     subtable::LassoSubtable,
   },
   lasso::{
-    fingerprint_strategy::{FingerprintStrategy, MemBatchInfo},
+    fingerprint_strategy::FingerprintStrategy,
     memory_checking::MemoryCheckingProof,
     surge::{SurgeCommitment, SurgeCommitmentGenerators},
   },
@@ -755,16 +755,16 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
     DensePolynomial<F>,
     DensePolynomial<F>,
   ) {
-    let init_evals = (0..self.mem_size())
+    let init_evals = (0..self.memory_size)
       .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let read_evals = (0..self.ops_size())
+    let read_evals = (0..self.num_ops)
       .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let write_evals = (0..self.ops_size())
+    let write_evals = (0..self.num_ops)
       .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let final_evals = (0..self.mem_size())
+    let final_evals = (0..self.memory_size)
       .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
       .collect();
     (
@@ -857,20 +857,6 @@ impl<F: PrimeField> BGPCInterpretable<F> for PolynomialRepresentation<F> {
   }
 }
 
-impl<F: PrimeField> MemBatchInfo for PolynomialRepresentation<F> {
-  fn ops_size(&self) -> usize {
-    self.num_ops
-  }
-
-  fn mem_size(&self) -> usize {
-    self.memory_size
-  }
-
-  fn num_memories(&self) -> usize {
-    self.num_memories
-  }
-}
-
 /// Read Only flags fingerprint Proof.
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ROFlagsFingerprintProof<G: CurveGroup> {
@@ -928,6 +914,9 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
     let eval_read: Vec<G::ScalarField> = (0..polynomials.num_memories)
       .map(|i| polynomials.read_cts[i].evaluate(rand_ops))
       .collect();
+    let eval_final: Vec<G::ScalarField> = (0..polynomials.num_memories)
+      .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
+      .collect();
 
     evals_ops.extend(eval_dim.clone());
     evals_ops.extend(eval_read.clone());
@@ -940,9 +929,6 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       transcript,
       random_tape,
     );
-    let eval_final: Vec<G::ScalarField> = (0..polynomials.num_memories)
-      .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
-      .collect();
 
     let proof_mem = CombinedTableEvalProof::prove(
       &polynomials.combined_final_poly,
@@ -966,7 +952,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
       random_tape,
     );
 
-    ROFlagsFingerprintProof {
+    Self {
       eval_dim,
       eval_read,
       eval_final,
@@ -1099,7 +1085,6 @@ impl<G: CurveGroup> ROFlagsFingerprintProof<G> {
     gamma: &G::ScalarField,
     tau: &G::ScalarField,
   ) -> Result<(), ProofVerifyError> {
-    println!("check_rs_fingerprints");
     // Computes the Reed-Solomon fingerprint of the tuple (a, v, t)
     let hash_func = |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField| -> G::ScalarField {
       t * gamma.square() + v * *gamma + a - tau

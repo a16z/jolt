@@ -8,7 +8,6 @@ use merlin::Transcript;
 
 use crate::{
   jolt::instruction::JoltInstruction,
-  lasso::fingerprint_strategy::MemBatchInfo,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -59,20 +58,6 @@ pub struct SurgePolys<F: PrimeField> {
   pub log_m: usize,      // log memory size
   pub dimensions: usize, // C
   pub alpha: usize,      // num_memories
-}
-
-impl<F: PrimeField> MemBatchInfo for SurgePolys<F> {
-  fn ops_size(&self) -> usize {
-    self.num_ops
-  }
-
-  fn mem_size(&self) -> usize {
-    self.m
-  }
-
-  fn num_memories(&self) -> usize {
-    self.alpha
-  }
 }
 
 impl<F: PrimeField> SurgePolys<F> {
@@ -139,7 +124,7 @@ impl<F: PrimeField> BGPCInterpretable<F> for SurgePolys<F> {
 
   fn v_mem(&self, memory_index: usize, leaf_index: usize) -> F {
     debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.mem_size());
+    debug_assert!(leaf_index < self.m);
 
     let subtable_index = memory_index / self.dimensions;
     self.materialized_subtables[subtable_index][leaf_index]
@@ -171,7 +156,7 @@ impl<F: PrimeField> BGPCInterpretable<F> for SurgePolys<F> {
 
   fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
     debug_assert!(memory_index < self.alpha);
-    debug_assert!(leaf_index < self.mem_size());
+    debug_assert!(leaf_index < self.m);
 
     let dimension_index = memory_index % self.dimensions;
     self.final_i[dimension_index][leaf_index]
@@ -231,16 +216,16 @@ impl<F: PrimeField> BGPCInterpretable<F> for SurgePolys<F> {
     DensePolynomial<F>,
     DensePolynomial<F>,
   ) {
-    let init_evals = (0..self.mem_size())
+    let init_evals = (0..self.m)
       .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let read_evals = (0..self.ops_size())
+    let read_evals = (0..self.num_ops)
       .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let write_evals = (0..self.ops_size())
+    let write_evals = (0..self.num_ops)
       .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let final_evals = (0..self.mem_size())
+    let final_evals = (0..self.m)
       .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
       .collect();
     (
@@ -259,10 +244,10 @@ impl<F: PrimeField> BGPCInterpretable<F> for SurgePolys<F> {
     BatchedGrandProductCircuit<F>,
     Vec<GPEvals<F>>,
   ) {
-    let mut rw_circuits = Vec::with_capacity(self.num_memories() * 2);
-    let mut if_circuits = Vec::with_capacity(self.num_memories() * 2);
-    let mut gp_evals = Vec::with_capacity(self.num_memories());
-    for memory_index in 0..self.num_memories() {
+    let mut rw_circuits = Vec::with_capacity(self.alpha * 2);
+    let mut if_circuits = Vec::with_capacity(self.alpha * 2);
+    let mut gp_evals = Vec::with_capacity(self.alpha);
+    for memory_index in 0..self.alpha {
       let (init_leaves, read_leaves, write_leaves, final_leaves) =
         self.compute_leaves(memory_index, r_hash);
       let (init_gpc, read_gpc, write_gpc, final_gpc) = (
@@ -321,7 +306,7 @@ impl<G: CurveGroup> FingerprintStrategy<G> for SurgeFingerprintProof<G> {
     let (rand_mem, rand_ops) = rand;
 
     // decommit derefs at rand_ops
-    let eval_derefs: Vec<G::ScalarField> = (0..polynomials.num_memories())
+    let eval_derefs: Vec<G::ScalarField> = (0..polynomials.alpha)
       .map(|i| polynomials.E_poly_i[i].evaluate(rand_ops))
       .collect();
     let proof_derefs = CombinedTableEvalProof::prove(
@@ -804,11 +789,10 @@ impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof
 
     (0..hypercube_size)
       .map(|eval_index| {
-        let g_operands: Vec<G::ScalarField> = (0..polys.num_memories())
+        let g_operands: Vec<G::ScalarField> = (0..polys.alpha)
           .map(|memory_index| g_operands[memory_index][eval_index])
           .collect();
-        eq[eval_index]
-          * instruction.combine_lookups(&g_operands, polys.dimensions, polys.mem_size())
+        eq[eval_index] * instruction.combine_lookups(&g_operands, polys.dimensions, polys.m)
       })
       .sum()
   }

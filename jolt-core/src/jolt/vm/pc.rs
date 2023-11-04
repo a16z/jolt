@@ -1,23 +1,20 @@
 use std::marker::PhantomData;
 
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use crate::{
-  lasso::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo},
+  lasso::fingerprint_strategy::FingerprintStrategy,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::{
-      BGPCInterpretable, BatchedGrandProductArgument, BatchedGrandProductCircuit, GPEvals,
-      GrandProductCircuit,
-    },
+    grand_product::{BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit},
   },
   utils::{
     self, errors::ProofVerifyError, is_power_of_two, math::Math, transcript::ProofTranscript,
@@ -207,7 +204,7 @@ impl<F: PrimeField> PCPolys<F> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,
   ) -> (ProgramCommitmentGens<G>, ProgramCommitment<G>) {
-    let gens = ProgramCommitmentGens::new(self.ops_size(), self.mem_size());
+    let gens = ProgramCommitmentGens::new(self.a_read_write.len(), self.v_init_final.opcode.len());
 
     let (read_write_commitments, _) = self.combined_read_write.commit(&gens.gens_read_write, None);
     let read_write_commitments = CombinedTableCommitment::new(read_write_commitments);
@@ -260,20 +257,6 @@ impl<G: CurveGroup> ProgramCommitmentGens<G> {
       gens_read_write,
       gens_init_final,
     }
-  }
-}
-
-impl<F: PrimeField> MemBatchInfo for PCPolys<F> {
-  fn ops_size(&self) -> usize {
-    self.a_read_write.len()
-  }
-
-  fn mem_size(&self) -> usize {
-    self.v_init_final.opcode.len()
-  }
-
-  fn num_memories(&self) -> usize {
-    1
   }
 }
 
@@ -363,16 +346,16 @@ impl<F: PrimeField> BGPCInterpretable<F> for PCPolys<F> {
     DensePolynomial<F>,
     DensePolynomial<F>,
   ) {
-    let init_evals = (0..self.mem_size())
+    let init_evals = (0..self.v_init_final.opcode.len())
       .map(|i| self.fingerprint_init(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let read_evals = (0..self.ops_size())
+    let read_evals = (0..self.a_read_write.len())
       .map(|i| self.fingerprint_read(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let write_evals = (0..self.ops_size())
+    let write_evals = (0..self.a_read_write.len())
       .map(|i| self.fingerprint_write(memory_index, i, r_hash.0, r_hash.1))
       .collect();
-    let final_evals = (0..self.mem_size())
+    let final_evals = (0..self.v_init_final.opcode.len())
       .map(|i| self.fingerprint_final(memory_index, i, r_hash.0, r_hash.1))
       .collect();
     (
@@ -391,35 +374,24 @@ impl<F: PrimeField> BGPCInterpretable<F> for PCPolys<F> {
     BatchedGrandProductCircuit<F>,
     Vec<GPEvals<F>>,
   ) {
-    let mut rw_circuits = Vec::with_capacity(self.num_memories() * 2);
-    let mut if_circuits = Vec::with_capacity(self.num_memories() * 2);
-    let mut gp_evals = Vec::with_capacity(self.num_memories());
-    for memory_index in 0..self.num_memories() {
-      let (init_leaves, read_leaves, write_leaves, final_leaves) =
-        self.compute_leaves(memory_index, r_hash);
-      let (init_gpc, read_gpc, write_gpc, final_gpc) = (
-        GrandProductCircuit::new(&init_leaves),
-        GrandProductCircuit::new(&read_leaves),
-        GrandProductCircuit::new(&write_leaves),
-        GrandProductCircuit::new(&final_leaves),
-      );
+    let (init_leaves, read_leaves, write_leaves, final_leaves) = self.compute_leaves(0, r_hash);
+    let (init_gpc, read_gpc, write_gpc, final_gpc) = (
+      GrandProductCircuit::new(&init_leaves),
+      GrandProductCircuit::new(&read_leaves),
+      GrandProductCircuit::new(&write_leaves),
+      GrandProductCircuit::new(&final_leaves),
+    );
 
-      gp_evals.push(GPEvals::new(
-        init_gpc.evaluate(),
-        read_gpc.evaluate(),
-        write_gpc.evaluate(),
-        final_gpc.evaluate(),
-      ));
-
-      rw_circuits.push(read_gpc);
-      rw_circuits.push(write_gpc);
-      if_circuits.push(init_gpc);
-      if_circuits.push(final_gpc);
-    }
+    let gp_eval = GPEvals::new(
+      init_gpc.evaluate(),
+      read_gpc.evaluate(),
+      write_gpc.evaluate(),
+      final_gpc.evaluate(),
+    );
     (
-      BatchedGrandProductCircuit::new_batch(rw_circuits),
-      BatchedGrandProductCircuit::new_batch(if_circuits),
-      gp_evals,
+      BatchedGrandProductCircuit::new_batch(vec![read_gpc, write_gpc]),
+      BatchedGrandProductCircuit::new_batch(vec![init_gpc, final_gpc]),
+      vec![gp_eval],
     )
   }
 }
