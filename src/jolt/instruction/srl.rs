@@ -1,12 +1,11 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
-  identity::IdentitySubtable, srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable,
+  identity::IdentitySubtable, srl::SrlSubtable,
   LassoSubtable,
 };
-use crate::utils::instruction_utils::{chunk_and_concatenate_for_shift, concatenate_lookups};
+use crate::utils::instruction_utils::chunk_and_concatenate_for_shift;
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SRLInstruction(pub u64, pub u64);

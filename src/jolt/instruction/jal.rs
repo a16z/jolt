@@ -4,10 +4,10 @@ use ark_std::log2;
 use super::JoltInstruction;
 use crate::jolt::subtable::{
   identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable,
-  zero_lsb::ZeroLSBSubtable, LassoSubtable,
+  LassoSubtable,
 };
 use crate::utils::instruction_utils::{
-  add_and_chunk_operands, chunk_and_concatenate_operands, concatenate_lookups,
+  add_and_chunk_operands, concatenate_lookups,
 };
 
 #[derive(Copy, Clone, Default, Debug)]

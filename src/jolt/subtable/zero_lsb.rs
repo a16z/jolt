@@ -1,5 +1,4 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;

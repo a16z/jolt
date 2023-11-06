@@ -3,7 +3,7 @@ use ark_std::log2;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
-  identity::IdentitySubtable, sll::SllSubtable, truncate_overflow::TruncateOverflowSubtable,
+  identity::IdentitySubtable, sll::SllSubtable,
   LassoSubtable,
 };
 use crate::utils::instruction_utils::{chunk_and_concatenate_for_shift, concatenate_lookups};

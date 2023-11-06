@@ -1,7 +1,6 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use super::LassoSubtable;
 use crate::utils::math::Math;
@@ -70,7 +69,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
       }
 
       let m = if k > b * CHUNK_INDEX {
-        std::cmp::min(b, (k - b * CHUNK_INDEX))
+        std::cmp::min(b, k - b * CHUNK_INDEX)
       } else {
         0
       };
