@@ -46,7 +46,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SllSubtable<F
     // and second half is always chunk Y_0
     debug_assert!(point.len() % 2 == 0);
 
-    let MAX_SHIFT = 64;
+    const MAX_SHIFT: usize = 64;
     let log_MAX_SHIFT = log2(MAX_SHIFT) as usize;
 
     let b = point.len() / 2;
@@ -97,5 +97,10 @@ mod test {
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity, SllSubtable<Fr, 0>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity0, SllSubtable<Fr, 0>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity1, SllSubtable<Fr, 1>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity2, SllSubtable<Fr, 2>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity3, SllSubtable<Fr, 3>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity4, SllSubtable<Fr, 4>, Fr, 256);
+  subtable_materialize_mle_parity_test!(sll_materialize_mle_parity5, SllSubtable<Fr, 5>, Fr, 256);
 }

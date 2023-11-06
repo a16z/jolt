@@ -46,7 +46,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
     // and second half is always chunk Y_0
     debug_assert!(point.len() % 2 == 0);
 
-    let MAX_SHIFT = 64;
+    const MAX_SHIFT: usize = 64;
     let log_MAX_SHIFT = log2(MAX_SHIFT) as usize;
 
     let b = point.len() / 2;
@@ -69,7 +69,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
           + (F::one() - k_bits[log_MAX_SHIFT - 1 - i]) * (F::one() - y[b - 1 - i]);
       }
 
-      let m = if (k - b * CHUNK_INDEX) > 0 {
+      let m = if k > b * CHUNK_INDEX {
         std::cmp::min(b, (k - b * CHUNK_INDEX))
       } else {
         0
@@ -95,5 +95,10 @@ mod test {
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity, SrlSubtable<Fr, 0>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity0, SrlSubtable<Fr, 0>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity1, SrlSubtable<Fr, 1>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity2, SrlSubtable<Fr, 2>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity3, SrlSubtable<Fr, 3>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity4, SrlSubtable<Fr, 4>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity5, SrlSubtable<Fr, 5>, Fr, 256);
 }

@@ -28,12 +28,11 @@ impl<F: PrimeField> LassoSubtable<F> for SraSignSubtable<F> {
 
     // find position of sign bit in the chunk 
     let sign_bit_index = 63 % operand_chunk_width; 
-    let sign_bit_mask: usize = 1 << (sign_bit_index);
 
     for idx in 0..M {
       let (x, y) = split_bits(idx, operand_chunk_width);
 
-      let x_sign = F::from(((x & sign_bit_mask) >> sign_bit_index) as u64);
+      let x_sign = F::from(((x >> sign_bit_index) & 1) as u64);
 
       let row = (0..(y as u32) % 64).into_iter()
         .fold(F::zero(), |acc, i: u32| acc + F::from(1_u64 << (64-1-i)) * x_sign);
@@ -48,7 +47,7 @@ impl<F: PrimeField> LassoSubtable<F> for SraSignSubtable<F> {
     // and second half is always chunk Y_0
     debug_assert!(point.len() % 2 == 0);
 
-    let MAX_SHIFT: usize = 64;
+    const MAX_SHIFT: usize = 64;
     let log_MAX_SHIFT = log2(MAX_SHIFT) as usize;
 
     let b = point.len() / 2;
