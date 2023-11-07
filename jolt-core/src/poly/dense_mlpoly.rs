@@ -3,6 +3,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct};
 
 use super::commitments::{Commitments, MultiCommitGens};
+use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
 use crate::subprotocols::dot_product::{DotProductProofGens, DotProductProofLog};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -264,6 +265,18 @@ impl<F: PrimeField> DensePolynomial<F> {
     Z.resize(Z.len().next_power_of_two(), F::zero());
 
     DensePolynomial::new(Z)
+  }
+
+  pub fn combined_commit<G>(
+    &self,
+    label: &'static [u8],
+  ) -> (PolyCommitmentGens<G>, CombinedTableCommitment<G>)
+  where
+    G: CurveGroup<ScalarField = F>,
+  {
+    let generators = PolyCommitmentGens::new(self.num_vars, label);
+    let (joint_commitment, _) = self.commit(&generators, None);
+    (generators, CombinedTableCommitment::new(joint_commitment))
   }
 
   pub fn from_usize(Z: &[usize]) -> Self {

@@ -28,7 +28,6 @@ pub struct SurgeCommitment<G: CurveGroup> {
   pub dim_read_commitment: CombinedTableCommitment<G>,
   pub final_commitment: CombinedTableCommitment<G>,
   pub E_commitment: CombinedTableCommitment<G>,
-  pub instruction_flag_commitment: Option<CombinedTableCommitment<G>>,
 }
 
 /// Container for generators for polynomial commitments. These preallocate memory
@@ -37,7 +36,6 @@ pub struct SurgeCommitmentGenerators<G: CurveGroup> {
   pub dim_read_commitment_gens: PolyCommitmentGens<G>,
   pub final_commitment_gens: PolyCommitmentGens<G>,
   pub E_commitment_gens: PolyCommitmentGens<G>,
-  pub flag_commitment_gens: Option<PolyCommitmentGens<G>>,
 }
 
 pub struct SurgePolys<F: PrimeField> {
@@ -79,7 +77,6 @@ impl<F: PrimeField> SurgePolys<F> {
       dim_read_commitment: CombinedTableCommitment::new(dim_read_commitment),
       final_commitment: CombinedTableCommitment::new(final_commitment),
       E_commitment: CombinedTableCommitment::new(E_commitment),
-      instruction_flag_commitment: None,
     }
   }
 }
@@ -104,7 +101,6 @@ impl<G: CurveGroup> SurgeCommitmentGenerators<G> {
       dim_read_commitment_gens,
       final_commitment_gens,
       E_commitment_gens,
-      flag_commitment_gens: None,
     }
   }
 }
