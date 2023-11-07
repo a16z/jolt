@@ -7,7 +7,7 @@ use crate::jolt::subtable::{
   zero_lsb::ZeroLSBSubtable, LassoSubtable,
 };
 use crate::utils::instruction_utils::{
-  add_and_chunk_operands, chunk_and_concatenate_operands, concatenate_lookups,
+  add_and_chunk_operands, concatenate_lookups,
 };
 
 #[derive(Copy, Clone, Default, Debug)]

@@ -1,17 +1,16 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
-  identity::IdentitySubtable, sll::SllSubtable,
+  identity::IdentitySubtable, srl::SrlSubtable,
   LassoSubtable,
 };
-use crate::utils::instruction_utils::{chunk_and_concatenate_for_shift, concatenate_lookups};
+use crate::utils::instruction_utils::chunk_and_concatenate_for_shift;
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct SLLInstruction(pub u64, pub u64);
+pub struct SRLInstruction(pub u64, pub u64);
 
-impl JoltInstruction for SLLInstruction {
+impl JoltInstruction for SRLInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     assert!(C <= 10);
     assert!(vals.len() == C * C);
@@ -23,7 +22,7 @@ impl JoltInstruction for SLLInstruction {
       vals_filtered.extend_from_slice(&subtable_val[i..i + 1]);
     }
 
-    concatenate_lookups(&vals_filtered, C, (log2(M) / 2) as usize)
+    vals_filtered.iter().sum()
   }
 
   fn g_poly_degree(&self, _: usize) -> usize {
@@ -32,16 +31,16 @@ impl JoltInstruction for SLLInstruction {
 
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-      Box::new(SllSubtable::<F, 0>::new()),
-      Box::new(SllSubtable::<F, 1>::new()),
-      Box::new(SllSubtable::<F, 2>::new()),
-      Box::new(SllSubtable::<F, 3>::new()),
-      Box::new(SllSubtable::<F, 4>::new()),
-      Box::new(SllSubtable::<F, 5>::new()),
-      Box::new(SllSubtable::<F, 6>::new()),
-      Box::new(SllSubtable::<F, 7>::new()),
-      Box::new(SllSubtable::<F, 8>::new()),
-      Box::new(SllSubtable::<F, 9>::new()),
+      Box::new(SrlSubtable::<F, 0>::new()),
+      Box::new(SrlSubtable::<F, 1>::new()),
+      Box::new(SrlSubtable::<F, 2>::new()),
+      Box::new(SrlSubtable::<F, 3>::new()),
+      Box::new(SrlSubtable::<F, 4>::new()),
+      Box::new(SrlSubtable::<F, 5>::new()),
+      Box::new(SrlSubtable::<F, 6>::new()),
+      Box::new(SrlSubtable::<F, 7>::new()),
+      Box::new(SrlSubtable::<F, 8>::new()),
+      Box::new(SrlSubtable::<F, 9>::new()),
     ];
     subtables.truncate(C);
     subtables.reverse();
@@ -61,10 +60,10 @@ mod test {
 
   use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-  use super::SLLInstruction;
+  use super::SRLInstruction;
 
   #[test]
-  fn sll_instruction_e2e() {
+  fn srl_instruction_e2e() {
     let mut rng = test_rng();
     const C: usize = 6;
     const M: usize = 1 << 22;
@@ -72,9 +71,9 @@ mod test {
     for _ in 0..8 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
 
-      let entry: u64 = x.checked_shl((y % 64) as u32).unwrap_or(0);
+      let entry: u64 = x.checked_shr((y % 64) as u32).unwrap_or(0);
 
-      jolt_instruction_test!(SLLInstruction(x, y), entry.into());
+      jolt_instruction_test!(SRLInstruction(x, y), entry.into());
     }
   }
 }

@@ -29,6 +29,8 @@ pub mod jal;
 pub mod jalr;
 pub mod or;
 pub mod sll;
+pub mod sra;
+pub mod srl;
 pub mod slt;
 pub mod sltu;
 pub mod sub;

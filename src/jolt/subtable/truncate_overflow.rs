@@ -3,7 +3,6 @@ use ark_std::log2;
 use std::marker::PhantomData;
 
 use crate::utils::split_bits;
-use std::cmp;
 
 use super::LassoSubtable;
 
