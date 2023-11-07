@@ -32,8 +32,7 @@ pub struct ELFRow {
 }
 
 impl ELFRow {
-  #[cfg(test)]
-  fn new(address: usize, opcode: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
+  pub fn new(address: usize, opcode: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
     Self {
       address,
       opcode,
