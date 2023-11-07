@@ -1,0 +1,71 @@
+[package]
+name = "jolt-core"
+version = "0.1.0"
+authors = [
+    # author of original Spartan paper and code base 
+    "Srinath Setty <srinath@microsoft.com>",
+    # authors who contributed to the Arkworks Spartan fork
+    "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
+    # authors who contributed to Lasso
+    "Michael Zhu <mzhu@a16z.com>",
+    "Sam Ragsdale <sragsdale@a16z.com>",
+    "Noah Citron <ncitron@a16z.com>"
+]
+edition = "2021"
+description = "The lookup singularity. Based on Spartan; built on Arkworks."
+documentation = "https://github.com/a16z/lasso/README.md"
+repository = "https://github.com/a16z/lasso"
+license-file = "LICENSE"
+keywords = ["zkSNARKs", "cryptography", "proofs"]
+
+[dependencies]
+merlin = "3.0.0"
+rand = "0.7.3"
+digest = "0.8.1"
+sha3 = "0.8.2"
+rayon = { version = "1.3.0", optional = true }
+subtle = { version = "2.4", default-features = false }
+rand_core = { version = "0.5", default-features = false }
+zeroize = { version = "1", default-features = false }
+itertools = "0.10.0"
+colored = "2.0.0"
+thiserror = "1.0"
+
+rand_chacha = { version = "0.3.0", default-features = false }
+
+ark-ec = { version = "0.4.2", default-features = false }
+ark-ff = { version = "0.4.2", default-features = false }
+ark-std = { version = "0.4.0", default-features = false }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+
+criterion = { version = "0.3.1", features = ["html_reports"] }
+num-integer = "0.1.45"
+seq-macro = "0.3.3"
+ark-curve25519 = "0.4.0"
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
+tracing-texray = "0.2.0"
+clap = { version = "4.3.10", features = ["derive"] }
+hashbrown = "0.14.0"
+ff = "0.13.0"
+pasta_curves = "0.5.1"
+bellpepper-core = "0.2.1"
+circom-scotia = "0.1.2"
+spartan2 = "0.1.0"
+strum = "0.25.0"
+strum_macros = "0.25.2"
+enum_dispatch = "0.3.12"
+
+[dev-dependencies]
+criterion = "0.3.1"
+
+[lib]
+name = "liblasso"
+path = "src/lib.rs"
+
+[features]
+default = ["ark-ec/parallel", "ark-ff/parallel", "ark-std/parallel", "ark-ff/asm", "multicore"]
+multicore = ["rayon"]
+ark-msm = [] # run with arkworks MSM without small field element optimization
