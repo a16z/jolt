@@ -1,7 +1,7 @@
 [package]
-name = "lasso"
+name = "jolt"
 # sync up with Arkwork's version
-version = "0.4.0"
+version = "0.1.0"
 authors = [
     # author of original Spartan paper and code base 
     "Srinath Setty <srinath@microsoft.com>",
@@ -19,7 +19,7 @@ license-file = "LICENSE"
 keywords = ["zkSNARKs", "cryptography", "proofs"]
 
 [workspace]
-members = ["ark-lasso"]
+members = ["jolt-core"]
 
 [profile.release]
 debug = true
