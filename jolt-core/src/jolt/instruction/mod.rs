@@ -4,7 +4,7 @@ use enum_dispatch::enum_dispatch;
 use crate::jolt::{subtable::LassoSubtable, vm::test_vm::TestInstructionSet};
 
 #[enum_dispatch]
-pub trait JoltInstruction {
+pub trait JoltLookupInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F;
   fn g_poly_degree(&self, C: usize) -> usize;
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;

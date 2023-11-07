@@ -1,14 +1,14 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use super::JoltInstruction;
+use super::JoltLookupInstruction;
 use crate::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct XORInstruction(pub u64, pub u64);
 
-impl JoltInstruction for XORInstruction {
+impl JoltLookupInstruction for XORInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     concatenate_lookups(vals, C, log2(M) as usize / 2)
   }
@@ -32,7 +32,7 @@ mod test {
   use ark_std::test_rng;
   use rand_chacha::rand_core::RngCore;
 
-  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+  use crate::{jolt::instruction::JoltLookupInstruction, jolt_instruction_test};
 
   use super::XORInstruction;
 

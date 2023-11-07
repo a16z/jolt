@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 
-use super::{slt::SLTInstruction, JoltInstruction};
+use super::{slt::SLTInstruction, JoltLookupInstruction};
 use crate::{
   jolt::subtable::{
     eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -12,7 +12,7 @@ use crate::{
 #[derive(Copy, Clone, Default, Debug)]
 pub struct BGEInstruction(pub i64, pub i64);
 
-impl JoltInstruction for BGEInstruction {
+impl JoltLookupInstruction for BGEInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // 1 - LTS(x, y) =
     F::one() - SLTInstruction(self.0, self.1).combine_lookups(vals, C, M)
@@ -44,7 +44,7 @@ mod test {
   use ark_std::{test_rng, One};
   use rand_chacha::rand_core::RngCore;
 
-  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+  use crate::{jolt::instruction::JoltLookupInstruction, jolt_instruction_test};
 
   use super::BGEInstruction;
 

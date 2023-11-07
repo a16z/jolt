@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 
-use super::JoltInstruction;
+use super::JoltLookupInstruction;
 use crate::{
   jolt::subtable::{
     eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -12,7 +12,7 @@ use crate::{
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SLTInstruction(pub i64, pub i64);
 
-impl JoltInstruction for SLTInstruction {
+impl JoltLookupInstruction for SLTInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
     debug_assert!(vals.len() % C == 0);
     let mut vals_by_subtable = vals.chunks_exact(C);
@@ -63,7 +63,7 @@ mod test {
   use ark_std::{test_rng, One, Zero};
   use rand_chacha::rand_core::RngCore;
 
-  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+  use crate::{jolt::instruction::JoltLookupInstruction, jolt_instruction_test};
 
   use super::SLTInstruction;
 
