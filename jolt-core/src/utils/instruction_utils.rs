@@ -122,7 +122,7 @@ mod tests {
   #[test]
   #[should_panic]
   fn chunk_and_concatenate_operands_too_large_2() {
-    // Fail to split 2 integers of length 6-bits into 3 chunks or length 3-bits
+    // Fail to split 2 integers of length 6-bits into 3 chunks of length 3-bits
     chunk_and_concatenate_operands(0b11_11_11, 0b10_10_10, 3, 3);
   }
 
