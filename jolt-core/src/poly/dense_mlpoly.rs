@@ -252,10 +252,12 @@ impl<F: PrimeField> DensePolynomial<F> {
     assert_eq!(self.Z.len(), self.len);
   }
 
-  pub fn merge(polys: &[DensePolynomial<F>]) -> DensePolynomial<F> {
+  pub fn merge<T>(polys: &Vec<T>) -> DensePolynomial<F> 
+  where T: AsRef<DensePolynomial<F>>
+  {
     let mut Z: Vec<F> = Vec::new();
     for poly in polys.iter() {
-      Z.extend(poly.vec().iter());
+      Z.extend(poly.as_ref().vec().iter());
     }
 
     // pad the polynomial with zero polynomial at the end
@@ -283,6 +285,12 @@ impl<F> Index<usize> for DensePolynomial<F> {
   #[inline(always)]
   fn index(&self, _index: usize) -> &F {
     &(self.Z[_index])
+  }
+}
+
+impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
+  fn as_ref(&self) -> &DensePolynomial<F> {
+      self
   }
 }
 
