@@ -643,7 +643,7 @@ mod tests {
       E_polys: vec![dim.clone()],
       instruction_flag_polys: vec![flag_poly.clone()],
 
-      combined_dim_read_poly: DensePolynomial::merge(&vec![dim.clone(), read_cts.clone()]),
+      combined_dim_read_poly: DensePolynomial::merge(&vec![&dim, &read_cts]),
       combined_final_poly: final_cts.clone(),
       combined_E_poly: dim.clone(),
       combined_instruction_flag_poly: flag_poly.clone(),

@@ -173,23 +173,22 @@ impl<F: PrimeField> PCPolys<F> {
     println!("read_cts {read_cts:?}");
     println!("t_read {t_read:?}");
 
-    // TODO(JOLT-48): DensePolynomial::merge should be parameterized with  Vec<&DensePolynomial> given it is read only. Avoids clones.
-    let combined_read_write = DensePolynomial::merge(&[
-      a_read_write.clone(),
-      t_read.clone(),
-      v_read_write.opcode.clone(),
-      v_read_write.rd.clone(),
-      v_read_write.rs1.clone(),
-      v_read_write.rs2.clone(),
-      v_read_write.imm.clone(),
+    let combined_read_write = DensePolynomial::merge(&vec![
+      &a_read_write,
+      &t_read,
+      &v_read_write.opcode,
+      &v_read_write.rd,
+      &v_read_write.rs1,
+      &v_read_write.rs2,
+      &v_read_write.imm,
     ]);
-    let combined_init_final = DensePolynomial::merge(&[
-      t_final.clone(),
-      v_init_final.opcode.clone(),
-      v_init_final.rd.clone(),
-      v_init_final.rs1.clone(),
-      v_init_final.rs2.clone(),
-      v_init_final.imm.clone(),
+    let combined_init_final = DensePolynomial::merge(&vec![
+      &t_final,
+      &v_init_final.opcode,
+      &v_init_final.rd,
+      &v_init_final.rs1,
+      &v_init_final.rs2,
+      &v_init_final.imm,
     ]);
 
     Self {
