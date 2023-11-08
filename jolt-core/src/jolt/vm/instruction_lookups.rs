@@ -15,6 +15,7 @@ use crate::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
     identity_poly::IdentityPolynomial,
+    structured_poly::{StructuredOpeningProof, StructuredPolynomials},
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
@@ -86,38 +87,11 @@ where
   pub memory_to_instructions_map: Vec<Vec<usize>>,
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheckOpenings<F, G>
-where
-  F: PrimeField,
-  G: CurveGroup<ScalarField = F>,
-{
-  E_poly_openings: Vec<F>,
-  flag_openings: Vec<F>,
-
-  E_poly_opening_proof: CombinedTableEvalProof<G>,
-  flag_opening_proof: CombinedTableEvalProof<G>,
-}
-
-pub struct MemoryCheckingOpenings<F, G>
-where
-  F: PrimeField,
-  G: CurveGroup<ScalarField = F>,
-{
-  dim_openings: Vec<F>,    // C-sized
-  read_openings: Vec<F>,   // NUM_MEMORIES-sized
-  E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
-  final_openings: Vec<F>,  // NUM_MEMORIES-sized
-  flag_openings: Vec<F>,   // NUM_INSTRUCTIONS-sized
-
-  dim_read_opening_proof: CombinedTableEvalProof<G>,
-  E_poly_opening_proof: CombinedTableEvalProof<G>,
-  final_opening_proof: CombinedTableEvalProof<G>,
-  flag_opening_proof: CombinedTableEvalProof<G>,
-
-  /// Maps memory_index to relevant instruction_flag indices.
-  /// Used by verifier to construct subtable_flag from instruction_flags.
-  memory_to_flag_indices: Vec<Vec<usize>>,
+pub struct BatchedInstructionPolynomials<F: PrimeField> {
+  batched_dim_read: DensePolynomial<F>,
+  batched_final: DensePolynomial<F>,
+  batched_E: DensePolynomial<F>,
+  batched_flag: DensePolynomial<F>,
 }
 
 pub struct InstructionCommitment<G: CurveGroup> {
@@ -136,22 +110,6 @@ pub struct InstructionCommitmentGenerators<G: CurveGroup> {
   pub final_commitment_gens: PolyCommitmentGens<G>,
   pub E_commitment_gens: PolyCommitmentGens<G>,
   pub flag_commitment_gens: PolyCommitmentGens<G>,
-}
-
-pub struct BatchedInstructionPolynomials<F: PrimeField> {
-  batched_dim_read: DensePolynomial<F>,
-  batched_final: DensePolynomial<F>,
-  batched_E: DensePolynomial<F>,
-  batched_flag: DensePolynomial<F>,
-}
-
-// alt: BatchablePolynomials
-pub trait StructuredPolynomials {
-  type Commitment;
-  type BatchedPolynomials;
-
-  fn batch(&self) -> Self::BatchedPolynomials;
-  fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment;
 }
 
 // TODO: macro?
@@ -205,90 +163,248 @@ where
   }
 }
 
-pub trait StructuredOpeningProof<F, G>
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+struct PrimarySumcheckOpenings<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Polynomials: StructuredPolynomials;
-  type BatchedPolynomials = <Self::Polynomials as StructuredPolynomials>::BatchedPolynomials;
-  type Commitment = <Self::Polynomials as StructuredPolynomials>::Commitment;
-  // TODO: associated type for openings?
+  E_poly_openings: Vec<F>,
+  flag_openings: Vec<F>,
 
-  fn prove_openings(
-    polynomials: &Self::BatchedPolynomials,
-    commitment: &Self::Commitment,
-    r: &Vec<F>,
-    openings: Vec<Vec<F>>,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self;
-
-  fn verify_openings(&self, commitment: Self::Commitment, r: &Vec<F>);
+  E_poly_opening_proof: CombinedTableEvalProof<G>,
+  flag_opening_proof: CombinedTableEvalProof<G>,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G>
-  for PrimarySumcheckOpenings<F, G>
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
+  StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F, G>
 {
-  type Polynomials = InstructionPolynomials<F, G>;
-
   fn prove_openings(
-    polynomials: &Self::BatchedPolynomials,
-    commitment: &Self::Commitment,
-    r: &Vec<F>,
+    polynomials: &BatchedInstructionPolynomials<F>,
+    commitment: &InstructionCommitment<G>,
+    opening_point: &Vec<F>,
     openings: Vec<Vec<F>>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
+    debug_assert!(openings.len() == 2);
     let E_poly_openings = &openings[0];
     let flag_openings = &openings[1];
 
-    let flag_proof = CombinedTableEvalProof::prove(
+    let E_poly_opening_proof = CombinedTableEvalProof::prove(
+      &polynomials.batched_E,
+      E_poly_openings,
+      opening_point,
+      &commitment.generators.E_commitment_gens,
+      transcript,
+      random_tape,
+    );
+    let flag_opening_proof = CombinedTableEvalProof::prove(
       &polynomials.batched_flag,
       flag_openings,
-      &r,
+      opening_point,
       &commitment.generators.flag_commitment_gens,
       transcript,
       random_tape,
     );
 
-    let memory_proof = CombinedTableEvalProof::prove(
-      &polynomials.batched_E,
-      E_poly_openings,
-      &r,
-      &commitment.generators.E_commitment_gens,
-      transcript,
-      random_tape,
-    );
-
-    unimplemented!("todo");
+    Self {
+      E_poly_openings: E_poly_openings.to_vec(),
+      E_poly_opening_proof,
+      flag_openings: flag_openings.to_vec(),
+      flag_opening_proof,
+    }
   }
 
-  fn verify_openings(&self, commitment: Self::Commitment, r: &Vec<F>) {
-    unimplemented!("todo");
+  fn verify_openings(
+    &self,
+    commitment: &InstructionCommitment<G>,
+    opening_point: &Vec<F>,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    self.E_poly_opening_proof.verify(
+      opening_point,
+      &self.E_poly_openings,
+      &commitment.generators.E_commitment_gens,
+      &commitment.E_commitment,
+      transcript,
+    )?;
+    self.flag_opening_proof.verify(
+      opening_point,
+      &self.flag_openings,
+      &commitment.generators.flag_commitment_gens,
+      &commitment.instruction_flag_commitment,
+      transcript,
+    )?;
+
+    Ok(())
   }
 }
 
-impl<F, G> StructuredOpeningProof<F, G> for MemoryCheckingOpenings<F, G>
+pub struct InstructionReadWriteOpenings<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Polynomials = InstructionPolynomials<F, G>;
+  dim_openings: Vec<F>,    // C-sized
+  read_openings: Vec<F>,   // NUM_MEMORIES-sized
+  E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
+  flag_openings: Vec<F>,   // NUM_INSTRUCTIONS-sized
 
+  dim_read_opening_proof: CombinedTableEvalProof<G>,
+  E_poly_opening_proof: CombinedTableEvalProof<G>,
+  flag_opening_proof: CombinedTableEvalProof<G>,
+}
+
+impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+  for InstructionReadWriteOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   fn prove_openings(
-    polynomials: &Self::BatchedPolynomials,
-    commitment: &Self::Commitment,
-    r: &Vec<F>,
+    polynomials: &BatchedInstructionPolynomials<F>,
+    commitment: &InstructionCommitment<G>,
+    opening_point: &Vec<F>,
     openings: Vec<Vec<F>>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
-    unimplemented!("todo");
+    debug_assert!(openings.len() == 4);
+    let dim_openings = &openings[0];
+    let read_openings = &openings[1];
+    let E_poly_openings = &openings[2];
+    let flag_openings = &openings[3];
+
+    let dim_read_openings = [dim_openings.as_slice(), read_openings.as_slice()]
+      .concat()
+      .to_vec();
+
+    let dim_read_opening_proof = CombinedTableEvalProof::prove(
+      &polynomials.batched_dim_read,
+      &dim_read_openings,
+      &opening_point,
+      &commitment.generators.dim_read_commitment_gens,
+      transcript,
+      random_tape,
+    );
+    let E_poly_opening_proof = CombinedTableEvalProof::prove(
+      &polynomials.batched_E,
+      E_poly_openings,
+      &opening_point,
+      &commitment.generators.E_commitment_gens,
+      transcript,
+      random_tape,
+    );
+    let flag_opening_proof = CombinedTableEvalProof::prove(
+      &polynomials.batched_flag,
+      flag_openings,
+      &opening_point,
+      &commitment.generators.flag_commitment_gens,
+      transcript,
+      random_tape,
+    );
+
+    Self {
+      dim_openings: dim_openings.to_vec(),
+      read_openings: read_openings.to_vec(),
+      E_poly_openings: E_poly_openings.to_vec(),
+      flag_openings: flag_openings.to_vec(),
+      dim_read_opening_proof,
+      E_poly_opening_proof,
+      flag_opening_proof,
+    }
   }
 
-  fn verify_openings(&self, commitment: Self::Commitment, r: &Vec<F>) {
-    unimplemented!("todo");
+  fn verify_openings(
+    &self,
+    commitment: &InstructionCommitment<G>,
+    opening_point: &Vec<F>,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    let dim_read_openings = [self.dim_openings.as_slice(), self.read_openings.as_slice()]
+      .concat()
+      .to_vec();
+
+    self.dim_read_opening_proof.verify(
+      opening_point,
+      &dim_read_openings,
+      &commitment.generators.dim_read_commitment_gens,
+      &commitment.dim_read_commitment,
+      transcript,
+    )?;
+
+    self.E_poly_opening_proof.verify(
+      opening_point,
+      &self.E_poly_openings,
+      &commitment.generators.E_commitment_gens,
+      &commitment.E_commitment,
+      transcript,
+    )?;
+
+    self.flag_opening_proof.verify(
+      opening_point,
+      &self.flag_openings,
+      &commitment.generators.flag_commitment_gens,
+      &commitment.instruction_flag_commitment,
+      transcript,
+    )?;
+    Ok(())
+  }
+}
+
+pub struct InstructionInitFinalOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  final_openings: Vec<F>, // NUM_MEMORIES-sized
+  final_opening_proof: CombinedTableEvalProof<G>,
+}
+
+impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+  for InstructionInitFinalOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  fn prove_openings(
+    polynomials: &BatchedInstructionPolynomials<F>,
+    commitment: &InstructionCommitment<G>,
+    opening_point: &Vec<F>,
+    openings: Vec<Vec<F>>,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self {
+    debug_assert!(openings.len() == 1);
+    let final_opening_proof = CombinedTableEvalProof::prove(
+      &polynomials.batched_flag,
+      &openings[0],
+      &opening_point,
+      &commitment.generators.flag_commitment_gens,
+      transcript,
+      random_tape,
+    );
+
+    Self {
+      final_openings: openings[0].clone(),
+      final_opening_proof,
+    }
+  }
+
+  fn verify_openings(
+    &self,
+    commitment: &InstructionCommitment<G>,
+    opening_point: &Vec<F>,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    self.final_opening_proof.verify(
+      opening_point,
+      &self.final_openings,
+      &commitment.generators.final_commitment_gens,
+      &commitment.final_commitment,
+      transcript,
+    )
   }
 }
 
@@ -299,66 +415,95 @@ struct MultisetHashes<F: PrimeField> {
   hash_write: F,
 }
 
-// TODO: flatten with MemoryCheckingProof?
-struct MemoryCheckingGrandProducts<F: PrimeField> {
-  proof_read_write: BatchedGrandProductArgument<F>,
-  proof_init_final: BatchedGrandProductArgument<F>,
-}
-
-pub struct MemoryCheckingProof<G, Openings>
+pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
   G: CurveGroup,
-  Openings: StructuredOpeningProof<G::ScalarField, G>,
+  Polynomials: StructuredPolynomials + ?Sized,
+  ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
+  InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
+  _polys: PhantomData<Polynomials>,
   multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
-  grand_products: MemoryCheckingGrandProducts<G::ScalarField>,
-  openings: Openings,
+  read_write_grand_product: BatchedGrandProductArgument<F>,
+  init_final_grand_product: BatchedGrandProductArgument<F>,
+  read_write_openings: ReadWriteOpenings,
+  init_final_openings: InitFinalOpenings,
 }
 
-pub trait MemoryChecking<F, G, Openings>
+pub trait MemoryChecking<F, G>: StructuredPolynomials
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
-  Openings: StructuredOpeningProof<F, G>,
 {
+  type ReadWriteOpenings: StructuredOpeningProof<F, G, Self>;
+  type InitFinalOpenings: StructuredOpeningProof<F, G, Self>;
+
   fn prove_memory_checking(
-    polynomials: &Openings::BatchedPolynomials,
-    commitments: &Openings::Commitment,
+    polynomials: &Self::BatchedPolynomials,
+    commitments: &Self::Commitment,
     r_fingerprint: (&F, &F),
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> MemoryCheckingProof<G, Openings> {
-    // <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+  ) -> MemoryCheckingProof<G, Self, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
     // let (proof_prod_layer, rand_mem, rand_ops) =
     //   ProductLayerProof::prove::<G, S::Polynomials>(polynomials, r_fingerprint, transcript);
 
-    // "Hash layer"
-    let opening_proof = Openings::prove_openings(
+    // fka "HashLayerProof"
+    let read_write_openings = Self::ReadWriteOpenings::prove_openings(
       polynomials,
       commitments,
-      &vec![], // TODO: rand_mem, rand_ops?
+      &vec![], // TODO: rand_ops
+      vec![],  // TODO: openings_init_final, openings_read_write
+      transcript,
+      random_tape,
+    );
+    let init_final_openings = Self::InitFinalOpenings::prove_openings(
+      polynomials,
+      commitments,
+      &vec![], // TODO: rand_mem
       vec![],  // TODO: openings_init_final, openings_read_write
       transcript,
       random_tape,
     );
 
-    // MemoryCheckingProof {
-    //   proof_prod_layer,
-    //   proof_hash_layer,
-    // }
-
     unimplemented!("todo");
   }
 
-  fn verify_memory_checking(proof: MemoryCheckingProof<G, Openings>) {
-    unimplemented!("todo");
+  fn verify_memory_checking(
+    proof: MemoryCheckingProof<G, Self, Self::ReadWriteOpenings, Self::InitFinalOpenings>,
+    commitments: &Self::Commitment,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+    // Verify grand product arguments
+
+    proof
+      .read_write_openings
+      .verify_openings(commitments, &vec![] /* TODO */, transcript)?;
+    proof
+      .init_final_openings
+      .verify_openings(commitments, &vec![] /* TODO */, transcript)?;
+
+    // Verify Reed-Solomon fingerprints
+
+    Ok(())
   }
 
-  // fn grand_product_leaves_init(&self) -> Vec<Vec<F>>;
-  // fn grand_product_leaves_final(&self) -> Vec<Vec<F>>;
-  // fn grand_product_leaves_read(&self) -> Vec<Vec<F>>;
-  // fn grand_product_leaves_write(&self) -> Vec<Vec<F>>;
+  fn grand_product_leaves_init(&self) -> Vec<Vec<F>> {
+    unimplemented!("todo");
+  }
+  fn grand_product_leaves_final(&self) -> Vec<Vec<F>> {
+    unimplemented!("todo");
+  }
+  fn grand_product_leaves_read(&self) -> Vec<Vec<F>> {
+    unimplemented!("todo");
+  }
+  fn grand_product_leaves_write(&self) -> Vec<Vec<F>> {
+    unimplemented!("todo");
+  }
 
   fn batched_init_final_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
     unimplemented!("todo");
@@ -366,13 +511,19 @@ where
   fn batched_read_write_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
     unimplemented!("todo");
   }
+
+  fn protocol_name() -> &'static [u8] {
+    unimplemented!("todo");
+  }
 }
 
-impl<F, G> MemoryChecking<F, G, MemoryCheckingOpenings<F, G>> for InstructionPolynomials<F, G>
+impl<F, G> MemoryChecking<F, G> for InstructionPolynomials<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
+  type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
+  type InitFinalOpenings = InstructionInitFinalOpenings<F, G>;
 }
 
 /// Proof of a single Jolt execution.
@@ -387,7 +538,12 @@ where
   /// Primary collation sumcheck proof
   primary_sumcheck: PrimarySumcheck<F, G>,
 
-  memory_checking: MemoryCheckingProof<G, MemoryCheckingOpenings<F, G>>,
+  memory_checking: MemoryCheckingProof<
+    G,
+    InstructionPolynomials<F, G>,
+    InstructionReadWriteOpenings<F, G>,
+    InstructionInitFinalOpenings<F, G>,
+  >,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -457,7 +613,7 @@ where
 
     // TODO: combine this with prove_jolt?
     // Create a single opening proof for the flag_evals and memory_evals
-    let openings = PrimarySumcheckOpenings::prove_openings(
+    let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
       &batched_polys,
       &commitment,
       &r_primary_sumcheck,
@@ -470,7 +626,7 @@ where
       sumcheck_proof: primary_sumcheck_proof,
       num_rounds,
       claimed_evaluation: sumcheck_claim,
-      openings,
+      openings: sumcheck_openings,
     };
 
     let r_fingerprints: Vec<G::ScalarField> =
@@ -532,10 +688,11 @@ where
       "Primary sumcheck check failed."
     );
 
-    proof
-      .primary_sumcheck
-      .openings
-      .verify_openings(proof.commitment, &r_primary_sumcheck);
+    proof.primary_sumcheck.openings.verify_openings(
+      &proof.commitment,
+      &r_primary_sumcheck,
+      transcript,
+    );
 
     let r_mem_check =
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
