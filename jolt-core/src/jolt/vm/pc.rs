@@ -1,5 +1,6 @@
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData};
 
+use ark_curve25519::Fr;
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -19,9 +20,14 @@ use crate::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     grand_product::BGPCInterpretable,
   },
-  utils::{self, errors::ProofVerifyError, math::Math, transcript::ProofTranscript, is_power_of_two},
+  utils::{
+    self, errors::ProofVerifyError, is_power_of_two, math::Math, transcript::ProofTranscript,
+  },
 };
 
+const ADDRESS_INCREMENT: usize = 1;
+
+#[derive(Debug, PartialEq)]
 pub struct ELFRow {
   address: usize,
   opcode: u64,
@@ -42,6 +48,17 @@ impl ELFRow {
       imm,
     }
   }
+
+  pub fn no_op(address: usize) -> Self {
+    Self {
+      address,
+      opcode: 0,
+      rd: 0,
+      rs1: 0,
+      rs2: 0,
+      imm: 0,
+    }
+  }
 }
 
 pub struct FiveTuplePoly<F: PrimeField> {
@@ -54,28 +71,28 @@ pub struct FiveTuplePoly<F: PrimeField> {
 
 impl<F: PrimeField> FiveTuplePoly<F> {
   fn from_elf(elf: &Vec<ELFRow>) -> Self {
-	let len = elf.len().next_power_of_two();
-	let mut opcodes = Vec::with_capacity(len);
-	let mut rds = Vec::with_capacity(len);
-	let mut rs1s = Vec::with_capacity(len);
-	let mut rs2s = Vec::with_capacity(len);
-	let mut imms = Vec::with_capacity(len);
+    let len = elf.len().next_power_of_two();
+    let mut opcodes = Vec::with_capacity(len);
+    let mut rds = Vec::with_capacity(len);
+    let mut rs1s = Vec::with_capacity(len);
+    let mut rs2s = Vec::with_capacity(len);
+    let mut imms = Vec::with_capacity(len);
 
-	for row in elf {
-		opcodes.push(F::from(row.opcode));
-		rds.push(F::from(row.rd));
-		rs1s.push(F::from(row.rs1));
-		rs2s.push(F::from(row.rs2));
-		imms.push(F::from(row.imm));
-	}
-	// Padding
-	for _ in elf.len()..len {
-		opcodes.push(F::zero());
-		rds.push(F::zero());
-		rs1s.push(F::zero());
-		rs2s.push(F::zero());
-		imms.push(F::zero());
-	}
+    for row in elf {
+      opcodes.push(F::from(row.opcode));
+      rds.push(F::from(row.rd));
+      rs1s.push(F::from(row.rs1));
+      rs2s.push(F::from(row.rs2));
+      imms.push(F::from(row.imm));
+    }
+    // Padding
+    for _ in elf.len()..len {
+      opcodes.push(F::zero());
+      rds.push(F::zero());
+      rs1s.push(F::zero());
+      rs2s.push(F::zero());
+      imms.push(F::zero());
+    }
 
     let opcode = DensePolynomial::new(opcodes);
     let rd = DensePolynomial::new(rds);
@@ -137,23 +154,23 @@ pub struct PCPolys<F: PrimeField> {
 
 impl<F: PrimeField> PCPolys<F> {
   // TODO(sragss): precommit PC strategy
-  pub fn new_program(program: Vec<ELFRow>, trace: Vec<ELFRow>) -> Self {
-	assert!(is_power_of_two(program.len()));
-	assert!(is_power_of_two(trace.len()));
+  pub fn new_program(mut program: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
+    Self::validate_program(&program, &trace);
+    Self::preprocess(&mut program, &mut trace);
+
+    // Preprocessing should deal with padding.
+    assert!(is_power_of_two(program.len()));
+    assert!(is_power_of_two(trace.len()));
 
     let num_ops = trace.len().next_power_of_two();
     let code_size = program.len().next_power_of_two();
 
     println!("PCPolys::new_program num_ops {num_ops} code_size {code_size}");
 
-	// Note: a_read_write and read_cts have been implicitly padded with 0s
-	// to the nearest power of 2
     let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
     let mut read_cts: Vec<usize> = vec![0; num_ops];
     let mut final_cts: Vec<usize> = vec![0; code_size];
 
-	// TODO(sragss): Current padding strategy doesn't work. As it adds phantom
-	// reads, but no corresponding writes to final.
     for (trace_index, trace) in trace.iter().enumerate() {
       let address = trace.address;
       debug_assert!(address < code_size);
@@ -169,8 +186,6 @@ impl<F: PrimeField> PCPolys<F> {
     let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
     let t_read = DensePolynomial::from_usize(&read_cts);
     let t_final = DensePolynomial::from_usize(&final_cts);
-    println!("read_cts {read_cts:?}");
-    println!("t_read {t_read:?}");
 
     let combined_read_write = DensePolynomial::merge(&vec![
       &a_read_write,
@@ -198,6 +213,46 @@ impl<F: PrimeField> PCPolys<F> {
       t_final,
       combined_read_write,
       combined_init_final,
+    }
+  }
+
+  fn validate_program(program: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
+    let mut pc = program[0].address;
+    assert!(pc < 10_000);
+
+    let mut program_map: HashMap<usize, &ELFRow> = HashMap::new();
+
+    for program_row in program.iter().skip(1) {
+      program_map.insert(program_row.address, program_row);
+      assert_eq!(program_row.address, pc + ADDRESS_INCREMENT);
+
+      pc = program_row.address;
+    }
+
+    for trace_row in trace {
+      assert_eq!(
+        **program_map
+          .get(&trace_row.address)
+          .expect("couldn't find in program"),
+        *trace_row
+      );
+    }
+  }
+
+  fn preprocess(program: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
+    // Program: Add single no_op instruction at adddress | ELF + 1 |
+    let no_op_address = program.last().unwrap().address + ADDRESS_INCREMENT;
+    program.push(ELFRow::no_op(no_op_address));
+
+    // Program: Pad to nearest power of 2
+    for _program_i in program.len()..program.len().next_power_of_two() {
+      program.push(ELFRow::no_op(0));
+    }
+
+    // Trace: Pad to nearest power of 2
+    for _trace_i in trace.len()..trace.len().next_power_of_two() {
+      // All padded elements of the trace point at the no_op row of the ELF
+      trace.push(ELFRow::no_op(no_op_address));
     }
   }
 
@@ -621,7 +676,6 @@ mod tests {
   }
 
   #[test]
-  #[should_panic]
   fn product_layer_proof_non_pow_two() {
     let program = vec![
       ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
@@ -635,17 +689,17 @@ mod tests {
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
       ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
     ];
-    let _polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-    // let (gens, commitments) = polys.commit::<EdwardsProjective>();
-    // let mut transcript = Transcript::new(b"test_transcript");
-    // let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    // let (proof, _, _) =
-    //   ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
+    let (_gens, _commitments) = polys.commit::<EdwardsProjective>();
+    let mut transcript = Transcript::new(b"test_transcript");
+    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
+    let (proof, _, _) =
+      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
 
-    // let mut transcript = Transcript::new(b"test_transcript");
-    // proof
-    //   .verify::<EdwardsProjective>(&mut transcript)
-    //   .expect("proof should work");
+    let mut transcript = Transcript::new(b"test_transcript");
+    proof
+      .verify::<EdwardsProjective>(&mut transcript)
+      .expect("proof should work");
   }
 
   #[test]
@@ -691,5 +745,86 @@ mod tests {
         &mut transcript,
       )
       .expect("should verify");
+  }
+
+  #[test]
+  fn e2e_mem_checking_non_pow_2() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+    ];
+    let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
+    let (gens, commitments) = polys.commit::<EdwardsProjective>();
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let mut random_tape = RandomTape::new(b"test_tape");
+    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
+    let memory_checking_proof =
+      MemoryCheckingProof::<EdwardsProjective, PCFingerprintProof<EdwardsProjective>>::prove(
+        &polys,
+        r_fingerprints,
+        &gens,
+        &mut transcript,
+        &mut random_tape,
+      );
+
+    let memory_to_dimension_index = |memory_index: usize| {
+      assert_eq!(memory_index, 0);
+      0
+    };
+    let evaluate_memory_mle = |_: usize, _: &[Fr]| unimplemented!("shouldn't be called");
+    let mut transcript = Transcript::new(b"test_transcript");
+    memory_checking_proof
+      .verify(
+        &commitments,
+        &gens,
+        memory_to_dimension_index,
+        evaluate_memory_mle,
+        r_fingerprints,
+        &mut transcript,
+      )
+      .expect("should verify");
+  }
+
+  #[test]
+  #[should_panic]
+  fn pc_validation_fake_trace() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(5, 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
+    ];
+    let _polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
+  }
+
+  #[test]
+  #[should_panic]
+  fn pc_validation_bad_prog_increment() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(4, 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+    ];
+    let _polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
   }
 }
