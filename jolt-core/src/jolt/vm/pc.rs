@@ -173,7 +173,6 @@ impl<F: PrimeField> PCPolys<F> {
     println!("read_cts {read_cts:?}");
     println!("t_read {t_read:?}");
 
-    // TODO(JOLT-48): DensePolynomial::merge should be parameterized with  Vec<&DensePolynomial> given it is read only. Avoids clones.
     let combined_read_write = DensePolynomial::merge(&vec![
       &a_read_write,
       &t_read,
