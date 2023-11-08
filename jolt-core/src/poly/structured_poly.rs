@@ -19,13 +19,15 @@ where
   G: CurveGroup<ScalarField = F>,
   Polynomials: StructuredPolynomials + ?Sized,
 {
-  // TODO: associated type for openings?
+  type Openings;
+  
+  fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self::Openings;
 
   fn prove_openings(
     polynomials: &Polynomials::BatchedPolynomials,
     commitment: &Polynomials::Commitment,
     opening_point: &Vec<F>,
-    openings: Vec<Vec<F>>,
+    openings: Self::Openings,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self;
