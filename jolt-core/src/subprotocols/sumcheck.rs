@@ -279,7 +279,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     flag_polys: &mut Vec<DensePolynomial<F>>,
     degree: usize,
     transcript: &mut T,
-  ) -> (Self, Vec<F>, (F, Vec<F>, Vec<F>)) {
+  ) -> (Self, Vec<F>, Vec<F>, Vec<F>) {
     // Check all polys are the same size
     let poly_len = eq_poly.len();
     for index in 0..J::NUM_MEMORIES {
@@ -405,22 +405,20 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     } // End rounds
 
     // Pass evaluations at point r back in proof:
-    // - eq(r)
     // - flags(r) * NUM_INSTRUCTIONS
     // - E(r) * NUM_SUBTABLES
 
     // Polys are fully defined so we can just take the first (and only) evaluation
-    let eq_eval = eq_poly[0];
     let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
     let memory_evals = (0..memory_polys.len())
       .map(|i| memory_polys[i][0])
       .collect();
-    let poly_eval_claims = (eq_eval, flag_evals, memory_evals);
 
     (
       SumcheckInstanceProof::new(compressed_polys),
       random_vars,
-      poly_eval_claims,
+      flag_evals,
+      memory_evals,
     )
   }
 

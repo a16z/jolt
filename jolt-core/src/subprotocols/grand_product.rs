@@ -289,7 +289,6 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
   where
     G: CurveGroup<ScalarField = F>,
   {
-    println!("BatchedGrandProductArgument::prove()");
     let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
     let mut claims_to_verify = (0..batch.circuits.len())
       .map(|i| batch.circuits[i].evaluate())

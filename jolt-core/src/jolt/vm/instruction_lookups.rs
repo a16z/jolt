@@ -11,7 +11,6 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::{fingerprint_strategy::FingerprintStrategy, memory_checking::MemoryCheckingProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -19,7 +18,7 @@ use crate::{
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::{BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit},
+    grand_product::{BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit},
     sumcheck::SumcheckInstanceProof,
   },
   utils::{
@@ -32,7 +31,11 @@ use crate::{
 
 // TODO(65): Refactor to make more specific.
 /// All vectors to be committed in polynomial form.
-pub struct InstructionPolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct InstructionPolynomials<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   _group: PhantomData<G>,
   /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
   /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
@@ -84,7 +87,11 @@ pub struct InstructionPolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>>
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheckOpenings<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+struct PrimarySumcheckOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   E_poly_openings: Vec<F>,
   flag_openings: Vec<F>,
 
@@ -92,7 +99,11 @@ struct PrimarySumcheckOpenings<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   flag_opening_proof: CombinedTableEvalProof<G>,
 }
 
-struct MemoryCheckingOpeningProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct MemoryCheckingOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   dim_openings: Vec<F>,    // C-sized
   read_openings: Vec<F>,   // NUM_MEMORIES-sized
   E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
@@ -140,7 +151,7 @@ pub trait StructuredPolynomials {
   type BatchedPolynomials;
 
   fn batch(&self) -> Self::BatchedPolynomials;
-  fn commit(batched_polys: Self::BatchedPolynomials) -> Self::Commitment;
+  fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment;
 }
 
 // TODO: macro?
@@ -163,7 +174,7 @@ where
     }
   }
 
-  fn commit(batched_polys: Self::BatchedPolynomials) -> Self::Commitment {
+  fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
     let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
       .batched_dim_read
       .combined_commit(b"BatchedInstructionPolynomials.dim_read");
@@ -194,15 +205,19 @@ where
   }
 }
 
-pub trait StructuredOpeningProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub trait StructuredOpeningProof<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   type Polynomials: StructuredPolynomials;
   type BatchedPolynomials = <Self::Polynomials as StructuredPolynomials>::BatchedPolynomials;
   type Commitment = <Self::Polynomials as StructuredPolynomials>::Commitment;
   // TODO: associated type for openings?
 
   fn prove_openings(
-    polynomials: Self::BatchedPolynomials,
-    commitment: Self::Commitment,
+    polynomials: &Self::BatchedPolynomials,
+    commitment: &Self::Commitment,
     r: &Vec<F>,
     openings: Vec<Vec<F>>,
     transcript: &mut Transcript,
@@ -218,32 +233,32 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G>
   type Polynomials = InstructionPolynomials<F, G>;
 
   fn prove_openings(
-    polynomials: Self::BatchedPolynomials,
-    commitment: Self::Commitment,
+    polynomials: &Self::BatchedPolynomials,
+    commitment: &Self::Commitment,
     r: &Vec<F>,
     openings: Vec<Vec<F>>,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
-    let E_poly_openings = openings[0];
-    let flag_openings = openings[1];
+    let E_poly_openings = &openings[0];
+    let flag_openings = &openings[1];
 
     let flag_proof = CombinedTableEvalProof::prove(
       &polynomials.batched_flag,
-      &flag_openings,
+      flag_openings,
       &r,
       &commitment.generators.flag_commitment_gens,
       transcript,
-      &mut random_tape,
+      random_tape,
     );
 
     let memory_proof = CombinedTableEvalProof::prove(
       &polynomials.batched_E,
-      &E_poly_openings,
+      E_poly_openings,
       &r,
       &commitment.generators.E_commitment_gens,
       transcript,
-      &mut random_tape,
+      random_tape,
     );
 
     unimplemented!("todo");
@@ -254,14 +269,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G>
   }
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G>
-  for MemoryCheckingOpeningProof<F, G>
+impl<F, G> StructuredOpeningProof<F, G> for MemoryCheckingOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
 {
   type Polynomials = InstructionPolynomials<F, G>;
 
   fn prove_openings(
-    polynomials: Self::BatchedPolynomials,
-    commitment: Self::Commitment,
+    polynomials: &Self::BatchedPolynomials,
+    commitment: &Self::Commitment,
     r: &Vec<F>,
     openings: Vec<Vec<F>>,
     transcript: &mut Transcript,
@@ -275,26 +292,117 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G>
   }
 }
 
+struct MultisetHashes<F: PrimeField> {
+  hash_init: F,
+  hash_final: F,
+  hash_read: F,
+  hash_write: F,
+}
+
+// TODO: flatten with MemoryCheckingProof?
+struct MemoryCheckingGrandProducts<F: PrimeField> {
+  proof_read_write: BatchedGrandProductArgument<F>,
+  proof_init_final: BatchedGrandProductArgument<F>,
+}
+
+pub struct MemoryCheckingProof<G, Openings>
+where
+  G: CurveGroup,
+  Openings: StructuredOpeningProof<G::ScalarField, G>,
+{
+  multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
+  grand_products: MemoryCheckingGrandProducts<G::ScalarField>,
+  openings: Openings,
+}
+
+pub trait MemoryChecking<F, G, Openings>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+  Openings: StructuredOpeningProof<F, G>,
+{
+  fn prove_memory_checking(
+    polynomials: &Openings::BatchedPolynomials,
+    commitments: &Openings::Commitment,
+    r_fingerprint: (&F, &F),
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> MemoryCheckingProof<G, Openings> {
+    // <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+    // let (proof_prod_layer, rand_mem, rand_ops) =
+    //   ProductLayerProof::prove::<G, S::Polynomials>(polynomials, r_fingerprint, transcript);
+
+    // "Hash layer"
+    let opening_proof = Openings::prove_openings(
+      polynomials,
+      commitments,
+      &vec![], // TODO: rand_mem, rand_ops?
+      vec![],  // TODO: openings_init_final, openings_read_write
+      transcript,
+      random_tape,
+    );
+
+    // MemoryCheckingProof {
+    //   proof_prod_layer,
+    //   proof_hash_layer,
+    // }
+
+    unimplemented!("todo");
+  }
+
+  fn verify_memory_checking(proof: MemoryCheckingProof<G, Openings>) {
+    unimplemented!("todo");
+  }
+
+  // fn grand_product_leaves_init(&self) -> Vec<Vec<F>>;
+  // fn grand_product_leaves_final(&self) -> Vec<Vec<F>>;
+  // fn grand_product_leaves_read(&self) -> Vec<Vec<F>>;
+  // fn grand_product_leaves_write(&self) -> Vec<Vec<F>>;
+
+  fn batched_init_final_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
+    unimplemented!("todo");
+  }
+  fn batched_read_write_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
+    unimplemented!("todo");
+  }
+}
+
+impl<F, G> MemoryChecking<F, G, MemoryCheckingOpenings<F, G>> for InstructionPolynomials<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+}
+
 /// Proof of a single Jolt execution.
-pub struct InstructionLookupsProof<G: CurveGroup> {
+pub struct InstructionLookupsProof<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   /// Commitments to all polynomials
   commitment: InstructionCommitment<G>,
 
   /// Primary collation sumcheck proof
-  primary_sumcheck: PrimarySumcheck<G>,
+  primary_sumcheck: PrimarySumcheck<F, G>,
 
-  memory_checking: MemoryCheckingProof<G, ROFlagsFingerprintProof<G>>,
+  memory_checking: MemoryCheckingProof<G, MemoryCheckingOpenings<F, G>>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PrimarySumcheck<G: CurveGroup> {
-  sumcheck_proof: SumcheckInstanceProof<G::ScalarField>,
+pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+  sumcheck_proof: SumcheckInstanceProof<F>,
   num_rounds: usize,
-  claimed_evaluation: G::ScalarField,
-  openings: PrimarySumcheckOpenings<G::ScalarField, G>,
+  claimed_evaluation: F,
+  openings: PrimarySumcheckOpenings<F, G>,
 }
 
-pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub trait InstructionLookups<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
@@ -308,16 +416,15 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     ops: Vec<Self::InstructionSet>,
     r: Vec<F>,
     transcript: &mut Transcript,
-  ) -> InstructionLookupsProof<G> {
+  ) -> InstructionLookupsProof<F, G> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let m = ops.len().next_power_of_two();
 
     let materialized_subtables: Vec<Vec<F>> = Self::materialize_subtables();
     let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&ops);
+
     let polynomials = Self::polynomialize(&ops, &subtable_lookup_indices, materialized_subtables);
     let batched_polys = polynomials.batch();
-    let commitment = InstructionPolynomials::commit(batched_polys);
+    let commitment = InstructionPolynomials::commit(&batched_polys);
 
     commitment
       .E_commitment
@@ -332,9 +439,10 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       &sumcheck_claim,
     );
 
-    let num_rounds = ops.len().log_2();
     let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
-    let (primary_sumcheck_proof, r_primary_sumcheck, (_eq_eval, flag_evals, E_evals)) =
+    let num_rounds = ops.len().log_2();
+
+    let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
       SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
         &F::zero(),
         num_rounds,
@@ -347,13 +455,14 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
     let mut random_tape = RandomTape::new(b"proof");
 
+    // TODO: combine this with prove_jolt?
     // Create a single opening proof for the flag_evals and memory_evals
     let openings = PrimarySumcheckOpenings::prove_openings(
-      batched_polys,
-      commitment,
+      &batched_polys,
+      &commitment,
       &r_primary_sumcheck,
       vec![E_evals, flag_evals],
-      &mut transcript,
+      transcript,
       &mut random_tape,
     );
 
@@ -368,10 +477,10 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
     let r_fingerprint = (&r_fingerprints[0], &r_fingerprints[1]);
 
-    let memory_checking = MemoryCheckingProof::prove(
-      &polynomials,
+    let memory_checking = InstructionPolynomials::prove_memory_checking(
+      &batched_polys,
+      &commitment,
       r_fingerprint,
-      &commitment.generators,
       transcript,
       &mut random_tape,
     );
@@ -384,7 +493,7 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   }
 
   fn verify(
-    proof: InstructionLookupsProof<G>,
+    proof: InstructionLookupsProof<F, G>,
     r_eq: &[G::ScalarField],
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
@@ -431,14 +540,15 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     let r_mem_check =
       <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
 
-    proof.memory_checking.verify(
-      &proof.commitment,
-      &proof.commitment.generators,
-      Self::memory_to_dimension_index,
-      Self::evaluate_memory_mle,
-      (&r_mem_check[0], &r_mem_check[1]),
-      transcript,
-    )?;
+    // TODO
+    // proof.memory_checking.verify(
+    //   &proof.commitment,
+    //   &proof.commitment.generators,
+    //   Self::memory_to_dimension_index,
+    //   Self::evaluate_memory_mle,
+    //   (&r_mem_check[0], &r_mem_check[1]),
+    //   transcript,
+    // )?;
 
     Ok(())
   }
@@ -687,12 +797,12 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     indices
   }
 
-  /// Maps an index [0, num_memories) -> [0, num_subtables)
+  /// Maps an index [0, NUM_MEMORIES) -> [0, NUM_SUBTABLES)
   fn memory_to_subtable_index(i: usize) -> usize {
     i / Self::C
   }
 
-  /// Maps an index [0, num_memories) -> [0, subtable_dimensionality]
+  /// Maps an index [0, NUM_MEMORIES) -> [0, C)
   fn memory_to_dimension_index(i: usize) -> usize {
     i % Self::C
   }
@@ -701,421 +811,3 @@ pub trait InstructionLookups<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     b"Jolt instruction lookups"
   }
 }
-
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BGPCInterpretable<F>
-  for InstructionPolynomials<F, G>
-{
-  fn compute_leaves(
-    &self,
-    memory_index: usize,
-    r_hash: (&F, &F),
-  ) -> (
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-  ) {
-    let (gamma, tau) = r_hash;
-    let fingerprint = |a: F, v: F, t: F| -> F { t * gamma.square() + v * gamma + a - tau };
-
-    let dimension_index = memory_index % self.C;
-
-    let init_leaves = (0..self.memory_size)
-      .map(|i| {
-        fingerprint(
-          F::from(i as u64),
-          self.materialized_subtables[self.memory_to_subtable_map[memory_index]][i],
-          F::zero(),
-        )
-      })
-      .collect();
-    let final_leaves = (0..self.memory_size)
-      .map(|i| {
-        fingerprint(
-          F::from(i as u64),
-          self.materialized_subtables[self.memory_to_subtable_map[memory_index]][i],
-          self.final_cts[memory_index][i],
-        )
-      })
-      .collect();
-    let read_leaves = (0..self.num_ops)
-      .map(|i| {
-        fingerprint(
-          self.dim[dimension_index][i],
-          self.E_polys[memory_index][i],
-          self.read_cts[memory_index][i],
-        )
-      })
-      .collect();
-    let write_leaves = (0..self.num_ops)
-      .map(|i| {
-        fingerprint(
-          self.dim[dimension_index][i],
-          self.E_polys[memory_index][i],
-          self.read_cts[memory_index][i] + F::one(),
-        )
-      })
-      .collect();
-
-    (
-      DensePolynomial::new(init_leaves),
-      DensePolynomial::new(read_leaves),
-      DensePolynomial::new(write_leaves),
-      DensePolynomial::new(final_leaves),
-    )
-  }
-
-  // TODO(sragss): Some if this logic is sharable.
-  fn construct_batches(
-    &self,
-    r_hash: (&F, &F),
-  ) -> (
-    BatchedGrandProductCircuit<F>,
-    BatchedGrandProductCircuit<F>,
-    Vec<GPEvals<F>>,
-  ) {
-    // compute leaves for all the batches                     (shared)
-    // convert the rw leaves to flagged leaves                (custom)
-    // create GPCs for each of the leaves (&leaves)           (custom)
-    // evaluate the GPCs                                      (shared)
-    // construct 1x batch with flags, 1x batch without flags  (custom)
-
-    let mut rw_circuits = Vec::with_capacity(self.num_memories * 2);
-    let mut if_circuits = Vec::with_capacity(self.num_memories * 2);
-    let mut gp_evals = Vec::with_capacity(self.num_memories);
-
-    // Stores the initial fingerprinted values for read and write memories. GPC stores the upper portion of the tree after the fingerprints at the leaves
-    // experience flagging (toggling based on the flag value at that leaf).
-    let mut rw_fingerprints: Vec<DensePolynomial<F>> = Vec::with_capacity(self.num_memories * 2);
-    for memory_index in 0..self.num_memories {
-      let (init_fingerprints, read_fingerprints, write_fingerprints, final_fingerprints) =
-        self.compute_leaves(memory_index, r_hash);
-
-      let (mut read_leaves, mut write_leaves) =
-        (read_fingerprints.evals(), write_fingerprints.evals());
-      rw_fingerprints.push(read_fingerprints);
-      rw_fingerprints.push(write_fingerprints);
-      for leaf_index in 0..self.num_ops {
-        // TODO(sragss): Would be faster if flags were non-FF repr
-        let flag = self.subtable_flag_polys[self.memory_to_subtable_map[memory_index]][leaf_index];
-        if flag == F::zero() {
-          read_leaves[leaf_index] = F::one();
-          write_leaves[leaf_index] = F::one();
-        }
-      }
-
-      let (init_gpc, final_gpc) = (
-        GrandProductCircuit::new(&init_fingerprints),
-        GrandProductCircuit::new(&final_fingerprints),
-      );
-      let (read_gpc, write_gpc) = (
-        GrandProductCircuit::new(&DensePolynomial::new(read_leaves)),
-        GrandProductCircuit::new(&DensePolynomial::new(write_leaves)),
-      );
-
-      gp_evals.push(GPEvals::new(
-        init_gpc.evaluate(),
-        read_gpc.evaluate(),
-        write_gpc.evaluate(),
-        final_gpc.evaluate(),
-      ));
-
-      rw_circuits.push(read_gpc);
-      rw_circuits.push(write_gpc);
-      if_circuits.push(init_gpc);
-      if_circuits.push(final_gpc);
-    }
-
-    // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
-    let expanded_flag_map: Vec<usize> = self
-      .memory_to_subtable_map
-      .iter()
-      .flat_map(|subtable_index| [*subtable_index, *subtable_index])
-      .collect();
-
-    // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
-    let rw_batch = BatchedGrandProductCircuit::new_batch_flags(
-      rw_circuits,
-      self.subtable_flag_polys.clone(),
-      expanded_flag_map,
-      rw_fingerprints,
-    );
-
-    let if_batch = BatchedGrandProductCircuit::new_batch(if_circuits);
-
-    (rw_batch, if_batch, gp_evals)
-  }
-}
-
-// /// Read Only flags fingerprint Proof.
-// #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-// pub struct ROFlagsFingerprintProof<G: CurveGroup> {
-//   eval_dim: Vec<G::ScalarField>,    // C-sized
-//   eval_read: Vec<G::ScalarField>,   // NUM_MEMORIES-sized
-//   eval_final: Vec<G::ScalarField>,  // NUM_MEMORIES-sized
-//   eval_derefs: Vec<G::ScalarField>, // NUM_MEMORIES-sized
-//   eval_flags: Vec<G::ScalarField>,  // NUM_INSTRUCTIONS-sized
-
-//   proof_ops: CombinedTableEvalProof<G>,
-//   proof_mem: CombinedTableEvalProof<G>,
-//   proof_derefs: CombinedTableEvalProof<G>,
-//   proof_flags: CombinedTableEvalProof<G>,
-
-//   /// Maps memory_index to relevant instruction_flag indices.
-//   /// Used by verifier to construct subtable_flag from instruction_flags.
-//   memory_to_flag_indices: Vec<Vec<usize>>,
-// }
-
-// impl<G: CurveGroup> FingerprintStrategy<G> for ROFlagsFingerprintProof<G> {
-//   type Polynomials = InstructionPolynomials<G::ScalarField>;
-//   type Generators = SurgeCommitmentGenerators<G>;
-//   type Commitments = SurgeCommitment<G>;
-
-//   fn prove(
-//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-//     polynomials: &Self::Polynomials,
-//     generators: &Self::Generators,
-//     transcript: &mut Transcript,
-//     random_tape: &mut RandomTape<G>,
-//   ) -> Self {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-//     let (rand_mem, rand_ops) = rand;
-
-//     // decommit derefs at rand_ops
-//     let eval_derefs: Vec<G::ScalarField> = (0..polynomials.num_memories)
-//       .map(|i| polynomials.E_polys[i].evaluate(rand_ops))
-//       .collect();
-//     let proof_derefs = CombinedTableEvalProof::prove(
-//       &polynomials.combined_E_poly,
-//       eval_derefs.as_ref(),
-//       rand_ops,
-//       &generators.E_commitment_gens,
-//       transcript,
-//       random_tape,
-//     );
-
-//     // form a single decommitment using comm_comb_ops
-//     let mut evals_ops: Vec<G::ScalarField> = Vec::new(); // moodlezoup: changed order of evals_ops
-
-//     let eval_dim: Vec<G::ScalarField> = (0..polynomials.C)
-//       .map(|i| polynomials.dim[i].evaluate(rand_ops))
-//       .collect();
-//     let eval_read: Vec<G::ScalarField> = (0..polynomials.num_memories)
-//       .map(|i| polynomials.read_cts[i].evaluate(rand_ops))
-//       .collect();
-
-//     evals_ops.extend(eval_dim.clone());
-//     evals_ops.extend(eval_read.clone());
-//     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-//     let proof_ops = CombinedTableEvalProof::prove(
-//       &polynomials.combined_dim_read_poly,
-//       &evals_ops,
-//       &rand_ops,
-//       &generators.dim_read_commitment_gens,
-//       transcript,
-//       random_tape,
-//     );
-
-//     let eval_final: Vec<G::ScalarField> = (0..polynomials.num_memories)
-//       .map(|i| polynomials.final_cts[i].evaluate(rand_mem))
-//       .collect();
-
-//     let proof_mem = CombinedTableEvalProof::prove(
-//       &polynomials.combined_final_poly,
-//       &eval_final,
-//       &rand_mem,
-//       &generators.final_commitment_gens,
-//       transcript,
-//       random_tape,
-//     );
-
-//     // TODO(sragss): flags combined with proof_ops?
-//     let eval_flags: Vec<G::ScalarField> = (0..polynomials.num_instructions)
-//       .map(|i| polynomials.instruction_flag_polys[i].evaluate(rand_ops))
-//       .collect();
-//     let proof_flags = CombinedTableEvalProof::prove(
-//       &polynomials.combined_instruction_flag_poly,
-//       &eval_flags,
-//       &rand_ops,
-//       &generators.flag_commitment_gens.as_ref().unwrap(),
-//       transcript,
-//       random_tape,
-//     );
-
-//     Self {
-//       eval_dim,
-//       eval_read,
-//       eval_final,
-//       eval_flags,
-//       proof_ops,
-//       proof_mem,
-//       eval_derefs,
-//       proof_derefs,
-//       proof_flags,
-
-//       memory_to_flag_indices: polynomials.memory_to_instructions_map.clone(), // TODO(sragss): Would be better as static
-//     }
-//   }
-
-//   fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
-//     &self,
-//     rand: (&Vec<G::ScalarField>, &Vec<G::ScalarField>),
-//     grand_product_claims: &[GPEvals<G::ScalarField>], // NUM_MEMORIES-sized
-//     memory_to_dimension_index: F1,
-//     evaluate_memory_mle: F2,
-//     commitments: &Self::Commitments,
-//     generators: &Self::Generators,
-//     r_hash: &G::ScalarField,
-//     r_multiset_check: &G::ScalarField,
-//     transcript: &mut Transcript,
-//   ) -> Result<(), ProofVerifyError> {
-//     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-//     let (rand_mem, rand_ops) = rand;
-
-//     // verify derefs at rand_ops
-//     // E_i(r_i''') ?= v_{E_i}
-//     self.proof_derefs.verify(
-//       rand_ops,
-//       &self.eval_derefs,
-//       &generators.E_commitment_gens,
-//       &commitments.E_commitment,
-//       transcript,
-//     )?;
-
-//     let mut evals_ops: Vec<G::ScalarField> = Vec::new();
-//     evals_ops.extend(self.eval_dim.clone());
-//     evals_ops.extend(self.eval_read.clone());
-//     evals_ops.resize(evals_ops.len().next_power_of_two(), G::ScalarField::zero());
-
-//     // dim_i(r_i''') ?= v_i
-//     // read_i(r_i''') ?= v_{read_i}
-//     self.proof_ops.verify(
-//       rand_ops,
-//       &evals_ops,
-//       &generators.dim_read_commitment_gens,
-//       &commitments.dim_read_commitment,
-//       transcript,
-//     )?;
-
-//     // final_i(r_i'') ?= v_{final_i}
-//     self.proof_mem.verify(
-//       rand_mem,
-//       &self.eval_final,
-//       &generators.final_commitment_gens,
-//       &commitments.final_commitment,
-//       transcript,
-//     )?;
-
-//     self.proof_flags.verify(
-//       rand_ops,
-//       &self.eval_flags,
-//       &generators.flag_commitment_gens.as_ref().unwrap(),
-//       &commitments.instruction_flag_commitment.as_ref().unwrap(),
-//       transcript,
-//     )?;
-
-//     // verify the claims from the product layer
-//     let init_addr = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-//     for memory_index in 0..grand_product_claims.len() {
-//       let dimension_index = memory_to_dimension_index(memory_index);
-
-//       // Compute the flag eval from opening proofs.
-//       // We need the subtable_flags evaluation, which can be derived from instruction_flags, by summing
-//       // the relevant indices from memory_to_flag_indices.
-//       let instruction_flag_eval = self.memory_to_flag_indices[memory_index]
-//         .iter()
-//         .map(|flag_index| self.eval_flags[*flag_index])
-//         .sum();
-
-//       // Check ALPHA memories / lookup polys / grand products
-//       // Only need 'C' indices / dimensions / read_timestamps / final_timestamps
-//       Self::check_reed_solomon_fingerprints(
-//         &grand_product_claims[memory_index],
-//         &self.eval_derefs[memory_index],
-//         &self.eval_dim[dimension_index],
-//         &self.eval_read[memory_index],
-//         &self.eval_final[memory_index],
-//         &instruction_flag_eval,
-//         &init_addr,
-//         &evaluate_memory_mle(memory_index, rand_mem),
-//         r_hash,
-//         r_multiset_check,
-//       )?;
-//     }
-//     Ok(())
-//   }
-// }
-
-// impl<G: CurveGroup> ROFlagsFingerprintProof<G> {
-//   /// Checks that the Reed-Solomon fingerprints of init, read, write, and final multisets
-//   /// are as claimed by the final sumchecks of their respective grand product arguments.
-//   ///
-//   /// Params
-//   /// - `claims`: Fingerprint values of the init, read, write, and final multisets, as
-//   /// as claimed by their respective grand product arguments.
-//   /// - `eval_deref`: The evaluation E_i(r'''_i).
-//   /// - `eval_dim`: The evaluation dim_i(r'''_i).
-//   /// - `eval_read`: The evaluation read_i(r'''_i).
-//   /// - `eval_final`: The evaluation final_i(r''_i).
-//   /// - `init_addr`: The MLE of the memory addresses, evaluated at r''_i.
-//   /// - `init_memory`: The MLE of the initial memory values, evaluated at r''_i.
-//   /// - `r_i`: One chunk of the evaluation point at which the Lasso commitment is being opened.
-//   /// - `gamma`: Random value used to compute the Reed-Solomon fingerprint.
-//   /// - `tau`: Random value used to compute the Reed-Solomon fingerprint.
-//   fn check_reed_solomon_fingerprints(
-//     claims: &GPEvals<G::ScalarField>,
-//     eval_deref: &G::ScalarField,
-//     eval_dim: &G::ScalarField,
-//     eval_read: &G::ScalarField,
-//     eval_final: &G::ScalarField,
-//     eval_flag: &G::ScalarField,
-//     init_addr: &G::ScalarField,
-//     init_memory: &G::ScalarField,
-//     gamma: &G::ScalarField,
-//     tau: &G::ScalarField,
-//   ) -> Result<(), ProofVerifyError> {
-//     // Computes the Reed-Solomon fingerprint of the tuple (a, v, t)
-//     let hash_func = |a: G::ScalarField, v: G::ScalarField, t: G::ScalarField| -> G::ScalarField {
-//       t * gamma.square() + v * *gamma + a - tau
-//     };
-//     let hash_func_flag = |a: G::ScalarField,
-//                           v: G::ScalarField,
-//                           t: G::ScalarField,
-//                           flag: G::ScalarField|
-//      -> G::ScalarField {
-//       flag * (t * gamma.square() + v * *gamma + a - tau) + G::ScalarField::one() - flag
-//     };
-
-//     let claim_init = claims.hash_init;
-//     let claim_read = claims.hash_read;
-//     let claim_write = claims.hash_write;
-//     let claim_final = claims.hash_final;
-
-//     // init
-//     let hash_init = hash_func(*init_addr, *init_memory, G::ScalarField::zero());
-//     assert_eq!(hash_init, claim_init); // verify the last claim of the `init` grand product sumcheck
-
-//     // read
-//     let hash_read = hash_func_flag(*eval_dim, *eval_deref, *eval_read, *eval_flag);
-//     assert_eq!(hash_read, claim_read); // verify the last claim of the `read` grand product sumcheck
-
-//     // write: shares addr, val with read
-//     let eval_write = *eval_read + G::ScalarField::one();
-//     let hash_write = hash_func_flag(*eval_dim, *eval_deref, eval_write, *eval_flag);
-//     assert_eq!(hash_write, claim_write); // verify the last claim of the `write` grand product sumcheck
-
-//     // final: shares addr and val with init
-//     let eval_final_addr = init_addr;
-//     let eval_final_val = init_memory;
-//     let hash_final = hash_func(*eval_final_addr, *eval_final_val, *eval_final);
-//     assert_eq!(hash_final, claim_final); // verify the last claim of the `final` grand product sumcheck
-
-//     Ok(())
-//   }
-
-//   fn protocol_name() -> &'static [u8] {
-//     b"Lasso HashLayerProof"
-//   }
-// }
