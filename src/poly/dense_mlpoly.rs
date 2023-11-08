@@ -14,6 +14,7 @@ use ark_serialize::*;
 use ark_std::Zero;
 use core::ops::Index;
 use merlin::Transcript;
+use std::ops::IndexMut;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -275,6 +276,13 @@ impl<F> Index<usize> for DensePolynomial<F> {
   #[inline(always)]
   fn index(&self, _index: usize) -> &F {
     &(self.Z[_index])
+  }
+}
+
+impl<F> IndexMut<usize> for DensePolynomial<F> {
+  #[inline(always)]
+  fn index_mut(&mut self, index: usize) -> &mut F {
+    &mut (self.Z[index])
   }
 }
 
