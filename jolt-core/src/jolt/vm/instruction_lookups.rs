@@ -11,6 +11,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
+  lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier, NewMemoryCheckingProof},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -275,7 +276,11 @@ where
       polynomials.dim.iter().map(evaluate).collect(),
       polynomials.read_cts.iter().map(evaluate).collect(),
       polynomials.E_polys.iter().map(evaluate).collect(),
-      polynomials.instruction_flag_polys.iter().map(evaluate).collect(),
+      polynomials
+        .instruction_flag_polys
+        .iter()
+        .map(evaluate)
+        .collect(),
     ]
   }
 
@@ -292,9 +297,10 @@ where
     let E_poly_openings = &openings[2];
     let flag_openings = &openings[3];
 
-    let dim_read_openings = [dim_openings.as_slice(), read_openings.as_slice()]
+    let mut dim_read_openings = [dim_openings.as_slice(), read_openings.as_slice()]
       .concat()
       .to_vec();
+    dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
     let dim_read_opening_proof = CombinedTableEvalProof::prove(
       &polynomials.batched_dim_read,
@@ -338,9 +344,10 @@ where
     opening_point: &Vec<F>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
-    let dim_read_openings = [self.dim_openings.as_slice(), self.read_openings.as_slice()]
+    let mut dim_read_openings = [self.dim_openings.as_slice(), self.read_openings.as_slice()]
       .concat()
       .to_vec();
+    dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
     self.dim_read_opening_proof.verify(
       opening_point,
@@ -433,182 +440,7 @@ where
   }
 }
 
-struct MultisetHashes<F: PrimeField> {
-  hash_init: F,
-  hash_final: F,
-  hash_read: F,
-  hash_write: F,
-}
-
-pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
-where
-  G: CurveGroup,
-  Polynomials: StructuredPolynomials + ?Sized,
-  ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-  InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-{
-  _polys: PhantomData<Polynomials>,
-  multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
-  read_write_grand_product: BatchedGrandProductArgument<G::ScalarField>,
-  init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
-  read_write_openings: ReadWriteOpenings,
-  init_final_openings: InitFinalOpenings,
-}
-
-pub trait MemoryChecking<F, G>: StructuredPolynomials
-where
-  F: PrimeField,
-  G: CurveGroup<ScalarField = F>,
-{
-  type ReadWriteOpenings: StructuredOpeningProof<F, G, Self>;
-  type InitFinalOpenings: StructuredOpeningProof<F, G, Self>;
-
-  fn prove_memory_checking(
-    &self,
-    polynomials: &Self::BatchedPolynomials,
-    commitments: &Self::Commitment,
-    r_fingerprint: (&F, &F),
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> MemoryCheckingProof<G, Self, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    // fka "ProductLayerProof"
-    let (read_write_circuit, read_hashes, write_hashes) = self.batched_read_write_grand_product();
-    let (init_final_circuit, init_hashes, final_hashes) = self.batched_init_final_grand_product();
-    debug_assert_eq!(read_hashes.len(), init_hashes.len());
-    let num_memories = read_hashes.len();
-
-    let mut multiset_hashes = Vec::with_capacity(num_memories);
-    for i in 0..num_memories {
-      let hashes = MultisetHashes {
-        hash_init: init_hashes[i],
-        hash_final: final_hashes[i],
-        hash_read: read_hashes[i],
-        hash_write: write_hashes[i],
-      };
-      debug_assert_eq!(
-        hashes.hash_init * hashes.hash_write,
-        hashes.hash_final * hashes.hash_read,
-        "Multiset hashes don't match"
-      );
-      multiset_hashes.push(hashes);
-      // TODO: append to transcript?
-    }
-
-    let (read_write_grand_product, r_read_write) =
-      BatchedGrandProductArgument::prove::<G>(read_write_circuit, transcript);
-    let (init_final_grand_product, r_init_final) =
-      BatchedGrandProductArgument::prove::<G>(init_final_circuit, transcript);
-
-    // fka "HashLayerProof"
-    let read_write_openings = Self::ReadWriteOpenings::prove_openings(
-      polynomials,
-      commitments,
-      &r_read_write,
-      Self::ReadWriteOpenings::open(self, &r_read_write),
-      transcript,
-      random_tape,
-    );
-    let init_final_openings = Self::InitFinalOpenings::prove_openings(
-      polynomials,
-      commitments,
-      &r_init_final,
-      Self::InitFinalOpenings::open(self, &r_init_final),
-      transcript,
-      random_tape,
-    );
-
-    MemoryCheckingProof {
-      _polys: PhantomData,
-      multiset_hashes,
-      read_write_grand_product,
-      init_final_grand_product,
-      read_write_openings,
-      init_final_openings,
-    }
-  }
-
-  fn verify_memory_checking(
-    proof: MemoryCheckingProof<G, Self, Self::ReadWriteOpenings, Self::InitFinalOpenings>,
-    commitments: &Self::Commitment,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    // Verify grand product arguments
-
-    proof
-      .read_write_openings
-      .verify_openings(commitments, &vec![] /* TODO */, transcript)?;
-    proof
-      .init_final_openings
-      .verify_openings(commitments, &vec![] /* TODO */, transcript)?;
-
-    // Verify Reed-Solomon fingerprints
-
-    Ok(())
-  }
-
-  fn grand_product_leaves_init(&self) -> Vec<DensePolynomial<F>>;
-  fn grand_product_leaves_final(&self) -> Vec<DensePolynomial<F>>;
-  fn grand_product_leaves_read(&self) -> Vec<DensePolynomial<F>>;
-  fn grand_product_leaves_write(&self) -> Vec<DensePolynomial<F>>;
-
-  fn batched_init_final_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-    let init_leaves = self.grand_product_leaves_init();
-    let final_leaves = self.grand_product_leaves_init();
-    debug_assert_eq!(init_leaves.len(), final_leaves.len());
-    let num_memories = init_leaves.len();
-
-    let mut circuits = Vec::with_capacity(2 * num_memories);
-    let mut init_hashes = Vec::with_capacity(num_memories);
-    let mut final_hashes = Vec::with_capacity(num_memories);
-    for i in 0..num_memories {
-      let init_circuit = GrandProductCircuit::new(&init_leaves[i]);
-      let final_circuit = GrandProductCircuit::new(&final_leaves[i]);
-      init_hashes.push(init_circuit.evaluate());
-      final_hashes.push(final_circuit.evaluate());
-      circuits.push(init_circuit);
-      circuits.push(final_circuit);
-    }
-
-    (
-      BatchedGrandProductCircuit::new_batch(circuits),
-      init_hashes,
-      final_hashes,
-    )
-  }
-
-  fn batched_read_write_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-    let read_leaves = self.grand_product_leaves_init();
-    let write_leaves = self.grand_product_leaves_init();
-    debug_assert_eq!(read_leaves.len(), write_leaves.len());
-    let num_memories = read_leaves.len();
-
-    let mut circuits = Vec::with_capacity(2 * num_memories);
-    let mut read_hashes = Vec::with_capacity(num_memories);
-    let mut write_hashes = Vec::with_capacity(num_memories);
-    for i in 0..num_memories {
-      let read_circuit = GrandProductCircuit::new(&read_leaves[i]);
-      let write_circuit = GrandProductCircuit::new(&write_leaves[i]);
-      read_hashes.push(read_circuit.evaluate());
-      write_hashes.push(write_circuit.evaluate());
-      circuits.push(read_circuit);
-      circuits.push(write_circuit);
-    }
-
-    (
-      BatchedGrandProductCircuit::new_batch(circuits),
-      read_hashes,
-      write_hashes,
-    )
-  }
-
-  fn protocol_name() -> &'static [u8];
-}
-
-impl<F, G> MemoryChecking<F, G> for InstructionPolynomials<F, G>
+impl<F, G> MemoryCheckingProver<F, G> for InstructionPolynomials<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
@@ -616,25 +448,51 @@ where
   type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
   type InitFinalOpenings = InstructionFinalOpenings<F, G>;
 
-  fn grand_product_leaves_init(&self) -> Vec<DensePolynomial<F>> {
+  type MemoryTuple = (F, F, F, F); // (a, v, t, flags)
+
+  fn fingerprint(inputs: &(F, F, F, F), gamma: &F, tau: &F) -> F {
+    let (a, v, t, flag) = *inputs;
+    flag * (t * gamma.square() + v * *gamma + a - tau) + F::one() - flag
+  }
+
+  fn read_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
     unimplemented!("todo");
   }
-  fn grand_product_leaves_final(&self) -> Vec<DensePolynomial<F>> {
+  fn write_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
     unimplemented!("todo");
   }
-  fn grand_product_leaves_read(&self) -> Vec<DensePolynomial<F>> {
+  fn init_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
     unimplemented!("todo");
   }
-  fn grand_product_leaves_write(&self) -> Vec<DensePolynomial<F>> {
+  fn final_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
     unimplemented!("todo");
   }
 
-  fn batched_read_write_grand_product(&self) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
+  fn read_write_grand_product(&self, gamma: &F, tau: &F) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
     unimplemented!("todo");
   }
 
   fn protocol_name() -> &'static [u8] {
     b"Instruction lookups memory checking"
+  }
+}
+
+impl<F, G> MemoryCheckingVerifier<F, G> for InstructionPolynomials<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    unimplemented!("todo");
+  }
+  fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    unimplemented!("todo");
+  }
+  fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    unimplemented!("todo");
+  }
+  fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    unimplemented!("todo");
   }
 }
 
@@ -650,7 +508,7 @@ where
   /// Primary collation sumcheck proof
   primary_sumcheck: PrimarySumcheck<F, G>,
 
-  memory_checking: MemoryCheckingProof<
+  memory_checking: NewMemoryCheckingProof<
     G,
     InstructionPolynomials<F, G>,
     InstructionReadWriteOpenings<F, G>,
@@ -741,17 +599,8 @@ where
       openings: sumcheck_openings,
     };
 
-    let r_fingerprints: Vec<G::ScalarField> =
-      <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
-    let r_fingerprint = (&r_fingerprints[0], &r_fingerprints[1]);
-
-    let memory_checking = polynomials.prove_memory_checking(
-      &batched_polys,
-      &commitment,
-      r_fingerprint,
-      transcript,
-      &mut random_tape,
-    );
+    let memory_checking =
+      polynomials.prove_memory_checking(&batched_polys, &commitment, transcript, &mut random_tape);
 
     InstructionLookupsProof {
       commitment,
@@ -806,18 +655,11 @@ where
       transcript,
     );
 
-    let r_mem_check =
-      <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
-
-    // TODO
-    // proof.memory_checking.verify(
-    //   &proof.commitment,
-    //   &proof.commitment.generators,
-    //   Self::memory_to_dimension_index,
-    //   Self::evaluate_memory_mle,
-    //   (&r_mem_check[0], &r_mem_check[1]),
-    //   transcript,
-    // )?;
+    InstructionPolynomials::verify_memory_checking(
+      proof.memory_checking,
+      &proof.commitment,
+      transcript,
+    )?;
 
     Ok(())
   }
