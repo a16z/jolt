@@ -27,10 +27,6 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-pub struct Proof<P: Pairing> {
-  _phantom: PhantomData<P>,
-}
-
 pub struct CommitmentKey<P: Pairing> {
   _phantom: PhantomData<P>,
 }
