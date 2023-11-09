@@ -7,9 +7,7 @@ use spartan2::{
   SNARK,
 };
 
-use bellpepper_core::{
-  Circuit, ConstraintSystem, SynthesisError,
-};
+use bellpepper_core::{Circuit, ConstraintSystem, SynthesisError};
 use core::marker::PhantomData;
 use ff::PrimeField;
 
@@ -26,9 +24,10 @@ struct JoltCircuit<F: PrimeField> {
 
 impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-    let root = current_dir().unwrap().join("src/r1cs/circuits/jolt/");
-    let r1cs_path = root.join("jolt.r1cs");
-    let wtns_path = root.join("jolt_js/jolt.wasm");
+    let circuit_dir = std::env::var("CIRCUIT_DIR").expect("failed to read CICUIT_DIR, should've been set by build.rs");
+    let circuit_dir = std::path::PathBuf::from(&circuit_dir);
+    let r1cs_path = circuit_dir.join("jolt.r1cs");
+    let wtns_path = circuit_dir.join("jolt_js/jolt.wasm");
 
     let cfg = CircomConfig::new(wtns_path, r1cs_path.clone()).unwrap();
 
@@ -55,8 +54,7 @@ fn run_jolt_spartan() {
   run_jolt_spartan_with::<G1, S>();
 }
 
-fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>()
-{
+fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>() {
   let circuit = JoltCircuit::default();
 
   // produce keys
@@ -73,17 +71,10 @@ fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>()
 }
 
 mod test {
-    use std::process::Command;
+  use std::process::Command;
 
   #[test]
   fn test_jolt_snark() {
-    // compile the circom circuit first 
-    let output = Command::new("bash")
-        .arg("./src/r1cs/circuits/compile_jolt.sh")
-        .output()
-        .expect("Could not compile circom circuit file."); 
-
-    // then run spartan
     super::run_jolt_spartan();
   }
 }
