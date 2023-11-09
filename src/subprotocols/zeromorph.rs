@@ -9,12 +9,13 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::subprotocols::dot_product::DotProductProof;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
 use ark_ec::{CurveConfig, CurveGroup, Group, pairing::Pairing};
 use ark_ff::{BigInteger, Field, PrimeField, BigInt};
 use ark_serialize::*;
-use ark_std::One;
+use ark_std::{One, Zero};
 use merlin::Transcript;
 
 #[cfg(feature = "ark-msm")]
@@ -60,49 +61,54 @@ impl<const N: u64, P: Pairing> Zeromorph<N, P> {
     polynimial: &DensePolynomial<P::ScalarField>,
     u_challenge: &[P::ScalarField],
     ) -> Vec<DensePolynomial<P::ScalarField>> {
-        let log_N = polynimial.get_num_vars();
+      // TODO: can grab from poly
+      let log_N = (N as usize).log_2();
 
-        // The size of the multilinear challenge must equal the log of the polynomial size
-        assert!(log_N == u_challenge.len());
+      // The size of the multilinear challenge must equal the log of the polynomial size
+      assert!(log_N == u_challenge.len());
 
-        // Define vector of quotient polynomials q_k, k = 0, ..., log_N - 1
-        let mut quotients = Vec::with_capacity(log_N);
+      // Define vector of quotient polynomials q_k, k = 0, ..., log_N - 1
+      let mut quotients = (0..log_N).into_iter().map(|_| DensePolynomial::from_usize(&[0])).collect::<Vec<_>>();
+      println!("log_N {:?} N {:?} quotients {:?}", log_N, N, quotients.len());
 
-        // Compute the coefficients of q_{n - 1}
-        let mut size_q = (1 << (log_N - 1)) as usize;
-        //TODO: check if this is correct. Based on Barretenburg's mle I think it is??? 
-        let q = DensePolynomial::new((0..size_q).fold(Vec::new(), |mut acc, l| {
-            acc.push(polynimial[size_q + l] - polynimial[l]);
-            acc
-        }));
+      // Compute the coefficients of q_{n - 1}
+      let mut size_q = (1 << (log_N - 1)) as usize;
+      //TODO: check if this is correct. Based on Barretenburg's mle I think it is??? 
+      let q = DensePolynomial::new((0..size_q).fold(Vec::new(), |mut acc, l| {
+          acc.push(polynimial[size_q + l] - polynimial[l]);
+          acc
+      }));
 
-        //Probs can't avoid this clone
-        quotients[log_N - 1] = q.clone();
+      //Probs can't avoid this clone
+      quotients.insert(log_N - 1,q.clone());
 
-        let mut f_k: Vec<P::ScalarField> = Vec::with_capacity(size_q);
+      let mut f_k: Vec<P::ScalarField> = vec![P::ScalarField::zero(); size_q];
 
-        //We can probably clean this up some but for now we're being explicit
-        let mut g = Vec::new();//polynimial.clone();
+      //We can probably clean this up some but for now we're being explicit
+      let mut g = (0..size_q).fold(Vec::new(), |mut acc, i| {
+        acc.push(polynimial[i]);
+        acc
+      });
 
-        for k in 1..log_N {
-            // Compute f_k
-            for l in 0..size_q {
+      for k in 1..log_N {
+          // Compute f_k
+          for l in 0..size_q {
             f_k[l] = g[l] + u_challenge[log_N - k] * q[l];
-            }
+          }
 
-            size_q = size_q / 2;
-            let q = DensePolynomial::new((0..size_q).fold(Vec::new(), |mut acc, l| {
-            acc.push(polynimial[size_q + l] - polynimial[l]);
-            acc
-            }));
+          size_q = size_q / 2;
+          let q = DensePolynomial::new((0..size_q).fold(Vec::new(), |mut acc, l| {
+          acc.push(polynimial[size_q + l] - polynimial[l]);
+          acc
+          }));
 
-            quotients[log_N - k - 1] = q;
+          quotients[log_N - k - 1] = q;
 
-            //Would be great to remove this new instantiation probably best way is to just have vectors of coeffs.
-            g = f_k.clone();
-        }
+          //Would be great to remove this new instantiation probably best way is to just have vectors of coeffs.
+          g = f_k.clone();
+      }
 
-        quotients
+      quotients
     }
 
     pub fn compute_batched_lifted_degree_quotient(
