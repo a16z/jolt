@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::ops::{Index, IndexMut};
+
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -60,6 +62,10 @@ impl<F: PrimeField> UniPoly<F> {
   pub fn as_vec(&self) -> Vec<F> {
     self.coeffs.clone()
   }
+  
+  pub fn len(&self) -> usize {
+    self.coeffs.len()
+  }
 
   pub fn eval_at_zero(&self) -> F {
     self.coeffs[0]
@@ -106,6 +112,22 @@ impl<F: PrimeField> CompressedUniPoly<F> {
     coeffs.extend(&self.coeffs_except_linear_term[1..]);
     assert_eq!(self.coeffs_except_linear_term.len() + 1, coeffs.len());
     UniPoly { coeffs }
+  }
+}
+
+impl<F> Index<usize> for UniPoly<F> {
+  type Output = F;
+
+  #[inline(always)]
+  fn index(&self, _index: usize) -> &F {
+    &(self.coeffs[_index])
+  }
+}
+
+impl<F> IndexMut<usize> for UniPoly<F> {
+  #[inline(always)]
+  fn index_mut(&mut self, index: usize) -> &mut F {
+    &mut (self.coeffs[index])
   }
 }
 
