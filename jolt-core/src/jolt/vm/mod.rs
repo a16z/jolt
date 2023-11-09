@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
+use strum_macros::FromRepr;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
@@ -820,3 +821,4 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 pub mod test_vm;
 pub mod memory;
 pub mod pc;
+pub mod instruction_set;
