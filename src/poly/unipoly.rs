@@ -62,7 +62,7 @@ impl<F: PrimeField> UniPoly<F> {
   pub fn as_vec(&self) -> Vec<F> {
     self.coeffs.clone()
   }
-  
+
   pub fn len(&self) -> usize {
     self.coeffs.len()
   }
