@@ -1,8 +1,7 @@
 use ark_ff::PrimeField;
 
 use crate::{
-  poly::dense_mlpoly::DensePolynomial,
-  subprotocols::grand_product::{BatchedGrandProductCircuit, GPEvals},
+  poly::dense_mlpoly::DensePolynomial, subprotocols::grand_product::BatchedGrandProductCircuit,
 };
 
 pub enum MemoryOp {
