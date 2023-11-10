@@ -3,10 +3,11 @@
 use std::{path::PathBuf, fs::File, io::Read};
 
 use emulator::{default_terminal::DefaultTerminal, Emulator, cpu};
-use trace::TraceRow;
 
 mod trace;
 mod emulator;
+
+pub use trace::{TraceRow, Instruction, RegisterState, MemoryState};
 
 pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
     let term = DefaultTerminal::new();
