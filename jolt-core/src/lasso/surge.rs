@@ -1,9 +1,8 @@
 use std::marker::{PhantomData, Sync};
 
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use crate::{
@@ -719,20 +718,7 @@ where
       transcript,
     )?;
 
-    // produce a random element from the transcript for hash function
-    let r_mem_check =
-      <Transcript as ProofTranscript<G>>::challenge_vector(transcript, b"challenge_r_hash", 2);
-    let r_fingerprints = (&r_mem_check[0], &r_mem_check[1]);
-
-    let memory_to_dimension_index = |memory_index: usize| memory_index % C;
-    let evaluate_memory_mle = |memory_index: usize, vals: &[F]| {
-      let subtable_index = memory_index / C;
-      instruction.subtables(C)[subtable_index].evaluate_mle(vals)
-    };
-
-    Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)?;
-
-    Ok(())
+    Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)
   }
 
   fn construct_polys(&self) -> SurgePolys<F, G> {

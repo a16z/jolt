@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_std::{One, Zero};
+use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{

@@ -581,27 +581,23 @@ where
   }
 
   fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    let subtable_flags = Self::subtable_flags(&openings.flag_openings);
     (0..Self::NUM_MEMORIES)
       .map(|memory_index| {
+        let subtable_index = Self::memory_to_subtable_index(memory_index);
         (
           openings.dim_openings[memory_index],
           openings.E_poly_openings[memory_index],
           openings.read_openings[memory_index],
-          Some(openings.flag_openings[memory_index]),
+          Some(subtable_flags[subtable_index]),
         )
       })
       .collect()
   }
   fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
-    (0..Self::NUM_MEMORIES)
-      .map(|memory_index| {
-        (
-          openings.dim_openings[memory_index],
-          openings.E_poly_openings[memory_index],
-          openings.read_openings[memory_index] + F::one(),
-          Some(openings.flag_openings[memory_index]),
-        )
-      })
+    Self::read_tuples(openings)
+      .iter()
+      .map(|(a, v, t, flag)| (*a, *v, *t + F::one(), *flag))
       .collect()
   }
   fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
@@ -883,7 +879,7 @@ where
       .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
       .collect();
 
-    let subtable_flag_polys = Self::subtable_flags(&instruction_flag_polys);
+    let subtable_flag_polys = Self::subtable_flag_polys(&instruction_flag_polys);
 
     InstructionPolynomials {
       _group: PhantomData,
@@ -941,7 +937,25 @@ where
     sum
   }
 
-  fn subtable_flags(instruction_flag_polys: &Vec<DensePolynomial<F>>) -> Vec<DensePolynomial<F>> {
+  fn subtable_flags(instruction_flags: &Vec<F>) -> Vec<F> {
+    let mut subtable_flags = vec![F::zero(); Self::NUM_SUBTABLES];
+    for (i, instruction) in InstructionSet::iter().enumerate() {
+      let instruction_subtables: Vec<Subtables> = instruction
+        .subtables::<F>(C)
+        .iter()
+        .map(|subtable| Subtables::from(subtable.subtable_id()))
+        .collect();
+      for subtable in instruction_subtables {
+        let subtable_index: usize = subtable.into();
+        subtable_flags[subtable_index] += &instruction_flags[i];
+      }
+    }
+    subtable_flags
+  }
+
+  fn subtable_flag_polys(
+    instruction_flag_polys: &Vec<DensePolynomial<F>>,
+  ) -> Vec<DensePolynomial<F>> {
     let m = instruction_flag_polys[0].len();
     let mut subtable_flag_polys =
       vec![DensePolynomial::new(vec![F::zero(); m]); Self::NUM_SUBTABLES];
