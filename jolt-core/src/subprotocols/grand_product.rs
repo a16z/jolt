@@ -153,29 +153,6 @@ impl<F: PrimeField> LayerProofBatched<F> {
   }
 }
 
-/// BatchedGrandProductCircuitInterpretable
-pub trait BGPCInterpretable<F: PrimeField> {
-  fn compute_leaves(
-    &self,
-    memory_index: usize,
-    r_hash: (&F, &F),
-  ) -> (
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-  );
-
-  fn construct_batches(
-    &self,
-    r_hash: (&F, &F),
-  ) -> (
-    BatchedGrandProductCircuit<F>,
-    BatchedGrandProductCircuit<F>,
-    Vec<GPEvals<F>>,
-  );
-}
-
 pub struct BatchedGrandProductCircuit<F: PrimeField> {
   pub circuits: Vec<GrandProductCircuit<F>>,
 

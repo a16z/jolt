@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 
 use crate::{
   poly::dense_mlpoly::DensePolynomial,
-  subprotocols::grand_product::{BGPCInterpretable, BatchedGrandProductCircuit, GPEvals},
+  subprotocols::grand_product::{BatchedGrandProductCircuit, GPEvals},
 };
 
 pub enum MemoryOp {
@@ -22,34 +22,6 @@ impl<F: PrimeField> Memory<F> {
     todo!("construct")
   }
 }
-
-impl<F: PrimeField> BGPCInterpretable<F> for Memory<F> {
-  fn compute_leaves(
-    &self,
-    memory_index: usize,
-    r_hash: (&F, &F),
-  ) -> (
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-    DensePolynomial<F>,
-  ) {
-    todo!()
-  }
-
-  fn construct_batches(
-    &self,
-    r_hash: (&F, &F),
-  ) -> (
-    BatchedGrandProductCircuit<F>,
-    BatchedGrandProductCircuit<F>,
-    Vec<GPEvals<F>>,
-  ) {
-    todo!()
-  }
-}
-
-// TODO(sragss): FingerprintStrategy
 
 #[cfg(test)]
 mod tests {

@@ -585,7 +585,6 @@ where
 mod tests {
   use std::collections::HashSet;
 
-  use crate::subprotocols::grand_product::BGPCInterpretable;
   use crate::{
     lasso::memory_checking::{MemoryCheckingProof, ProductLayerProof},
     poly::dense_mlpoly::DensePolynomial,
