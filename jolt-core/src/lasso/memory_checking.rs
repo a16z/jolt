@@ -17,8 +17,6 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use std::marker::PhantomData;
 
-use super::fingerprint_strategy::FingerprintStrategy;
-
 struct MultisetHashes<F: PrimeField> {
   hash_init: F,
   hash_final: F,
