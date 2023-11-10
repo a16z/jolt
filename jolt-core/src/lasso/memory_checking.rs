@@ -6,8 +6,7 @@ use crate::poly::{
   structured_poly::{StructuredOpeningProof, StructuredPolynomials},
 };
 use crate::subprotocols::grand_product::{
-  BGPCInterpretable, BatchedGrandProductArgument, BatchedGrandProductCircuit, GPEvals,
-  GrandProductCircuit,
+  BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
 };
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::random::RandomTape;
@@ -15,7 +14,6 @@ use crate::utils::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
 use std::marker::PhantomData;
 
@@ -28,7 +26,7 @@ struct MultisetHashes<F: PrimeField> {
   hash_write: F,
 }
 
-pub struct NewMemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
+pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
   G: CurveGroup,
   Polynomials: StructuredPolynomials + ?Sized,
@@ -60,7 +58,7 @@ where
     commitments: &Polynomials::Commitment,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> NewMemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+  ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
     // Fiat-Shamir randomness for multiset hashes
     let gamma: F =
       <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking gamma");
@@ -117,7 +115,7 @@ where
       random_tape,
     );
 
-    NewMemoryCheckingProof {
+    MemoryCheckingProof {
       _polys: PhantomData,
       multiset_hashes,
       read_write_grand_product,
@@ -203,7 +201,7 @@ where
   Polynomials: StructuredPolynomials,
 {
   fn verify_memory_checking(
-    mut proof: NewMemoryCheckingProof<
+    mut proof: MemoryCheckingProof<
       G,
       Polynomials,
       Self::ReadWriteOpenings,
@@ -317,181 +315,6 @@ where
       assert_eq!(claim.hash_init, init_fingerprints[i]);
       assert_eq!(claim.hash_final, final_fingerprints[i]);
     }
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, S: FingerprintStrategy<G>> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField>,
-  proof_hash_layer: S,
-}
-
-impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
-  pub fn prove(
-    polynomials: &S::Polynomials,
-    r_fingerprint: (&G::ScalarField, &G::ScalarField),
-    generators: &S::Generators,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let (proof_prod_layer, rand_mem, rand_ops) =
-      ProductLayerProof::prove::<G, S::Polynomials>(polynomials, r_fingerprint, transcript);
-
-    let proof_hash_layer = S::prove(
-      (&rand_mem, &rand_ops),
-      &polynomials,
-      &generators,
-      transcript,
-      random_tape,
-    );
-
-    MemoryCheckingProof {
-      proof_prod_layer,
-      proof_hash_layer,
-    }
-  }
-
-  pub fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
-    &self,
-    commitments: &S::Commitments,
-    generators: &S::Generators,
-    // TODO(sragss): Consider hardcoding these params
-    memory_to_dimension_index: F1,
-    evaluate_memory_mle: F2,
-    r_mem_check: (&G::ScalarField, &G::ScalarField),
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let (r_hash, r_multiset_check) = r_mem_check;
-
-    let (claims_mem, rand_mem, claims_ops, rand_ops) =
-      self.proof_prod_layer.verify::<G>(transcript)?;
-
-    assert_eq!(claims_mem.len(), claims_ops.len());
-    assert!(claims_mem.len() % 2 == 0);
-    let num_memories = claims_mem.len() / 2;
-
-    let claims: Vec<GPEvals<G::ScalarField>> = (0..num_memories)
-      .map(|i| {
-        GPEvals::new(
-          claims_mem[2 * i],     // init
-          claims_ops[2 * i],     // read
-          claims_ops[2 * i + 1], // write
-          claims_mem[2 * i + 1], // final
-        )
-      })
-      .collect();
-
-    // verify the proof of hash layer
-    self.proof_hash_layer.verify(
-      (&rand_mem, &rand_ops),
-      &claims,
-      memory_to_dimension_index,
-      evaluate_memory_mle,
-      commitments,
-      generators,
-      r_hash,
-      r_multiset_check,
-      transcript,
-    )?;
-
-    Ok(())
-  }
-
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso MemoryCheckingProof"
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProductLayerProof<F: PrimeField> {
-  grand_product_evals: Vec<GPEvals<F>>,
-  proof_mem: BatchedGrandProductArgument<F>,
-  proof_ops: BatchedGrandProductArgument<F>,
-}
-
-impl<F: PrimeField> ProductLayerProof<F> {
-  /// Performs grand product argument proofs required for memory-checking.
-  /// Batches everything into two instances of BatchedGrandProductArgument.
-  ///
-  /// Params
-  /// - `polys`: The grand product circuits whose evaluations are proven.
-  /// - `r_fingerprint`: The random values used for fingerprinting.
-  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
-  pub fn prove<G, P>(
-    polys: &P,
-    r_fingerprint: (&G::ScalarField, &G::ScalarField),
-    transcript: &mut Transcript,
-  ) -> (Self, Vec<F>, Vec<F>)
-  where
-    G: CurveGroup<ScalarField = F>,
-    P: BGPCInterpretable<G::ScalarField>,
-  {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let (batched_rw, batched_if, grand_product_evals) = polys.construct_batches(r_fingerprint);
-
-    grand_product_evals.iter().for_each(|gp_eval| {
-      assert_eq!(
-        gp_eval.hash_init * gp_eval.hash_write,
-        gp_eval.hash_final * gp_eval.hash_read,
-        "Grand Products: Multi-set hashes don't match"
-      );
-      gp_eval.append_to_transcript::<G>(transcript);
-    });
-
-    let (proof_ops, rand_ops_sized_gps) =
-      BatchedGrandProductArgument::prove::<G>(batched_rw, transcript);
-    let (proof_mem, rand_mem_sized_gps) =
-      BatchedGrandProductArgument::prove::<G>(batched_if, transcript);
-
-    let product_layer_proof = ProductLayerProof {
-      grand_product_evals,
-      proof_mem,
-      proof_ops,
-    };
-
-    (product_layer_proof, rand_mem_sized_gps, rand_ops_sized_gps)
-  }
-
-  pub fn verify<G>(
-    &self,
-    transcript: &mut Transcript,
-  ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    for eval in &self.grand_product_evals {
-      // Multiset equality check
-      assert_eq!(
-        eval.hash_init * eval.hash_write,
-        eval.hash_read * eval.hash_final
-      );
-
-      eval.append_to_transcript::<G>(transcript);
-    }
-
-    let read_write_claims = GPEvals::flatten_read_write(&self.grand_product_evals);
-    let (claims_ops, rand_ops) = self
-      .proof_ops
-      .verify::<G, Transcript>(&read_write_claims, transcript);
-
-    let init_final_claims = GPEvals::flatten_init_final(&self.grand_product_evals);
-    let (claims_mem, rand_mem) = self
-      .proof_mem
-      .verify::<G, Transcript>(&init_final_claims, transcript);
-
-    Ok((claims_mem, rand_mem, claims_ops, rand_ops))
-  }
-
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso ProductLayerProof"
   }
 }
 

@@ -151,24 +151,25 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn random_surge_test(num_ops: usize, C: usize, M: usize) -> Box<dyn FnOnce()> {
-  let mut rng = test_rng();
+  todo!();
+  // let mut rng = test_rng();
 
-  let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
-  let operand_max: u64 = (1 << (log2(M) as usize * C - 1)).try_into().unwrap();
-  for _ in 0..num_ops {
-    let a = rng.next_u64() % operand_max;
-    let b = rng.next_u64() % operand_max;
-    ops.push(XORInstruction(a, b));
-  }
+  // let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
+  // let operand_max: u64 = (1 << (log2(M) as usize * C - 1)).try_into().unwrap();
+  // for _ in 0..num_ops {
+  //   let a = rng.next_u64() % operand_max;
+  //   let b = rng.next_u64() % operand_max;
+  //   ops.push(XORInstruction(a, b));
+  // }
 
-  let func = move || {
-    let mut prover_transcript = Transcript::new(b"test_transcript");
-    let proof: SurgeProof<EdwardsProjective, _> =
-      SurgeProof::prove(ops.clone(), C, M, &mut prover_transcript);
+  // let func = move || {
+  //   let mut prover_transcript = Transcript::new(b"test_transcript");
+  //   let proof: SurgeProof<_, EdwardsProjective> =
+  //     SurgeProof::prove(ops.clone(), C, M, &mut prover_transcript);
 
-    let mut verifier_transcript = Transcript::new(b"test_transcript");
-    proof.verify(&mut verifier_transcript).expect("should work");
-  };
+  //   let mut verifier_transcript = Transcript::new(b"test_transcript");
+  //   proof.verify(&mut verifier_transcript).expect("should work");
+  // };
 
-  Box::new(func)
+  // Box::new(func)
 }

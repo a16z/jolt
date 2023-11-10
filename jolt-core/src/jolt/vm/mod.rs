@@ -13,7 +13,6 @@ use crate::jolt::{
 
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
 use self::memory::MemoryOp;
-use self::pc::PCFingerprintProof;
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
@@ -46,7 +45,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     contiguous_reads_per_access: usize,
     r_mem_check: &(F, F),
     transcript: &mut Transcript,
-  ) -> MemoryCheckingProof<G, PCFingerprintProof<G>> {
+  ) {
     // let (gamma, tau) = r_mem_check;
     // let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
 

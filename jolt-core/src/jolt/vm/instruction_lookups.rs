@@ -11,7 +11,7 @@ use crate::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
   },
-  lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier, NewMemoryCheckingProof},
+  lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
@@ -20,7 +20,7 @@ use crate::{
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::{BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit},
+    grand_product::BatchedGrandProductCircuit,
     sumcheck::SumcheckInstanceProof,
   },
   utils::{
@@ -394,10 +394,10 @@ where
     random_tape: &mut RandomTape<G>,
   ) -> Self {
     let final_opening_proof = CombinedTableEvalProof::prove(
-      &polynomials.batched_flag,
+      &polynomials.batched_final,
       &openings,
       &opening_point,
-      &commitment.generators.flag_commitment_gens,
+      &commitment.generators.final_commitment_gens,
       transcript,
       random_tape,
     );
@@ -553,7 +553,7 @@ where
     gamma: &F,
     tau: &F,
   ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-    unimplemented!("todo");
+    todo!();
   }
 
   fn protocol_name() -> &'static [u8] {
@@ -648,7 +648,7 @@ where
   /// Primary collation sumcheck proof
   primary_sumcheck: PrimarySumcheck<F, G>,
 
-  memory_checking: NewMemoryCheckingProof<
+  memory_checking: MemoryCheckingProof<
     G,
     InstructionPolynomials<F, G>,
     InstructionReadWriteOpenings<F, G>,
