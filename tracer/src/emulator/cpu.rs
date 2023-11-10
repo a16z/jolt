@@ -1,5 +1,7 @@
 extern crate fnv;
 
+use std::rc::Rc;
+
 use crate::trace::Tracer;
 use crate::trace;
 
@@ -77,7 +79,7 @@ pub struct Cpu {
 	_dump_flag: bool,
 	decode_cache: DecodeCache,
 	unsigned_data_mask: u64,
-    pub tracer: Tracer,
+    pub tracer: Rc<Tracer>,
 }
 
 #[derive(Clone)]
@@ -223,6 +225,7 @@ impl Cpu {
 	/// # Arguments
 	/// * `Terminal`
 	pub fn new(terminal: Box<dyn Terminal>) -> Self {
+        let tracer = Rc::new(Tracer::new());
 		let mut cpu = Cpu {
 			clock: 0,
 			xlen: Xlen::Bit64,
@@ -232,13 +235,13 @@ impl Cpu {
 			f: [0.0; 32],
 			pc: 0,
 			csr: [0; CSR_CAPACITY],
-			mmu: Mmu::new(Xlen::Bit64, terminal),
+			mmu: Mmu::new(Xlen::Bit64, terminal, tracer.clone()),
 			reservation: 0,
 			is_reservation_set: false,
 			_dump_flag: false,
 			decode_cache: DecodeCache::new(),
 			unsigned_data_mask: 0xffffffffffffffff,
-            tracer: Tracer::new(),
+            tracer,
 		};
 		cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
 		cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -333,6 +336,7 @@ impl Cpu {
 				let result = (inst.operation)(self, word, instruction_address);
 				self.x[0] = 0; // hardwired zero
                 self.tracer.capture_post_state(self.x.clone());
+                self.tracer.end_instruction();
 				return result;
 			},
 			Err(()) => {

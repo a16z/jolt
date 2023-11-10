@@ -1,7 +1,10 @@
 extern crate tracer;
 
-use tracer::trace::trace;
+use tracer::trace;
 
 pub fn main() {
-    trace("../jolt-compiler/target/riscv32i-unknown-none-elf/release/program".into())
+    let rows = trace("../jolt-compiler/target/riscv32i-unknown-none-elf/release/program".into());
+    for row in rows {
+        println!("{:?}\n", row);
+    }
 }

@@ -6,6 +6,10 @@ const DTB_SIZE: usize = 0xfe0;
 
 extern crate fnv;
 
+use std::rc::Rc;
+
+use crate::trace::{Tracer, MemoryState};
+
 use self::fnv::FnvHashMap;
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType, Xlen};
@@ -84,7 +88,7 @@ impl Mmu {
   /// # Arguments
   /// * `xlen`
   /// * `terminal`
-  pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>) -> Self {
+  pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>, tracer: Rc<Tracer>) -> Self {
     let mut dtb = vec![0; DTB_SIZE];
 
     // Load default device tree binary content
@@ -99,7 +103,7 @@ impl Mmu {
       ppn: 0,
       addressing_mode: AddressingMode::None,
       privilege_mode: PrivilegeMode::Machine,
-      memory: MemoryWrapper::new(),
+      memory: MemoryWrapper::new(tracer),
       dtb: dtb,
       disk: VirtioBlockDisk::new(),
       plic: Plic::new(),
@@ -912,12 +916,14 @@ impl Mmu {
 /// using [`DRAM_BASE`](constant.DRAM_BASE.html) and accesses [`Memory`](../memory/struct.Memory.html).
 pub struct MemoryWrapper {
   memory: Memory,
+  tracer: Rc<Tracer>,
 }
 
 impl MemoryWrapper {
-  fn new() -> Self {
+  fn new(tracer: Rc<Tracer>) -> Self {
     MemoryWrapper {
       memory: Memory::new(),
+      tracer,
     }
   }
 
@@ -931,7 +937,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.read_byte(p_address - DRAM_BASE)
+
+    let value = self.memory.read_byte(p_address - DRAM_BASE);
+    self.tracer.push_memory(MemoryState::Read {
+        address: p_address,
+        value: value.into()
+    });
+
+    value
   }
 
   pub fn read_halfword(&mut self, p_address: u64) -> u16 {
@@ -940,7 +953,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.read_halfword(p_address - DRAM_BASE)
+
+    let value = self.memory.read_halfword(p_address - DRAM_BASE);
+    self.tracer.push_memory(MemoryState::Read {
+        address: p_address,
+        value: value.into()
+    });
+
+    value
   }
 
   pub fn read_word(&mut self, p_address: u64) -> u32 {
@@ -949,7 +969,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.read_word(p_address - DRAM_BASE)
+
+    let value = self.memory.read_word(p_address - DRAM_BASE);
+    self.tracer.push_memory(MemoryState::Read {
+        address: p_address,
+        value: value.into()
+    });
+
+    value
   }
 
   pub fn read_doubleword(&mut self, p_address: u64) -> u64 {
@@ -958,7 +985,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.read_doubleword(p_address - DRAM_BASE)
+
+    let value = self.memory.read_doubleword(p_address - DRAM_BASE);
+    self.tracer.push_memory(MemoryState::Read {
+        address: p_address,
+        value: value.into()
+    });
+
+    value
   }
 
   pub fn write_byte(&mut self, p_address: u64, value: u8) {
@@ -967,7 +1001,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.write_byte(p_address - DRAM_BASE, value)
+
+    let pre_value = self.memory.read_byte(p_address - DRAM_BASE);
+    self.memory.write_byte(p_address - DRAM_BASE, value);
+    self.tracer.push_memory(MemoryState::Write {
+        address: p_address,
+        pre_value: pre_value.into(),
+        post_value: value.into(),
+    });
   }
 
   pub fn write_halfword(&mut self, p_address: u64, value: u16) {
@@ -976,7 +1017,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.write_halfword(p_address - DRAM_BASE, value)
+
+    let pre_value = self.memory.read_halfword(p_address - DRAM_BASE);
+    self.memory.write_halfword(p_address - DRAM_BASE, value);
+    self.tracer.push_memory(MemoryState::Write {
+        address: p_address,
+        pre_value: pre_value.into(),
+        post_value: value.into(),
+    });
   }
 
   pub fn write_word(&mut self, p_address: u64, value: u32) {
@@ -985,7 +1033,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.write_word(p_address - DRAM_BASE, value)
+
+    let pre_value = self.memory.read_word(p_address - DRAM_BASE);
+    self.memory.write_word(p_address - DRAM_BASE, value);
+    self.tracer.push_memory(MemoryState::Write {
+        address: p_address,
+        pre_value: pre_value.into(),
+        post_value: value.into(),
+    });
   }
 
   pub fn write_doubleword(&mut self, p_address: u64, value: u64) {
@@ -994,7 +1049,14 @@ impl MemoryWrapper {
       "Memory address must equals to or bigger than DRAM_BASE. {:X}",
       p_address
     );
-    self.memory.write_doubleword(p_address - DRAM_BASE, value)
+
+    let pre_value = self.memory.read_doubleword(p_address - DRAM_BASE);
+    self.memory.write_doubleword(p_address - DRAM_BASE, value);
+    self.tracer.push_memory(MemoryState::Write {
+        address: p_address,
+        pre_value: pre_value.into(),
+        post_value: value.into(),
+    });
   }
 
   pub fn validate_address(&self, address: u64) -> bool {

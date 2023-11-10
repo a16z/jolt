@@ -1,11 +1,10 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::cell::RefCell;
 
-use crate::emulator::{cpu, default_terminal::DefaultTerminal, Emulator};
- 
 #[derive(Debug)]
 pub struct TraceRow {
     pub instruction: Instruction,
     pub register_state: RegisterState,
+    pub memory_state: Option<MemoryState>,
 }
 
 #[derive(Debug)]
@@ -23,37 +22,63 @@ pub struct RegisterState {
     pub rs1_val: Option<i64>,
     pub rs2_val: Option<i64>,
     pub rd_pre_val: Option<i64>,
-    pub rd_val: Option<i64>,
+    pub rd_post_val: Option<i64>,
+}
+
+#[derive(Debug)]
+pub enum MemoryState {
+    Read {
+        address: u64,
+        value: u64,
+    },
+    Write {
+        address: u64,
+        pre_value: u64,
+        post_value: u64,
+    },
 }
 
 pub struct Tracer {
-    pub rows: Vec<TraceRow>,
+    pub rows: RefCell<Vec<TraceRow>>,
+    open: RefCell<bool>,
 }
 
 impl Tracer {
     pub fn new() -> Self {
-        Self { rows: Vec::new() }
+        Self { rows: RefCell::new(Vec::new()), open: RefCell::new(false) }
     }
 
-    pub fn start_instruction(&mut self, inst: Instruction) {
-        self.rows.push(TraceRow {
+    pub fn start_instruction(&self, inst: Instruction) {
+        *self.open.try_borrow_mut().unwrap() = true;
+        self.rows.try_borrow_mut().unwrap().push(TraceRow {
             instruction: inst,
             register_state: RegisterState::default(),
+            memory_state: None,
         });
     }
 
-    pub fn capture_pre_state(&mut self, reg: [i64; 32]) {
-        let row = self.rows.last_mut().unwrap();
+    pub fn capture_pre_state(&self, reg: [i64; 32]) {
+        if !*self.open.try_borrow().unwrap() {
+            return;
+        }
+
+        let mut rows = self.rows.try_borrow_mut().unwrap();
+        let row = rows.last_mut().unwrap();
         if let Some(rd) = row.instruction.rd {
             row.register_state.rd_pre_val = Some(reg[rd]);
         }
     }
 
-    pub fn capture_post_state(&mut self, reg: [i64; 32]) {
-        let row = self.rows.last_mut().unwrap();
+    pub fn capture_post_state(&self, reg: [i64; 32]) {
+        if !*self.open.try_borrow().unwrap() {
+            return;
+        }
+
+        let mut rows = self.rows.try_borrow_mut().unwrap();
+        let row = rows.last_mut().unwrap();
 
         if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_val = Some(reg[rd]);
+            row.register_state.rd_post_val = Some(reg[rd]);
         }
 
         if let Some(rs1) = row.instruction.rs1 {
@@ -64,36 +89,19 @@ impl Tracer {
             row.register_state.rs2_val = Some(reg[rs2]);
         }
     }
-}
 
-pub fn trace(elf: PathBuf) {
-    let term = DefaultTerminal::new();
-    let mut emulator = Emulator::new(Box::new(term));
-    emulator.update_xlen(cpu::Xlen::Bit32);
-
-    let mut elf_file = File::open(elf).unwrap();
-
-    let mut elf_contents = Vec::new();
-    elf_file.read_to_end(&mut elf_contents).unwrap();
-
-    emulator.setup_program(elf_contents);
-
-    let mut prev_pc = 0;
-    loop {
-        let pc = emulator.get_cpu().read_pc();
-        emulator.tick();
-
-        if prev_pc == pc {
-            break;
+    pub fn push_memory(&self, memory_state: MemoryState) {
+        if !*self.open.try_borrow().unwrap() {
+            return;
         }
 
-        prev_pc = pc;
+        if let Some(row) = self.rows.try_borrow_mut().unwrap().last_mut() {
+            row.memory_state = Some(memory_state);
+        }
     }
 
-    let trace = &emulator.get_cpu().tracer.rows;
-    for step in trace {
-        println!("{:?}", step);
-        println!();
+    pub fn end_instruction(&self) {
+        *self.open.try_borrow_mut().unwrap() = false;
     }
 }
 
