@@ -6,13 +6,13 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::{instruction_lookups::InstructionLookups, Jolt};
-use crate::jolt::instruction::bge::BGEInstruction;
-use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::{
-  bne::BNEInstruction, sll::SLLInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+  bge::BGEInstruction, bgeu::BGEUInstruction, bne::BNEInstruction, sll::SLLInstruction,
+  xor::XORInstruction, JoltInstruction, Opcode,
 };
-use crate::jolt::subtable::ltu::LtuSubtable;
-use crate::jolt::subtable::{eq::EqSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable};
+use crate::jolt::subtable::{
+  eq::EqSubtable, ltu::LtuSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable,
+};
 
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
@@ -73,18 +73,17 @@ subtable_enum!(
 
 pub enum TestJoltVM {}
 
-impl<F, G> InstructionLookups<F, G> for TestJoltVM
+const C: usize = 8;
+const M: usize = 1 << 16;
+
+impl<F, G> Jolt<F, G, C, M> for TestJoltVM
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  const C: usize = 8;
-  const M: usize = 1 << 16;
-
   type InstructionSet = TestInstructionSet;
   type Subtables = TestSubtables<F>;
 }
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> Jolt<F, G> for TestJoltVM {}
 
 // ==================== TEST ====================
 

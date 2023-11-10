@@ -15,6 +15,7 @@ use ark_serialize::*;
 use ark_std::Zero;
 use core::ops::Index;
 use merlin::Transcript;
+use std::ops::AddAssign;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -426,6 +427,20 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     let C_Zr = Zr.commit(&G::ScalarField::zero(), &gens.gens.gens_1);
 
     self.verify(gens, transcript, r, &C_Zr, comm)
+  }
+}
+
+impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
+  fn add_assign(&mut self, rhs: &DensePolynomial<F>) {
+    assert_eq!(self.num_vars, rhs.num_vars);
+    assert_eq!(self.len, rhs.len);
+    let summed_evaluations: Vec<F> = self.Z.iter().zip(&rhs.Z).map(|(a, b)| *a + *b).collect();
+
+    *self = Self {
+      num_vars: self.num_vars,
+      len: self.len,
+      Z: summed_evaluations,
+    }
   }
 }
 

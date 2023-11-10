@@ -43,22 +43,24 @@ where
   init_final_openings: InitFinalOpenings,
 }
 
-pub trait MemoryCheckingProver<F, G>: StructuredPolynomials
+pub trait MemoryCheckingProver<F, G, Polynomials>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
+  Polynomials: StructuredPolynomials,
 {
-  type ReadWriteOpenings: StructuredOpeningProof<F, G, Self>;
-  type InitFinalOpenings: StructuredOpeningProof<F, G, Self>;
+  type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
+  type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
   type MemoryTuple = (F, F, F); // (a, v, t)
 
   fn prove_memory_checking(
     &self,
-    polynomials: &Self::BatchedPolynomials,
-    commitments: &Self::Commitment,
+    polynomials: &Polynomials,
+    batched_polys: &Polynomials::BatchedPolynomials,
+    commitments: &Polynomials::Commitment,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> NewMemoryCheckingProof<G, Self, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+  ) -> NewMemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
     // Fiat-Shamir randomness for multiset hashes
     let gamma: F =
       <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking gamma");
@@ -69,9 +71,9 @@ where
 
     // fka "ProductLayerProof"
     let (read_write_circuit, read_hashes, write_hashes) =
-      self.read_write_grand_product(&gamma, &tau);
+      self.read_write_grand_product(polynomials, &gamma, &tau);
     let (init_final_circuit, init_hashes, final_hashes) =
-      self.init_final_grand_product(&gamma, &tau);
+      self.init_final_grand_product(polynomials, &gamma, &tau);
     debug_assert_eq!(read_hashes.len(), init_hashes.len());
     let num_memories = read_hashes.len();
 
@@ -99,18 +101,18 @@ where
 
     // fka "HashLayerProof"
     let read_write_openings = Self::ReadWriteOpenings::prove_openings(
-      polynomials,
+      batched_polys,
       commitments,
       &r_read_write,
-      Self::ReadWriteOpenings::open(self, &r_read_write),
+      Self::ReadWriteOpenings::open(polynomials, &r_read_write),
       transcript,
       random_tape,
     );
     let init_final_openings = Self::InitFinalOpenings::prove_openings(
-      polynomials,
+      batched_polys,
       commitments,
       &r_init_final,
-      Self::InitFinalOpenings::open(self, &r_init_final),
+      Self::InitFinalOpenings::open(polynomials, &r_init_final),
       transcript,
       random_tape,
     );
@@ -127,33 +129,12 @@ where
 
   fn read_write_grand_product(
     &self,
+    polynomials: &Polynomials,
     gamma: &F,
     tau: &F,
   ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-    let read_leaves: Vec<DensePolynomial<F>> = self
-      .read_tuples()
-      .iter()
-      .map(|tuples| {
-        DensePolynomial::new(
-          tuples
-            .iter()
-            .map(|tuple| Self::fingerprint(tuple, gamma, tau))
-            .collect(),
-        )
-      })
-      .collect();
-    let write_leaves: Vec<DensePolynomial<F>> = self
-      .write_tuples()
-      .iter()
-      .map(|tuples| {
-        DensePolynomial::new(
-          tuples
-            .iter()
-            .map(|tuple| Self::fingerprint(tuple, gamma, tau))
-            .collect(),
-        )
-      })
-      .collect();
+    let read_leaves: Vec<DensePolynomial<F>> = self.read_leaves(polynomials, gamma, tau);
+    let write_leaves: Vec<DensePolynomial<F>> = self.write_leaves(polynomials, gamma, tau);
     debug_assert_eq!(read_leaves.len(), write_leaves.len());
     let num_memories = read_leaves.len();
 
@@ -178,33 +159,12 @@ where
 
   fn init_final_grand_product(
     &self,
+    polynomials: &Polynomials,
     gamma: &F,
     tau: &F,
   ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-    let init_leaves: Vec<DensePolynomial<F>> = self
-      .init_tuples()
-      .iter()
-      .map(|tuples| {
-        DensePolynomial::new(
-          tuples
-            .iter()
-            .map(|tuple| Self::fingerprint(tuple, gamma, tau))
-            .collect(),
-        )
-      })
-      .collect();
-    let final_leaves: Vec<DensePolynomial<F>> = self
-      .final_tuples()
-      .iter()
-      .map(|tuples| {
-        DensePolynomial::new(
-          tuples
-            .iter()
-            .map(|tuple| Self::fingerprint(tuple, gamma, tau))
-            .collect(),
-        )
-      })
-      .collect();
+    let init_leaves: Vec<DensePolynomial<F>> = self.init_leaves(polynomials, gamma, tau);
+    let final_leaves: Vec<DensePolynomial<F>> = self.final_leaves(polynomials, gamma, tau);
     debug_assert_eq!(init_leaves.len(), final_leaves.len());
     let num_memories = init_leaves.len();
 
@@ -227,22 +187,24 @@ where
     )
   }
 
-  fn read_tuples(&self) -> Vec<Vec<Self::MemoryTuple>>;
-  fn write_tuples(&self) -> Vec<Vec<Self::MemoryTuple>>;
-  fn init_tuples(&self) -> Vec<Vec<Self::MemoryTuple>>;
-  fn final_tuples(&self) -> Vec<Vec<Self::MemoryTuple>>;
+  fn read_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn write_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn init_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn final_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
   fn fingerprint(tuple: &Self::MemoryTuple, gamma: &F, tau: &F) -> F;
   fn protocol_name() -> &'static [u8];
 }
 
-pub trait MemoryCheckingVerifier<F, G>: MemoryCheckingProver<F, G>
+pub trait MemoryCheckingVerifier<F, G, Polynomials>:
+  MemoryCheckingProver<F, G, Polynomials>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
+  Polynomials: StructuredPolynomials,
 {
   fn verify_memory_checking(
-    proof: NewMemoryCheckingProof<G, Self, Self::ReadWriteOpenings, Self::InitFinalOpenings>,
-    commitments: &Self::Commitment,
+    proof: NewMemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>,
+    commitments: &Polynomials::Commitment,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
     // Fiat-Shamir randomness for multiset hashes
@@ -322,22 +284,22 @@ where
     tau: &F,
   ) {
     let read_fingerprints: Vec<_> =
-      <Self as MemoryCheckingVerifier<_, _>>::read_tuples(read_write_openings)
+      <Self as MemoryCheckingVerifier<_, _, _>>::read_tuples(read_write_openings)
         .iter()
         .map(|tuple| Self::fingerprint(tuple, gamma, tau))
         .collect();
     let write_fingerprints: Vec<_> =
-      <Self as MemoryCheckingVerifier<_, _>>::write_tuples(read_write_openings)
+      <Self as MemoryCheckingVerifier<_, _, _>>::write_tuples(read_write_openings)
         .iter()
         .map(|tuple| Self::fingerprint(tuple, gamma, tau))
         .collect();
     let init_fingerprints: Vec<_> =
-      <Self as MemoryCheckingVerifier<_, _>>::init_tuples(init_final_openings)
+      <Self as MemoryCheckingVerifier<_, _, _>>::init_tuples(init_final_openings)
         .iter()
         .map(|tuple| Self::fingerprint(tuple, gamma, tau))
         .collect();
     let final_fingerprints: Vec<_> =
-      <Self as MemoryCheckingVerifier<_, _>>::final_tuples(init_final_openings)
+      <Self as MemoryCheckingVerifier<_, _, _>>::final_tuples(init_final_openings)
         .iter()
         .map(|tuple| Self::fingerprint(tuple, gamma, tau))
         .collect();

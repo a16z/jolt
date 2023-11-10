@@ -65,27 +65,11 @@ where
   /// Stored independently for use in sumchecking, combined into single DensePolynomial for commitment.
   pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
-  // TODO(sragss): Storing both the polys and the combined polys may get expensive from a memory
-  // perspective. Consider making an additional datastructure to handle the concept of combined polys
-  // with a single reference to underlying evaluations.
-  pub num_memories: usize,
-  pub C: usize,
-  pub memory_size: usize,
-  pub num_ops: usize,
-  pub num_instructions: usize,
-
-  pub materialized_subtables: Vec<Vec<F>>, // NUM_SUBTABLES sized
+  pub num_lookups: usize,
 
   /// NUM_SUBTABLES sized – uncommitted but used by the prover for GrandProducts sumchecking. Can be derived by verifier
   /// via summation of all instruction_flags used by a given subtable (/memory)
   pub subtable_flag_polys: Vec<DensePolynomial<F>>,
-
-  /// NUM_MEMORIES sized. Maps memory_to_subtable_map[memory_index] => subtable_index
-  /// where memory_index: (0, ... NUM_MEMORIES), subtable_index: (0, ... NUM_SUBTABLES).
-  pub memory_to_subtable_map: Vec<usize>,
-
-  /// NUM_MEMORIES sized. Maps memory_to_instructions_map[memory_index] => [instruction_index_0, ...]
-  pub memory_to_instructions_map: Vec<Vec<usize>>,
 }
 
 pub struct BatchedInstructionPolynomials<F: PrimeField> {
@@ -440,35 +424,135 @@ where
   }
 }
 
-impl<F, G> MemoryCheckingProver<F, G> for InstructionPolynomials<F, G>
+impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
+  MemoryCheckingProver<F, G, InstructionPolynomials<F, G>>
+  for InstructionLookups<F, G, InstructionSet, Subtables, C, M>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
+  InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+  Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
   type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
   type InitFinalOpenings = InstructionFinalOpenings<F, G>;
 
-  type MemoryTuple = (F, F, F, F); // (a, v, t, flags)
+  type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
-  fn fingerprint(inputs: &(F, F, F, F), gamma: &F, tau: &F) -> F {
+  fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
     let (a, v, t, flag) = *inputs;
-    flag * (t * gamma.square() + v * *gamma + a - tau) + F::one() - flag
+    match flag {
+      Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + F::one() - val,
+      None => t * gamma.square() + v * *gamma + a - tau,
+    }
   }
 
-  fn read_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
-    unimplemented!("todo");
+  fn read_leaves(
+    &self,
+    polynomials: &InstructionPolynomials<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        let dim_index = Self::memory_to_dimension_index(memory_index);
+        let subtable_index = Self::memory_to_subtable_index(memory_index);
+        let leaf_fingerprints = (0..polynomials.num_lookups)
+          .map(|i| {
+            (
+              polynomials.dim[dim_index][i],
+              polynomials.E_polys[memory_index][i],
+              polynomials.read_cts[memory_index][i],
+              Some(polynomials.subtable_flag_polys[subtable_index][i]),
+            )
+          })
+          .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
+          .collect();
+        DensePolynomial::new(leaf_fingerprints)
+      })
+      .collect()
   }
-  fn write_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
-    unimplemented!("todo");
+  fn write_leaves(
+    &self,
+    polynomials: &InstructionPolynomials<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        let dim_index = Self::memory_to_dimension_index(memory_index);
+        let subtable_index = Self::memory_to_subtable_index(memory_index);
+        let leaf_fingerprints = (0..polynomials.num_lookups)
+          .map(|i| {
+            (
+              polynomials.dim[dim_index][i],
+              polynomials.E_polys[memory_index][i],
+              polynomials.read_cts[memory_index][i] + F::one(),
+              Some(polynomials.subtable_flag_polys[subtable_index][i]),
+            )
+          })
+          .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
+          .collect();
+        DensePolynomial::new(leaf_fingerprints)
+      })
+      .collect()
   }
-  fn init_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
-    unimplemented!("todo");
+  fn init_leaves(
+    &self,
+    polynomials: &InstructionPolynomials<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        let dim_index = Self::memory_to_dimension_index(memory_index);
+        let subtable_index = Self::memory_to_subtable_index(memory_index);
+        let leaf_fingerprints = (0..polynomials.num_lookups)
+          .map(|i| {
+            (
+              F::from(i as u64),
+              self.materialized_subtables[subtable_index][i],
+              F::zero(),
+              None,
+            )
+          })
+          .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
+          .collect();
+        DensePolynomial::new(leaf_fingerprints)
+      })
+      .collect()
   }
-  fn final_tuples(&self) -> Vec<Vec<Self::MemoryTuple>> {
-    unimplemented!("todo");
+  fn final_leaves(
+    &self,
+    polynomials: &InstructionPolynomials<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        let dim_index = Self::memory_to_dimension_index(memory_index);
+        let subtable_index = Self::memory_to_subtable_index(memory_index);
+        let leaf_fingerprints = (0..polynomials.num_lookups)
+          .map(|i| {
+            (
+              F::from(i as u64),
+              self.materialized_subtables[subtable_index][i],
+              polynomials.final_cts[memory_index][i],
+              None,
+            )
+          })
+          .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
+          .collect();
+        DensePolynomial::new(leaf_fingerprints)
+      })
+      .collect()
   }
 
-  fn read_write_grand_product(&self, gamma: &F, tau: &F) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
+  fn read_write_grand_product(
+    &self,
+    polynomials: &InstructionPolynomials<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
     unimplemented!("todo");
   }
 
@@ -477,10 +561,14 @@ where
   }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G> for InstructionPolynomials<F, G>
+impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
+  MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>>
+  for InstructionLookups<F, G, InstructionSet, Subtables, C, M>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
+  InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+  Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
   fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
     unimplemented!("todo");
@@ -524,31 +612,53 @@ pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   openings: PrimarySumcheckOpenings<F, G>,
 }
 
-pub trait InstructionLookups<F, G>
+pub struct InstructionLookups<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
+  InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+  Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
-  type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
-  type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
+  _field: PhantomData<F>,
+  _group: PhantomData<G>,
+  _instructions: PhantomData<InstructionSet>,
+  _subtables: PhantomData<Subtables>,
+  ops: Vec<InstructionSet>,
+  materialized_subtables: Vec<Vec<F>>,
+}
 
-  const C: usize;
-  const M: usize;
-  const NUM_SUBTABLES: usize = Self::Subtables::COUNT;
-  const NUM_INSTRUCTIONS: usize = Self::InstructionSet::COUNT;
-  const NUM_MEMORIES: usize = Self::C * Self::Subtables::COUNT;
+impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
+  InstructionLookups<F, G, InstructionSet, Subtables, C, M>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+  InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+  Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
+{
+  const NUM_SUBTABLES: usize = Subtables::COUNT;
+  const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
+  const NUM_MEMORIES: usize = C * Subtables::COUNT;
 
-  fn prove_lookups(
-    ops: Vec<Self::InstructionSet>,
+  pub fn new(ops: Vec<InstructionSet>) -> Self {
+    let materialized_subtables = Self::materialize_subtables();
+
+    Self {
+      _field: PhantomData,
+      _group: PhantomData,
+      _instructions: PhantomData,
+      _subtables: PhantomData,
+      ops,
+      materialized_subtables,
+    }
+  }
+
+  pub fn prove_lookups(
+    &self,
     r: Vec<F>,
     transcript: &mut Transcript,
   ) -> InstructionLookupsProof<F, G> {
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let materialized_subtables: Vec<Vec<F>> = Self::materialize_subtables();
-    let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&ops);
-
-    let polynomials = Self::polynomialize(&ops, &subtable_lookup_indices, materialized_subtables);
+    let polynomials = self.polynomialize();
     let batched_polys = polynomials.batch();
     let commitment = InstructionPolynomials::commit(&batched_polys);
 
@@ -557,7 +667,7 @@ where
       .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
     let eq = EqPolynomial::new(r.to_vec());
-    let sumcheck_claim = Self::compute_sumcheck_claim(&ops, &polynomials.E_polys, &eq);
+    let sumcheck_claim = Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq);
 
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
@@ -566,11 +676,11 @@ where
     );
 
     let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
-    let num_rounds = ops.len().log_2();
+    let num_rounds = self.ops.len().log_2();
 
     // TODO: compartmentalize all primary sumcheck logic
     let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
-      SumcheckInstanceProof::prove_jolt::<G, Self, Transcript>(
+      SumcheckInstanceProof::prove_jolt::<G, Transcript>(
         &F::zero(),
         num_rounds,
         &mut eq_poly,
@@ -599,8 +709,13 @@ where
       openings: sumcheck_openings,
     };
 
-    let memory_checking =
-      polynomials.prove_memory_checking(&batched_polys, &commitment, transcript, &mut random_tape);
+    let memory_checking = self.prove_memory_checking(
+      &polynomials,
+      &batched_polys,
+      &commitment,
+      transcript,
+      &mut random_tape,
+    );
 
     InstructionLookupsProof {
       commitment,
@@ -627,6 +742,7 @@ where
       &proof.primary_sumcheck.claimed_evaluation,
     );
 
+    // TODO: compartmentalize all primary sumcheck logic
     let (claim_last, r_primary_sumcheck) = proof
       .primary_sumcheck
       .sumcheck_proof
@@ -655,26 +771,20 @@ where
       transcript,
     );
 
-    InstructionPolynomials::verify_memory_checking(
-      proof.memory_checking,
-      &proof.commitment,
-      transcript,
-    )?;
+    Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)?;
 
     Ok(())
   }
 
-  fn polynomialize(
-    ops: &Vec<Self::InstructionSet>,
-    subtable_lookup_indices: &Vec<Vec<usize>>,
-    materialized_subtables: Vec<Vec<F>>,
-  ) -> InstructionPolynomials<F, G> {
-    let m: usize = ops.len().next_power_of_two();
+  fn polynomialize(&self) -> InstructionPolynomials<F, G> {
+    let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&self.ops);
 
-    let mut opcodes: Vec<u8> = ops.iter().map(|op| op.to_opcode()).collect();
+    let m: usize = self.ops.len().next_power_of_two();
+
+    let mut opcodes: Vec<u8> = self.ops.iter().map(|op| op.to_opcode()).collect();
     opcodes.resize(m, 0);
 
-    let mut dim: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::C);
+    let mut dim: Vec<DensePolynomial<_>> = Vec::with_capacity(C);
     let mut read_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
     let mut final_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
     let mut E_polys: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
@@ -684,12 +794,12 @@ where
       let access_sequence: &Vec<usize> =
         &subtable_lookup_indices[Self::memory_to_dimension_index(memory_index)];
 
-      let mut final_cts_i = vec![0usize; Self::M];
+      let mut final_cts_i = vec![0usize; M];
       let mut read_cts_i = vec![0usize; m];
 
       for op_index in 0..m {
         let memory_address = access_sequence[op_index];
-        debug_assert!(memory_address < Self::M);
+        debug_assert!(memory_address < M);
 
         // TODO(JOLT-11): Simplify using subtable map + instruction_map
         // Only increment if the flag is used at this step
@@ -705,52 +815,46 @@ where
       final_cts.push(DensePolynomial::from_usize(&final_cts_i));
     }
 
-    for i in 0..Self::C {
+    for i in 0..C {
       let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
-
       dim.push(DensePolynomial::from_usize(access_sequence));
     }
 
     for subtable_index in 0..Self::NUM_SUBTABLES {
-      for i in 0..Self::C {
+      for i in 0..C {
         let subtable_lookups = subtable_lookup_indices[i]
           .iter()
-          .map(|&lookup_index| materialized_subtables[subtable_index][lookup_index])
+          .map(|&lookup_index| self.materialized_subtables[subtable_index][lookup_index])
           .collect();
         E_polys.push(DensePolynomial::new(subtable_lookups))
       }
     }
 
-    // TODO(JOLT-11)
     let mut instruction_flag_bitvectors: Vec<Vec<usize>> =
       vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
-    let mut subtable_flag_bitvectors: Vec<Vec<usize>> = vec![vec![0usize; m]; Self::NUM_SUBTABLES];
     for lookup_index in 0..m {
       let opcode_index = opcodes[lookup_index] as usize;
       instruction_flag_bitvectors[opcode_index][lookup_index] = 1;
-
-      let subtable_indices = &subtable_map[opcode_index];
-      for subtable_index in subtable_indices {
-        subtable_flag_bitvectors[*subtable_index][lookup_index] = 1;
-      }
     }
     let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
       .iter()
       .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
       .collect();
-    let subtable_flag_polys: Vec<DensePolynomial<F>> = subtable_flag_bitvectors
-      .iter()
-      .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
-      .collect();
 
-    let memory_to_subtable_map: Vec<usize> = (0..Self::NUM_MEMORIES)
-      .map(|memory_index| Self::memory_to_subtable_index(memory_index))
-      .collect();
-    let subtable_to_instructions_map: Vec<Vec<usize>> = Self::subtable_to_instruction_indices();
-    let memory_to_instructions_map: Vec<Vec<usize>> = memory_to_subtable_map
-      .iter()
-      .map(|subtable_index| subtable_to_instructions_map[*subtable_index].clone())
-      .collect();
+    // TODO: separate function
+    let mut subtable_flag_polys =
+      vec![DensePolynomial::new(vec![F::zero(); m]); Self::NUM_SUBTABLES];
+    for (i, instruction) in InstructionSet::iter().enumerate() {
+      let instruction_subtables: Vec<Subtables> = instruction
+        .subtables::<F>(C)
+        .iter()
+        .map(|subtable| Subtables::from(subtable.subtable_id()))
+        .collect();
+      for subtable in instruction_subtables {
+        let subtable_index: usize = subtable.into();
+        subtable_flag_polys[subtable_index] += &instruction_flag_polys[i];
+      }
+    }
 
     InstructionPolynomials {
       _group: PhantomData,
@@ -758,21 +862,14 @@ where
       read_cts,
       final_cts,
       instruction_flag_polys,
-      E_polys,
-      num_memories: Self::NUM_MEMORIES,
-      C: Self::C,
-      memory_size: Self::M,
-      num_ops: m,
-      num_instructions: Self::NUM_INSTRUCTIONS,
-      materialized_subtables,
       subtable_flag_polys,
-      memory_to_subtable_map,
-      memory_to_instructions_map,
+      E_polys,
+      num_lookups: m,
     }
   }
 
   fn compute_sumcheck_claim(
-    ops: &Vec<Self::InstructionSet>,
+    ops: &Vec<InstructionSet>,
     E_polys: &Vec<DensePolynomial<F>>,
     eq: &EqPolynomial<F>,
   ) -> F {
@@ -790,7 +887,7 @@ where
         filtered_operands.push(E_polys[memory_index][k]);
       }
 
-      let collation_eval = op.combine_lookups(&filtered_operands, Self::C, Self::M);
+      let collation_eval = op.combine_lookups(&filtered_operands, C, M);
       let combined_eval = eq_evals[k] * collation_eval;
       claim += combined_eval;
     }
@@ -798,17 +895,17 @@ where
     claim
   }
 
-  fn instruction_to_memory_indices(op: &Self::InstructionSet) -> Vec<usize> {
-    let instruction_subtables: Vec<Self::Subtables> = op
-      .subtables::<F>(Self::C)
+  fn instruction_to_memory_indices(op: &InstructionSet) -> Vec<usize> {
+    let instruction_subtables: Vec<Subtables> = op
+      .subtables::<F>(C)
       .iter()
-      .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
+      .map(|subtable| Subtables::from(subtable.subtable_id()))
       .collect();
 
-    let mut memory_indices = Vec::with_capacity(Self::C * instruction_subtables.len());
+    let mut memory_indices = Vec::with_capacity(C * instruction_subtables.len());
     for subtable in instruction_subtables {
       let index: usize = subtable.into();
-      memory_indices.extend((Self::C * index)..(Self::C * (index + 1)));
+      memory_indices.extend((C * index)..(C * (index + 1)));
     }
 
     memory_indices
@@ -819,44 +916,42 @@ where
     assert_eq!(flags.len(), Self::NUM_INSTRUCTIONS);
 
     let mut sum = F::zero();
-    for instruction in Self::InstructionSet::iter() {
+    for instruction in InstructionSet::iter() {
       let instruction_index = instruction.to_opcode() as usize;
       let memory_indices = Self::instruction_to_memory_indices(&instruction);
       let mut filtered_operands = Vec::with_capacity(memory_indices.len());
       for index in memory_indices {
         filtered_operands.push(vals[index]);
       }
-      sum += flags[instruction_index]
-        * instruction.combine_lookups(&filtered_operands, Self::C, Self::M);
+      sum += flags[instruction_index] * instruction.combine_lookups(&filtered_operands, C, M);
     }
 
     sum
   }
 
   fn sumcheck_poly_degree() -> usize {
-    Self::InstructionSet::iter()
-      .map(|instruction| instruction.g_poly_degree(Self::C))
+    InstructionSet::iter()
+      .map(|instruction| instruction.g_poly_degree(C))
       .max()
       .unwrap()
       + 2 // eq and flag
   }
 
   fn materialize_subtables() -> Vec<Vec<F>> {
-    let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Self::Subtables::COUNT);
-    for subtable in Self::Subtables::iter() {
-      subtables.push(subtable.materialize(Self::M));
+    let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Subtables::COUNT);
+    for subtable in Subtables::iter() {
+      subtables.push(subtable.materialize(M));
     }
     subtables
   }
 
-  fn subtable_lookup_indices(ops: &Vec<Self::InstructionSet>) -> Vec<Vec<usize>> {
+  fn subtable_lookup_indices(ops: &Vec<InstructionSet>) -> Vec<Vec<usize>> {
     let m = ops.len().next_power_of_two();
-    let log_m = Self::M.log_2();
-    let chunked_indices: Vec<Vec<usize>> =
-      ops.iter().map(|op| op.to_indices(Self::C, log_m)).collect();
+    let log_m = M.log_2();
+    let chunked_indices: Vec<Vec<usize>> = ops.iter().map(|op| op.to_indices(C, log_m)).collect();
 
-    let mut subtable_lookup_indices: Vec<Vec<usize>> = Vec::with_capacity(Self::C);
-    for i in 0..Self::C {
+    let mut subtable_lookup_indices: Vec<Vec<usize>> = Vec::with_capacity(C);
+    for i in 0..C {
       let mut access_sequence: Vec<usize> =
         chunked_indices.iter().map(|chunks| chunks[i]).collect();
       access_sequence.resize(m, 0);
@@ -868,13 +963,13 @@ where
   /// Computes which subtables indices are active for a given instruction.
   /// vec[instruction_index] = [subtable_id_a, subtable_id_b, ...]
   fn instruction_to_subtable_map() -> Vec<Vec<usize>> {
-    Self::InstructionSet::iter()
+    InstructionSet::iter()
       .map(|instruction| {
         // TODO(sragss): Box<dyn SubtableTrait>.into() should work via additional functionality on the trait .
         let instruction_subtable_ids: Vec<usize> = instruction
-          .subtables::<F>(Self::C)
+          .subtables::<F>(C)
           .iter()
-          .map(|subtable| Self::Subtables::from(subtable.subtable_id()).into())
+          .map(|subtable| Subtables::from(subtable.subtable_id()).into())
           .collect();
 
         instruction_subtable_ids
@@ -883,7 +978,7 @@ where
   }
 
   fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
-    let subtable = Self::Subtables::iter()
+    let subtable = Subtables::iter()
       .nth(Self::memory_to_subtable_index(memory_index))
       .expect("should exist");
     subtable.evaluate_mle(point)
@@ -893,11 +988,11 @@ where
     let mut indices: Vec<Vec<usize>> =
       vec![Vec::with_capacity(Self::NUM_INSTRUCTIONS); Self::NUM_SUBTABLES];
 
-    for instruction in Self::InstructionSet::iter() {
-      let instruction_subtables: Vec<Self::Subtables> = instruction
-        .subtables::<F>(Self::C)
+    for instruction in InstructionSet::iter() {
+      let instruction_subtables: Vec<Subtables> = instruction
+        .subtables::<F>(C)
         .iter()
-        .map(|subtable| Self::Subtables::from(subtable.subtable_id()))
+        .map(|subtable| Subtables::from(subtable.subtable_id()))
         .collect();
       for subtable in instruction_subtables {
         let subtable_index: usize = subtable.into();
@@ -910,12 +1005,12 @@ where
 
   /// Maps an index [0, NUM_MEMORIES) -> [0, NUM_SUBTABLES)
   fn memory_to_subtable_index(i: usize) -> usize {
-    i / Self::C
+    i / C
   }
 
   /// Maps an index [0, NUM_MEMORIES) -> [0, C)
   fn memory_to_dimension_index(i: usize) -> usize {
-    i % Self::C
+    i % C
   }
 
   fn protocol_name() -> &'static [u8] {

@@ -1,14 +1,24 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use std::any::TypeId;
+use strum::{EnumCount, IntoEnumIterator};
 
 use crate::lasso::memory_checking::MemoryCheckingProof;
 
-use self::instruction_lookups::InstructionLookups;
+use crate::jolt::{
+  instruction::{JoltInstruction, Opcode},
+  subtable::LassoSubtable,
+};
+
+use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
 use self::memory::MemoryOp;
 use self::pc::PCFingerprintProof;
 
-pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>>: InstructionLookups<F, G> {
+pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
+  type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
+  type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
+
   fn prove() {
     // preprocess?
     // emulate
@@ -17,6 +27,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>>: InstructionLookup
     // prove_lookups
     // prove_r1cs
     unimplemented!("todo");
+  }
+
+  fn prove_instruction_lookups(
+    ops: Vec<Self::InstructionSet>,
+    r: Vec<F>,
+    transcript: &mut Transcript,
+  ) -> InstructionLookupsProof<F, G> {
+    let instruction_lookups =
+      InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
+    instruction_lookups.prove_lookups(r, transcript)
   }
 
   fn prove_program_code(
