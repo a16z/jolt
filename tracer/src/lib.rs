@@ -1,2 +1,2 @@
-mod emulator;
 pub mod trace;
+pub mod emulator;
