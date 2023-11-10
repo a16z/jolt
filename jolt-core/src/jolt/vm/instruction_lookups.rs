@@ -593,7 +593,7 @@ where
       .collect()
   }
   fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
-        (0..Self::NUM_MEMORIES)
+    (0..Self::NUM_MEMORIES)
       .map(|memory_index| {
         (
           openings.dim_openings[memory_index],
@@ -883,20 +883,7 @@ where
       .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
       .collect();
 
-    // TODO: separate function
-    let mut subtable_flag_polys =
-      vec![DensePolynomial::new(vec![F::zero(); m]); Self::NUM_SUBTABLES];
-    for (i, instruction) in InstructionSet::iter().enumerate() {
-      let instruction_subtables: Vec<Subtables> = instruction
-        .subtables::<F>(C)
-        .iter()
-        .map(|subtable| Subtables::from(subtable.subtable_id()))
-        .collect();
-      for subtable in instruction_subtables {
-        let subtable_index: usize = subtable.into();
-        subtable_flag_polys[subtable_index] += &instruction_flag_polys[i];
-      }
-    }
+    let subtable_flag_polys = Self::subtable_flags(&instruction_flag_polys);
 
     InstructionPolynomials {
       _group: PhantomData,
@@ -952,6 +939,24 @@ where
     }
 
     sum
+  }
+
+  fn subtable_flags(instruction_flag_polys: &Vec<DensePolynomial<F>>) -> Vec<DensePolynomial<F>> {
+    let m = instruction_flag_polys[0].len();
+    let mut subtable_flag_polys =
+      vec![DensePolynomial::new(vec![F::zero(); m]); Self::NUM_SUBTABLES];
+    for (i, instruction) in InstructionSet::iter().enumerate() {
+      let instruction_subtables: Vec<Subtables> = instruction
+        .subtables::<F>(C)
+        .iter()
+        .map(|subtable| Subtables::from(subtable.subtable_id()))
+        .collect();
+      for subtable in instruction_subtables {
+        let subtable_index: usize = subtable.into();
+        subtable_flag_polys[subtable_index] += &instruction_flag_polys[i];
+      }
+    }
+    subtable_flag_polys
   }
 
   fn instruction_to_memory_indices(op: &InstructionSet) -> Vec<usize> {
