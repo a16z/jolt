@@ -365,6 +365,8 @@ where
 {
   final_openings: Vec<F>, // NUM_MEMORIES-sized
   final_opening_proof: CombinedTableEvalProof<G>,
+  a_init_final: Option<F>,      // Computed by verifier
+  v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
@@ -403,6 +405,8 @@ where
     Self {
       final_openings: openings,
       final_opening_proof,
+      a_init_final: None,
+      v_init_final: None,
     }
   }
 
@@ -566,17 +570,69 @@ where
   InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
   Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
+  fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
+    openings.a_init_final =
+      Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+    openings.v_init_final = Some(
+      Subtables::iter()
+        .map(|subtable| subtable.evaluate_mle(opening_point))
+        .collect(),
+    );
+  }
+
   fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
-    unimplemented!("todo");
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        (
+          openings.dim_openings[memory_index],
+          openings.E_poly_openings[memory_index],
+          openings.read_openings[memory_index],
+          Some(openings.flag_openings[memory_index]),
+        )
+      })
+      .collect()
   }
   fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
-    unimplemented!("todo");
+        (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        (
+          openings.dim_openings[memory_index],
+          openings.E_poly_openings[memory_index],
+          openings.read_openings[memory_index] + F::one(),
+          Some(openings.flag_openings[memory_index]),
+        )
+      })
+      .collect()
   }
   fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
-    unimplemented!("todo");
+    let a_init = openings.a_init_final.unwrap();
+    let v_init = openings.v_init_final.as_ref().unwrap();
+
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        (
+          a_init,
+          v_init[Self::memory_to_subtable_index(memory_index)],
+          F::zero(),
+          None,
+        )
+      })
+      .collect()
   }
   fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
-    unimplemented!("todo");
+    let a_init = openings.a_init_final.unwrap();
+    let v_init = openings.v_init_final.as_ref().unwrap();
+
+    (0..Self::NUM_MEMORIES)
+      .map(|memory_index| {
+        (
+          a_init,
+          v_init[Self::memory_to_subtable_index(memory_index)],
+          openings.final_openings[memory_index],
+          None,
+        )
+      })
+      .collect()
   }
 }
 
@@ -943,13 +999,6 @@ where
       subtable_lookup_indices.push(access_sequence);
     }
     subtable_lookup_indices
-  }
-
-  fn evaluate_memory_mle(memory_index: usize, point: &[F]) -> F {
-    let subtable = Subtables::iter()
-      .nth(Self::memory_to_subtable_index(memory_index))
-      .expect("should exist");
-    subtable.evaluate_mle(point)
   }
 
   /// Maps an index [0, NUM_MEMORIES) -> [0, NUM_SUBTABLES)

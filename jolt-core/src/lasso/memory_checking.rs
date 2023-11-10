@@ -203,7 +203,12 @@ where
   Polynomials: StructuredPolynomials,
 {
   fn verify_memory_checking(
-    proof: NewMemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>,
+    mut proof: NewMemoryCheckingProof<
+      G,
+      Polynomials,
+      Self::ReadWriteOpenings,
+      Self::InitFinalOpenings,
+    >,
     commitments: &Polynomials::Commitment,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
@@ -249,6 +254,8 @@ where
       .init_final_openings
       .verify_openings(commitments, &r_init_final, transcript)?;
 
+    Self::compute_verifier_openings(&mut proof.init_final_openings, &r_init_final);
+
     assert_eq!(claims_read_write.len(), claims_init_final.len());
     assert!(claims_read_write.len() % 2 == 0);
     let num_memories = claims_read_write.len() / 2;
@@ -271,6 +278,7 @@ where
     Ok(())
   }
 
+  fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>);
   fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
   fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
   fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple>;
