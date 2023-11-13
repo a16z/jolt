@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 
-use super::JoltLookupInstruction;
+use super::JoltInstruction;
 use crate::{
   jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
   utils::instruction_utils::chunk_and_concatenate_operands,
@@ -9,7 +9,7 @@ use crate::{
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SLTUInstruction(pub u64, pub u64);
 
-impl JoltLookupInstruction for SLTUInstruction {
+impl JoltInstruction for SLTUInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
     let mut sum = F::zero();
     let mut eq_prod = F::one();
@@ -40,7 +40,7 @@ mod test {
   use ark_std::{test_rng, One, Zero};
   use rand_chacha::rand_core::RngCore;
 
-  use crate::{jolt::instruction::JoltLookupInstruction, jolt_instruction_test};
+  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
   use super::SLTUInstruction;
 

@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::jolt::instruction::{JoltLookupInstruction, Opcode};
+use crate::jolt::instruction::{JoltInstruction, Opcode};
 use crate::jolt::vm::Jolt;
 use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;

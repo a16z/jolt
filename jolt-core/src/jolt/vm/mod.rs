@@ -7,7 +7,7 @@ use strum::{EnumCount, IntoEnumIterator};
 
 use crate::{
   jolt::{
-    instruction::{JoltLookupInstruction, Opcode},
+    instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable, vm::pc::PCPolys,
   },
   lasso::{memory_checking::MemoryCheckingProof, fingerprint_strategy::ROFlagsFingerprintProof},
@@ -175,7 +175,7 @@ pub enum MemoryOp {
 pub struct MemoryTuple<F: PrimeField>(F, F, F);
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-  type InstructionSet: JoltLookupInstruction + Opcode + IntoEnumIterator + EnumCount;
+  type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
   type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
   const MEMORY_OPS_PER_STEP: usize;

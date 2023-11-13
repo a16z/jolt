@@ -9,7 +9,7 @@ use super::Jolt;
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::{
-  bne::BNEInstruction, sll::SLLInstruction, xor::XORInstruction, JoltLookupInstruction, Opcode,
+  bne::BNEInstruction, sll::SLLInstruction, xor::XORInstruction, JoltInstruction, Opcode,
 };
 use crate::jolt::subtable::ltu::LtuSubtable;
 use crate::jolt::subtable::{eq::EqSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable};
@@ -18,7 +18,7 @@ macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(u8)]
         #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-        #[enum_dispatch(JoltLookupInstruction)]
+        #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl Opcode for $enum_name {}
     };
@@ -102,7 +102,7 @@ use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::jalr::JALRInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
   use crate::jolt::instruction::sub::SUBInstruction;
-use crate::jolt::instruction::{JoltLookupInstruction, Opcode};
+use crate::jolt::instruction::{JoltInstruction, Opcode};
   use crate::jolt::subtable::and::AndSubtable;
 use crate::jolt::subtable::eq::EqSubtable;
   use crate::jolt::subtable::identity::IdentitySubtable;
@@ -182,7 +182,7 @@ use crate::{
     // Setup VM / Instructions / Subtables
     #[repr(u8)]
     #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-    #[enum_dispatch(JoltLookupInstruction)]
+    #[enum_dispatch(JoltInstruction)]
     pub enum ReuseInstructionSet {
       BNE(BNEInstruction),
       BGEU(BGEUInstruction),
@@ -234,7 +234,7 @@ use crate::{
     // Setup VM / Instructions / Subtables
     #[repr(u8)]
     #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
-    #[enum_dispatch(JoltLookupInstruction)]
+    #[enum_dispatch(JoltInstruction)]
     pub enum ReuseInstructionSet {
       AND(ANDInstruction),
       SUB(SUBInstruction),

@@ -7,7 +7,7 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 
 use crate::{
-  jolt::instruction::JoltLookupInstruction,
+  jolt::instruction::JoltInstruction,
   lasso::fingerprint_strategy::MemBatchInfo,
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
@@ -374,7 +374,7 @@ pub struct SurgePrimarySumcheck<G: CurveGroup> {
 }
 
 // #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SurgeProof<G: CurveGroup, I: JoltLookupInstruction + Default + std::marker::Sync> {
+pub struct SurgeProof<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> {
   // TODO(sragss): JoltInstruction trait add Default
   generators: SurgeCommitmentGens<G>,
   commitments: SurgeCommitment<G>,
@@ -388,7 +388,7 @@ pub struct SurgeProof<G: CurveGroup, I: JoltLookupInstruction + Default + std::m
   _marker: PhantomData<I>,
 }
 
-impl<G: CurveGroup, I: JoltLookupInstruction + Default + std::marker::Sync> SurgeProof<G, I> {
+impl<G: CurveGroup, I: JoltInstruction + Default + std::marker::Sync> SurgeProof<G, I> {
   pub fn prove(
     ops: Vec<I>,
     C: usize, // TODO(sragss): move to const generic?

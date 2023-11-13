@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use super::JoltLookupInstruction;
+use super::JoltInstruction;
 use crate::jolt::subtable::{
   identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable,
   zero_lsb::ZeroLSBSubtable, LassoSubtable,
@@ -13,7 +13,7 @@ use crate::utils::instruction_utils::{
 #[derive(Copy, Clone, Default, Debug)]
 pub struct JALRInstruction(pub u64, pub u64);
 
-impl JoltLookupInstruction for JALRInstruction {
+impl JoltInstruction for JALRInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // C from IDEN, C from TruncateOverflow, C from ZeroLSB
     assert!(vals.len() == 3 * C);
@@ -63,7 +63,7 @@ mod test {
   use ark_std::test_rng;
   use rand_chacha::rand_core::RngCore;
 
-  use crate::{jolt::instruction::JoltLookupInstruction, jolt_instruction_test};
+  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
   use super::JALRInstruction;
 

@@ -1,4 +1,4 @@
-use super::{instruction::JoltLookupInstruction, vm::pc::ELFRow};
+use super::{instruction::JoltInstruction, vm::pc::ELFRow};
 
 
 // TODO(sragss): Move to memory checking.
@@ -8,7 +8,7 @@ pub enum MemoryOp {
 }
 
 trait JoltProvableTrace {
-    type JoltInstructionEnum: JoltLookupInstruction;
+    type JoltInstructionEnum: JoltInstruction;
     fn to_jolt_instructions(&self) -> Vec<Self::JoltInstructionEnum>;
     fn to_ram_ops(&self) -> Vec<MemoryOp>;
     fn to_pc_trace(&self) -> ELFRow;

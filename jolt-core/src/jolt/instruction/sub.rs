@@ -2,7 +2,7 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 
-use super::JoltLookupInstruction;
+use super::JoltInstruction;
 use crate::jolt::subtable::{
   identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
@@ -13,7 +13,7 @@ use crate::utils::instruction_utils::{
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SUBInstruction(pub u64, pub u64);
 
-impl JoltLookupInstruction for SUBInstruction {
+impl JoltInstruction for SUBInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // The first C are from IDEN and the last C are from LOWER9
     assert!(vals.len() == 2 * C);
@@ -60,7 +60,7 @@ mod test {
   use ark_std::test_rng;
   use rand_chacha::rand_core::RngCore;
 
-  use crate::{jolt::instruction::JoltLookupInstruction, jolt_instruction_test};
+  use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
   use super::SUBInstruction;
 
