@@ -1,6 +1,8 @@
 use ark_ff::PrimeField;
 use strum_macros::FromRepr;
 
+use crate::jolt::vm::pc::ELFRow;
+
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
 #[derive(Debug, PartialEq, Eq, FromRepr)]
 #[repr(u8)]
@@ -157,5 +159,23 @@ impl R1CSFlags for RV32IM {
         _ => false
     };
 
+    vec![
+        F::from(flag_0), 
+        F::from(flag_1), 
+        F::from(flag_2), 
+        F::from(flag_3), 
+        F::from(flag_4), 
+        F::from(flag_5), 
+        F::from(flag_6), 
+        F::from(flag_7), 
+        F::from(flag_8), 
+        F::from(flag_9), 
+        F::from(flag_10), 
+        F::from(flag_11), 
+        F::from(flag_12), 
+        F::from(flag_13), 
+        F::from(flag_13),
+        F::from(flag_14)
+    ]
   }
 }
