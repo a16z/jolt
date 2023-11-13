@@ -68,11 +68,12 @@ mod test {
     let mut rng = test_rng();
     const C: usize = 6;
     const M: usize = 1 << 22;
+    let operand_size = 22 / 2;
 
     for _ in 0..8 {
-      let (x, y) = (rng.next_u64(), rng.next_u64());
+      let (x, y) = (rng.next_u64(), rng.next_u64() % operand_size);
 
-      let entry: u64 = x.checked_shl((y % 64) as u32).unwrap_or(0);
+      let entry: u64 = x.checked_shl((y) as u32).unwrap_or(0);
 
       jolt_instruction_test!(SLLInstruction(x, y), entry.into());
     }
