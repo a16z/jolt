@@ -26,6 +26,9 @@ pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
         let pc = emulator.get_cpu().read_pc();
         emulator.tick();
 
+        // This is a trick to see if the program has terminated by throwing itself
+        // into an infinite loop. It seems to be a good heuristic for now but we
+        // should eventually migrate to an explicit shutdown signal.
         if prev_pc == pc {
             break;
         }

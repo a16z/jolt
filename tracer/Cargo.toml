@@ -4,7 +4,7 @@ version = "0.2.0"
 authors = [
     # author of the original riscv-rust codebase
     "Takahiro <hogehoge@gachapin.jp>",
-    # authors of the mofications for Jolt
+    # authors of the modifications for Jolt
     "Michael Zhu <mzhu@a16z.com>",
     "Sam Ragsdale <sragsdale@a16z.com>",
     "Noah Citron <ncitron@a16z.com>"

@@ -331,7 +331,7 @@ impl Cpu {
 
 		match self.decode(word).cloned() {
 			Ok(inst) => {
-                inst.tracer.unwrap()(&inst, self, word, instruction_address);
+                inst.trace.unwrap()(&inst, self, word, instruction_address);
                 self.tracer.capture_pre_state(self.x.clone());
 				let result = (inst.operation)(self, word, instruction_address);
 				self.x[0] = 0; // hardwired zero
@@ -1365,7 +1365,7 @@ struct Instruction {
 	name: &'static str,
 	operation: fn(cpu: &mut Cpu, word: u32, address: u64) -> Result<(), Trap>,
 	disassemble: fn(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String,
-    tracer: Option<fn(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64)>,
+    trace: Option<fn(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64)>,
 }
 
 struct FormatB {
@@ -1795,7 +1795,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -1807,7 +1807,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -1819,7 +1819,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -1831,7 +1831,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1851,7 +1851,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1871,7 +1871,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1891,7 +1891,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1911,7 +1911,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1935,7 +1935,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1959,7 +1959,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1979,7 +1979,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -1999,7 +1999,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -2019,7 +2019,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -2039,7 +2039,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2051,7 +2051,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2063,7 +2063,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000007f,
@@ -2075,7 +2075,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_u,
-        tracer: Some(trace_u),
+        trace: Some(trace_u),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2089,7 +2089,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_b,
-        tracer: Some(trace_b),
+        trace: Some(trace_b),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2103,7 +2103,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_b,
-        tracer: Some(trace_b),
+        trace: Some(trace_b),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2117,7 +2117,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_b,
-        tracer: Some(trace_b),
+        trace: Some(trace_b),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2131,7 +2131,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_b,
-        tracer: Some(trace_b),
+        trace: Some(trace_b),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2145,7 +2145,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_b,
-        tracer: Some(trace_b),
+        trace: Some(trace_b),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2159,7 +2159,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_b,
-        tracer: Some(trace_b),
+        trace: Some(trace_b),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2180,7 +2180,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_csr,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2200,7 +2200,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_csr,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2221,7 +2221,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_csr,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2241,7 +2241,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_csr,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2262,7 +2262,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_csr,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2282,7 +2282,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_csr,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2302,7 +2302,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2320,7 +2320,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2338,7 +2338,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2358,7 +2358,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xffffffff,
@@ -2369,7 +2369,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xffffffff,
@@ -2388,7 +2388,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			});
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00007f,
@@ -2400,7 +2400,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0007f,
@@ -2412,7 +2412,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0007f,
@@ -2425,7 +2425,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0007f,
@@ -2437,7 +2437,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0007f,
@@ -2449,7 +2449,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0007f,
@@ -2462,7 +2462,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0007f,
@@ -2475,7 +2475,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00007f,
@@ -2498,7 +2498,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2509,7 +2509,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2520,7 +2520,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2535,7 +2535,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2550,7 +2550,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2565,7 +2565,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2580,7 +2580,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2595,7 +2595,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0600007f,
@@ -2608,7 +2608,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r2,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00007f,
@@ -2621,7 +2621,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0707f,
@@ -2633,7 +2633,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0707f,
@@ -2645,7 +2645,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0707f,
@@ -2657,7 +2657,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfff0707f,
@@ -2669,7 +2669,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0600007f,
@@ -2681,7 +2681,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r2,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2692,7 +2692,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			cpu.mmu.store_doubleword(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.f[f.rs2].to_bits())
 		},
 		disassemble: dump_format_s,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2707,7 +2707,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2722,7 +2722,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00007f,
@@ -2735,7 +2735,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2746,7 +2746,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			cpu.mmu.store_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.f[f.rs2].to_bits() as u32)
 		},
 		disassemble: dump_format_s,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000007f,
@@ -2759,7 +2759,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_j,
-        tracer: Some(trace_j),
+        trace: Some(trace_j),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2786,7 +2786,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			s += &format!(")");
 			s
 		},
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2801,7 +2801,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2816,7 +2816,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2831,7 +2831,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2846,7 +2846,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2861,7 +2861,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0xf9f0707f,
@@ -2881,7 +2881,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf9f0707f,
@@ -2901,7 +2901,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000007f,
@@ -2913,7 +2913,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_u,
-        tracer: Some(trace_u),
+        trace: Some(trace_u),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2928,7 +2928,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -2943,7 +2943,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i_mem,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2955,7 +2955,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2974,7 +2974,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -2993,7 +2993,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3012,7 +3012,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3024,7 +3024,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xffffffff,
@@ -3056,7 +3056,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3068,7 +3068,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3080,7 +3080,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3100,7 +3100,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3117,7 +3117,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3134,7 +3134,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3154,7 +3154,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3165,7 +3165,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			cpu.mmu.store(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u8)
 		},
 		disassemble: dump_format_s,
-        tracer: Some(trace_s),
+        trace: Some(trace_s),
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -3187,7 +3187,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xf800707f,
@@ -3209,7 +3209,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3220,7 +3220,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			cpu.mmu.store_doubleword(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u64)
 		},
 		disassemble: dump_format_s,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe007fff,
@@ -3231,7 +3231,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3242,7 +3242,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			cpu.mmu.store_halfword(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u16)
 		},
 		disassemble: dump_format_s,
-        tracer: Some(trace_s),
+        trace: Some(trace_s),
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3254,7 +3254,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0xfc00707f,
@@ -3271,7 +3271,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3284,7 +3284,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3296,7 +3296,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3311,7 +3311,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3326,7 +3326,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3341,7 +3341,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3356,7 +3356,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3368,7 +3368,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0xfc00707f,
@@ -3385,7 +3385,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0xfc00707f,
@@ -3398,7 +3398,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3410,7 +3410,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xffffffff,
@@ -3442,7 +3442,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3454,7 +3454,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0xfc00707f,
@@ -3471,7 +3471,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 	Instruction {
 		mask: 0xfc00707f,
@@ -3488,7 +3488,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3500,7 +3500,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3512,7 +3512,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3524,7 +3524,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3535,7 +3535,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			cpu.mmu.store_word(cpu.x[f.rs1].wrapping_add(f.imm) as u64, cpu.x[f.rs2] as u32)
 		},
 		disassemble: dump_format_s,
-        tracer: Some(trace_s),
+        trace: Some(trace_s),
 	},
 	Instruction {
 		mask: 0xffffffff,
@@ -3546,7 +3546,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			panic!("URET instruction is not implemented yet.");
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xffffffff,
@@ -3557,7 +3557,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_empty,
-        tracer: None,
+        trace: None,
 	},
 	Instruction {
 		mask: 0xfe00707f,
@@ -3569,7 +3569,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_r,
-        tracer: Some(trace_r),
+        trace: Some(trace_r),
 	},
 	Instruction {
 		mask: 0x0000707f,
@@ -3581,7 +3581,7 @@ const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 			Ok(())
 		},
 		disassemble: dump_format_i,
-        tracer: Some(trace_i),
+        trace: Some(trace_i),
 	},
 ];
 

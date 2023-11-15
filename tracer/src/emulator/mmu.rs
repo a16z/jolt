@@ -88,6 +88,7 @@ impl Mmu {
   /// # Arguments
   /// * `xlen`
   /// * `terminal`
+  /// * `tracer`
   pub fn new(xlen: Xlen, terminal: Box<dyn Terminal>, tracer: Rc<Tracer>) -> Self {
     let mut dtb = vec![0; DTB_SIZE];
 
