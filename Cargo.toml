@@ -19,7 +19,7 @@ license-file = "LICENSE"
 keywords = ["zkSNARKs", "cryptography", "proofs"]
 
 [workspace]
-members = ["jolt-core"]
+members = ["jolt-core", "tracer"]
 
 [profile.release]
 debug = true
