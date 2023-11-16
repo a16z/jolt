@@ -463,8 +463,7 @@ where
     let v_read_write_openings = openings.1;
     let t_read_opening = openings.2;
 
-    let mut combined_openings: Vec<G::ScalarField> =
-      vec![a_read_write_opening.clone(), t_read_opening.clone()];
+    let mut combined_openings: Vec<F> = vec![a_read_write_opening.clone(), t_read_opening.clone()];
     combined_openings.extend(v_read_write_openings.iter());
 
     let read_write_opening_proof = CombinedTableEvalProof::prove(
@@ -490,7 +489,7 @@ where
     opening_point: &Vec<F>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
-    let mut combined_openings: Vec<G::ScalarField> = vec![
+    let mut combined_openings: Vec<F> = vec![
       self.a_read_write_opening.clone(),
       self.t_read_opening.clone(),
     ];
@@ -543,7 +542,7 @@ where
     let v_init_final = openings.0;
     let t_final = openings.1;
 
-    let mut combined_openings: Vec<G::ScalarField> = vec![t_final];
+    let mut combined_openings: Vec<F> = vec![t_final];
     combined_openings.extend(v_init_final.iter());
     let init_final_opening_proof = CombinedTableEvalProof::prove(
       &polynomials.combined_init_final,
@@ -568,7 +567,7 @@ where
     opening_point: &Vec<F>,
     transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
-    let mut combined_openings: Vec<G::ScalarField> = vec![self.t_final.clone()];
+    let mut combined_openings: Vec<F> = vec![self.t_final.clone()];
     combined_openings.extend(self.v_init_final.iter());
 
     self.init_final_opening_proof.verify(

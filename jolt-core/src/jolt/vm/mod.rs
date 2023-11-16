@@ -1,18 +1,21 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::Read;
 use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::lasso::memory_checking::MemoryCheckingProof;
+use crate::lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver};
 
 use crate::jolt::{
   instruction::{JoltInstruction, Opcode},
   subtable::LassoSubtable,
 };
+use crate::poly::structured_poly::StructuredPolynomials;
+use crate::utils::random::RandomTape;
 
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
-use self::memory::MemoryOp;
+use self::read_write_memory::{MemoryOp, ReadWriteMemory};
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
@@ -90,72 +93,23 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     // )
   }
 
-  fn prove_memory(
-    memory_trace: Vec<MemoryOp>,
-    memory_size: usize,
-    r_mem_check: &(F, F),
-    transcript: &mut Transcript,
-  ) {
-    // let (gamma, tau) = r_mem_check;
-    // let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
+  fn prove_memory(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) {
+    todo!("Load program bytecode into memory");
 
-    // let m: usize = memory_trace.len().next_power_of_two();
-    // // TODO(moodlezoup): resize memory_trace
+    let memory: ReadWriteMemory<F, G> = ReadWriteMemory::new(memory_trace, memory_size, transcript);
+    let batched_polys = memory.batch();
+    let commitments = ReadWriteMemory::commit(&batched_polys);
 
-    // let mut timestamp: u64 = 0;
+    let mut random_tape = RandomTape::new(b"proof");
+    memory.prove_memory_checking(
+      &memory,
+      &batched_polys,
+      &commitments,
+      transcript,
+      &mut random_tape,
+    );
 
-    // let mut read_set: Vec<(F, F, F)> = Vec::with_capacity(m);
-    // let mut write_set: Vec<(F, F, F)> = Vec::with_capacity(m);
-    // let mut final_set: Vec<(F, F, F)> = (0..memory_size)
-    //   .map(|i| (F::from(i as u64), F::zero(), F::zero()))
-    //   .collect();
-
-    // for memory_access in memory_trace {
-    //   match memory_access {
-    //     MemoryOp::Read(a, v) => {
-    //       read_set.push((F::from(a), F::from(v), F::from(timestamp)));
-    //       write_set.push((F::from(a), F::from(v), F::from(timestamp + 1)));
-    //       final_set[a as usize] = (F::from(a), F::from(v), F::from(timestamp + 1));
-    //     }
-    //     MemoryOp::Write(a, v_old, v_new) => {
-    //       read_set.push((F::from(a), F::from(v_old), F::from(timestamp)));
-    //       write_set.push((F::from(a), F::from(v_new), F::from(timestamp + 1)));
-    //       final_set[a as usize] = (F::from(a), F::from(v_new), F::from(timestamp + 1));
-    //     }
-    //   }
-    //   timestamp += 1;
-    // }
-
-    // let init_poly = DensePolynomial::new(
-    //   (0..memory_size)
-    //     .map(|i| {
-    //       // addr is given by i, init value is 0, and ts = 0
-    //       hash_func(&F::from(i as u64), &F::zero(), &F::zero())
-    //     })
-    //     .collect::<Vec<F>>(),
-    // );
-    // let read_poly = DensePolynomial::new(
-    //   read_set
-    //     .iter()
-    //     .map(|(a, v, t)| hash_func(a, v, t))
-    //     .collect::<Vec<F>>(),
-    // );
-    // let write_poly = DensePolynomial::new(
-    //   write_set
-    //     .iter()
-    //     .map(|(a, v, t)| hash_func(a, v, t))
-    //     .collect::<Vec<F>>(),
-    // );
-    // let final_poly = DensePolynomial::new(
-    //   final_set
-    //     .iter()
-    //     .map(|(a, v, t)| hash_func(a, v, t))
-    //     .collect::<Vec<F>>(),
-    // );
-
-    // Memory checking
-    // Lasso range cheeck on read timestamps to enforce each timestamp read at step i is less than i
-    unimplemented!("todo");
+    todo!("Lasso lookups to enforce timestamp validity")
   }
 
   fn prove_r1cs() {
@@ -164,6 +118,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 }
 
 pub mod instruction_lookups;
-pub mod memory;
 pub mod pc;
+pub mod read_write_memory;
 pub mod test_vm;
