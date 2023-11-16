@@ -17,6 +17,7 @@ use crate::{
     eq_poly::EqPolynomial,
     identity_poly::IdentityPolynomial,
     structured_poly::{StructuredOpeningProof, StructuredPolynomials},
+    unipoly::{CompressedUniPoly, UniPoly},
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
@@ -731,7 +732,7 @@ where
 
     // TODO: compartmentalize all primary sumcheck logic
     let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
-      SumcheckInstanceProof::prove_jolt::<G, Transcript>(
+      Self::prove_primary_sumcheck(
         &F::zero(),
         num_rounds,
         &mut eq_poly,
@@ -890,6 +891,173 @@ where
       subtable_flag_polys,
       E_polys,
     }
+  }
+
+  /// Prove Jolt primary sumcheck including instruction collation.
+  ///
+  /// Computes \sum{ eq(r,x) * [ flags_0(x) * g_0(E(x)) + flags_1(x) * g_1(E(x)) + ... + flags_{NUM_INSTRUCTIONS}(E(x)) * g_{NUM_INSTRUCTIONS}(E(x)) ]}
+  /// via the sumcheck protocol.
+  /// Note: These E(x) terms differ from term to term depending on the memories used in the instruction.
+  ///
+  /// Returns: (SumcheckProof, Random evaluation point, claimed evaluations of polynomials)
+  ///
+  /// Params:
+  /// - `claim`: Claimed sumcheck evaluation.
+  /// - `num_rounds`: Number of rounds to run sumcheck. Corresponds to the number of free bits or free variables in the polynomials.
+  /// - `memory_polys`: Each of the `E` polynomials or "dereferenced memory" polynomials.
+  /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
+  /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
+  /// - `transcript`: Fiat-shamir transcript.
+  fn prove_primary_sumcheck(
+    _claim: &F,
+    num_rounds: usize,
+    eq_poly: &mut DensePolynomial<F>,
+    memory_polys: &mut Vec<DensePolynomial<F>>,
+    flag_polys: &mut Vec<DensePolynomial<F>>,
+    degree: usize,
+    transcript: &mut Transcript,
+  ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>) {
+    // Check all polys are the same size
+    let poly_len = eq_poly.len();
+    for index in 0..Self::NUM_MEMORIES {
+      debug_assert_eq!(memory_polys[index].len(), poly_len);
+    }
+    for index in 0..Self::NUM_INSTRUCTIONS {
+      debug_assert_eq!(flag_polys[index].len(), poly_len);
+    }
+
+    let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
+    let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+
+    let num_eval_points = degree + 1;
+    for _round in 0..num_rounds {
+      let mle_len = eq_poly.len();
+      let mle_half = mle_len / 2;
+
+      // Store evaluations of each polynomial at all poly_size / 2 points
+      let mut eq_evals: Vec<Vec<F>> = vec![Vec::with_capacity(num_eval_points); mle_half];
+      let mut multi_flag_evals: Vec<Vec<Vec<F>>> =
+        vec![vec![Vec::with_capacity(num_eval_points); mle_half]; Self::NUM_INSTRUCTIONS];
+      let mut multi_memory_evals: Vec<Vec<Vec<F>>> =
+        vec![vec![Vec::with_capacity(num_eval_points); mle_half]; Self::NUM_MEMORIES];
+
+      let evaluate_mles_iterator = (0..mle_half).into_iter();
+
+      // Loop over half MLE size (size of MLE next round)
+      //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
+      //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
+      // After: Sum over MLE elements (with combine)
+
+      for mle_leaf_index in evaluate_mles_iterator {
+        // 0
+        eq_evals[mle_leaf_index].push(eq_poly[mle_leaf_index]);
+        for flag_instruction_index in 0..multi_flag_evals.len() {
+          multi_flag_evals[flag_instruction_index][mle_leaf_index]
+            .push(flag_polys[flag_instruction_index][mle_leaf_index]);
+        }
+        for memory_index in 0..multi_memory_evals.len() {
+          multi_memory_evals[memory_index][mle_leaf_index]
+            .push(memory_polys[memory_index][mle_leaf_index]);
+        }
+
+        // 1
+        eq_evals[mle_leaf_index].push(eq_poly[mle_half + mle_leaf_index]);
+        for flag_instruction_index in 0..multi_flag_evals.len() {
+          multi_flag_evals[flag_instruction_index][mle_leaf_index]
+            .push(flag_polys[flag_instruction_index][mle_half + mle_leaf_index]);
+        }
+        for memory_index in 0..multi_memory_evals.len() {
+          multi_memory_evals[memory_index][mle_leaf_index]
+            .push(memory_polys[memory_index][mle_half + mle_leaf_index]);
+        }
+
+        // (2, ...)
+        for eval_index in 2..num_eval_points {
+          let eq_eval = eq_evals[mle_leaf_index][eval_index - 1]
+            + eq_poly[mle_half + mle_leaf_index]
+            - eq_poly[mle_leaf_index];
+          eq_evals[mle_leaf_index].push(eq_eval);
+
+          for flag_instruction_index in 0..multi_flag_evals.len() {
+            let flag_eval = multi_flag_evals[flag_instruction_index][mle_leaf_index]
+              [eval_index - 1]
+              + flag_polys[flag_instruction_index][mle_half + mle_leaf_index]
+              - flag_polys[flag_instruction_index][mle_leaf_index];
+            multi_flag_evals[flag_instruction_index][mle_leaf_index].push(flag_eval);
+          }
+          for memory_index in 0..multi_memory_evals.len() {
+            let memory_eval = multi_memory_evals[memory_index][mle_leaf_index][eval_index - 1]
+              + memory_polys[memory_index][mle_half + mle_leaf_index]
+              - memory_polys[memory_index][mle_leaf_index];
+            multi_memory_evals[memory_index][mle_leaf_index].push(memory_eval);
+          }
+        }
+      }
+
+      // Accumulate inner terms.
+      // S({0,1,... num_eval_points}) = eq * [ INNER TERMS ] = eq * [ flags_0 * g_0(E_0) + flags_1 * g_1(E_1)]
+      let mut evaluations: Vec<F> = Vec::with_capacity(num_eval_points);
+      for eval_index in 0..num_eval_points {
+        evaluations.push(F::zero());
+        for instruction in InstructionSet::iter() {
+          let instruction_index = instruction.to_opcode() as usize;
+          let memory_indices: Vec<usize> = Self::instruction_to_memory_indices(&instruction);
+
+          for mle_leaf_index in 0..mle_half {
+            let mut terms = Vec::with_capacity(memory_indices.len());
+            for memory_index in &memory_indices {
+              terms.push(multi_memory_evals[*memory_index][mle_leaf_index][eval_index]);
+            }
+
+            let instruction_collation_eval = instruction.combine_lookups(&terms, C, M);
+            let flag_eval = multi_flag_evals[instruction_index][mle_leaf_index][eval_index];
+
+            // TODO(sragss): May have an excessive group mul here.
+            evaluations[eval_index] +=
+              eq_evals[mle_leaf_index][eval_index] * flag_eval * instruction_collation_eval;
+          }
+        }
+      } // End accumulation
+
+      let round_uni_poly = UniPoly::from_evals(&evaluations);
+      compressed_polys.push(round_uni_poly.compress());
+
+      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
+        &round_uni_poly,
+        b"poly",
+        transcript,
+      );
+
+      let r_j =
+        <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+      random_vars.push(r_j);
+
+      // Bind all polys
+      eq_poly.bound_poly_var_top(&r_j);
+      for flag_instruction_index in 0..flag_polys.len() {
+        flag_polys[flag_instruction_index].bound_poly_var_top(&r_j);
+      }
+      for memory_index in 0..multi_memory_evals.len() {
+        memory_polys[memory_index].bound_poly_var_top(&r_j);
+      }
+    } // End rounds
+
+    // Pass evaluations at point r back in proof:
+    // - flags(r) * NUM_INSTRUCTIONS
+    // - E(r) * NUM_SUBTABLES
+
+    // Polys are fully defined so we can just take the first (and only) evaluation
+    let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
+    let memory_evals = (0..memory_polys.len())
+      .map(|i| memory_polys[i][0])
+      .collect();
+
+    (
+      SumcheckInstanceProof::new(compressed_polys),
+      random_vars,
+      flag_evals,
+      memory_evals,
+    )
   }
 
   fn compute_sumcheck_claim(

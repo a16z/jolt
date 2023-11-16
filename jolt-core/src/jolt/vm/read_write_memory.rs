@@ -418,7 +418,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     }
 
     // Pad with reads to register 0
-    for _ in (0..m - trace_len) {
+    for _ in 0..m - trace_len {
       a_read_write.push(0);
       v_read.push(0);
       v_write.push(0);
