@@ -11,15 +11,17 @@ use crate::utils::instruction_utils::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct ADDInstruction(pub u64, pub u64);
+pub struct ADDInstruction<const W: usize>(pub u64, pub u64);
 
-impl JoltInstruction for ADDInstruction {
+pub type ADD32Instruction = ADDInstruction<32>;
+pub type ADD64Instruction = ADDInstruction<64>;
+
+impl<const W: usize> JoltInstruction for ADDInstruction<W> {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // The first C are from IDEN and the last C are from LOWER9
     assert!(vals.len() == 2 * C);
 
-    const WORD_SIZE: usize = 64;
-    let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
+    let msb_chunk_index = C - (W / log2(M) as usize) - 1;
 
     let mut vals_by_subtable = vals.chunks_exact(C);
     let identity = vals_by_subtable.next().unwrap();
@@ -72,7 +74,7 @@ mod test {
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
-      jolt_instruction_test!(ADDInstruction(x, y), (x.overflowing_add(y)).0.into());
+      jolt_instruction_test!(ADDInstruction::<64>(x, y), (x.overflowing_add(y)).0.into());
     }
   }
 }

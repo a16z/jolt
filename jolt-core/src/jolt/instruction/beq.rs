@@ -7,9 +7,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BNEInstruction(pub u64, pub u64);
+pub struct BEQInstruction(pub u64, pub u64);
 
-impl JoltInstruction for BNEInstruction {
+impl JoltInstruction for BEQInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], _: usize, _: usize) -> F {
     F::one() - vals.iter().product::<F>()
   }
@@ -35,7 +35,7 @@ mod test {
 
   use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-  use super::BNEInstruction;
+  use super::BEQInstruction;
 
   #[test]
   fn beq_instruction_e2e() {
@@ -45,11 +45,11 @@ mod test {
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
-      jolt_instruction_test!(BNEInstruction(x, y), (x != y).into());
+      jolt_instruction_test!(BEQInstruction(x, y), (x != y).into());
     }
     for _ in 0..256 {
       let x = rng.next_u64();
-      jolt_instruction_test!(BNEInstruction(x, x), Fr::zero());
+      jolt_instruction_test!(BEQInstruction(x, x), Fr::zero());
     }
   }
 }
