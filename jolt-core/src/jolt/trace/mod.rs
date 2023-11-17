@@ -3,7 +3,7 @@ use ark_ff::PrimeField;
 use super::{instruction::JoltInstruction, vm::pc::ELFRow};
 
 
-// TODO(sragss): Move to memory checking.
+#[derive(Debug, PartialEq)]
 pub enum MemoryOp {
     Read(u64, u64),       // (address, value)
     Write(u64, u64, u64), // (address, old_value, new_value)
@@ -16,6 +16,10 @@ impl MemoryOp {
 
     fn new_write(address: u64, old_value: u64, new_value: u64) -> Self {
         Self::Write(address, old_value, new_value)
+    }
+
+    fn no_op() -> Self {
+        Self::Read(0, 0)
     }
 }
 

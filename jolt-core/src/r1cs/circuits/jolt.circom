@@ -308,10 +308,10 @@ template JoltMain(N) {
     // in the case of concatenation, the chunks are [x_i || y_i]
     signal input chunks_x[N * C()];
     signal input chunks_y[N * C()];
-    signal input chunks_query[N * C()];
+    signal input chunks_query[N * C()]; // dim_i
 
     // The 'a' vector from Lasso containing the table entries looked up.
-    signal input lookup_outputs[N]; 
+    signal input lookup_outputs[N];
 
     // The individual op_flags that guide the circuit. 
     // Unpacked from op_flags_packed, which is read from code.
