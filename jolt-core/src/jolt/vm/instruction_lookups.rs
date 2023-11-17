@@ -1,6 +1,7 @@
 use ark_ec::CurveGroup;
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use itertools::interleave;
 use merlin::Transcript;
 use std::any::TypeId;
 use std::marker::PhantomData;
@@ -21,7 +22,7 @@ use crate::{
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::BatchedGrandProductCircuit,
+    grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
     sumcheck::SumcheckInstanceProof,
   },
   utils::{
@@ -458,14 +459,13 @@ where
     (0..Self::NUM_MEMORIES)
       .map(|memory_index| {
         let dim_index = Self::memory_to_dimension_index(memory_index);
-        let subtable_index = Self::memory_to_subtable_index(memory_index);
         let leaf_fingerprints = (0..self.num_lookups)
           .map(|i| {
             (
               polynomials.dim[dim_index][i],
               polynomials.E_polys[memory_index][i],
               polynomials.read_cts[memory_index][i],
-              Some(polynomials.subtable_flag_polys[subtable_index][i]),
+              None,
             )
           })
           .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
@@ -483,14 +483,13 @@ where
     (0..Self::NUM_MEMORIES)
       .map(|memory_index| {
         let dim_index = Self::memory_to_dimension_index(memory_index);
-        let subtable_index = Self::memory_to_subtable_index(memory_index);
         let leaf_fingerprints = (0..self.num_lookups)
           .map(|i| {
             (
               polynomials.dim[dim_index][i],
               polynomials.E_polys[memory_index][i],
               polynomials.read_cts[memory_index][i] + F::one(),
-              Some(polynomials.subtable_flag_polys[subtable_index][i]),
+              None,
             )
           })
           .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
@@ -554,7 +553,49 @@ where
     gamma: &F,
     tau: &F,
   ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-    todo!();
+    let read_fingerprints: Vec<DensePolynomial<F>> = self.read_leaves(polynomials, gamma, tau);
+    let write_fingerprints: Vec<DensePolynomial<F>> = self.write_leaves(polynomials, gamma, tau);
+    debug_assert_eq!(read_fingerprints.len(), write_fingerprints.len());
+
+    let mut circuits = Vec::with_capacity(2 * Self::NUM_MEMORIES);
+    let mut read_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
+    let mut write_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
+
+    for i in 0..Self::NUM_MEMORIES {
+      let mut toggled_read_fingerprints = read_fingerprints[i].evals();
+      let mut toggled_write_fingerprints = write_fingerprints[i].evals();
+      let subtable_index = Self::memory_to_subtable_index(i);
+      for j in 0..self.num_lookups {
+        let flag = polynomials.subtable_flag_polys[subtable_index][j];
+        if flag == F::zero() {
+          toggled_read_fingerprints[j] = F::one();
+          toggled_write_fingerprints[j] = F::one();
+        }
+      }
+
+      let read_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
+      let write_circuit =
+        GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+      read_hashes.push(read_circuit.evaluate());
+      write_hashes.push(write_circuit.evaluate());
+      circuits.push(read_circuit);
+      circuits.push(write_circuit);
+    }
+
+    // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
+    let expanded_flag_map: Vec<usize> = (0..2 * Self::NUM_MEMORIES)
+      .map(|i| Self::memory_to_subtable_index(i / 2))
+      .collect();
+
+    // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
+    let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
+      circuits,
+      polynomials.subtable_flag_polys.clone(),
+      expanded_flag_map,
+      interleave(read_fingerprints, write_fingerprints).collect(),
+    );
+
+    (batched_circuits, read_hashes, write_hashes)
   }
 
   fn protocol_name() -> &'static [u8] {

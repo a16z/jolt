@@ -1,8 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::jolt::instruction::{JoltInstruction, Opcode};
-use crate::jolt::vm::instruction_lookups::InstructionLookups;
 use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
@@ -14,7 +12,6 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::One;
 use merlin::Transcript;
-use strum::IntoEnumIterator;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
