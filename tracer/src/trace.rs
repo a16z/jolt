@@ -11,18 +11,18 @@ pub struct TraceRow {
 pub struct Instruction {
     pub address: u64,
     pub opcode: &'static str,
-    pub rs1: Option<usize>,
-    pub rs2: Option<usize>,
-    pub rd: Option<usize>,
-    pub imm: Option<i128>,
+    pub rs1: Option<u64>,
+    pub rs2: Option<u64>,
+    pub rd: Option<u64>,
+    pub imm: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct RegisterState {
-    pub rs1_val: Option<i64>,
-    pub rs2_val: Option<i64>,
-    pub rd_pre_val: Option<i64>,
-    pub rd_post_val: Option<i64>,
+    pub rs1_val: Option<u64>,
+    pub rs2_val: Option<u64>,
+    pub rd_pre_val: Option<u64>,
+    pub rd_post_val: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -49,6 +49,8 @@ impl Tracer {
     }
 
     pub fn start_instruction(&self, inst: Instruction) {
+        let mut inst = inst;
+        inst.address = inst.address as u32 as u64;
         *self.open.try_borrow_mut().unwrap() = true;
         self.rows.try_borrow_mut().unwrap().push(TraceRow {
             instruction: inst,
@@ -65,7 +67,7 @@ impl Tracer {
         let mut rows = self.rows.try_borrow_mut().unwrap();
         let row = rows.last_mut().unwrap();
         if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_pre_val = Some(reg[rd]);
+            row.register_state.rd_pre_val = Some(reg[rd as usize] as u64);
         }
     }
 
@@ -78,15 +80,15 @@ impl Tracer {
         let row = rows.last_mut().unwrap();
 
         if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_post_val = Some(reg[rd]);
+            row.register_state.rd_post_val = Some(reg[rd as usize] as u64);
         }
 
         if let Some(rs1) = row.instruction.rs1 {
-            row.register_state.rs1_val = Some(reg[rs1]);
+            row.register_state.rs1_val = Some(reg[rs1 as usize] as u64);
         }
 
         if let Some(rs2) = row.instruction.rs2 {
-            row.register_state.rs2_val = Some(reg[rs2]);
+            row.register_state.rs2_val = Some(reg[rs2 as usize] as u64);
         }
     }
 
