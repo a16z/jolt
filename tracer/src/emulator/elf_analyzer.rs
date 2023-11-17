@@ -38,6 +38,7 @@ pub struct _ProgramHeader {
 }
 
 /// ELF section header
+#[derive(Debug)]
 pub struct SectionHeader {
   sh_name: u32,
   pub sh_type: u32,

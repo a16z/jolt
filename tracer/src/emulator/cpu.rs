@@ -1,5 +1,6 @@
 extern crate fnv;
 
+use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
@@ -1697,15 +1698,34 @@ fn get_register_name(num: usize) -> &'static str {
 	}
 }
 
+fn normalize_u64(value: u64, width: &Xlen) -> u64 {
+    match width {
+        Xlen::Bit32 => value as u32 as u64,
+        Xlen::Bit64 => value,
+    }
+}
+
+fn normalize_unsigned_imm(value: u64) -> i32 {
+    value as i32
+}
+
+fn normalize_signed_imm(value: i64) -> i32 {
+    value.try_into().unwrap()
+}
+
+fn normalize_register(value: usize) -> u64 {
+    value.try_into().unwrap()
+}
+
 fn trace_r(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_r(word);
     let inst = trace::Instruction { 
         opcode: inst.name,
-        address,
+        address: normalize_u64(address, &cpu.xlen),
         imm: None,
-        rs1: Some(f.rs1),
-        rs2: Some(f.rs2),
-        rd: Some(f.rd),
+        rs1: Some(normalize_register(f.rs1)),
+        rs2: Some(normalize_register(f.rs2)),
+        rd: Some(normalize_register(f.rd)),
     };
 
     cpu.tracer.start_instruction(inst)
@@ -1715,11 +1735,11 @@ fn trace_i(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_i(word);
     let inst = trace::Instruction {
         opcode: inst.name,
-        address,
-        imm: Some(f.imm.into()),
-        rs1: Some(f.rs1),
+        address: normalize_u64(address, &cpu.xlen),
+        imm: Some(normalize_signed_imm(f.imm)),
+        rs1: Some(normalize_register(f.rs1)),
         rs2: None,
-        rd: Some(f.rd),
+        rd: Some(normalize_register(f.rd)),
     };
 
     cpu.tracer.start_instruction(inst);
@@ -1729,10 +1749,10 @@ fn trace_s(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_s(word);
     let inst = trace::Instruction {
         opcode: inst.name,
-        address,
-        imm: Some(f.imm.into()),
-        rs1: Some(f.rs1),
-        rs2: Some(f.rs2),
+        address: normalize_u64(address, &cpu.xlen),
+        imm: Some(normalize_signed_imm(f.imm)),
+        rs1: Some(normalize_register(f.rs1)),
+        rs2: Some(normalize_register(f.rs2)),
         rd: None,
     };
 
@@ -1743,10 +1763,10 @@ fn trace_b(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_b(word);
     let inst = trace::Instruction {
         opcode: inst.name,
-        address,
-        imm: Some(f.imm.into()),
-        rs1: Some(f.rs1),
-        rs2: Some(f.rs2),
+        address: normalize_u64(address, &cpu.xlen),
+        imm: Some(normalize_unsigned_imm(f.imm)),
+        rs1: Some(normalize_register(f.rs1)),
+        rs2: Some(normalize_register(f.rs2)),
         rd: None,
     };
 
@@ -1757,11 +1777,11 @@ fn trace_u(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_u(word);
     let inst = trace::Instruction { 
         opcode: inst.name,
-        address,
-        imm: Some(f.imm.into()),
+        address: normalize_u64(address, &cpu.xlen),
+        imm: Some(normalize_unsigned_imm(f.imm)),
         rs1: None,
         rs2: None,
-        rd: Some(f.rd),
+        rd: Some(normalize_register(f.rd)),
     };
 
     cpu.tracer.start_instruction(inst);
@@ -1771,11 +1791,11 @@ fn trace_j(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_u(word);
     let inst = trace::Instruction { 
         opcode: inst.name,
-        address,
-        imm: Some(f.imm.into()),
+        address: normalize_u64(address, &cpu.xlen),
+        imm: Some(normalize_unsigned_imm(f.imm)),
         rs1: None,
         rs2: None,
-        rd: Some(f.rd),
+        rd: Some(normalize_register(f.rd)),
     };
 
     cpu.tracer.start_instruction(inst);
