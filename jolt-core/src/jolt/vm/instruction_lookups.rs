@@ -817,7 +817,7 @@ where
     }
   }
 
-  fn verify(
+  pub fn verify(
     proof: InstructionLookupsProof<F, G>,
     r_eq: &[G::ScalarField],
     transcript: &mut Transcript,

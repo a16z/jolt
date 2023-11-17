@@ -12,7 +12,7 @@ use crate::jolt::{
   subtable::LassoSubtable,
 };
 use crate::poly::structured_poly::StructuredPolynomials;
-use crate::utils::random::RandomTape;
+use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
 use self::read_write_memory::{MemoryOp, ReadWriteMemory};
@@ -39,6 +39,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     let instruction_lookups =
       InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
     instruction_lookups.prove_lookups(r, transcript)
+  }
+
+  fn verify_instruction_lookups(
+    proof: InstructionLookupsProof<F, G>,
+    r: Vec<F>,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
+      proof, &r, transcript,
+    )
   }
 
   fn prove_program_code(

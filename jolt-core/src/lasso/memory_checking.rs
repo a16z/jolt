@@ -318,17 +318,17 @@ where
 
 #[cfg(test)]
 mod tests {
-  use crate::{
-    poly::dense_mlpoly::DensePolynomial,
-    subprotocols::grand_product::{
-      BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit,
-    },
-  };
-  use ark_curve25519::{EdwardsProjective, Fr};
-  use ark_std::{One, Zero};
-  use merlin::Transcript;
+  // use crate::{
+  //   poly::dense_mlpoly::DensePolynomial,
+  //   subprotocols::grand_product::{
+  //     BGPCInterpretable, BatchedGrandProductCircuit, GPEvals, GrandProductCircuit,
+  //   },
+  // };
+  // use ark_curve25519::{EdwardsProjective, Fr};
+  // use ark_std::{One, Zero};
+  // use merlin::Transcript;
 
-  use super::ProductLayerProof;
+  // use super::ProductLayerProof;
 
   // #[test]
   // fn product_layer_proof_trivial() {

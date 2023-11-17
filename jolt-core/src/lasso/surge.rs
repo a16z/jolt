@@ -824,8 +824,9 @@ where
 mod tests {
   use merlin::Transcript;
 
-  use crate::{jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof};
-  use ark_curve25519::EdwardsProjective;
+  use super::{Surge, SurgeProof};
+  use crate::jolt::instruction::xor::XORInstruction;
+  use ark_curve25519::{EdwardsProjective, Fr};
 
   #[test]
   fn e2e() {
@@ -835,14 +836,16 @@ mod tests {
       XORInstruction(12, 12),
       XORInstruction(25, 12),
     ];
-    let C = 8;
-    let M = 1 << 8;
+    const C: usize = 8;
+    const M: usize = 1 << 8;
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let proof: SurgeProof<EdwardsProjective, _> = SurgeProof::prove(ops, C, M, &mut transcript);
+    let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::new(ops);
+    let proof = surge.prove(&mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
-    proof.verify(&mut transcript).expect("should work");
+    <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::verify(proof, &mut transcript)
+      .expect("should work");
   }
 
   #[test]
@@ -854,13 +857,15 @@ mod tests {
       XORInstruction(220, 1),
       XORInstruction(220, 1),
     ];
-    let C = 2;
-    let M = 1 << 8;
+    const C: usize = 2;
+    const M: usize = 1 << 8;
 
     let mut transcript = Transcript::new(b"test_transcript");
-    let proof: SurgeProof<EdwardsProjective, _> = SurgeProof::prove(ops, C, M, &mut transcript);
+    let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::new(ops);
+    let proof = surge.prove(&mut transcript);
 
     let mut transcript = Transcript::new(b"test_transcript");
-    proof.verify(&mut transcript).expect("should work");
+    <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::verify(proof, &mut transcript)
+      .expect("should work");
   }
 }
