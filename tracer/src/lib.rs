@@ -3,6 +3,7 @@
 use std::{path::PathBuf, fs::File, io::Read};
 
 use emulator::{default_terminal::DefaultTerminal, Emulator, cpu};
+use common;
 
 mod trace;
 mod emulator;
@@ -12,7 +13,12 @@ pub use common::{TraceRow, Instruction, RegisterState, MemoryState};
 pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
-    emulator.update_xlen(cpu::Xlen::Bit32);
+
+    match common::constants::XLEN {
+        32 => emulator.update_xlen(cpu::Xlen::Bit32),
+        64 => emulator.update_xlen(cpu::Xlen::Bit64),
+        _ => panic!("Emulator only supports 32 / 64 bit registers.")
+    };
 
     let mut elf_file = File::open(elf).unwrap();
 
