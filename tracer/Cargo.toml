@@ -13,6 +13,8 @@ description = "RISC-V emulator for Jolt"
 license = "MIT"
 homepage = "https://github.com/a16z/lasso/README.md"
 repository = "https://github.com/a16z/lasso"
+edition="2021"
 
 [dependencies]
 fnv = "1.0.7"
+common = { path = "../common" }

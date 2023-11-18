@@ -1,4 +1,4 @@
-use emulator::mmu::MemoryWrapper;
+use crate::emulator::mmu::MemoryWrapper;
 
 // Based on Virtual I/O Device (VIRTIO) Version 1.1
 // https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html

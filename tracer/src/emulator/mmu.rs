@@ -8,7 +8,8 @@ extern crate fnv;
 
 use std::rc::Rc;
 
-use crate::trace::{Tracer, MemoryState};
+use crate::trace::Tracer;
+use common::MemoryState;
 
 use self::fnv::FnvHashMap;
 
