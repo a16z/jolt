@@ -17,5 +17,6 @@ edition="2021"
 
 [dependencies]
 fnv = "1.0.7"
-common = { path = "../common" }
 object = "0.32.1"
+
+common = { path = "../common" }
