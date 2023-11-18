@@ -1,42 +1,6 @@
 use std::cell::RefCell;
 
-#[derive(Debug)]
-pub struct TraceRow {
-    pub instruction: Instruction,
-    pub register_state: RegisterState,
-    pub memory_state: Option<MemoryState>,
-}
-
-#[derive(Debug)]
-pub struct Instruction {
-    pub address: u64,
-    pub opcode: &'static str,
-    pub rs1: Option<u64>,
-    pub rs2: Option<u64>,
-    pub rd: Option<u64>,
-    pub imm: Option<i32>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct RegisterState {
-    pub rs1_val: Option<u64>,
-    pub rs2_val: Option<u64>,
-    pub rd_pre_val: Option<u64>,
-    pub rd_post_val: Option<u64>,
-}
-
-#[derive(Debug)]
-pub enum MemoryState {
-    Read {
-        address: u64,
-        value: u64,
-    },
-    Write {
-        address: u64,
-        pre_value: u64,
-        post_value: u64,
-    },
-}
+use common::{TraceRow, Instruction, RegisterState, MemoryState};
 
 pub struct Tracer {
     pub rows: RefCell<Vec<TraceRow>>,

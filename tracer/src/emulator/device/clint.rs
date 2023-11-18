@@ -1,4 +1,4 @@
-use emulator::cpu::{MIP_MSIP, MIP_MTIP};
+use crate::emulator::cpu::{MIP_MSIP, MIP_MTIP};
 
 /// Emulates CLINT known as Timer. Refer to the [specification](https://sifive.cdn.prismic.io/sifive%2Fc89f6e5a-cf9e-44c3-a3db-04420702dcc1_sifive+e31+manual+v19.08.pdf)
 /// for the detail.

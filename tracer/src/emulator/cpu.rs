@@ -4,7 +4,7 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
-use crate::trace;
+use common;
 
 use self::fnv::FnvHashMap;
 
@@ -1719,7 +1719,7 @@ fn normalize_register(value: usize) -> u64 {
 
 fn trace_r(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_r(word);
-    let inst = trace::Instruction { 
+    let inst = common::Instruction { 
         opcode: inst.name,
         address: normalize_u64(address, &cpu.xlen),
         imm: None,
@@ -1733,7 +1733,7 @@ fn trace_r(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
 
 fn trace_i(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_i(word);
-    let inst = trace::Instruction {
+    let inst = common::Instruction {
         opcode: inst.name,
         address: normalize_u64(address, &cpu.xlen),
         imm: Some(normalize_signed_imm(f.imm)),
@@ -1747,7 +1747,7 @@ fn trace_i(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
 
 fn trace_s(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_s(word);
-    let inst = trace::Instruction {
+    let inst = common::Instruction {
         opcode: inst.name,
         address: normalize_u64(address, &cpu.xlen),
         imm: Some(normalize_signed_imm(f.imm)),
@@ -1761,7 +1761,7 @@ fn trace_s(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
 
 fn trace_b(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_b(word);
-    let inst = trace::Instruction {
+    let inst = common::Instruction {
         opcode: inst.name,
         address: normalize_u64(address, &cpu.xlen),
         imm: Some(normalize_unsigned_imm(f.imm)),
@@ -1775,7 +1775,7 @@ fn trace_b(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
 
 fn trace_u(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_u(word);
-    let inst = trace::Instruction { 
+    let inst = common::Instruction { 
         opcode: inst.name,
         address: normalize_u64(address, &cpu.xlen),
         imm: Some(normalize_unsigned_imm(f.imm)),
@@ -1789,7 +1789,7 @@ fn trace_u(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
 
 fn trace_j(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
     let f = parse_format_u(word);
-    let inst = trace::Instruction { 
+    let inst = common::Instruction { 
         opcode: inst.name,
         address: normalize_u64(address, &cpu.xlen),
         imm: Some(normalize_unsigned_imm(f.imm)),

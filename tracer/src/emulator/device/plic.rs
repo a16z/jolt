@@ -1,4 +1,4 @@
-use emulator::cpu::MIP_SEIP;
+use crate::emulator::cpu::MIP_SEIP;
 
 // Based on SiFive Interrupt Cookbook
 // https://sifive.cdn.prismic.io/sifive/0d163928-2128-42be-a75a-464df65e04e0_sifive-interrupt-cookbook.pdf

@@ -7,7 +7,7 @@ use emulator::{default_terminal::DefaultTerminal, Emulator, cpu};
 mod trace;
 mod emulator;
 
-pub use trace::{TraceRow, Instruction, RegisterState, MemoryState};
+pub use common::{TraceRow, Instruction, RegisterState, MemoryState};
 
 pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
     let term = DefaultTerminal::new();
