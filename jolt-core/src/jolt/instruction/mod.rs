@@ -9,6 +9,7 @@ pub trait JoltInstruction {
   fn g_poly_degree(&self, C: usize) -> usize;
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
+  fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>);
 }
 
 pub trait Opcode {
