@@ -376,7 +376,7 @@ where
 mod tests {
   use std::collections::HashSet;
 
-use super::*;
+  use super::*;
   use ark_curve25519::{EdwardsProjective, Fr};
   use ark_ff::Field;
   use ark_std::{One, Zero};
@@ -759,13 +759,13 @@ use super::*;
     let prover = TestProver {};
 
     // Check leaves match
-    let (gamma, tau)= (&Fr::from(100), &Fr::from(35));
+    let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
     let init_leaves: Vec<DensePolynomial<Fr>> = prover.init_leaves(&polys, gamma, tau);
     let read_leaves: Vec<DensePolynomial<Fr>> = prover.read_leaves(&polys, gamma, tau);
     let write_leaves: Vec<DensePolynomial<Fr>> = prover.write_leaves(&polys, gamma, tau);
     let final_leaves: Vec<DensePolynomial<Fr>> = prover.final_leaves(&polys, gamma, tau);
 
-    [0,1].into_iter().for_each(|i| {
+    [0, 1].into_iter().for_each(|i| {
       let init_leaves = &init_leaves[i];
       let read_leaves = &read_leaves[i];
       let write_leaves = &write_leaves[i];
@@ -817,252 +817,314 @@ use super::*;
     assert_eq!(r_if_verify, r_if);
   }
 
-  // #[test]
-  // fn product_layer_proof_flags_no_reuse() {
-  //   // Define a GrandProduct circuit that can be batched across 2 memories
-  //   struct FlagMems {
-  //     a_0_ops: Vec<Fr>,
-  //     a_1_ops: Vec<Fr>,
+  #[test]
+  fn product_layer_proof_flags_no_reuse() {
+    // Define a GrandProduct circuit that can be batched across 2 memories
+    struct FlagPolys {
+      a_0_ops: DensePolynomial<Fr>,
+      a_1_ops: DensePolynomial<Fr>,
 
-  //     v_0_ops: Vec<Fr>,
-  //     v_1_ops: Vec<Fr>,
-  //     v_mems: Vec<Fr>,
+      v_0_ops: DensePolynomial<Fr>,
+      v_1_ops: DensePolynomial<Fr>,
+      v_mems: DensePolynomial<Fr>,
 
-  //     t_0_reads: Vec<Fr>,
-  //     t_1_reads: Vec<Fr>,
+      t_0_reads: DensePolynomial<Fr>,
+      t_1_reads: DensePolynomial<Fr>,
 
-  //     t_0_finals: Vec<Fr>,
-  //     t_1_finals: Vec<Fr>,
+      t_0_finals: DensePolynomial<Fr>,
+      t_1_finals: DensePolynomial<Fr>,
 
-  //     flags_0: Vec<Fr>,
-  //     flags_1: Vec<Fr>,
-  //   }
+      flags_0: DensePolynomial<Fr>,
+      flags_1: DensePolynomial<Fr>,
+    }
 
-  //   impl MemBatchInfo for FlagMems {
-  //     fn mem_size(&self) -> usize {
-  //       assert_eq!(self.v_mems.len(), self.t_0_finals.len());
-  //       assert_eq!(self.v_mems.len(), self.t_1_finals.len());
-  //       self.v_mems.len()
-  //     }
+    struct FakeType();
+    struct FakeOpeningProof();
+    #[rustfmt::skip]
+    impl StructuredOpeningProof<Fr, EdwardsProjective, FlagPolys> for FakeOpeningProof {
+      type Openings = FakeType;
+      fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
+      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
+    }
 
-  //     fn ops_size(&self) -> usize {
-  //       let ops_len = self.a_0_ops.len();
-  //       assert_eq!(ops_len, self.a_1_ops.len());
-  //       assert_eq!(ops_len, self.v_0_ops.len());
-  //       assert_eq!(ops_len, self.v_1_ops.len());
-  //       assert_eq!(ops_len, self.t_0_reads.len());
-  //       assert_eq!(ops_len, self.t_1_reads.len());
-  //       assert_eq!(ops_len, self.flags_0.len());
-  //       assert_eq!(ops_len, self.flags_1.len());
+    #[rustfmt::skip]
+    impl StructuredPolynomials for FlagPolys {
+      type Commitment = FakeType;
+      type BatchedPolynomials = FakeType;
 
-  //       ops_len
-  //     }
+      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
+      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
+    }
 
-  //     fn num_memories(&self) -> usize {
-  //       2
-  //     }
-  //   }
+    struct TestProver {}
+    #[rustfmt::skip] // Keep leaf functions small
+    impl MemoryCheckingProver<Fr, EdwardsProjective, FlagPolys> for TestProver {
+      type ReadWriteOpenings = FakeOpeningProof;
+      type InitFinalOpenings = FakeOpeningProof;
 
-  //   impl BGPCInterpretable<Fr> for FlagMems {
-  //     fn a_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-  //       assert!(memory_index < 2);
-  //       match memory_index {
-  //         0 => self.a_0_ops[leaf_index],
-  //         1 => self.a_1_ops[leaf_index],
-  //         _ => panic!("waaa"),
-  //       }
-  //     }
+      type MemoryTuple = (Fr, Fr, Fr, Option<Fr>);
 
-  //     fn v_mem(&self, memory_index: usize, leaf_index: usize) -> Fr {
-  //       assert!(memory_index < 2);
-  //       self.v_mems[leaf_index]
-  //     }
+      fn read_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.a_0_ops.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index], None),
+                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index], None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
+      }
 
-  //     fn v_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-  //       assert!(memory_index < 2);
-  //       match memory_index {
-  //         0 => self.v_0_ops[leaf_index],
-  //         1 => self.v_1_ops[leaf_index],
-  //         _ => panic!("waaa"),
-  //       }
-  //     }
+      fn write_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.a_0_ops.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one(), None),
+                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one(), None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
+      }
 
-  //     fn t_final(&self, memory_index: usize, leaf_index: usize) -> Fr {
-  //       assert!(memory_index < 2);
-  //       match memory_index {
-  //         0 => self.t_0_finals[leaf_index],
-  //         1 => self.t_1_finals[leaf_index],
-  //         _ => panic!("waaa"),
-  //       }
-  //     }
+      fn init_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.v_mems.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero(), None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
+      }
 
-  //     fn t_read(&self, memory_index: usize, leaf_index: usize) -> Fr {
-  //       assert!(memory_index < 2);
-  //       match memory_index {
-  //         0 => self.t_0_reads[leaf_index],
-  //         1 => self.t_1_reads[leaf_index],
-  //         _ => panic!("waaa"),
-  //       }
-  //     }
+      fn final_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.v_mems.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index], None),
+                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index], None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
+      }
 
-  //     // FLAGS OVERRIDES
+      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+        let (a, v, t, flag) = *tuple;
+        match flag {
+          Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + Fr::one() - val,
+          None => t * gamma.square() + v * *gamma + a - tau,
+        }
+      }
 
-  //     fn construct_batches(
-  //       &self,
-  //       r_hash: (&Fr, &Fr),
-  //     ) -> (
-  //       BatchedGrandProductCircuit<Fr>,
-  //       BatchedGrandProductCircuit<Fr>,
-  //       Vec<GPEvals<Fr>>,
-  //     ) {
-  //       // compute leaves for all the batches                     (shared)
-  //       // convert the rw leaves to flagged leaves                (custom)
-  //       // create GPCs for each of the leaves (&leaves)           (custom)
-  //       // evaluate the GPCs                                      (shared)
-  //       // construct 1x batch with flags, 1x batch without flags  (custom)
+      // FLAGS OVERRIDES
 
-  //       let mut rw_circuits = Vec::with_capacity(self.num_memories() * 2);
-  //       let mut if_circuits = Vec::with_capacity(self.num_memories() * 2);
-  //       let mut gp_evals = Vec::with_capacity(self.num_memories());
+      // Override read_write_grand product to call BatchedGrandProductCircuit::new_batch_flags and insert our additional toggling layer.
+      fn read_write_grand_product(
+          &self,
+          polynomials: &FlagPolys,
+          gamma: &Fr,
+          tau: &Fr,
+        ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>, Vec<Fr>) {
+          // Fingerprint will generate "unflagged" leaves for the final layer
+          let read_fingerprints: Vec<DensePolynomial<Fr>> = self.read_leaves(polynomials, gamma, tau);
+          let write_fingerprints: Vec<DensePolynomial<Fr>> = self.write_leaves(polynomials, gamma, tau);
 
-  //       // Stores the initial fingerprinted values for read and write memories. GPC stores the upper portion of the tree after the fingerprints at the leaves
-  //       // experience flagging (toggling based on the flag value at that leaf).
-  //       let mut rw_fingerprints: Vec<DensePolynomial<Fr>> =
-  //         Vec::with_capacity(self.num_memories() * 2);
-  //       for memory_index in 0..self.num_memories() {
-  //         let (init_fingerprints, read_fingerprints, write_fingerprints, final_fingerprints) =
-  //           self.compute_leaves(memory_index, r_hash);
+          // Generate "flagged" leaves for the second to last layer. Input to normal Grand Products
+          let num_memories = 2;
+          let mut circuits = Vec::with_capacity(2 * num_memories);
+          let mut read_hashes = Vec::with_capacity(num_memories);
+          let mut write_hashes = Vec::with_capacity(num_memories);
 
-  //         let (mut read_leaves, mut write_leaves) =
-  //           (read_fingerprints.evals(), write_fingerprints.evals());
-  //         rw_fingerprints.push(read_fingerprints);
-  //         rw_fingerprints.push(write_fingerprints);
-  //         for leaf_index in 0..self.ops_size() {
-  //           let flag = match memory_index {
-  //             0 => self.flags_0[leaf_index],
-  //             1 => self.flags_1[leaf_index],
-  //             _ => panic!("waa"),
-  //           };
-  //           // TODO(sragss): Would be faster if flags were non-FF repr
-  //           if flag == Fr::zero() {
-  //             read_leaves[leaf_index] = Fr::one();
-  //             write_leaves[leaf_index] = Fr::one();
-  //           }
-  //         }
+          for i in 0..num_memories {
+            let mut toggled_read_fingerprints = read_fingerprints[i].evals();
+            let mut toggled_write_fingerprints = write_fingerprints[i].evals();
 
-  //         let (init_gpc, final_gpc) = (
-  //           GrandProductCircuit::new(&init_fingerprints),
-  //           GrandProductCircuit::new(&final_fingerprints),
-  //         );
-  //         let (read_gpc, write_gpc) = (
-  //           GrandProductCircuit::new(&DensePolynomial::new(read_leaves)),
-  //           GrandProductCircuit::new(&DensePolynomial::new(write_leaves)),
-  //         );
+            let subtable_index = i;
+            for leaf_index in 0..polynomials.a_0_ops.len() {
+              let flag = match subtable_index {
+                0 => polynomials.flags_0[leaf_index],
+                1 => polynomials.flags_1[leaf_index],
+                _ => unimplemented!()
+              };
+              if flag == Fr::zero() {
+                toggled_read_fingerprints[leaf_index] = Fr::one();
+                toggled_write_fingerprints[leaf_index] = Fr::one();
+              }
+            }
 
-  //         gp_evals.push(GPEvals::new(
-  //           init_gpc.evaluate(),
-  //           read_gpc.evaluate(),
-  //           write_gpc.evaluate(),
-  //           final_gpc.evaluate(),
-  //         ));
+            let read_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
+            let write_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+            read_hashes.push(read_circuit.evaluate());
+            write_hashes.push(write_circuit.evaluate());
+            circuits.push(read_circuit);
+            circuits.push(write_circuit);
+          }
 
-  //         rw_circuits.push(read_gpc);
-  //         rw_circuits.push(write_gpc);
-  //         if_circuits.push(init_gpc);
-  //         if_circuits.push(final_gpc);
-  //       }
+          let expanded_flag_map = vec![0, 0, 1, 1];
+          let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
+            circuits, 
+            vec![polynomials.flags_0.clone(), polynomials.flags_1.clone()], 
+            expanded_flag_map, 
+            vec![read_fingerprints[0].clone(), write_fingerprints[0].clone(), read_fingerprints[1].clone(), write_fingerprints[1].clone()]
+          );
 
-  //       // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMORIES, write_NUM_MEMORIES]
-  //       let expanded_flag_map = vec![0, 0, 1, 1];
+          (batched_circuits, read_hashes, write_hashes)
+      }
 
-  //       // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
-  //       let rw_batch = BatchedGrandProductCircuit::new_batch_flags(
-  //         rw_circuits,
-  //         vec![
-  //           DensePolynomial::new(self.flags_0.clone()),
-  //           DensePolynomial::new(self.flags_1.clone()),
-  //         ],
-  //         expanded_flag_map,
-  //         rw_fingerprints,
-  //       );
+      fn protocol_name() -> &'static [u8] {
+        b"protocol_name"
+      }
+    }
 
-  //       let if_batch = BatchedGrandProductCircuit::new_batch(if_circuits);
+    // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
+    let v_mems = vec![
+      Fr::from(0),
+      Fr::from(1),
+      Fr::from(2),
+      Fr::from(3),
+      Fr::from(4),
+      Fr::from(5),
+      Fr::from(6),
+      Fr::from(7),
+    ];
 
-  //       (rw_batch, if_batch, gp_evals)
-  //     }
-  //   }
+    // 2 lookups into the last 2 elements of memory each
+    let a_0_ops = vec![Fr::from(6), Fr::from(7), Fr::from(6), Fr::from(7)];
+    let a_1_ops = vec![Fr::from(0), Fr::from(1), Fr::from(0), Fr::from(2)];
+    let v_0_ops = a_0_ops.clone();
+    let v_1_ops = a_1_ops.clone();
 
-  //   // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
-  //   let v_mems = vec![
-  //     Fr::from(0),
-  //     Fr::from(1),
-  //     Fr::from(2),
-  //     Fr::from(3),
-  //     Fr::from(4),
-  //     Fr::from(5),
-  //     Fr::from(6),
-  //     Fr::from(7),
-  //   ];
+    let flags_0 = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
+    let flags_1 = vec![
+      Fr::one(),
+      Fr::zero(), // Flagged off!
+      Fr::one(),
+      Fr::one(),
+    ];
 
-  //   // 2 lookups into the last 2 elements of memory each
-  //   let a_0_ops = vec![Fr::from(6), Fr::from(7), Fr::from(6), Fr::from(7)];
-  //   let a_1_ops = vec![Fr::from(0), Fr::from(1), Fr::from(0), Fr::from(2)];
-  //   let v_0_ops = a_0_ops.clone();
-  //   let v_1_ops = a_1_ops.clone();
+    let t_0_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::one()];
+    let t_1_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()];
+    let t_0_finals = vec![
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::from(2),
+      Fr::from(2),
+    ];
+    let t_1_finals = vec![
+      Fr::from(2),
+      Fr::zero(), // Flagged off!
+      Fr::one(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+      Fr::zero(),
+    ];
 
-  //   let flags_0 = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
-  //   let flags_1 = vec![
-  //     Fr::one(),
-  //     Fr::zero(), // Flagged off!
-  //     Fr::one(),
-  //     Fr::one(),
-  //   ];
+    let a_0_ops = DensePolynomial::new(a_0_ops);
+    let a_1_ops = DensePolynomial::new(a_1_ops);
+    let v_0_ops = DensePolynomial::new(v_0_ops);
+    let v_1_ops = DensePolynomial::new(v_1_ops);
+    let v_mems = DensePolynomial::new(v_mems);
+    let t_0_reads = DensePolynomial::new(t_0_reads);
+    let t_1_reads = DensePolynomial::new(t_1_reads);
+    let t_0_finals = DensePolynomial::new(t_0_finals);
+    let t_1_finals = DensePolynomial::new(t_1_finals);
+    let flags_0 = DensePolynomial::new(flags_0);
+    let flags_1 = DensePolynomial::new(flags_1);
+    let polys = FlagPolys {
+      a_0_ops,
+      a_1_ops,
+      v_0_ops,
+      v_1_ops,
+      v_mems,
+      t_0_reads,
+      t_1_reads,
+      t_0_finals,
+      t_1_finals,
+      flags_0,
+      flags_1,
+    };
 
-  //   let t_0_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::one()];
-  //   let t_1_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()];
-  //   let t_0_finals = vec![
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::from(2),
-  //     Fr::from(2),
-  //   ];
-  //   let t_1_finals = vec![
-  //     Fr::from(2),
-  //     Fr::zero(), // Flagged off!
-  //     Fr::one(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //     Fr::zero(),
-  //   ];
+    let prover = TestProver {};
 
-  //   let polys = FlagMems {
-  //     a_0_ops,
-  //     a_1_ops,
-  //     v_0_ops,
-  //     v_1_ops,
-  //     v_mems,
-  //     t_0_reads,
-  //     t_1_reads,
-  //     t_0_finals,
-  //     t_1_finals,
-  //     flags_0,
-  //     flags_1,
-  //   };
+    // Prove
+    let mut transcript = Transcript::new(b"test_transcript");
+    let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
+      prover.prove_grand_products(&polys, &mut transcript);
 
-  //   let mut transcript = Transcript::new(b"test_transcript");
-  //   let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-  //   let (proof, _, _) =
-  //     ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    // Verify
+    let mut transcript = Transcript::new(b"test_transcript");
+    let _gamma: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking gamma",
+    );
+    let _tau: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking tau",
+    );
+    <Transcript as ProofTranscript<EdwardsProjective>>::append_protocol_name(
+      &mut transcript,
+      TestProver::protocol_name(),
+    );
+    for hash in multiset_hashes.iter() {
+      hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
+    }
 
-  //   let mut transcript = Transcript::new(b"test_transcript");
-  //   proof
-  //     .verify::<EdwardsProjective>(&mut transcript)
-  //     .expect("proof should work");
-  // }
+    let interleaved_read_write_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_read, hash.hash_write])
+      .collect();
+    let interleaved_init_final_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_init, hash.hash_final])
+      .collect();
+    let (_claims_rw, r_rw_verify) =
+      proof_rw.verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
+    assert_eq!(r_rw_verify, r_rw);
+
+    let (_claims_if, r_if_verify) =
+      proof_if.verify::<EdwardsProjective, _>(&interleaved_init_final_hashes, &mut transcript);
+    assert_eq!(r_if_verify, r_if);
+  }
 }
