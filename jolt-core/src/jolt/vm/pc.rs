@@ -203,8 +203,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
     let mut read_cts: Vec<usize> = vec![0; num_ops];
     let mut final_cts: Vec<usize> = vec![0; code_size];
 
-    // TODO(sragss): Current padding strategy doesn't work. As it adds phantom
-    // reads, but no corresponding writes to final.
     for (trace_index, trace) in trace.iter().enumerate() {
       let address = trace.address;
       debug_assert!(address < code_size);
