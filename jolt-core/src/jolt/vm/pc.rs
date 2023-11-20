@@ -143,23 +143,22 @@ where
   type BatchedPolynomials = BatchedPCPolys<F>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
-    // TODO(JOLT-48): DensePolynomial::merge should be parameterized with  Vec<&DensePolynomial> given it is read only. Avoids clones.
     let combined_read_write = DensePolynomial::merge(&vec![
-      self.a_read_write.clone(),
-      self.t_read.clone(),
-      self.v_read_write.opcode.clone(),
-      self.v_read_write.rd.clone(),
-      self.v_read_write.rs1.clone(),
-      self.v_read_write.rs2.clone(),
-      self.v_read_write.imm.clone(),
+      &self.a_read_write,
+      &self.t_read,
+      &self.v_read_write.opcode,
+      &self.v_read_write.rd,
+      &self.v_read_write.rs1,
+      &self.v_read_write.rs2,
+      &self.v_read_write.imm,
     ]);
     let combined_init_final = DensePolynomial::merge(&vec![
-      self.t_final.clone(),
-      self.v_init_final.opcode.clone(),
-      self.v_init_final.rd.clone(),
-      self.v_init_final.rs1.clone(),
-      self.v_init_final.rs2.clone(),
-      self.v_init_final.imm.clone(),
+      &self.t_final,
+      &self.v_init_final.opcode,
+      &self.v_init_final.rd,
+      &self.v_init_final.rs1,
+      &self.v_init_final.rs2,
+      &self.v_init_final.imm,
     ]);
 
     Self::BatchedPolynomials {
@@ -233,9 +232,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
   }
 }
 
-pub struct PCProof<F: PrimeField> {
-  _marker: PhantomData<F>,
-}
+pub struct PCProof<F: PrimeField>(PhantomData<F>);
 
 impl<F, G> MemoryCheckingProver<F, G, PCPolys<F, G>> for PCProof<F>
 where
@@ -582,171 +579,119 @@ where
 
 #[cfg(test)]
 mod tests {
-  // use std::collections::HashSet;
+  use super::*;
+  use ark_curve25519::{EdwardsProjective, Fr};
+  use std::collections::HashSet;
 
   // use crate::{
   //   lasso::memory_checking::{MemoryCheckingProof, ProductLayerProof},
   //   poly::dense_mlpoly::DensePolynomial,
   //   utils::random::RandomTape,
   // };
-  // use ark_curve25519::{EdwardsProjective, Fr};
   // use merlin::Transcript;
 
   // use super::{ELFRow, FiveTuplePoly, PCFingerprintProof, PCPolys};
 
-  // #[test]
-  // fn five_tuple_poly() {
-  //   let program = vec![
-  //     ELFRow::new(0, 2u64, 3u64, 4u64, 5u64, 6u64),
-  //     ELFRow::new(1, 7u64, 8u64, 9u64, 10u64, 11u64),
-  //     ELFRow::new(2, 12u64, 13u64, 14u64, 15u64, 16u64),
-  //     ELFRow::new(3, 17u64, 18u64, 19u64, 20u64, 21u64),
-  //   ];
-  //   let tuple: FiveTuplePoly<Fr> = FiveTuplePoly::from_elf(&program);
-  //   let expected_opcode: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![2, 7, 12, 17]);
-  //   let expected_rd: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![3, 8, 13, 18]);
-  //   let expected_rs1: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![4, 9, 14, 19]);
-  //   let expected_rs2: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![5, 10, 15, 20]);
-  //   let expected_imm: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![6, 11, 16, 21]);
-  //   assert_eq!(tuple.opcode, expected_opcode);
-  //   assert_eq!(tuple.rd, expected_rd);
-  //   assert_eq!(tuple.rs1, expected_rs1);
-  //   assert_eq!(tuple.rs2, expected_rs2);
-  //   assert_eq!(tuple.imm, expected_imm);
+  #[test]
+  fn five_tuple_poly() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 3u64, 4u64, 5u64, 6u64),
+      ELFRow::new(1, 7u64, 8u64, 9u64, 10u64, 11u64),
+      ELFRow::new(2, 12u64, 13u64, 14u64, 15u64, 16u64),
+      ELFRow::new(3, 17u64, 18u64, 19u64, 20u64, 21u64),
+    ];
+    let tuple: FiveTuplePoly<Fr> = FiveTuplePoly::from_elf(&program);
+    let expected_opcode: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![2, 7, 12, 17]);
+    let expected_rd: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![3, 8, 13, 18]);
+    let expected_rs1: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![4, 9, 14, 19]);
+    let expected_rs2: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![5, 10, 15, 20]);
+    let expected_imm: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![6, 11, 16, 21]);
+    assert_eq!(tuple.opcode, expected_opcode);
+    assert_eq!(tuple.rd, expected_rd);
+    assert_eq!(tuple.rs1, expected_rs1);
+    assert_eq!(tuple.rs2, expected_rs2);
+    assert_eq!(tuple.imm, expected_imm);
+  }
 
-    // let gamma = Fr::from(100);
-    // let fingerprint = tuple.fingerprint_term(2, &gamma);
-    // let expected_fingerprint = gamma * Fr::from(12)
-    //   + gamma * gamma * Fr::from(13)
-    //   + gamma * gamma * gamma * Fr::from(14)
-    //   + gamma * gamma * gamma * gamma * Fr::from(15)
-    //   + gamma * gamma * gamma * gamma * gamma * Fr::from(16);
-    // assert_eq!(fingerprint, expected_fingerprint);
-  // }
+  fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
+    let set1: HashSet<_> = vec1.iter().cloned().collect();
+    let set2: HashSet<_> = vec2.iter().cloned().collect();
+    set1.difference(&set2).cloned().collect()
+  }
 
-  // fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
-  //   let set1: HashSet<_> = vec1.iter().cloned().collect();
-  //   let set2: HashSet<_> = vec2.iter().cloned().collect();
-  //   set1.difference(&set2).cloned().collect()
-  // }
+  #[test]
+  fn pc_poly_leaf_construction() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+    ];
+    let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
 
-  // #[test]
-  // fn pc_poly_leaf_construction() {
-  //   let program = vec![
-  //     ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-  //     ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //   ];
-  //   let trace = vec![
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //   ];
-  //   let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
+    let (gamma, tau)= (&Fr::from(100), &Fr::from(35));
+    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
+    let init_leaves: Vec<DensePolynomial<Fr>> = pc_prover.init_leaves(&polys, gamma, tau);
+    let read_leaves: Vec<DensePolynomial<Fr>> = pc_prover.read_leaves(&polys, gamma, tau);
+    let write_leaves: Vec<DensePolynomial<Fr>> = pc_prover.write_leaves(&polys, gamma, tau);
+    let final_leaves: Vec<DensePolynomial<Fr>> = pc_prover.final_leaves(&polys, gamma, tau);
 
-  //   let r_fingerprints = (&Fr::from(100), &Fr::from(35));
-  //   let (init_leaves, read_leaves, write_leaves, final_leaves) =
-  //     polys.compute_leaves(0, r_fingerprints);
-  //   let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
-  //   let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();
-  //   let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
-  //   assert_eq!(difference.len(), 0);
-  // }
+    let init_leaves = &init_leaves[0];
+    let read_leaves = &read_leaves[0];
+    let write_leaves = &write_leaves[0];
+    let final_leaves = &final_leaves[0];
 
-  // #[test]
-  // fn product_layer_proof() {
-  //   let program = vec![
-  //     ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-  //     ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //   ];
-  //   let trace = vec![
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //   ];
-  //   let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-  //   let mut transcript = Transcript::new(b"test_transcript");
-  //   let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-  //   let (proof, _, _) =
-  //     ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
+    let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();
+    let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
+    assert_eq!(difference.len(), 0);
+  }
 
-  //   let mut transcript = Transcript::new(b"test_transcript");
-  //   proof
-  //     .verify::<EdwardsProjective>(&mut transcript)
-  //     .expect("proof should work");
-  // }
+  #[test]
+  fn e2e_memchecking() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+    ];
+    let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>); // TODO(sragss): Why is this necessary? -- default?
 
-  // #[test]
-  // #[should_panic]
-  // fn product_layer_proof_non_pow_two() {
-  //   let program = vec![
-  //     ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-  //     ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //     ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
-  //   ];
-  //   let trace = vec![
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //     ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-  //   ];
-  //   let _polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-  //   // let (gens, commitments) = polys.commit::<EdwardsProjective>();
-  //   // let mut transcript = Transcript::new(b"test_transcript");
-  //   // let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-  //   // let (proof, _, _) =
-  //   //   ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let mut transcript = Transcript::new(b"test_transcript");
+    let mut random_tape = RandomTape::new(b"test_tape");
 
-  //   // let mut transcript = Transcript::new(b"test_transcript");
-  //   // proof
-  //   //   .verify::<EdwardsProjective>(&mut transcript)
-  //   //   .expect("proof should work");
-  // }
+    let batched_polys = polys.batch();
+    let commitments = PCPolys::commit(&batched_polys);
+    let proof = pc_prover.prove_memory_checking(&polys, &batched_polys, &commitments, &mut transcript, &mut random_tape);
 
-  // #[test]
-  // fn e2e_mem_checking() {
-  //   let program = vec![
-  //     ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-  //     ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //   ];
-  //   let trace = vec![
-  //     ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-  //     ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-  //   ];
-  //   let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-  //   let (gens, commitments) = polys.commit::<EdwardsProjective>();
+    let mut transcript = Transcript::new(b"test_transcript");
+    PCProof::verify_memory_checking(proof, &commitments, &mut transcript).expect("proof should verify");
+  }
 
-  //   let mut transcript = Transcript::new(b"test_transcript");
-  //   let mut random_tape = RandomTape::new(b"test_tape");
-  //   let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-  //   let memory_checking_proof =
-  //     MemoryCheckingProof::<EdwardsProjective, PCFingerprintProof<EdwardsProjective>>::prove(
-  //       &polys,
-  //       r_fingerprints,
-  //       &gens,
-  //       &mut transcript,
-  //       &mut random_tape,
-  //     );
-
-  //   let memory_to_dimension_index = |memory_index: usize| {
-  //     assert_eq!(memory_index, 0);
-  //     0
-  //   };
-  //   let evaluate_memory_mle = |_: usize, _: &[Fr]| unimplemented!("shouldn't be called");
-  //   let mut transcript = Transcript::new(b"test_transcript");
-  //   memory_checking_proof
-  //     .verify(
-  //       &commitments,
-  //       &gens,
-  //       memory_to_dimension_index,
-  //       evaluate_memory_mle,
-  //       r_fingerprints,
-  //       &mut transcript,
-  //     )
-  //     .expect("should verify");
-  // }
+  #[test]
+  #[should_panic]
+  fn product_layer_proof_non_pow_two() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+    ];
+    let _polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+  }
 }

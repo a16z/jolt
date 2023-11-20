@@ -57,6 +57,8 @@ where
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+    // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
+
     // Fiat-Shamir randomness for multiset hashes
     let gamma: F =
       <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking gamma");
