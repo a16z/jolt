@@ -432,6 +432,7 @@ mod tests {
     }
 
     struct TestProver {}
+    #[rustfmt::skip] // Keep leaf functions small
     impl MemoryCheckingProver<Fr, EdwardsProjective, NormalMems> for TestProver {
       type ReadWriteOpenings = FakeOpeningProof;
       type InitFinalOpenings = FakeOpeningProof;
@@ -444,20 +445,9 @@ mod tests {
         gamma: &Fr,
         tau: &Fr,
       ) -> Vec<DensePolynomial<Fr>> {
-        let leaves: Vec<Fr> = (0..polynomials.a_ops.len())
-          .map(|i| {
-            Self::fingerprint(
-              &(
-                polynomials.a_ops[i],
-                polynomials.v_ops[i],
-                polynomials.t_reads[i],
-              ),
-              gamma,
-              tau,
-            )
-          })
-          .collect();
-        vec![DensePolynomial::new(leaves)]
+        vec![DensePolynomial::new((0..polynomials.a_ops.len())
+          .map(|i| Self::fingerprint(&(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i]), gamma, tau))
+          .collect())]
       }
 
       fn write_leaves(
@@ -466,20 +456,9 @@ mod tests {
         gamma: &Fr,
         tau: &Fr,
       ) -> Vec<DensePolynomial<Fr>> {
-        let leaves: Vec<Fr> = (0..polynomials.a_ops.len())
-          .map(|i| {
-            Self::fingerprint(
-              &(
-                polynomials.a_ops[i],
-                polynomials.v_ops[i],
-                polynomials.t_reads[i] + Fr::one(),
-              ),
-              gamma,
-              tau,
-            )
-          })
-          .collect();
-        vec![DensePolynomial::new(leaves)]
+        vec![DensePolynomial::new((0..polynomials.a_ops.len())
+          .map(|i| Self::fingerprint(&(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i] + Fr::one()), gamma, tau))
+          .collect())]
       }
 
       fn init_leaves(
@@ -488,16 +467,9 @@ mod tests {
         gamma: &Fr,
         tau: &Fr,
       ) -> Vec<DensePolynomial<Fr>> {
-        let leaves: Vec<Fr> = (0..polynomials.v_mems.len())
-          .map(|i| {
-            Self::fingerprint(
-              &(Fr::from(i as u64), polynomials.v_mems[i], Fr::zero()),
-              gamma,
-              tau,
-            )
-          })
-          .collect();
-        vec![DensePolynomial::new(leaves)]
+        vec![DensePolynomial::new((0..polynomials.v_mems.len())
+          .map(|i| Self::fingerprint(&(Fr::from(i as u64), polynomials.v_mems[i], Fr::zero()), gamma, tau))
+          .collect())]
       }
 
       fn final_leaves(
@@ -506,20 +478,9 @@ mod tests {
         gamma: &Fr,
         tau: &Fr,
       ) -> Vec<DensePolynomial<Fr>> {
-        let leaves: Vec<Fr> = (0..polynomials.v_mems.len())
-          .map(|i| {
-            Self::fingerprint(
-              &(
-                Fr::from(i as u64),
-                polynomials.v_mems[i],
-                polynomials.t_finals[i],
-              ),
-              gamma,
-              tau,
-            )
-          })
-          .collect();
-        vec![DensePolynomial::new(leaves)]
+        vec![DensePolynomial::new((0..polynomials.v_mems.len())
+          .map(|i| Self::fingerprint(&(Fr::from(i as u64), polynomials.v_mems[i], polynomials.t_finals[i]), gamma, tau))
+          .collect())]
       }
 
       fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
