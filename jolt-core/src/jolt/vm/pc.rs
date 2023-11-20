@@ -581,15 +581,6 @@ mod tests {
   use ark_curve25519::{EdwardsProjective, Fr};
   use std::collections::HashSet;
 
-  // use crate::{
-  //   lasso::memory_checking::{MemoryCheckingProof, ProductLayerProof},
-  //   poly::dense_mlpoly::DensePolynomial,
-  //   utils::random::RandomTape,
-  // };
-  // use merlin::Transcript;
-
-  // use super::{ELFRow, FiveTuplePoly, PCFingerprintProof, PCPolys};
-
   #[test]
   fn five_tuple_poly() {
     let program = vec![
