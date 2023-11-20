@@ -392,43 +392,21 @@ mod tests {
     }
     struct FakeType();
     struct FakeOpeningProof();
+    #[rustfmt::skip]
     impl StructuredOpeningProof<Fr, EdwardsProjective, NormalMems> for FakeOpeningProof {
       type Openings = FakeType;
-
-      fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings {
-        unimplemented!()
-      }
-      fn prove_openings(
-        _: &<NormalMems as StructuredPolynomials>::BatchedPolynomials,
-        _: &<NormalMems as StructuredPolynomials>::Commitment,
-        _: &Vec<Fr>,
-        _: Self::Openings,
-        _: &mut Transcript,
-        _: &mut RandomTape<EdwardsProjective>,
-      ) -> Self {
-        unimplemented!()
-      }
-      fn verify_openings(
-        &self,
-        _: &<NormalMems as StructuredPolynomials>::Commitment,
-        _: &Vec<Fr>,
-        _: &mut Transcript,
-      ) -> Result<(), ProofVerifyError> {
-        unimplemented!()
-      }
+      fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
+      fn prove_openings(_: &<NormalMems as StructuredPolynomials>::BatchedPolynomials, _: &<NormalMems as StructuredPolynomials>::Commitment, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn verify_openings(&self, _: &<NormalMems as StructuredPolynomials>::Commitment, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 
+    #[rustfmt::skip]
     impl StructuredPolynomials for NormalMems {
       type Commitment = FakeType;
       type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials {
-        unimplemented!()
-      }
-
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        unimplemented!()
-      }
+      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
+      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
     }
 
     struct TestProver {}
@@ -536,13 +514,23 @@ mod tests {
     // Prove
     let mut transcript = Transcript::new(b"test_transcript");
     let prover = TestProver {};
-    let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) = prover.prove_grand_products(&polys, &mut transcript);
+    let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
+      prover.prove_grand_products(&polys, &mut transcript);
 
     // Verify
     let mut transcript = Transcript::new(b"test_transcript");
-    let _gamma: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(&mut transcript, b"Memory checking gamma");
-    let _tau : Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(&mut transcript, b"Memory checking tau");
-    <Transcript as ProofTranscript<EdwardsProjective>>::append_protocol_name(&mut transcript, TestProver::protocol_name());
+    let _gamma: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking gamma",
+    );
+    let _tau: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking tau",
+    );
+    <Transcript as ProofTranscript<EdwardsProjective>>::append_protocol_name(
+      &mut transcript,
+      TestProver::protocol_name(),
+    );
     for hash in multiset_hashes.iter() {
       hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
     }
@@ -555,12 +543,13 @@ mod tests {
       .iter()
       .flat_map(|hash| [hash.hash_init, hash.hash_final])
       .collect();
-    let (_claims_rw, r_rw_verify) = proof_rw.verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
+    let (_claims_rw, r_rw_verify) =
+      proof_rw.verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
     assert_eq!(r_rw_verify, r_rw);
 
-    let (_claims_if, r_if_verify) = proof_if.verify::<EdwardsProjective, _>(&interleaved_init_final_hashes, &mut transcript);
+    let (_claims_if, r_if_verify) =
+      proof_if.verify::<EdwardsProjective, _>(&interleaved_init_final_hashes, &mut transcript);
     assert_eq!(r_if_verify, r_if);
-
   }
 
   // #[test]
