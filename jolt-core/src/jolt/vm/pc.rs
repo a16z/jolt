@@ -530,7 +530,7 @@ where
     polynomials: &BatchedPCPolys<F>,
     commitment: &ProgramCommitment<G>,
     opening_point: &Vec<F>,
-    openings: (Vec<F>, F),
+    openings: Self::Openings,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
   ) -> Self {
