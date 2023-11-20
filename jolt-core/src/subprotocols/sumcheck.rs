@@ -480,10 +480,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
           accum[1] += comb_func(&params_one);
 
           // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-          // D_n(index, 0) = D_{n-1}
-          // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-          // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-          // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+          // D_n(index, 0) = D_{n-1}[LOW]
+          // D_n(index, 1) = D_{n-1}[HIGH]
+          // D_n(index, 2) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+          // D_n(index, 3) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
           // ...
           let mut existing_term = params_one;
           for eval_i in 2..(combined_degree + 1) {

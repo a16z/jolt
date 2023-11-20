@@ -48,4 +48,3 @@ pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
 
     output
 }
-
