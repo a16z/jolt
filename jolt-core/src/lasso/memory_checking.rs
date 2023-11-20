@@ -24,6 +24,31 @@ struct MultisetHashes<F: PrimeField> {
   hash_write: F,
 }
 
+impl<F: PrimeField> MultisetHashes<F> {
+  pub fn append_to_transcript<G: CurveGroup<ScalarField = F>>(&self, transcript: &mut Transcript) {
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_init",
+      &self.hash_init,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_read",
+      &self.hash_read,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_write",
+      &self.hash_write,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_final",
+      &self.hash_final,
+    );
+  }
+}
+
 pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
   G: CurveGroup,
@@ -88,8 +113,8 @@ where
         hashes.hash_final * hashes.hash_read,
         "Multiset hashes don't match"
       );
+      hashes.append_to_transcript::<G>(transcript);
       multiset_hashes.push(hashes);
-      // TODO: append to transcript
     }
 
     let (read_write_grand_product, r_read_write) =
@@ -224,7 +249,7 @@ where
         hash.hash_init * hash.hash_write,
         hash.hash_read * hash.hash_final
       );
-      // TODO: append to transcript
+      hash.append_to_transcript::<G>(transcript);
     }
 
     let interleaved_read_write_hashes = proof
