@@ -632,7 +632,7 @@ where
       instruction.combine_lookups(vals_no_eq, C, M) * eq
     };
 
-    let (primary_sumcheck_proof, r_primary_sumcheck, _) =
+    let (primary_sumcheck_proof, r_z, _) =
       SumcheckInstanceProof::<F>::prove_arbitrary::<_, G, Transcript>(
         &sumcheck_claim,
         num_rounds,
@@ -648,8 +648,8 @@ where
     let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
       &batched_polys,
       &commitment,
-      &r_primary_sumcheck,
-      PrimarySumcheckOpenings::open(&polynomials, &r_primary_sumcheck), // TODO: use return value from prove_arbitrary?
+      &r_z,
+      PrimarySumcheckOpenings::open(&polynomials, &r_z), // TODO: use return value from prove_arbitrary?
       transcript,
       &mut random_tape,
     );
@@ -691,11 +691,11 @@ where
 
     <Transcript as ProofTranscript<G>>::append_scalar(
       transcript,
-      b"claim_eval_scalar_product",
+      b"sumcheck_claim",
       &proof.primary_sumcheck.claimed_evaluation,
     );
     let primary_sumcheck_poly_degree = instruction.g_poly_degree(C) + 1;
-    let (claim_last, _) = proof
+    let (claim_last, r_z) = proof
       .primary_sumcheck
       .sumcheck_proof
       .verify::<G, Transcript>(
@@ -705,7 +705,7 @@ where
         transcript,
       )?;
 
-    let eq_eval = EqPolynomial::new(r_primary_sumcheck.to_vec()).evaluate(&r_primary_sumcheck);
+    let eq_eval = EqPolynomial::new(r_primary_sumcheck.to_vec()).evaluate(&r_z);
     assert_eq!(
       eq_eval * instruction.combine_lookups(&proof.primary_sumcheck.openings.E_poly_openings, C, M),
       claim_last,
@@ -714,7 +714,7 @@ where
 
     proof.primary_sumcheck.openings.verify_openings(
       &proof.commitment,
-      &r_primary_sumcheck,
+      &r_z,
       transcript,
     )?;
 
