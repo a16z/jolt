@@ -396,7 +396,7 @@ where
     (0..Self::num_memories())
       .map(|memory_index| {
         let subtable_index = Self::memory_to_subtable_index(memory_index);
-        let leaf_fingerprints = (0..self.num_lookups)
+        let leaf_fingerprints = (0..M)
           .map(|i| {
             (
               F::from(i as u64),
@@ -420,7 +420,7 @@ where
       .map(|memory_index| {
         let dimndex = Self::memory_to_dimension_index(memory_index);
         let subtable_index = Self::memory_to_subtable_index(memory_index);
-        let leaf_fingerprints = (0..self.num_lookups)
+        let leaf_fingerprints = (0..M)
           .map(|i| {
             (
               F::from(i as u64),

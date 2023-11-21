@@ -21,35 +21,35 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
 }
 
 fn jolt_demo_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-  const C: usize = 8;
+  const C: usize = 4;
   const M: usize = 1 << 16;
   vec![
     (
-      tracing::info_span!("EQ(2^10)"),
+      tracing::info_span!("XOR(2^10)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 10),
     ),
     (
-      tracing::info_span!("EQ(2^12)"),
+      tracing::info_span!("XOR(2^12)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 12),
     ),
     (
-      tracing::info_span!("EQ(2^14)"),
+      tracing::info_span!("XOR(2^14)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 14),
     ),
     (
-      tracing::info_span!("EQ(2^16)"),
+      tracing::info_span!("XOR(2^16)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 16),
     ),
     (
-      tracing::info_span!("EQ(2^18)"),
+      tracing::info_span!("XOR(2^18)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 18),
     ),
     (
-      tracing::info_span!("EQ(2^20)"),
+      tracing::info_span!("XOR(2^20)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 20),
     ),
     (
-      tracing::info_span!("EQ(2^22)"),
+      tracing::info_span!("XOR(2^22)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 22),
     ),
   ]
@@ -60,35 +60,35 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
   const M: usize = 1 << 16;
   vec![
     (
-      tracing::info_span!("EQ(2^10)"),
+      tracing::info_span!("XOR(2^10)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 10),
     ),
     (
-      tracing::info_span!("EQ(2^12)"),
+      tracing::info_span!("XOR(2^12)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 12),
     ),
     (
-      tracing::info_span!("EQ(2^14)"),
+      tracing::info_span!("XOR(2^14)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 14),
     ),
     (
-      tracing::info_span!("EQ(2^16)"),
+      tracing::info_span!("XOR(2^16)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 16),
     ),
     (
-      tracing::info_span!("EQ(2^18)"),
+      tracing::info_span!("XOR(2^18)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 18),
     ),
     (
-      tracing::info_span!("EQ(2^20)"),
+      tracing::info_span!("XOR(2^20)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 20),
     ),
     (
-      tracing::info_span!("EQ(2^22)"),
+      tracing::info_span!("XOR(2^22)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 22),
     ),
     (
-      tracing::info_span!("EQ(2^24)"),
+      tracing::info_span!("XOR(2^24)"),
       random_surge_test::<C, M>(/* num_ops */ 1 << 24),
     ),
   ]
@@ -98,11 +98,10 @@ fn random_surge_test<const C: usize, const M: usize>(num_ops: usize) -> Box<dyn 
   let mut rng = test_rng();
 
   let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
-  let operand_max: u64 = (1 << (log2(M) as usize * C - 1)).try_into().unwrap();
   for _ in 0..num_ops {
-    let a = rng.next_u64() % operand_max;
-    let b = rng.next_u64() % operand_max;
-    ops.push(XORInstruction(a, b));
+    let a = rng.next_u32();
+    let b = rng.next_u32();
+    ops.push(XORInstruction(a as u64, b as u64));
   }
 
   let func = move || {
