@@ -22,12 +22,13 @@ use crate::msm::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CubicSumcheckType {
   Prod,
   Flags,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct CubicSumcheckParams<F: PrimeField> {
   poly_As: Vec<DensePolynomial<F>>,
   poly_Bs: Vec<DensePolynomial<F>>,

@@ -9,11 +9,11 @@
 pub mod benches;
 pub mod lasso;
 mod msm;
-mod poly;
+pub mod poly;
 pub mod r1cs;
-mod subprotocols;
+pub mod subprotocols;
 pub mod jolt;
-mod utils;
+pub mod utils;
 
 #[cfg(test)]
 mod e2e_test;
