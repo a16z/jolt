@@ -88,6 +88,7 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
   }
 
+  #[inline]
   pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
     match self.sumcheck_type {
       CubicSumcheckType::Prod => Self::combine_prod(a, b, c),
@@ -95,10 +96,12 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
   }
 
+  #[inline]
   pub fn combine_prod(l: &F, r: &F, eq: &F) -> F {
     *l * r * eq
   }
 
+  #[inline]
   pub fn combine_flags(h: &F, flag: &F, eq: &F) -> F {
     *eq * (*flag * h + (F::one() - flag))
   }
