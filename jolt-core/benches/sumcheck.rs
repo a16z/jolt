@@ -42,8 +42,6 @@ fn sumcheck_bench(c: &mut Criterion) {
     let coeffs = vec![Fr::one()];
 
     group.bench_function("sumcheck unbatched 2^16", |b| {
-
-
         b.iter(|| {
             let mut transcript = Transcript::new(b"test_transcript");
             let params = black_box(params.clone());
@@ -55,11 +53,54 @@ fn sumcheck_bench(c: &mut Criterion) {
             );
         })
     });
+
+    let batch_size = 10;
+    let num_vars = 10;
+
+    let r_eq = vec![Fr::rand(&mut rng); num_vars];
+    let eq = DensePolynomial::new(EqPolynomial::new(r_eq).evals());
+
+    let mut poly_as = Vec::with_capacity(batch_size);
+    let mut poly_bs = Vec::with_capacity(batch_size);
+    for _ in 0..batch_size {
+        let ra = vec![Fr::rand(&mut rng); num_vars];
+        let rb = vec![Fr::rand(&mut rng); num_vars];
+        let a = DensePolynomial::new(EqPolynomial::new(ra).evals());
+        let b = DensePolynomial::new(EqPolynomial::new(rb).evals());
+        poly_as.push(a);
+        poly_bs.push(b);
+    }
+    let params = CubicSumcheckParams::new_prod(poly_as.clone(), poly_bs.clone(), eq.clone(), num_vars);
+    let coeffs = vec![Fr::rand(&mut rng); batch_size];
+
+    let mut joint_claim = Fr::zero();
+    for batch_i in 0..batch_size {
+        let mut claim = Fr::zero();
+        for var_i in 0..num_vars{
+            use liblasso::utils::index_to_field_bitvector;
+        
+            let eval_a = poly_as[batch_i].evaluate(&index_to_field_bitvector(var_i, num_vars));
+            let eval_b = poly_bs[batch_i].evaluate(&index_to_field_bitvector(var_i, num_vars));
+            let eval_eq = eq.evaluate(&index_to_field_bitvector(var_i, num_vars));
+        
+            claim += eval_a * eval_b * eval_eq;
+        }
+        joint_claim += coeffs[batch_i] * claim;
+    }
+
+    group.bench_function("sumcheck batched 2^10", |b| {
+        b.iter(|| {
+            let mut transcript = Transcript::new(b"test_transcript");
+            let params = black_box(params.clone());
+            let (proof, r, evals)  = SumcheckInstanceProof::prove_cubic_batched_special::<EdwardsProjective>(
+                &joint_claim,
+                params,
+                &coeffs,
+                &mut transcript
+            );
+        })
+    });
     group.finish();
-}
-
-fn sumcheck(poly_vars: usize) {
-
 }
 
 criterion_group!(benches, sumcheck_bench);
