@@ -130,4 +130,4 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 pub mod instruction_lookups;
 pub mod pc;
 pub mod read_write_memory;
-pub mod test_vm;
+pub mod rv32i_vm;

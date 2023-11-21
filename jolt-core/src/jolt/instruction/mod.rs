@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 
-use crate::jolt::{subtable::LassoSubtable, vm::test_vm::TestInstructionSet};
+use crate::jolt::subtable::LassoSubtable;
 
 #[enum_dispatch]
 pub trait JoltInstruction {
@@ -29,10 +29,10 @@ pub mod jal;
 pub mod jalr;
 pub mod or;
 pub mod sll;
-pub mod sra;
-pub mod srl;
 pub mod slt;
 pub mod sltu;
+pub mod sra;
+pub mod srl;
 pub mod sub;
 pub mod xor;
 

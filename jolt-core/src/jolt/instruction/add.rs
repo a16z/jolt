@@ -18,7 +18,7 @@ impl JoltInstruction for ADDInstruction {
     // The first C are from IDEN and the last C are from LOWER9
     assert!(vals.len() == 2 * C);
 
-    const WORD_SIZE: usize = 64;
+    const WORD_SIZE: usize = 32;
     let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
 
     let mut vals_by_subtable = vals.chunks_exact(C);
