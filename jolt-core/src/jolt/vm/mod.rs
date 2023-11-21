@@ -11,7 +11,7 @@ use crate::jolt::{
   instruction::{JoltInstruction, Opcode},
   subtable::LassoSubtable,
 };
-use crate::poly::structured_poly::StructuredPolynomials;
+use crate::poly::structured_poly::BatchablePolynomials;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};

@@ -4,8 +4,7 @@ use merlin::Transcript;
 
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 
-// alt: BatchablePolynomials
-pub trait StructuredPolynomials {
+pub trait BatchablePolynomials {
   type Commitment;
   type BatchedPolynomials;
 
@@ -17,7 +16,7 @@ pub trait StructuredOpeningProof<F, G, Polynomials>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
-  Polynomials: StructuredPolynomials + ?Sized,
+  Polynomials: BatchablePolynomials + ?Sized,
 {
   type Openings;
   

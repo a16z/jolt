@@ -12,7 +12,7 @@ use crate::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, StructuredPolynomials},
+    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
   },
   subprotocols::{
     combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
@@ -50,7 +50,7 @@ pub struct SurgeCommitmentGenerators<G: CurveGroup> {
   pub E_commitment_gens: PolyCommitmentGens<G>,
 }
 
-impl<F, G> StructuredPolynomials for SurgePolys<F, G>
+impl<F, G> BatchablePolynomials for SurgePolys<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,

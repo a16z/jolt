@@ -9,7 +9,7 @@ use crate::{
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, StructuredPolynomials},
+    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
   },
   subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
   subprotocols::grand_product::BatchedGrandProductCircuit,
@@ -40,6 +40,57 @@ where
   t_final: DensePolynomial<F>,
 }
 
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
+  pub fn new(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) -> Self {
+    let m = memory_trace.len();
+    assert!(m.is_power_of_two());
+
+    let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
+    let mut v_read: Vec<u64> = Vec::with_capacity(m);
+    let mut v_write: Vec<u64> = Vec::with_capacity(m);
+    let mut v_final: Vec<u64> = vec![0; memory_size];
+    let mut t_read: Vec<u64> = Vec::with_capacity(m);
+    let mut t_write: Vec<u64> = Vec::with_capacity(m);
+    let mut t_final: Vec<u64> = vec![0; memory_size];
+
+    let mut timestamp: u64 = 0;
+    for memory_access in memory_trace {
+      match memory_access {
+        MemoryOp::Read(a, v) => {
+          a_read_write.push(a);
+          v_read.push(v);
+          v_write.push(v);
+          t_read.push(t_final[a as usize]);
+          t_write.push(timestamp + 1);
+          t_final[a as usize] = timestamp + 1;
+        }
+        MemoryOp::Write(a, v_old, v_new) => {
+          a_read_write.push(a);
+          v_read.push(v_old);
+          v_write.push(v_new);
+          v_final[a as usize] = v_new;
+          t_read.push(t_final[a as usize]);
+          t_write.push(timestamp + 1);
+          t_final[a as usize] = timestamp + 1;
+        }
+      }
+      timestamp += 1;
+    }
+
+    Self {
+      _group: PhantomData,
+      memory_size,
+      a_read_write: DensePolynomial::from_u64(&a_read_write),
+      v_read: DensePolynomial::from_u64(&v_read),
+      v_write: DensePolynomial::from_u64(&v_write),
+      v_final: DensePolynomial::from_u64(&v_final),
+      t_read: DensePolynomial::from_u64(&t_read),
+      t_write: DensePolynomial::from_u64(&t_write),
+      t_final: DensePolynomial::from_u64(&t_final),
+    }
+  }
+}
+
 pub struct BatchedMemoryPolynomials<F: PrimeField> {
   /// Contains:
   /// a_read_write, v_read, v_write, t_read, t_write
@@ -65,7 +116,7 @@ pub struct MemoryCommitmentGenerators<G: CurveGroup> {
   pub gens_init_final: PolyCommitmentGens<G>,
 }
 
-impl<F, G> StructuredPolynomials for ReadWriteMemory<F, G>
+impl<F, G> BatchablePolynomials for ReadWriteMemory<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
@@ -376,68 +427,6 @@ where
       openings.v_final,
       openings.t_final,
     )]
-  }
-}
-
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
-  pub fn new(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) -> Self {
-    let trace_len = memory_trace.len();
-    let m = trace_len.next_power_of_two();
-
-    let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
-    let mut v_read: Vec<u64> = Vec::with_capacity(m);
-    let mut v_write: Vec<u64> = Vec::with_capacity(m);
-    let mut v_final: Vec<u64> = vec![0; memory_size];
-    let mut t_read: Vec<u64> = Vec::with_capacity(m);
-    let mut t_write: Vec<u64> = Vec::with_capacity(m);
-    let mut t_final: Vec<u64> = vec![0; memory_size];
-
-    let mut timestamp: u64 = 0;
-    for memory_access in memory_trace {
-      match memory_access {
-        MemoryOp::Read(a, v) => {
-          a_read_write.push(a);
-          v_read.push(v);
-          v_write.push(v);
-          t_read.push(t_final[a as usize]);
-          t_write.push(timestamp + 1);
-          t_final[a as usize] = timestamp + 1;
-        }
-        MemoryOp::Write(a, v_old, v_new) => {
-          a_read_write.push(a);
-          v_read.push(v_old);
-          v_write.push(v_new);
-          v_final[a as usize] = v_new;
-          t_read.push(t_final[a as usize]);
-          t_write.push(timestamp + 1);
-          t_final[a as usize] = timestamp + 1;
-        }
-      }
-      timestamp += 1;
-    }
-
-    // Pad with reads to register 0
-    for _ in 0..m - trace_len {
-      a_read_write.push(0);
-      v_read.push(0);
-      v_write.push(0);
-      t_read.push(t_final[0]);
-      t_write.push(timestamp + 1);
-      t_final[0] = timestamp + 1;
-      timestamp += 1;
-    }
-
-    Self {
-      _group: PhantomData,
-      memory_size,
-      a_read_write: DensePolynomial::from_u64(&a_read_write),
-      v_read: DensePolynomial::from_u64(&v_read),
-      v_write: DensePolynomial::from_u64(&v_write),
-      v_final: DensePolynomial::from_u64(&v_final),
-      t_read: DensePolynomial::from_u64(&t_read),
-      t_write: DensePolynomial::from_u64(&t_write),
-      t_final: DensePolynomial::from_u64(&t_final),
-    }
   }
 }
 

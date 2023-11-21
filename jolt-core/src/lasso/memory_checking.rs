@@ -3,7 +3,7 @@
 
 use crate::poly::{
   dense_mlpoly::DensePolynomial,
-  structured_poly::{StructuredOpeningProof, StructuredPolynomials},
+  structured_poly::{StructuredOpeningProof, BatchablePolynomials},
 };
 use crate::subprotocols::grand_product::{
   BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
@@ -52,7 +52,7 @@ impl<F: PrimeField> MultisetHashes<F> {
 pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
   G: CurveGroup,
-  Polynomials: StructuredPolynomials + ?Sized,
+  Polynomials: BatchablePolynomials + ?Sized,
   ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
   InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
@@ -68,7 +68,7 @@ pub trait MemoryCheckingProver<F, G, Polynomials>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
-  Polynomials: StructuredPolynomials,
+  Polynomials: BatchablePolynomials,
 {
   type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
   type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
@@ -251,7 +251,7 @@ pub trait MemoryCheckingVerifier<F, G, Polynomials>:
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
-  Polynomials: StructuredPolynomials,
+  Polynomials: BatchablePolynomials,
 {
   fn verify_memory_checking(
     mut proof: MemoryCheckingProof<
@@ -402,7 +402,7 @@ mod tests {
     }
 
     #[rustfmt::skip]
-    impl StructuredPolynomials for NormalMems {
+    impl BatchablePolynomials for NormalMems {
       type Commitment = FakeType;
       type BatchedPolynomials = FakeType;
 
@@ -588,7 +588,7 @@ mod tests {
     }
 
     #[rustfmt::skip]
-    impl StructuredPolynomials for Polys {
+    impl BatchablePolynomials for Polys {
       type Commitment = FakeType;
       type BatchedPolynomials = FakeType;
 
@@ -848,7 +848,7 @@ mod tests {
     }
 
     #[rustfmt::skip]
-    impl StructuredPolynomials for FlagPolys {
+    impl BatchablePolynomials for FlagPolys {
       type Commitment = FakeType;
       type BatchedPolynomials = FakeType;
 

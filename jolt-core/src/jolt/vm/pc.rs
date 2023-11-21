@@ -10,7 +10,7 @@ use crate::{
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, StructuredPolynomials},
+    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
   },
   subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
   utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
@@ -134,7 +134,7 @@ pub struct PCCommitmentGenerators<G: CurveGroup> {
   pub gens_init_final: PolyCommitmentGens<G>,
 }
 
-impl<F, G> StructuredPolynomials for PCPolys<F, G>
+impl<F, G> BatchablePolynomials for PCPolys<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,

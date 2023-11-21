@@ -17,7 +17,7 @@ use crate::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     eq_poly::EqPolynomial,
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, StructuredPolynomials},
+    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
     unipoly::{CompressedUniPoly, UniPoly},
   },
   subprotocols::{
@@ -98,7 +98,7 @@ pub struct InstructionCommitmentGenerators<G: CurveGroup> {
 }
 
 // TODO: macro?
-impl<F, G> StructuredPolynomials for InstructionPolynomials<F, G>
+impl<F, G> BatchablePolynomials for InstructionPolynomials<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
@@ -547,6 +547,7 @@ where
       .collect()
   }
 
+  /// Overrides default implementation to handle flags
   fn read_write_grand_product(
     &self,
     polynomials: &InstructionPolynomials<F, G>,
