@@ -74,16 +74,14 @@ where
   type BatchedPolynomials = BatchedMemoryPolynomials<F>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
-    // TODO(JOLT-48): DensePolynomial::merge should be parameterized with  Vec<&DensePolynomial> given it is read only. Avoids clones.
     let batched_read_write = DensePolynomial::merge(&vec![
-      self.a_read_write.clone(),
-      self.v_read.clone(),
-      self.v_write.clone(),
-      self.t_read.clone(),
-      self.t_write.clone(),
+      &self.a_read_write,
+      &self.v_read,
+      &self.v_write,
+      &self.t_read,
+      &self.t_write,
     ]);
-    let batched_init_final =
-      DensePolynomial::merge(&vec![self.v_final.clone(), self.t_final.clone()]);
+    let batched_init_final = DensePolynomial::merge(&vec![&self.v_final, &self.t_final]);
 
     Self::BatchedPolynomials {
       batched_read_write,
