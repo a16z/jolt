@@ -67,12 +67,12 @@ mod test {
   #[test]
   fn add_instruction_e2e() {
     let mut rng = test_rng();
-    const C: usize = 8;
+    const C: usize = 4;
     const M: usize = 1 << 16;
 
     for _ in 0..256 {
-      let (x, y) = (rng.next_u64(), rng.next_u64());
-      jolt_instruction_test!(ADDInstruction(x, y), (x.overflowing_add(y)).0.into());
+      let (x, y) = (rng.next_u32(), rng.next_u32());
+      jolt_instruction_test!(ADDInstruction(x as u64, y as u64), (x.overflowing_add(y)).0.into());
     }
   }
 }
