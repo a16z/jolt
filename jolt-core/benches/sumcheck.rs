@@ -55,7 +55,7 @@ fn sumcheck_bench(c: &mut Criterion) {
     });
 
     let batch_size = 10;
-    let num_vars = 10;
+    let num_vars = 14;
 
     let r_eq = vec![Fr::rand(&mut rng); num_vars];
     let eq = DensePolynomial::new(EqPolynomial::new(r_eq).evals());
@@ -88,7 +88,7 @@ fn sumcheck_bench(c: &mut Criterion) {
         joint_claim += coeffs[batch_i] * claim;
     }
 
-    group.bench_function("sumcheck batched 2^10", |b| {
+    group.bench_function("sumcheck 10xbatched 2^14", |b| {
         b.iter(|| {
             let mut transcript = Transcript::new(b"test_transcript");
             let params = black_box(params.clone());

@@ -125,6 +125,28 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     })
   }
 
+  pub fn pairs_par_iter(
+    &self,
+  ) -> impl ParallelIterator<
+    Item = (
+      &DensePolynomial<F>,
+      &DensePolynomial<F>,
+      &DensePolynomial<F>,
+    ),
+  > {
+    self.poly_As.par_iter().enumerate().map(move |(i, a)| {
+      let b_idx = match self.sumcheck_type {
+        CubicSumcheckType::Prod => i,
+        CubicSumcheckType::Flags => self.a_to_b[i],
+        _ => panic!("uh oh"),
+      };
+
+      let b = &self.poly_Bs[b_idx];
+      let c = &self.poly_eq;
+      (a, b, c)
+    })
+  }
+
   pub fn apply_bound_poly_var_top(&mut self, r_j: &F) {
     // Apply on poly_As
     for poly in &mut self.poly_As {
@@ -177,42 +199,58 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
     for _j in 0..params.num_rounds {
+
+      #[cfg(feature = "multicore")]
+      let iterator = params.pairs_par_iter();
+
+      #[cfg(not(feature = "multicore"))]
       let iterator = params.pairs_iter();
 
       let evals: Vec<(F, F, F)> = iterator
         .map(|(poly_A, poly_B, eq)| {
-          let mut eval_point_0 = F::zero();
-          let mut eval_point_2 = F::zero();
-          let mut eval_point_3 = F::zero();
 
           let len = poly_A.len() / 2;
-          for i in 0..len {
-            // TODO(#28): Optimize
 
+          #[cfg(feature = "multicore")]
+          let iterator = (0..len).into_par_iter();
+
+          #[cfg(not(feature = "multicore"))]
+          let iterator = (0..len).into_par_iter();
+
+          let (eval_point_0, eval_point_2, eval_point_3) = iterator.map(|i| {
             // eval 0: bound_func is A(low)
-            eval_point_0 += params.combine(&poly_A[i], &poly_B[i], &eq[i]);
+            let eval_point_0 = params.combine(&poly_A[i], &poly_B[i], &eq[i]);
+
+            let high = len + i;
+            let low = i;
+            let m_a = poly_A[high] - poly_A[low];
+            let m_b = poly_B[high] - poly_B[low];
+            let m_eq = eq[high] - eq[low];
 
             // eval 2: bound_func is -A(low) + 2*A(high)
-            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-            let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-            let poly_C_bound_point = eq[len + i] + eq[len + i] - eq[i];
-            eval_point_2 += params.combine(
+            let poly_A_bound_point = poly_A[high] + m_a;
+            let poly_B_bound_point = poly_B[high] + m_b;
+            let poly_C_bound_point = eq[high] + m_eq;
+            let eval_point_2 = params.combine(
               &poly_A_bound_point,
               &poly_B_bound_point,
               &poly_C_bound_point,
             );
 
             // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-            let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
-            let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
-            let poly_C_bound_point = poly_C_bound_point + eq[len + i] - eq[i];
+            let poly_A_bound_point = poly_A_bound_point + m_a;
+            let poly_B_bound_point = poly_B_bound_point + m_b;
+            let poly_C_bound_point = poly_C_bound_point + m_eq;
 
-            eval_point_3 += params.combine(
+            let eval_point_3 = params.combine(
               &poly_A_bound_point,
               &poly_B_bound_point,
               &poly_C_bound_point,
             );
-          }
+
+            (eval_point_0, eval_point_2, eval_point_3)
+          })
+          .reduce(|| (F::zero(), F::zero(), F::zero()), |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c));
 
           (eval_point_0, eval_point_2, eval_point_3)
         })
