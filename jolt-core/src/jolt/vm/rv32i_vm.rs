@@ -7,11 +7,18 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::{instruction_lookups::InstructionLookups, Jolt};
 use crate::jolt::instruction::{
-  bge::BGEInstruction, bgeu::BGEUInstruction, bne::BNEInstruction, sll::SLLInstruction,
-  xor::XORInstruction, JoltInstruction, Opcode,
+  add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+  bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
+  jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
+  slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
+  sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
 };
 use crate::jolt::subtable::{
-  eq::EqSubtable, ltu::LtuSubtable, sll::SllSubtable, xor::XorSubtable, LassoSubtable,
+  and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
+  gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
+  or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
+  truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, zero_lsb::ZeroLSBSubtable,
+  LassoSubtable,
 };
 
 macro_rules! instruction_set {
@@ -52,39 +59,65 @@ macro_rules! subtable_enum {
 }
 
 instruction_set!(
-  TestInstructionSet,
-  XOR: XORInstruction,
+  RV32I,
+  // ADD: ADDInstruction,
+  // AND: ANDInstruction,
+  // BEQ: BEQInstruction,
+  // BGE: BGEInstruction,
+  // BGEU: BGEUInstruction,
+  // BLT: BLTInstruction,
+  // BLTU: BLTUInstruction,
   BNE: BNEInstruction,
-  SLL: SLLInstruction
+  // JAL: JALInstruction,
+  // JALR: JALRInstruction,
+  // OR: ORInstruction,
+  // SLL: SLLInstruction,
+  // SLT: SLTInstruction,
+  // SLTU: SLTUInstruction,
+  // SRA: SRAInstruction,
+  // SRL: SRLInstruction,
+  // SUB: SUBInstruction,
+  XOR: XORInstruction
 );
 subtable_enum!(
-  TestSubtables,
-  XOR: XorSubtable<F>,
+  RV32ISubtables,
+  // AND: AndSubtable<F>,
+  // EQ_ABS: EqAbsSubtable<F>,
+  // EQ_MSB: EqMSBSubtable<F>,
   EQ: EqSubtable<F>,
-  SLL0: SllSubtable<F, 0>,
-  SLL1: SllSubtable<F, 1>,
-  SLL2: SllSubtable<F, 2>,
-  SLL3: SllSubtable<F, 3>,
-  SLL4: SllSubtable<F, 4>,
-  SLL5: SllSubtable<F, 5>,
-  SLL6: SllSubtable<F, 6>,
-  SLL7: SllSubtable<F, 7>
+  // GT_MSB: GtMSBSubtable<F>,
+  // IDENTITY: IdentitySubtable<F>,
+  // LT_ABS: LtAbsSubtable<F>,
+  // LTU: LtuSubtable<F>,
+  // OR: OrSubtable<F>,
+  // SLL0: SllSubtable<F, 0>,
+  // SLL1: SllSubtable<F, 1>,
+  // SLL2: SllSubtable<F, 2>,
+  // SLL3: SllSubtable<F, 3>,
+  // SRA_SIGN: SraSignSubtable<F>,
+  // SRL0: SrlSubtable<F, 0>,
+  // SRL1: SrlSubtable<F, 1>,
+  // SRL2: SrlSubtable<F, 2>,
+  // SRL3: SrlSubtable<F, 3>,
+  // TRUNCATE: TruncateOverflowSubtable<F>,
+  XOR: XorSubtable<F>
+  // ZERO_LSB: ZeroLSBSubtable<F>
 );
 
 // ==================== JOLT ====================
 
-pub enum TestJoltVM {}
+pub enum RV32IJoltVM {}
 
-const C: usize = 8;
+const C: usize = 4;
 const M: usize = 1 << 16;
 
-impl<F, G> Jolt<F, G, C, M> for TestJoltVM
+impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type InstructionSet = TestInstructionSet;
-  type Subtables = TestSubtables<F>;
+  type InstructionSet = RV32I;
+  type Subtables = RV32ISubtables<F>;
 }
 
 // ==================== TEST ====================
@@ -113,10 +146,10 @@ mod tests {
   use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
   use crate::jolt::subtable::zero_lsb::ZeroLSBSubtable;
   use crate::jolt::subtable::LassoSubtable;
+  use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
   use crate::{
-    jolt::vm::test_vm::{
-      BNEInstruction, InstructionLookups, Jolt, TestInstructionSet, TestJoltVM, XORInstruction, C,
-      M,
+    jolt::vm::rv32i_vm::{
+      BNEInstruction, InstructionLookups, Jolt, RV32IJoltVM, XORInstruction, C, M, RV32I,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
@@ -134,37 +167,39 @@ mod tests {
     r_i
   }
 
-  // #[test]
-  // fn e2e() {
-  //   let ops: Vec<TestInstructionSet> = vec![
-  //     TestInstructionSet::XOR(XORInstruction(420, 69)),
-  //     TestInstructionSet::XOR(XORInstruction(420, 420)),
-  //     TestInstructionSet::XOR(XORInstruction(420, 69)),
-  //     TestInstructionSet::BNE(BNEInstruction(82, 200)),
-  //     TestInstructionSet::BNE(BNEInstruction(82, 200)),
-  //   ];
+  #[test]
+  fn e2e() {
+    let ops: Vec<RV32I> = vec![
+      RV32I::XOR(XORInstruction(420, 69)),
+      RV32I::XOR(XORInstruction(420, 420)),
+      // RV32I::XOR(XORInstruction(420, 69)),
+      RV32I::BNE(BNEInstruction(82, 200)),
+      RV32I::BNE(BNEInstruction(82, 200)),
+    ];
 
-  //   let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
-  //   let mut prover_transcript = Transcript::new(b"example");
-  //   let proof = TestJoltVM::prove_lookups(ops, r.clone(), &mut prover_transcript);
-  //   let mut verifier_transcript = Transcript::new(b"example");
-  //   assert!(TestJoltVM::verify_instruction_lookups(proof, &r, &mut verifier_transcript).is_ok());
-  // }
+    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
+      RV32IJoltVM::prove_instruction_lookups(ops, r.clone(), &mut prover_transcript);
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok());
+  }
 
   #[test]
   fn instruction_set_subtables() {
     let mut subtable_set: HashSet<_> = HashSet::new();
-    for instruction in <TestJoltVM as Jolt<_, EdwardsProjective, C, M>>::InstructionSet::iter() {
+    for instruction in <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::InstructionSet::iter() {
       for subtable in instruction.subtables::<Fr>(C) {
         // panics if subtable cannot be cast to enum variant
-        let _ =
-          <TestJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::from(subtable.subtable_id());
+        let _ = <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::from(
+          subtable.subtable_id(),
+        );
         subtable_set.insert(subtable.subtable_id());
       }
     }
     assert_eq!(
       subtable_set.len(),
-      <TestJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::COUNT,
+      <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::COUNT,
       "Unused enum variants in Subtables"
     );
   }

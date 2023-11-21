@@ -213,6 +213,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
       .collect::<Vec<F>>();
 
     let mut rand = Vec::new();
+    println!("num_layers = {}", batch.num_layers());
     for layer_id in (0..batch.num_layers()).rev() {
       // produce a fresh set of coeffs and a joint claim
       let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(

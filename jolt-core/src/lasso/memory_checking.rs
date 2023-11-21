@@ -167,9 +167,10 @@ where
 
     let (read_write_grand_product, r_read_write) =
       BatchedGrandProductArgument::prove::<G>(read_write_circuit, transcript);
+    println!("r.len() = {}", r_read_write.len());
     let (init_final_grand_product, r_init_final) =
       BatchedGrandProductArgument::prove::<G>(init_final_circuit, transcript);
-
+    println!("r.len() = {}", r_init_final.len());
     (
       read_write_grand_product,
       init_final_grand_product,
