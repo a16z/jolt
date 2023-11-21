@@ -82,7 +82,8 @@ where
       self.t_read.clone(),
       self.t_write.clone(),
     ]);
-    let batched_init_final = DensePolynomial::merge(&vec![self.v_final.clone(), self.t_final.clone()]);
+    let batched_init_final =
+      DensePolynomial::merge(&vec![self.v_final.clone(), self.t_final.clone()]);
 
     Self::BatchedPolynomials {
       batched_read_write,
@@ -444,13 +445,56 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
 #[cfg(test)]
 mod tests {
-  #[test]
-  fn prod_layer_proof() {
-    todo!()
+  use super::*;
+  use ark_curve25519::{EdwardsProjective, Fr};
+  use ark_std::{log2, test_rng, One, Zero};
+  use rand_chacha::rand_core::RngCore;
+
+  fn generate_memory_trace(memory_size: usize, num_ops: usize) -> Vec<MemoryOp> {
+    let mut rng = test_rng();
+    let mut memory = vec![0u64; memory_size];
+    let mut memory_trace = Vec::with_capacity(num_ops);
+
+    for _ in 0..num_ops {
+      if rng.next_u32() % 2 == 0 {
+        let address: usize = rng.next_u32() as usize % memory_size;
+        let value = memory[address];
+        memory_trace.push(MemoryOp::Read(address as u64, value));
+      } else {
+        let address: usize = rng.next_u32() as usize % memory_size;
+        let old_value = memory[address];
+        let new_value = rng.next_u64();
+        memory_trace.push(MemoryOp::Write(address as u64, old_value, new_value));
+        memory[address] = new_value;
+      }
+    }
+    memory_trace
   }
 
   #[test]
-  fn e2e_mem_checking() {
-    todo!()
+  fn e2e_memchecking() {
+    const MEMORY_SIZE: usize = 1 << 16;
+    const NUM_OPS: usize = 1 << 8;
+    let memory_trace = generate_memory_trace(MEMORY_SIZE, NUM_OPS);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let mut random_tape = RandomTape::new(b"test_tape");
+
+    let rw_memory: ReadWriteMemory<Fr, EdwardsProjective> =
+      ReadWriteMemory::new(memory_trace, MEMORY_SIZE, &mut transcript);
+    let batched_polys = rw_memory.batch();
+    let commitments = ReadWriteMemory::commit(&batched_polys);
+
+    let proof = rw_memory.prove_memory_checking(
+      &rw_memory,
+      &batched_polys,
+      &commitments,
+      &mut transcript,
+      &mut random_tape,
+    );
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut transcript)
+      .expect("proof should verify");
   }
 }
