@@ -332,12 +332,19 @@ impl Cpu {
 
 		match self.decode(word).cloned() {
 			Ok(inst) => {
-                inst.trace.unwrap()(&inst, self, word, instruction_address);
+                // setup trace
+                let trace_inst = inst.trace.unwrap()(&inst, &self.xlen, word, instruction_address);
+                self.tracer.start_instruction(trace_inst);
                 self.tracer.capture_pre_state(self.x.clone());
+
+                // execute
 				let result = (inst.operation)(self, word, instruction_address);
 				self.x[0] = 0; // hardwired zero
+
+                // complete trace
                 self.tracer.capture_post_state(self.x.clone());
                 self.tracer.end_instruction();
+
 				return result;
 			},
 			Err(()) => {
@@ -1359,14 +1366,14 @@ impl Cpu {
 	}
 }
 
-#[derive(Clone)]
-struct Instruction {
-	mask: u32,
-	data: u32, // @TODO: rename
-	name: &'static str,
+#[derive(Debug, Clone)]
+pub struct Instruction {
+	pub mask: u32,
+	pub data: u32, // @TODO: rename
+	pub name: &'static str,
 	operation: fn(cpu: &mut Cpu, word: u32, address: u64) -> Result<(), Trap>,
 	disassemble: fn(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String,
-    trace: Option<fn(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64)>,
+    pub trace: Option<fn(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction>,
 }
 
 struct FormatB {
@@ -1717,94 +1724,82 @@ fn normalize_register(value: usize) -> u64 {
     value.try_into().unwrap()
 }
 
-fn trace_r(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
+fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction {
     let f = parse_format_r(word);
-    let inst = common::Instruction { 
+    common::Instruction { 
         opcode: inst.name,
-        address: normalize_u64(address, &cpu.xlen),
+        address: normalize_u64(address, xlen),
         imm: None,
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: Some(normalize_register(f.rd)),
-    };
-
-    cpu.tracer.start_instruction(inst)
+    }
 }
 
-fn trace_i(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
+fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction {
     let f = parse_format_i(word);
-    let inst = common::Instruction {
+    common::Instruction {
         opcode: inst.name,
-        address: normalize_u64(address, &cpu.xlen),
+        address: normalize_u64(address, &xlen),
         imm: Some(normalize_signed_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-    };
-
-    cpu.tracer.start_instruction(inst);
+    }
 }
 
-fn trace_s(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
+fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction {
     let f = parse_format_s(word);
-    let inst = common::Instruction {
+    common::Instruction {
         opcode: inst.name,
-        address: normalize_u64(address, &cpu.xlen),
+        address: normalize_u64(address, &xlen),
         imm: Some(normalize_signed_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
-    };
-
-    cpu.tracer.start_instruction(inst);
+    }
 }
 
-fn trace_b(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
+fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction {
     let f = parse_format_b(word);
-    let inst = common::Instruction {
+    common::Instruction {
         opcode: inst.name,
-        address: normalize_u64(address, &cpu.xlen),
+        address: normalize_u64(address, &xlen),
         imm: Some(normalize_unsigned_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
-    };
-
-    cpu.tracer.start_instruction(inst);
+    }
 }
 
-fn trace_u(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
+fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction {
     let f = parse_format_u(word);
-    let inst = common::Instruction { 
+    common::Instruction { 
         opcode: inst.name,
-        address: normalize_u64(address, &cpu.xlen),
+        address: normalize_u64(address, &xlen),
         imm: Some(normalize_unsigned_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-    };
-
-    cpu.tracer.start_instruction(inst);
+    }
 }
 
-fn trace_j(inst: &Instruction, cpu: &mut Cpu, word: u32, address: u64) {
+fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::Instruction { 
     let f = parse_format_u(word);
-    let inst = common::Instruction { 
+    common::Instruction { 
         opcode: inst.name,
-        address: normalize_u64(address, &cpu.xlen),
+        address: normalize_u64(address, &xlen),
         imm: Some(normalize_unsigned_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-    };
-
-    cpu.tracer.start_instruction(inst);
+    }
 }
 
 const INSTRUCTION_NUM: usize = 116;
 
 // @TODO: Reorder in often used order as 
-const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
+pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
 	Instruction {
 		mask: 0xfe00707f,
 		data: 0x00000033,
