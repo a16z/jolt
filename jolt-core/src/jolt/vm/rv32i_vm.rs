@@ -168,12 +168,12 @@ mod tests {
       RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BGE(BGEInstruction(rng.next_u32() as i64, rng.next_u32() as i64)),
+      RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::BGEU(BGEUInstruction(
         rng.next_u32() as u64,
         rng.next_u32() as u64,
       )),
-      RV32I::BLT(BLTInstruction(rng.next_u32() as i64, rng.next_u32() as i64)),
+      RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::BLTU(BLTUInstruction(
         rng.next_u32() as u64,
         rng.next_u32() as u64,
