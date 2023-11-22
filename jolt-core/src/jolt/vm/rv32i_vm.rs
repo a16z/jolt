@@ -6,6 +6,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::{instruction_lookups::InstructionLookups, Jolt};
+use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
   add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
   bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
@@ -60,7 +61,7 @@ macro_rules! subtable_enum {
 
 instruction_set!(
   RV32I,
-  ADD: ADDInstruction,
+  ADD: ADD32Instruction,
   AND: ANDInstruction,
   BEQ: BEQInstruction,
   BGE: BGEInstruction,
