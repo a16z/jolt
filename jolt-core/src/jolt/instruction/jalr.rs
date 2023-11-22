@@ -18,7 +18,7 @@ impl JoltInstruction for JALRInstruction {
     // C from IDEN, C from TruncateOverflow, C from ZeroLSB
     assert!(vals.len() == 3 * C);
 
-    const WORD_SIZE: usize = 64;
+    const WORD_SIZE: usize = 32;
     let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
 
     let mut vals_by_subtable = vals.chunks_exact(C);
@@ -70,13 +70,13 @@ mod test {
   #[test]
   fn jalr_instruction_e2e() {
     let mut rng = test_rng();
-    const C: usize = 8;
+    const C: usize = 4;
     const M: usize = 1 << 16;
 
     for _ in 0..256 {
-      let (x, y) = (rng.next_u64(), rng.next_u64());
+      let (x, y) = (rng.next_u32(), rng.next_u32());
       let z = x.overflowing_add(y.overflowing_add(4).0).0;
-      jolt_instruction_test!(JALRInstruction(x, y), (z - z % 2).into());
+      jolt_instruction_test!(JALRInstruction(x as u64, y as u64), (z - z % 2).into());
     }
   }
 }

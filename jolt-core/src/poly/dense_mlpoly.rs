@@ -3,6 +3,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct};
 
 use super::commitments::{Commitments, MultiCommitGens};
+use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
 use crate::subprotocols::dot_product::{DotProductProofGens, DotProductProofLog};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -14,6 +15,7 @@ use ark_serialize::*;
 use ark_std::Zero;
 use core::ops::Index;
 use merlin::Transcript;
+use std::ops::AddAssign;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -266,6 +268,18 @@ impl<F: PrimeField> DensePolynomial<F> {
     DensePolynomial::new(Z)
   }
 
+  pub fn combined_commit<G>(
+    &self,
+    label: &'static [u8],
+  ) -> (PolyCommitmentGens<G>, CombinedTableCommitment<G>)
+  where
+    G: CurveGroup<ScalarField = F>,
+  {
+    let generators = PolyCommitmentGens::new(self.num_vars, label);
+    let (joint_commitment, _) = self.commit(&generators, None);
+    (generators, CombinedTableCommitment::new(joint_commitment))
+  }
+
   pub fn from_usize(Z: &[usize]) -> Self {
     DensePolynomial::new(
       (0..Z.len())
@@ -413,6 +427,20 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     let C_Zr = Zr.commit(&G::ScalarField::zero(), &gens.gens.gens_1);
 
     self.verify(gens, transcript, r, &C_Zr, comm)
+  }
+}
+
+impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
+  fn add_assign(&mut self, rhs: &DensePolynomial<F>) {
+    assert_eq!(self.num_vars, rhs.num_vars);
+    assert_eq!(self.len, rhs.len);
+    let summed_evaluations: Vec<F> = self.Z.iter().zip(&rhs.Z).map(|(a, b)| *a + *b).collect();
+
+    *self = Self {
+      num_vars: self.num_vars,
+      len: self.len,
+      Z: summed_evaluations,
+    }
   }
 }
 

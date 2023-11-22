@@ -1,8 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::poly::{
+  dense_mlpoly::DensePolynomial,
+  structured_poly::{StructuredOpeningProof, BatchablePolynomials},
+};
 use crate::subprotocols::grand_product::{
-  BGPCInterpretable, BatchedGrandProductArgument,
+  BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
 };
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::random::RandomTape;
@@ -10,259 +14,463 @@ use crate::utils::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
+use std::marker::PhantomData;
 
-use super::fingerprint_strategy::{FingerprintStrategy, MemBatchInfo};
-use super::gp_evals::GPEvals;
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G: CurveGroup, S: FingerprintStrategy<G>> {
-  proof_prod_layer: ProductLayerProof<G::ScalarField>,
-  proof_hash_layer: S,
-  num_ops: usize,
-  num_memories: usize,
-  memory_size: usize,
+pub struct MultisetHashes<F: PrimeField> {
+  hash_init: F,
+  hash_final: F,
+  hash_read: F,
+  hash_write: F,
 }
 
-impl<G: CurveGroup, S: FingerprintStrategy<G>> MemoryCheckingProof<G, S> {
-  pub fn prove(
-    polynomials: &S::Polynomials,
-    r_fingerprint: (&G::ScalarField, &G::ScalarField),
-    generators: &S::Generators,
+impl<F: PrimeField> MultisetHashes<F> {
+  pub fn append_to_transcript<G: CurveGroup<ScalarField = F>>(&self, transcript: &mut Transcript) {
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_init",
+      &self.hash_init,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_read",
+      &self.hash_read,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_write",
+      &self.hash_write,
+    );
+    <Transcript as ProofTranscript<G>>::append_scalar(
+      transcript,
+      b"claim_hash_final",
+      &self.hash_final,
+    );
+  }
+}
+
+pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
+where
+  G: CurveGroup,
+  Polynomials: BatchablePolynomials + ?Sized,
+  ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
+  InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
+{
+  _polys: PhantomData<Polynomials>,
+  multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
+  read_write_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+  init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+  read_write_openings: ReadWriteOpenings,
+  init_final_openings: InitFinalOpenings,
+}
+
+pub trait MemoryCheckingProver<F, G, Polynomials>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+  Polynomials: BatchablePolynomials,
+{
+  type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
+  type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
+  type MemoryTuple = (F, F, F); // (a, v, t)
+
+  fn prove_memory_checking(
+    &self,
+    polynomials: &Polynomials,
+    batched_polys: &Polynomials::BatchedPolynomials,
+    commitments: &Polynomials::Commitment,
     transcript: &mut Transcript,
     random_tape: &mut RandomTape<G>,
-  ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+  ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+    // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
 
-    let (proof_prod_layer, rand_mem, rand_ops) =
-      ProductLayerProof::prove::<G, S::Polynomials>(polynomials, r_fingerprint, transcript);
+    // fka "ProductLayerProof"
+    let (
+      read_write_grand_product,
+      init_final_grand_product,
+      multiset_hashes,
+      r_read_write,
+      r_init_final,
+    ) = self.prove_grand_products(polynomials, transcript);
 
-    let proof_hash_layer = S::prove(
-      (&rand_mem, &rand_ops),
-      &polynomials,
-      &generators,
+    // fka "HashLayerProof"
+    let read_write_openings = Self::ReadWriteOpenings::prove_openings(
+      batched_polys,
+      commitments,
+      &r_read_write,
+      Self::ReadWriteOpenings::open(polynomials, &r_read_write),
+      transcript,
+      random_tape,
+    );
+    let init_final_openings = Self::InitFinalOpenings::prove_openings(
+      batched_polys,
+      commitments,
+      &r_init_final,
+      Self::InitFinalOpenings::open(polynomials, &r_init_final),
       transcript,
       random_tape,
     );
 
     MemoryCheckingProof {
-      proof_prod_layer,
-      proof_hash_layer,
-      num_ops: polynomials.ops_size(),
-      num_memories: polynomials.num_memories(),
-      memory_size: polynomials.mem_size(),
+      _polys: PhantomData,
+      multiset_hashes,
+      read_write_grand_product,
+      init_final_grand_product,
+      read_write_openings,
+      init_final_openings,
     }
   }
 
-  pub fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[G::ScalarField]) -> G::ScalarField>(
+  fn prove_grand_products(
     &self,
-    commitments: &S::Commitments,
-    generators: &S::Generators,
-    // TODO(sragss): Consider hardcoding these params
-    memory_to_dimension_index: F1,
-    evaluate_memory_mle: F2,
-    r_mem_check: (&G::ScalarField, &G::ScalarField),
+    polynomials: &Polynomials,
     transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError> {
+  ) -> (
+    BatchedGrandProductArgument<F>,
+    BatchedGrandProductArgument<F>,
+    Vec<MultisetHashes<F>>,
+    Vec<F>,
+    Vec<F>,
+  ) {
+    // Fiat-Shamir randomness for multiset hashes
+    let gamma: F =
+      <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking gamma");
+    let tau: F =
+      <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking tau");
+
     <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-    let (r_hash, r_multiset_check) = r_mem_check;
+    // fka "ProductLayerProof"
+    let (read_write_circuit, read_hashes, write_hashes) =
+      self.read_write_grand_product(polynomials, &gamma, &tau);
+    let (init_final_circuit, init_hashes, final_hashes) =
+      self.init_final_grand_product(polynomials, &gamma, &tau);
+    debug_assert_eq!(read_hashes.len(), init_hashes.len());
+    let num_memories = read_hashes.len();
 
-    let (claims_mem, rand_mem, claims_ops, rand_ops) =
-      self.proof_prod_layer.verify::<G>(transcript)?;
+    let mut multiset_hashes = Vec::with_capacity(num_memories);
+    for i in 0..num_memories {
+      let hashes = MultisetHashes {
+        hash_init: init_hashes[i],
+        hash_final: final_hashes[i],
+        hash_read: read_hashes[i],
+        hash_write: write_hashes[i],
+      };
+      debug_assert_eq!(
+        hashes.hash_init * hashes.hash_write,
+        hashes.hash_final * hashes.hash_read,
+        "Multiset hashes don't match"
+      );
+      hashes.append_to_transcript::<G>(transcript);
+      multiset_hashes.push(hashes);
+    }
 
-    let claims: Vec<GPEvals<G::ScalarField>> = (0..self.num_memories)
-      .map(|i| {
-        GPEvals::new(
-          claims_mem[2 * i],     // init
-          claims_ops[2 * i],     // read
-          claims_ops[2 * i + 1], // write
-          claims_mem[2 * i + 1], // final
-        )
-      })
+    let (read_write_grand_product, r_read_write) =
+      BatchedGrandProductArgument::prove::<G>(read_write_circuit, transcript);
+    let (init_final_grand_product, r_init_final) =
+      BatchedGrandProductArgument::prove::<G>(init_final_circuit, transcript);
+    (
+      read_write_grand_product,
+      init_final_grand_product,
+      multiset_hashes,
+      r_read_write,
+      r_init_final,
+    )
+  }
+
+  fn read_write_grand_product(
+    &self,
+    polynomials: &Polynomials,
+    gamma: &F,
+    tau: &F,
+  ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
+    let read_leaves: Vec<DensePolynomial<F>> = self.read_leaves(polynomials, gamma, tau);
+    let write_leaves: Vec<DensePolynomial<F>> = self.write_leaves(polynomials, gamma, tau);
+    debug_assert_eq!(read_leaves.len(), write_leaves.len());
+    let num_memories = read_leaves.len();
+
+    let mut circuits = Vec::with_capacity(2 * num_memories);
+    let mut read_hashes = Vec::with_capacity(num_memories);
+    let mut write_hashes = Vec::with_capacity(num_memories);
+    for i in 0..num_memories {
+      let read_circuit = GrandProductCircuit::new(&read_leaves[i]);
+      let write_circuit = GrandProductCircuit::new(&write_leaves[i]);
+      read_hashes.push(read_circuit.evaluate());
+      write_hashes.push(write_circuit.evaluate());
+      circuits.push(read_circuit);
+      circuits.push(write_circuit);
+    }
+
+    (
+      BatchedGrandProductCircuit::new_batch(circuits),
+      read_hashes,
+      write_hashes,
+    )
+  }
+
+  fn init_final_grand_product(
+    &self,
+    polynomials: &Polynomials,
+    gamma: &F,
+    tau: &F,
+  ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
+    let init_leaves: Vec<DensePolynomial<F>> = self.init_leaves(polynomials, gamma, tau);
+    let final_leaves: Vec<DensePolynomial<F>> = self.final_leaves(polynomials, gamma, tau);
+    debug_assert_eq!(init_leaves.len(), final_leaves.len());
+    let num_memories = init_leaves.len();
+
+    let mut circuits = Vec::with_capacity(2 * num_memories);
+    let mut init_hashes = Vec::with_capacity(num_memories);
+    let mut final_hashes = Vec::with_capacity(num_memories);
+    for i in 0..num_memories {
+      let init_circuit = GrandProductCircuit::new(&init_leaves[i]);
+      let final_circuit = GrandProductCircuit::new(&final_leaves[i]);
+      init_hashes.push(init_circuit.evaluate());
+      final_hashes.push(final_circuit.evaluate());
+      circuits.push(init_circuit);
+      circuits.push(final_circuit);
+    }
+
+    (
+      BatchedGrandProductCircuit::new_batch(circuits),
+      init_hashes,
+      final_hashes,
+    )
+  }
+
+  fn read_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn write_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn init_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn final_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  fn fingerprint(tuple: &Self::MemoryTuple, gamma: &F, tau: &F) -> F;
+  fn protocol_name() -> &'static [u8];
+}
+
+pub trait MemoryCheckingVerifier<F, G, Polynomials>:
+  MemoryCheckingProver<F, G, Polynomials>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+  Polynomials: BatchablePolynomials,
+{
+  fn verify_memory_checking(
+    mut proof: MemoryCheckingProof<
+      G,
+      Polynomials,
+      Self::ReadWriteOpenings,
+      Self::InitFinalOpenings,
+    >,
+    commitments: &Polynomials::Commitment,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    // Fiat-Shamir randomness for multiset hashes
+    let gamma: F =
+      <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking gamma");
+    let tau: F =
+      <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"Memory checking tau");
+
+    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+    for hash in &proof.multiset_hashes {
+      // Multiset equality check
+      assert_eq!(
+        hash.hash_init * hash.hash_write,
+        hash.hash_read * hash.hash_final
+      );
+      hash.append_to_transcript::<G>(transcript);
+    }
+
+    let interleaved_read_write_hashes = proof
+      .multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_read, hash.hash_write])
+      .collect();
+    let interleaved_init_final_hashes = proof
+      .multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_init, hash.hash_final])
       .collect();
 
-    // verify the proof of hash layer
-    self.proof_hash_layer.verify(
-      (&rand_mem, &rand_ops),
-      &claims,
-      memory_to_dimension_index,
-      evaluate_memory_mle,
-      commitments,
-      generators,
-      r_hash,
-      r_multiset_check,
-      transcript,
-    )?;
+    let (claims_read_write, r_read_write) = proof
+      .read_write_grand_product
+      .verify::<G, Transcript>(&interleaved_read_write_hashes, transcript);
+    let (claims_init_final, r_init_final) = proof
+      .init_final_grand_product
+      .verify::<G, Transcript>(&interleaved_init_final_hashes, transcript);
+
+    proof
+      .read_write_openings
+      .verify_openings(commitments, &r_read_write, transcript)?;
+    proof
+      .init_final_openings
+      .verify_openings(commitments, &r_init_final, transcript)?;
+
+    Self::compute_verifier_openings(&mut proof.init_final_openings, &r_init_final);
+
+    assert_eq!(claims_read_write.len(), claims_init_final.len());
+    assert!(claims_read_write.len() % 2 == 0);
+    let num_memories = claims_read_write.len() / 2;
+    let grand_product_claims: Vec<MultisetHashes<F>> = (0..num_memories)
+      .map(|i| MultisetHashes {
+        hash_read: claims_read_write[2 * i],
+        hash_write: claims_read_write[2 * i + 1],
+        hash_init: claims_init_final[2 * i],
+        hash_final: claims_init_final[2 * i + 1],
+      })
+      .collect();
+    Self::check_fingerprints(
+      grand_product_claims,
+      &proof.read_write_openings,
+      &proof.init_final_openings,
+      &gamma,
+      &tau,
+    );
 
     Ok(())
   }
 
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso MemoryCheckingProof"
-  }
-}
+  fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>);
+  fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
+  fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
+  fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple>;
+  fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple>;
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProductLayerProof<F: PrimeField> {
-  grand_product_evals: Vec<GPEvals<F>>,
-  proof_mem: BatchedGrandProductArgument<F>,
-  proof_ops: BatchedGrandProductArgument<F>,
-  num_memories: usize,
-}
-
-impl<F: PrimeField> ProductLayerProof<F> {
-  /// Performs grand product argument proofs required for memory-checking.
-  /// Batches everything into two instances of BatchedGrandProductArgument.
-  ///
-  /// Params
-  /// - `polys`: The grand product circuits whose evaluations are proven.
-  /// - `r_fingerprint`: The random values used for fingerprinting.
-  /// - `transcript`: The proof transcript, used for Fiat-Shamir.
-  #[tracing::instrument(skip_all, name = "ProductLayer.prove")]
-  pub fn prove<G, P>(
-    polys: &P,
-    r_fingerprint: (&G::ScalarField, &G::ScalarField),
-    transcript: &mut Transcript,
-  ) -> (Self, Vec<F>, Vec<F>)
-  where
-    G: CurveGroup<ScalarField = F>,
-    P: BGPCInterpretable<G::ScalarField>,
-  {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    let num_memories = polys.num_memories();
-    let (batched_rw, batched_if, grand_product_evals) =
-      polys.construct_batches(r_fingerprint);
-
-    grand_product_evals.iter().for_each(|gp_eval| {
-      assert_eq!(
-        gp_eval.hash_init * gp_eval.hash_write,
-        gp_eval.hash_final * gp_eval.hash_read,
-		"Grand Products: Multi-set hashes don't match"
-      );
-      gp_eval.append_to_transcript::<G>(transcript);
-    });
-
-    let (proof_ops, rand_ops_sized_gps) =
-      BatchedGrandProductArgument::prove::<G>(batched_rw, transcript);
-    let (proof_mem, rand_mem_sized_gps) =
-      BatchedGrandProductArgument::prove::<G>(batched_if, transcript);
-
-    let product_layer_proof = ProductLayerProof {
-      grand_product_evals,
-      proof_mem,
-      proof_ops,
-      num_memories,
-    };
-
-    (product_layer_proof, rand_mem_sized_gps, rand_ops_sized_gps)
-  }
-
-  pub fn verify<G>(
-    &self,
-    transcript: &mut Transcript,
-  ) -> Result<(Vec<F>, Vec<F>, Vec<F>, Vec<F>), ProofVerifyError>
-  where
-    G: CurveGroup<ScalarField = F>,
-  {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-    for eval in &self.grand_product_evals {
-      // Multiset equality check
-      assert_eq!(
-        eval.hash_init * eval.hash_write,
-        eval.hash_read * eval.hash_final
-      );
-
-      eval.append_to_transcript::<G>(transcript);
+  fn check_fingerprints(
+    claims: Vec<MultisetHashes<F>>,
+    read_write_openings: &Self::ReadWriteOpenings,
+    init_final_openings: &Self::InitFinalOpenings,
+    gamma: &F,
+    tau: &F,
+  ) {
+    let read_fingerprints: Vec<_> =
+      <Self as MemoryCheckingVerifier<_, _, _>>::read_tuples(read_write_openings)
+        .iter()
+        .map(|tuple| Self::fingerprint(tuple, gamma, tau))
+        .collect();
+    let write_fingerprints: Vec<_> =
+      <Self as MemoryCheckingVerifier<_, _, _>>::write_tuples(read_write_openings)
+        .iter()
+        .map(|tuple| Self::fingerprint(tuple, gamma, tau))
+        .collect();
+    let init_fingerprints: Vec<_> =
+      <Self as MemoryCheckingVerifier<_, _, _>>::init_tuples(init_final_openings)
+        .iter()
+        .map(|tuple| Self::fingerprint(tuple, gamma, tau))
+        .collect();
+    let final_fingerprints: Vec<_> =
+      <Self as MemoryCheckingVerifier<_, _, _>>::final_tuples(init_final_openings)
+        .iter()
+        .map(|tuple| Self::fingerprint(tuple, gamma, tau))
+        .collect();
+    for (i, claim) in claims.iter().enumerate() {
+      assert_eq!(claim.hash_read, read_fingerprints[i]);
+      assert_eq!(claim.hash_write, write_fingerprints[i]);
+      assert_eq!(claim.hash_init, init_fingerprints[i]);
+      assert_eq!(claim.hash_final, final_fingerprints[i]);
     }
-
-    let read_write_claims = GPEvals::flatten_read_write(&self.grand_product_evals);
-    let (claims_ops, rand_ops) = self
-      .proof_ops
-      .verify::<G, Transcript>(&read_write_claims, transcript);
-
-    let init_final_claims = GPEvals::flatten_init_final(&self.grand_product_evals);
-    let (claims_mem, rand_mem) = self
-      .proof_mem
-      .verify::<G, Transcript>(&init_final_claims, transcript);
-
-    Ok((claims_mem, rand_mem, claims_ops, rand_ops))
-  }
-
-  fn protocol_name() -> &'static [u8] {
-    b"Lasso ProductLayerProof"
   }
 }
 
 #[cfg(test)]
 mod tests {
-  use crate::{subprotocols::grand_product::{BGPCInterpretable, GrandProductCircuit, BatchedGrandProductCircuit}, poly::dense_mlpoly::DensePolynomial, lasso::{fingerprint_strategy::MemBatchInfo, gp_evals::GPEvals}};
-  use ark_curve25519::{EdwardsProjective, Fr};
-  use ark_std::{One, Zero};
-  use merlin::Transcript;
+  use std::collections::HashSet;
 
-  use super::ProductLayerProof;
+  use super::*;
+  use ark_curve25519::{EdwardsProjective, Fr};
+  use ark_ff::Field;
+  use ark_std::{One, Zero};
 
   #[test]
   fn product_layer_proof_trivial() {
-    // Define the most trivial GrandProduct memory checking layout
     struct NormalMems {
-      a_ops: Vec<Fr>,
+      a_ops: DensePolynomial<Fr>,
 
-      v_ops: Vec<Fr>,
-      v_mems: Vec<Fr>,
+      v_ops: DensePolynomial<Fr>,
+      v_mems: DensePolynomial<Fr>,
 
-      t_reads: Vec<Fr>,
-      t_finals: Vec<Fr>,
+      t_reads: DensePolynomial<Fr>,
+      t_finals: DensePolynomial<Fr>,
+    }
+    struct FakeType();
+    struct FakeOpeningProof();
+    #[rustfmt::skip]
+    impl StructuredOpeningProof<Fr, EdwardsProjective, NormalMems> for FakeOpeningProof {
+      type Openings = FakeType;
+      fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
+      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 
-    impl MemBatchInfo for NormalMems {
-      fn mem_size(&self) -> usize {
-        assert_eq!(self.v_mems.len(), self.t_finals.len());
-        self.v_mems.len()
-      }
+    #[rustfmt::skip]
+    impl BatchablePolynomials for NormalMems {
+      type Commitment = FakeType;
+      type BatchedPolynomials = FakeType;
 
-      fn ops_size(&self) -> usize {
-        assert_eq!(self.a_ops.len(), self.v_ops.len());
-        assert_eq!(self.a_ops.len(), self.t_reads.len());
-        self.a_ops.len()
-      }
-
-      fn num_memories(&self) -> usize {
-        1
-      }
+      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
+      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
     }
 
-    impl BGPCInterpretable<Fr> for NormalMems {
-      fn a_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert_eq!(memory_index, 0);
-        self.a_ops[leaf_index]
+    struct TestProver {}
+    #[rustfmt::skip] // Keep leaf functions small
+    impl MemoryCheckingProver<Fr, EdwardsProjective, NormalMems> for TestProver {
+      type ReadWriteOpenings = FakeOpeningProof;
+      type InitFinalOpenings = FakeOpeningProof;
+
+      type MemoryTuple = (Fr, Fr, Fr);
+
+      fn read_leaves(
+        &self,
+        polynomials: &NormalMems,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        vec![DensePolynomial::new((0..polynomials.a_ops.len())
+          .map(|i| Self::fingerprint(&(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i]), gamma, tau))
+          .collect())]
       }
 
-      fn v_mem(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert_eq!(memory_index, 0);
-        self.v_mems[leaf_index]
+      fn write_leaves(
+        &self,
+        polynomials: &NormalMems,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        vec![DensePolynomial::new((0..polynomials.a_ops.len())
+          .map(|i| Self::fingerprint(&(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i] + Fr::one()), gamma, tau))
+          .collect())]
       }
 
-      fn v_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert_eq!(memory_index, 0);
-        self.v_ops[leaf_index]
+      fn init_leaves(
+        &self,
+        polynomials: &NormalMems,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        vec![DensePolynomial::new((0..polynomials.v_mems.len())
+          .map(|i| Self::fingerprint(&(Fr::from(i as u64), polynomials.v_mems[i], Fr::zero()), gamma, tau))
+          .collect())]
       }
 
-      fn t_final(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert_eq!(memory_index, 0);
-        self.t_finals[leaf_index]
+      fn final_leaves(
+        &self,
+        polynomials: &NormalMems,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        vec![DensePolynomial::new((0..polynomials.v_mems.len())
+          .map(|i| Self::fingerprint(&(Fr::from(i as u64), polynomials.v_mems[i], polynomials.t_finals[i]), gamma, tau))
+          .collect())]
       }
 
-      fn t_read(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert_eq!(memory_index, 0);
-        self.t_reads[leaf_index]
+      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+        let (a, v, t) = tuple;
+        t * &gamma.square() + v * gamma + a - tau
+      }
+
+      fn protocol_name() -> &'static [u8] {
+        b"protocol_name"
       }
     }
-
     // Imagine a size-8 range-check table (addresses and values just ascending), with 4 lookups
     let v_mems = vec![
       Fr::from(0),
@@ -291,6 +499,11 @@ mod tests {
       Fr::from(2),
     ];
 
+    let a_ops = DensePolynomial::new(a_ops);
+    let v_ops = DensePolynomial::new(v_ops);
+    let v_mems = DensePolynomial::new(v_mems);
+    let t_reads = DensePolynomial::new(t_reads);
+    let t_finals = DensePolynomial::new(t_finals);
     let polys = NormalMems {
       a_ops,
       v_ops,
@@ -299,100 +512,185 @@ mod tests {
       t_finals,
     };
 
+    // Prove
     let mut transcript = Transcript::new(b"test_transcript");
-    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let prover = TestProver {};
+    let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
+      prover.prove_grand_products(&polys, &mut transcript);
 
+    // Verify
     let mut transcript = Transcript::new(b"test_transcript");
-    proof
-      .verify::<EdwardsProjective>(&mut transcript)
-      .expect("proof should work");
+    let _gamma: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking gamma",
+    );
+    let _tau: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking tau",
+    );
+    <Transcript as ProofTranscript<EdwardsProjective>>::append_protocol_name(
+      &mut transcript,
+      TestProver::protocol_name(),
+    );
+    for hash in multiset_hashes.iter() {
+      hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
+    }
+
+    let interleaved_read_write_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_read, hash.hash_write])
+      .collect();
+    let interleaved_init_final_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_init, hash.hash_final])
+      .collect();
+    let (_claims_rw, r_rw_verify) =
+      proof_rw.verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
+    assert_eq!(r_rw_verify, r_rw);
+
+    let (_claims_if, r_if_verify) =
+      proof_if.verify::<EdwardsProjective, _>(&interleaved_init_final_hashes, &mut transcript);
+    assert_eq!(r_if_verify, r_if);
+  }
+
+  fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
+    let set1: HashSet<_> = vec1.iter().cloned().collect();
+    let set2: HashSet<_> = vec2.iter().cloned().collect();
+    set1.difference(&set2).cloned().collect()
   }
 
   #[test]
   fn product_layer_proof_batched() {
     // Define a GrandProduct circuit that can be batched across 2 memories
-    struct NormalMems {
-      a_0_ops: Vec<Fr>,
-      a_1_ops: Vec<Fr>,
+    struct Polys {
+      a_0_ops: DensePolynomial<Fr>,
+      a_1_ops: DensePolynomial<Fr>,
 
-      v_0_ops: Vec<Fr>,
-      v_1_ops: Vec<Fr>,
-      v_mems: Vec<Fr>,
+      v_0_ops: DensePolynomial<Fr>,
+      v_1_ops: DensePolynomial<Fr>,
+      v_mems: DensePolynomial<Fr>,
 
-      t_0_reads: Vec<Fr>,
-      t_1_reads: Vec<Fr>,
+      t_0_reads: DensePolynomial<Fr>,
+      t_1_reads: DensePolynomial<Fr>,
 
-      t_0_finals: Vec<Fr>,
-      t_1_finals: Vec<Fr>,
+      t_0_finals: DensePolynomial<Fr>,
+      t_1_finals: DensePolynomial<Fr>,
     }
 
-    impl MemBatchInfo for NormalMems {
-      fn mem_size(&self) -> usize {
-        assert_eq!(self.v_mems.len(), self.t_0_finals.len());
-        assert_eq!(self.v_mems.len(), self.t_1_finals.len());
-        self.v_mems.len()
-      }
-
-      fn ops_size(&self) -> usize {
-        let ops_len = self.a_0_ops.len();
-        assert_eq!(ops_len, self.a_1_ops.len());
-        assert_eq!(ops_len, self.v_0_ops.len());
-        assert_eq!(ops_len, self.v_1_ops.len());
-        assert_eq!(ops_len, self.t_0_reads.len());
-        assert_eq!(ops_len, self.t_1_reads.len());
-
-        ops_len
-      }
-
-      fn num_memories(&self) -> usize {
-        2
-      }
+    struct FakeType();
+    struct FakeOpeningProof();
+    #[rustfmt::skip]
+    impl StructuredOpeningProof<Fr, EdwardsProjective, Polys> for FakeOpeningProof {
+      type Openings = FakeType;
+      fn open(_: &Polys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
+      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 
-    impl BGPCInterpretable<Fr> for NormalMems {
-      fn a_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.a_0_ops[leaf_index],
-          1 => self.a_1_ops[leaf_index],
-          _ => panic!("waaa"),
-        }
+    #[rustfmt::skip]
+    impl BatchablePolynomials for Polys {
+      type Commitment = FakeType;
+      type BatchedPolynomials = FakeType;
+
+      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
+      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
+    }
+
+    struct TestProver {}
+    #[rustfmt::skip] // Keep leaf functions small
+    impl MemoryCheckingProver<Fr, EdwardsProjective, Polys> for TestProver {
+      type ReadWriteOpenings = FakeOpeningProof;
+      type InitFinalOpenings = FakeOpeningProof;
+
+      type MemoryTuple = (Fr, Fr, Fr);
+
+      fn read_leaves(
+        &self,
+        polynomials: &Polys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.a_0_ops.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index]),
+                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index]),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn v_mem(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        self.v_mems[leaf_index]
+      fn write_leaves(
+        &self,
+        polynomials: &Polys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.a_0_ops.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one()),
+                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one()),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn v_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.v_0_ops[leaf_index],
-          1 => self.v_1_ops[leaf_index],
-          _ => panic!("waaa"),
-        }
+      fn init_leaves(
+        &self,
+        polynomials: &Polys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.v_mems.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero()),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn t_final(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.t_0_finals[leaf_index],
-          1 => self.t_1_finals[leaf_index],
-          _ => panic!("waaa"),
-        }
+      fn final_leaves(
+        &self,
+        polynomials: &Polys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.v_mems.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index]),
+                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index]),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn t_read(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.t_0_reads[leaf_index],
-          1 => self.t_1_reads[leaf_index],
-          _ => panic!("waaa"),
-        }
+      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+        let (a, v, t) = tuple;
+        t * &gamma.square() + v * gamma + a - tau
       }
 
+      fn protocol_name() -> &'static [u8] {
+        b"protocol_name"
+      }
     }
 
     // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
@@ -436,7 +734,16 @@ mod tests {
       Fr::zero(),
     ];
 
-    let polys = NormalMems {
+    let a_0_ops = DensePolynomial::new(a_0_ops);
+    let a_1_ops = DensePolynomial::new(a_1_ops);
+    let v_0_ops = DensePolynomial::new(v_0_ops);
+    let v_1_ops = DensePolynomial::new(v_1_ops);
+    let v_mems = DensePolynomial::new(v_mems);
+    let t_0_reads = DensePolynomial::new(t_0_reads);
+    let t_1_reads = DensePolynomial::new(t_1_reads);
+    let t_0_finals = DensePolynomial::new(t_0_finals);
+    let t_1_finals = DensePolynomial::new(t_1_finals);
+    let polys = Polys {
       a_0_ops,
       a_1_ops,
       v_0_ops,
@@ -448,172 +755,259 @@ mod tests {
       t_1_finals,
     };
 
-    let mut transcript = Transcript::new(b"test_transcript");
-    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let prover = TestProver {};
 
+    // Check leaves match
+    let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
+    let init_leaves: Vec<DensePolynomial<Fr>> = prover.init_leaves(&polys, gamma, tau);
+    let read_leaves: Vec<DensePolynomial<Fr>> = prover.read_leaves(&polys, gamma, tau);
+    let write_leaves: Vec<DensePolynomial<Fr>> = prover.write_leaves(&polys, gamma, tau);
+    let final_leaves: Vec<DensePolynomial<Fr>> = prover.final_leaves(&polys, gamma, tau);
+
+    [0, 1].into_iter().for_each(|i| {
+      let init_leaves = &init_leaves[i];
+      let read_leaves = &read_leaves[i];
+      let write_leaves = &write_leaves[i];
+      let final_leaves = &final_leaves[i];
+
+      let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
+      let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();
+      let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
+      assert_eq!(difference.len(), 0);
+    });
+
+    // Prove
     let mut transcript = Transcript::new(b"test_transcript");
-    proof
-      .verify::<EdwardsProjective>(&mut transcript)
-      .expect("proof should work");
+    let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
+      prover.prove_grand_products(&polys, &mut transcript);
+
+    // Verify
+    let mut transcript = Transcript::new(b"test_transcript");
+    let _gamma: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking gamma",
+    );
+    let _tau: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking tau",
+    );
+    <Transcript as ProofTranscript<EdwardsProjective>>::append_protocol_name(
+      &mut transcript,
+      TestProver::protocol_name(),
+    );
+    for hash in multiset_hashes.iter() {
+      hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
+    }
+
+    let interleaved_read_write_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_read, hash.hash_write])
+      .collect();
+    let interleaved_init_final_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_init, hash.hash_final])
+      .collect();
+    let (_claims_rw, r_rw_verify) =
+      proof_rw.verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
+    assert_eq!(r_rw_verify, r_rw);
+
+    let (_claims_if, r_if_verify) =
+      proof_if.verify::<EdwardsProjective, _>(&interleaved_init_final_hashes, &mut transcript);
+    assert_eq!(r_if_verify, r_if);
   }
 
   #[test]
   fn product_layer_proof_flags_no_reuse() {
     // Define a GrandProduct circuit that can be batched across 2 memories
-    struct FlagMems {
-      a_0_ops: Vec<Fr>,
-      a_1_ops: Vec<Fr>,
+    struct FlagPolys {
+      a_0_ops: DensePolynomial<Fr>,
+      a_1_ops: DensePolynomial<Fr>,
 
-      v_0_ops: Vec<Fr>,
-      v_1_ops: Vec<Fr>,
-      v_mems: Vec<Fr>,
+      v_0_ops: DensePolynomial<Fr>,
+      v_1_ops: DensePolynomial<Fr>,
+      v_mems: DensePolynomial<Fr>,
 
-      t_0_reads: Vec<Fr>,
-      t_1_reads: Vec<Fr>,
+      t_0_reads: DensePolynomial<Fr>,
+      t_1_reads: DensePolynomial<Fr>,
 
-      t_0_finals: Vec<Fr>,
-      t_1_finals: Vec<Fr>,
+      t_0_finals: DensePolynomial<Fr>,
+      t_1_finals: DensePolynomial<Fr>,
 
-      flags_0: Vec<Fr>,
-      flags_1: Vec<Fr>,
+      flags_0: DensePolynomial<Fr>,
+      flags_1: DensePolynomial<Fr>,
     }
 
-    impl MemBatchInfo for FlagMems {
-      fn mem_size(&self) -> usize {
-        assert_eq!(self.v_mems.len(), self.t_0_finals.len());
-        assert_eq!(self.v_mems.len(), self.t_1_finals.len());
-        self.v_mems.len()
-      }
-
-      fn ops_size(&self) -> usize {
-        let ops_len = self.a_0_ops.len();
-        assert_eq!(ops_len, self.a_1_ops.len());
-        assert_eq!(ops_len, self.v_0_ops.len());
-        assert_eq!(ops_len, self.v_1_ops.len());
-        assert_eq!(ops_len, self.t_0_reads.len());
-        assert_eq!(ops_len, self.t_1_reads.len());
-        assert_eq!(ops_len, self.flags_0.len());
-        assert_eq!(ops_len, self.flags_1.len());
-
-        ops_len
-      }
-
-      fn num_memories(&self) -> usize {
-        2
-      }
+    struct FakeType();
+    struct FakeOpeningProof();
+    #[rustfmt::skip]
+    impl StructuredOpeningProof<Fr, EdwardsProjective, FlagPolys> for FakeOpeningProof {
+      type Openings = FakeType;
+      fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
+      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 
-    impl BGPCInterpretable<Fr> for FlagMems {
-      fn a_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.a_0_ops[leaf_index],
-          1 => self.a_1_ops[leaf_index],
-          _ => panic!("waaa"),
-        }
+    #[rustfmt::skip]
+    impl BatchablePolynomials for FlagPolys {
+      type Commitment = FakeType;
+      type BatchedPolynomials = FakeType;
+
+      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
+      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
+    }
+
+    struct TestProver {}
+    #[rustfmt::skip] // Keep leaf functions small
+    impl MemoryCheckingProver<Fr, EdwardsProjective, FlagPolys> for TestProver {
+      type ReadWriteOpenings = FakeOpeningProof;
+      type InitFinalOpenings = FakeOpeningProof;
+
+      type MemoryTuple = (Fr, Fr, Fr, Option<Fr>);
+
+      fn read_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.a_0_ops.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index], None),
+                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index], None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn v_mem(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        self.v_mems[leaf_index]
+      fn write_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.a_0_ops.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one(), None),
+                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one(), None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn v_ops(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.v_0_ops[leaf_index],
-          1 => self.v_1_ops[leaf_index],
-          _ => panic!("waaa"),
-        }
+      fn init_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.v_mems.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero(), None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn t_final(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.t_0_finals[leaf_index],
-          1 => self.t_1_finals[leaf_index],
-          _ => panic!("waaa"),
-        }
+      fn final_leaves(
+        &self,
+        polynomials: &FlagPolys,
+        gamma: &Fr,
+        tau: &Fr,
+      ) -> Vec<DensePolynomial<Fr>> {
+        [0,1].iter().map(|memory_index| {
+          DensePolynomial::new((0..polynomials.v_mems.len())
+            .map(|leaf_index| {
+              let tuple = match memory_index {
+                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index], None),
+                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index], None),
+                _ => unimplemented!()
+              };
+              Self::fingerprint(&tuple, gamma, tau)
+            })
+            .collect())
+        }).collect()
       }
 
-      fn t_read(&self, memory_index: usize, leaf_index: usize) -> Fr {
-        assert!(memory_index < 2);
-        match memory_index {
-          0 => self.t_0_reads[leaf_index],
-          1 => self.t_1_reads[leaf_index],
-          _ => panic!("waaa"),
+      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+        let (a, v, t, flag) = *tuple;
+        match flag {
+          Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + Fr::one() - val,
+          None => t * gamma.square() + v * *gamma + a - tau,
         }
       }
 
       // FLAGS OVERRIDES
 
-      fn construct_batches(&self, r_hash: (&Fr, &Fr)) -> (BatchedGrandProductCircuit<Fr>, BatchedGrandProductCircuit<Fr>, Vec<GPEvals<Fr>>) {
-        // compute leaves for all the batches                     (shared)
-        // convert the rw leaves to flagged leaves                (custom)
-        // create GPCs for each of the leaves (&leaves)           (custom)
-        // evaluate the GPCs                                      (shared)
-        // construct 1x batch with flags, 1x batch without flags  (custom)
-    
-        let mut rw_circuits = Vec::with_capacity(self.num_memories() * 2);
-        let mut if_circuits = Vec::with_capacity(self.num_memories() * 2);
-        let mut gp_evals = Vec::with_capacity(self.num_memories());
-    
-        // Stores the initial fingerprinted values for read and write memories. GPC stores the upper portion of the tree after the fingerprints at the leaves 
-        // experience flagging (toggling based on the flag value at that leaf).
-        let mut rw_fingerprints: Vec<DensePolynomial<Fr>> = Vec::with_capacity(self.num_memories() * 2);
-        for memory_index in 0..self.num_memories() {
-          let (init_fingerprints, read_fingerprints, write_fingerprints, final_fingerprints) = 
-            self.compute_leaves(memory_index, r_hash);
-    
-          let (mut read_leaves, mut write_leaves) = (read_fingerprints.evals(), write_fingerprints.evals());
-          rw_fingerprints.push(read_fingerprints);
-          rw_fingerprints.push(write_fingerprints);
-          for leaf_index in 0..self.ops_size() {
-            let flag = match memory_index {
-              0 => self.flags_0[leaf_index],
-              1 => self.flags_1[leaf_index],
-              _ => panic!("waa")
-            };
-            // TODO(sragss): Would be faster if flags were non-FF repr
-            if flag == Fr::zero() {
-              read_leaves[leaf_index] = Fr::one();
-              write_leaves[leaf_index] = Fr::one();
+      // Override read_write_grand product to call BatchedGrandProductCircuit::new_batch_flags and insert our additional toggling layer.
+      fn read_write_grand_product(
+          &self,
+          polynomials: &FlagPolys,
+          gamma: &Fr,
+          tau: &Fr,
+        ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>, Vec<Fr>) {
+          // Fingerprint will generate "unflagged" leaves for the final layer
+          let read_fingerprints: Vec<DensePolynomial<Fr>> = self.read_leaves(polynomials, gamma, tau);
+          let write_fingerprints: Vec<DensePolynomial<Fr>> = self.write_leaves(polynomials, gamma, tau);
+
+          // Generate "flagged" leaves for the second to last layer. Input to normal Grand Products
+          let num_memories = 2;
+          let mut circuits = Vec::with_capacity(2 * num_memories);
+          let mut read_hashes = Vec::with_capacity(num_memories);
+          let mut write_hashes = Vec::with_capacity(num_memories);
+
+          for i in 0..num_memories {
+            let mut toggled_read_fingerprints = read_fingerprints[i].evals();
+            let mut toggled_write_fingerprints = write_fingerprints[i].evals();
+
+            let subtable_index = i;
+            for leaf_index in 0..polynomials.a_0_ops.len() {
+              let flag = match subtable_index {
+                0 => polynomials.flags_0[leaf_index],
+                1 => polynomials.flags_1[leaf_index],
+                _ => unimplemented!()
+              };
+              if flag == Fr::zero() {
+                toggled_read_fingerprints[leaf_index] = Fr::one();
+                toggled_write_fingerprints[leaf_index] = Fr::one();
+              }
             }
+
+            let read_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
+            let write_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+            read_hashes.push(read_circuit.evaluate());
+            write_hashes.push(write_circuit.evaluate());
+            circuits.push(read_circuit);
+            circuits.push(write_circuit);
           }
-    
-          let (init_gpc, final_gpc) = 
-            (GrandProductCircuit::new(&init_fingerprints), GrandProductCircuit::new(&final_fingerprints));
-          let (read_gpc, write_gpc) = 
-            (GrandProductCircuit::new(&DensePolynomial::new(read_leaves)), GrandProductCircuit::new(&DensePolynomial::new(write_leaves)));
-    
-          gp_evals.push(GPEvals::new(
-              init_gpc.evaluate(),
-              read_gpc.evaluate(),
-              write_gpc.evaluate(),
-              final_gpc.evaluate(),
-          ));
-    
-          rw_circuits.push(read_gpc);
-          rw_circuits.push(write_gpc);
-          if_circuits.push(init_gpc);
-          if_circuits.push(final_gpc);
-        }
-    
-        // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMORIES, write_NUM_MEMORIES]
-        let expanded_flag_map = vec![0, 0, 1, 1];
-    
-        // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
-        let rw_batch = BatchedGrandProductCircuit::new_batch_flags(
-          rw_circuits, 
-          vec![DensePolynomial::new(self.flags_0.clone()), DensePolynomial::new(self.flags_1.clone())], 
-          expanded_flag_map, 
-          rw_fingerprints);
-    
-        let if_batch = BatchedGrandProductCircuit::new_batch(if_circuits);
-    
-        (rw_batch, if_batch, gp_evals)
+
+          let expanded_flag_map = vec![0, 0, 1, 1];
+          let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
+            circuits, 
+            vec![polynomials.flags_0.clone(), polynomials.flags_1.clone()], 
+            expanded_flag_map, 
+            vec![read_fingerprints[0].clone(), write_fingerprints[0].clone(), read_fingerprints[1].clone(), write_fingerprints[1].clone()]
+          );
+
+          (batched_circuits, read_hashes, write_hashes)
+      }
+
+      fn protocol_name() -> &'static [u8] {
+        b"protocol_name"
       }
     }
 
@@ -635,18 +1029,13 @@ mod tests {
     let v_0_ops = a_0_ops.clone();
     let v_1_ops = a_1_ops.clone();
 
-    let flags_0 = vec![
-      Fr::one(), 
-      Fr::one(), 
-      Fr::one(), 
-      Fr::one()
-    ];
+    let flags_0 = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
     let flags_1 = vec![
-      Fr::one(), 
+      Fr::one(),
       Fr::zero(), // Flagged off!
-      Fr::one(), 
-      Fr::one()
-      ];
+      Fr::one(),
+      Fr::one(),
+    ];
 
     let t_0_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::one()];
     let t_1_reads = vec![Fr::zero(), Fr::zero(), Fr::one(), Fr::zero()];
@@ -671,7 +1060,18 @@ mod tests {
       Fr::zero(),
     ];
 
-    let polys = FlagMems {
+    let a_0_ops = DensePolynomial::new(a_0_ops);
+    let a_1_ops = DensePolynomial::new(a_1_ops);
+    let v_0_ops = DensePolynomial::new(v_0_ops);
+    let v_1_ops = DensePolynomial::new(v_1_ops);
+    let v_mems = DensePolynomial::new(v_mems);
+    let t_0_reads = DensePolynomial::new(t_0_reads);
+    let t_1_reads = DensePolynomial::new(t_1_reads);
+    let t_0_finals = DensePolynomial::new(t_0_finals);
+    let t_1_finals = DensePolynomial::new(t_1_finals);
+    let flags_0 = DensePolynomial::new(flags_0);
+    let flags_1 = DensePolynomial::new(flags_1);
+    let polys = FlagPolys {
       a_0_ops,
       a_1_ops,
       v_0_ops,
@@ -682,17 +1082,48 @@ mod tests {
       t_0_finals,
       t_1_finals,
       flags_0,
-      flags_1
+      flags_1,
     };
 
-    let mut transcript = Transcript::new(b"test_transcript");
-    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let prover = TestProver {};
 
+    // Prove
     let mut transcript = Transcript::new(b"test_transcript");
-    proof
-      .verify::<EdwardsProjective>(&mut transcript)
-      .expect("proof should work");
+    let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
+      prover.prove_grand_products(&polys, &mut transcript);
+
+    // Verify
+    let mut transcript = Transcript::new(b"test_transcript");
+    let _gamma: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking gamma",
+    );
+    let _tau: Fr = <Transcript as ProofTranscript<EdwardsProjective>>::challenge_scalar(
+      &mut transcript,
+      b"Memory checking tau",
+    );
+    <Transcript as ProofTranscript<EdwardsProjective>>::append_protocol_name(
+      &mut transcript,
+      TestProver::protocol_name(),
+    );
+    for hash in multiset_hashes.iter() {
+      hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
+    }
+
+    let interleaved_read_write_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_read, hash.hash_write])
+      .collect();
+    let interleaved_init_final_hashes = multiset_hashes
+      .iter()
+      .flat_map(|hash| [hash.hash_init, hash.hash_final])
+      .collect();
+    let (_claims_rw, r_rw_verify) =
+      proof_rw.verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
+    assert_eq!(r_rw_verify, r_rw);
+
+    let (_claims_if, r_if_verify) =
+      proof_if.verify::<EdwardsProjective, _>(&interleaved_init_final_hashes, &mut transcript);
+    assert_eq!(r_if_verify, r_if);
   }
 }

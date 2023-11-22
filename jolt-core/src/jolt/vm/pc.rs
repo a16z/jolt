@@ -1,25 +1,19 @@
 use std::marker::PhantomData;
 
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{One, Zero};
+use ark_ff::PrimeField;
+use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-  lasso::{
-    fingerprint_strategy::{FingerprintStrategy, MemBatchInfo},
-    gp_evals::GPEvals,
-  },
+  lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier},
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
+    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
   },
-  subprotocols::{
-    combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    grand_product::BGPCInterpretable,
-  },
-  utils::{self, errors::ProofVerifyError, math::Math, transcript::ProofTranscript, is_power_of_two},
+  subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+  utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
 };
 
 pub struct ELFRow {
@@ -55,28 +49,28 @@ pub struct FiveTuplePoly<F: PrimeField> {
 
 impl<F: PrimeField> FiveTuplePoly<F> {
   fn from_elf(elf: &Vec<ELFRow>) -> Self {
-	let len = elf.len().next_power_of_two();
-	let mut opcodes = Vec::with_capacity(len);
-	let mut rds = Vec::with_capacity(len);
-	let mut rs1s = Vec::with_capacity(len);
-	let mut rs2s = Vec::with_capacity(len);
-	let mut imms = Vec::with_capacity(len);
+    let len = elf.len().next_power_of_two();
+    let mut opcodes = Vec::with_capacity(len);
+    let mut rds = Vec::with_capacity(len);
+    let mut rs1s = Vec::with_capacity(len);
+    let mut rs2s = Vec::with_capacity(len);
+    let mut imms = Vec::with_capacity(len);
 
-	for row in elf {
-		opcodes.push(F::from(row.opcode));
-		rds.push(F::from(row.rd));
-		rs1s.push(F::from(row.rs1));
-		rs2s.push(F::from(row.rs2));
-		imms.push(F::from(row.imm));
-	}
-	// Padding
-	for _ in elf.len()..len {
-		opcodes.push(F::zero());
-		rds.push(F::zero());
-		rs1s.push(F::zero());
-		rs2s.push(F::zero());
-		imms.push(F::zero());
-	}
+    for row in elf {
+      opcodes.push(F::from(row.opcode));
+      rds.push(F::from(row.rd));
+      rs1s.push(F::from(row.rs1));
+      rs2s.push(F::from(row.rs2));
+      imms.push(F::from(row.imm));
+    }
+    // Padding
+    for _ in elf.len()..len {
+      opcodes.push(F::zero());
+      rds.push(F::zero());
+      rs1s.push(F::zero());
+      rs2s.push(F::zero());
+      imms.push(F::zero());
+    }
 
     let opcode = DensePolynomial::new(opcodes);
     let rd = DensePolynomial::new(rds);
@@ -101,24 +95,10 @@ impl<F: PrimeField> FiveTuplePoly<F> {
       self.imm.evaluate(r),
     ]
   }
-
-  fn fingerprint_term(&self, leaf_index: usize, gamma: &F) -> F {
-    // v.opcode * gamma + v.rd * gamma^2 + v.rs1 * gamma^3 + v.rs2 * gamma^4 + v.imm * gamma^5
-    let mut gamma_term = gamma.clone();
-    let mut fingerprint = self.opcode[leaf_index] * gamma_term;
-    gamma_term = gamma_term.square();
-    fingerprint += self.rd[leaf_index] * gamma_term;
-    gamma_term = gamma_term * gamma;
-    fingerprint += self.rs1[leaf_index] * gamma_term;
-    gamma_term = gamma_term * gamma;
-    fingerprint += self.rs2[leaf_index] * gamma_term;
-    gamma_term = gamma_term * gamma;
-    fingerprint += self.imm[leaf_index] * gamma_term;
-    fingerprint
-  }
 }
 
-pub struct PCPolys<F: PrimeField> {
+pub struct PCPolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+  _group: PhantomData<G>,
   a_read_write: DensePolynomial<F>,
 
   v_read_write: FiveTuplePoly<F>,
@@ -126,7 +106,9 @@ pub struct PCPolys<F: PrimeField> {
 
   t_read: DensePolynomial<F>,
   t_final: DensePolynomial<F>,
+}
 
+pub struct BatchedPCPolys<F: PrimeField> {
   /// Contains:
   /// - a_read_write, t_read, v_read_write
   combined_read_write: DensePolynomial<F>,
@@ -136,25 +118,91 @@ pub struct PCPolys<F: PrimeField> {
   combined_init_final: DensePolynomial<F>,
 }
 
-impl<F: PrimeField> PCPolys<F> {
+pub struct ProgramCommitment<G: CurveGroup> {
+  generators: PCCommitmentGenerators<G>,
+  /// Contains:
+  /// - a_read_write, t_read, v_read_write
+  pub read_write_commitments: CombinedTableCommitment<G>,
+
+  // Contains:
+  // - t_final, v_init_final
+  pub init_final_commitments: CombinedTableCommitment<G>,
+}
+
+pub struct PCCommitmentGenerators<G: CurveGroup> {
+  pub gens_read_write: PolyCommitmentGens<G>,
+  pub gens_init_final: PolyCommitmentGens<G>,
+}
+
+impl<F, G> BatchablePolynomials for PCPolys<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  type Commitment = ProgramCommitment<G>;
+  type BatchedPolynomials = BatchedPCPolys<F>;
+
+  fn batch(&self) -> Self::BatchedPolynomials {
+    let combined_read_write = DensePolynomial::merge(&vec![
+      &self.a_read_write,
+      &self.t_read,
+      &self.v_read_write.opcode,
+      &self.v_read_write.rd,
+      &self.v_read_write.rs1,
+      &self.v_read_write.rs2,
+      &self.v_read_write.imm,
+    ]);
+    let combined_init_final = DensePolynomial::merge(&vec![
+      &self.t_final,
+      &self.v_init_final.opcode,
+      &self.v_init_final.rd,
+      &self.v_init_final.rs1,
+      &self.v_init_final.rs2,
+      &self.v_init_final.imm,
+    ]);
+
+    Self::BatchedPolynomials {
+      combined_read_write,
+      combined_init_final,
+    }
+  }
+
+  fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+    let (gens_read_write, read_write_commitments) = batched_polys
+      .combined_read_write
+      .combined_commit(b"BatchedPCPolys.read_write");
+    let (gens_init_final, init_final_commitments) = batched_polys
+      .combined_init_final
+      .combined_commit(b"BatchedPCPolys.init_final");
+
+    let generators = PCCommitmentGenerators {
+      gens_read_write,
+      gens_init_final,
+    };
+
+    Self::Commitment {
+      read_write_commitments,
+      init_final_commitments,
+      generators,
+    }
+  }
+}
+
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
   // TODO(sragss): precommit PC strategy
   pub fn new_program(program: Vec<ELFRow>, trace: Vec<ELFRow>) -> Self {
-	assert!(is_power_of_two(program.len()));
-	assert!(is_power_of_two(trace.len()));
+    assert!(is_power_of_two(program.len()));
+    assert!(is_power_of_two(trace.len()));
 
     let num_ops = trace.len().next_power_of_two();
     let code_size = program.len().next_power_of_two();
 
-    println!("PCPolys::new_program num_ops {num_ops} code_size {code_size}");
-
-	// Note: a_read_write and read_cts have been implicitly padded with 0s
-	// to the nearest power of 2
+    // Note: a_read_write and read_cts have been implicitly padded with 0s
+    // to the nearest power of 2
     let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
     let mut read_cts: Vec<usize> = vec![0; num_ops];
     let mut final_cts: Vec<usize> = vec![0; code_size];
 
-	// TODO(sragss): Current padding strategy doesn't work. As it adds phantom
-	// reads, but no corresponding writes to final.
     for (trace_index, trace) in trace.iter().enumerate() {
       let address = trace.address;
       debug_assert!(address < code_size);
@@ -170,373 +218,368 @@ impl<F: PrimeField> PCPolys<F> {
     let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
     let t_read = DensePolynomial::from_usize(&read_cts);
     let t_final = DensePolynomial::from_usize(&final_cts);
-    println!("read_cts {read_cts:?}");
-    println!("t_read {t_read:?}");
-
-    let combined_read_write = DensePolynomial::merge(&vec![
-      &a_read_write,
-      &t_read,
-      &v_read_write.opcode,
-      &v_read_write.rd,
-      &v_read_write.rs1,
-      &v_read_write.rs2,
-      &v_read_write.imm,
-    ]);
-    let combined_init_final = DensePolynomial::merge(&vec![
-      &t_final,
-      &v_init_final.opcode,
-      &v_init_final.rd,
-      &v_init_final.rs1,
-      &v_init_final.rs2,
-      &v_init_final.imm,
-    ]);
 
     Self {
+      _group: PhantomData,
       a_read_write,
       v_read_write,
       v_init_final,
       t_read,
       t_final,
-      combined_read_write,
-      combined_init_final,
     }
   }
+}
 
-  pub fn commit<G: CurveGroup<ScalarField = F>>(
+pub struct PCProof<F: PrimeField>(PhantomData<F>);
+
+impl<F, G> MemoryCheckingProver<F, G, PCPolys<F, G>> for PCProof<F>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  type ReadWriteOpenings = PCReadWriteOpenings<F, G>;
+  type InitFinalOpenings = PCInitFinalOpenings<F, G>;
+
+  // [a, opcode, rd, rs1, rs2, imm, t]
+  type MemoryTuple = [F; 7];
+
+  fn fingerprint(inputs: &Self::MemoryTuple, gamma: &F, tau: &F) -> F {
+    let mut result = F::zero();
+    let mut gamma_term = F::one();
+    for input in inputs {
+      result += *input * gamma_term;
+      gamma_term *= gamma;
+    }
+    result - tau
+  }
+
+  fn read_leaves(
     &self,
-  ) -> (ProgramCommitmentGens<G>, ProgramCommitment<G>) {
-    let gens = ProgramCommitmentGens::new(self.ops_size(), self.mem_size());
+    polynomials: &PCPolys<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    let num_ops = polynomials.a_read_write.len();
+    let read_fingerprints = (0..num_ops)
+      .map(|i| {
+        <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+          &[
+            polynomials.a_read_write[i],
+            polynomials.v_read_write.opcode[i],
+            polynomials.v_read_write.rd[i],
+            polynomials.v_read_write.rs1[i],
+            polynomials.v_read_write.rs2[i],
+            polynomials.v_read_write.imm[i],
+            polynomials.t_read[i],
+          ],
+          gamma,
+          tau,
+        )
+      })
+      .collect();
+    vec![DensePolynomial::new(read_fingerprints)]
+  }
+  fn write_leaves(
+    &self,
+    polynomials: &PCPolys<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    let num_ops = polynomials.a_read_write.len();
+    let read_fingerprints = (0..num_ops)
+      .map(|i| {
+        <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+          &[
+            polynomials.a_read_write[i],
+            polynomials.v_read_write.opcode[i],
+            polynomials.v_read_write.rd[i],
+            polynomials.v_read_write.rs1[i],
+            polynomials.v_read_write.rs2[i],
+            polynomials.v_read_write.imm[i],
+            polynomials.t_read[i] + F::one(),
+          ],
+          gamma,
+          tau,
+        )
+      })
+      .collect();
+    vec![DensePolynomial::new(read_fingerprints)]
+  }
+  fn init_leaves(
+    &self,
+    polynomials: &PCPolys<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    let memory_size = polynomials.v_init_final.opcode.len();
+    let init_fingerprints = (0..memory_size)
+      .map(|i| {
+        <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+          &[
+            F::from(i as u64),
+            polynomials.v_init_final.opcode[i],
+            polynomials.v_init_final.rd[i],
+            polynomials.v_init_final.rs1[i],
+            polynomials.v_init_final.rs2[i],
+            polynomials.v_init_final.imm[i],
+            F::zero(),
+          ],
+          gamma,
+          tau,
+        )
+      })
+      .collect();
+    vec![DensePolynomial::new(init_fingerprints)]
+  }
+  fn final_leaves(
+    &self,
+    polynomials: &PCPolys<F, G>,
+    gamma: &F,
+    tau: &F,
+  ) -> Vec<DensePolynomial<F>> {
+    let memory_size = polynomials.v_init_final.opcode.len();
+    let init_fingerprints = (0..memory_size)
+      .map(|i| {
+        <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+          &[
+            F::from(i as u64),
+            polynomials.v_init_final.opcode[i],
+            polynomials.v_init_final.rd[i],
+            polynomials.v_init_final.rs1[i],
+            polynomials.v_init_final.rs2[i],
+            polynomials.v_init_final.imm[i],
+            polynomials.t_final[i],
+          ],
+          gamma,
+          tau,
+        )
+      })
+      .collect();
+    vec![DensePolynomial::new(init_fingerprints)]
+  }
 
-    let (read_write_commitments, _) = self.combined_read_write.commit(&gens.gens_read_write, None);
-    let read_write_commitments = CombinedTableCommitment::new(read_write_commitments);
-
-    let (init_final_commitments, _) = self.combined_init_final.commit(&gens.gens_init_final, None);
-    let init_final_commitments = CombinedTableCommitment::new(init_final_commitments);
-
-    let commitments = ProgramCommitment {
-      read_write_commitments,
-      init_final_commitments,
-    };
-
-    (gens, commitments)
+  fn protocol_name() -> &'static [u8] {
+    b"Bytecode memory checking"
   }
 }
 
-pub struct PCProof<F: PrimeField> {
-  _marker: PhantomData<F>,
-}
+impl<F, G> MemoryCheckingVerifier<F, G, PCPolys<F, G>> for PCProof<F>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
+    openings.a_init_final =
+      Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+  }
 
-pub struct ProgramCommitment<G: CurveGroup> {
-  /// Contains:
-  /// - a_read_write, t_read, v_read_write
-  pub read_write_commitments: CombinedTableCommitment<G>,
-
-  // Contains:
-  // - t_final, v_init_final
-  pub init_final_commitments: CombinedTableCommitment<G>,
-}
-
-pub struct ProgramCommitmentGens<G: CurveGroup> {
-  pub gens_read_write: PolyCommitmentGens<G>,
-  pub gens_init_final: PolyCommitmentGens<G>,
-}
-
-impl<G: CurveGroup> ProgramCommitmentGens<G> {
-  pub fn new(ops_size: usize, mem_size: usize) -> Self {
-    debug_assert!(utils::is_power_of_two(ops_size));
-    debug_assert!(utils::is_power_of_two(mem_size));
-
-    // a_read_write, t_read, v_read_write.opcode, v_read_write.rd, v_read_write.rs1, v_read_write.rs2, v_read_write.imm
-    let num_vars_ops = (7 * ops_size).log_2();
-    // t_final, v_init_final.opcode, v_read_write.rd, v_read_write.rs1, v_read_write.rs2, v_read_write.imm
-    let num_vars_mem = (6 * mem_size).log_2();
-
-    let gens_read_write = PolyCommitmentGens::new(num_vars_ops, b"read_write_commitment");
-    let gens_init_final = PolyCommitmentGens::new(num_vars_mem, b"init_final_commitment");
-
-    ProgramCommitmentGens {
-      gens_read_write,
-      gens_init_final,
-    }
+  fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    vec![[
+      openings.a_read_write_opening,
+      openings.v_read_write_openings[0], // opcode
+      openings.v_read_write_openings[1], // rd
+      openings.v_read_write_openings[2], // rs1
+      openings.v_read_write_openings[3], // rs2
+      openings.v_read_write_openings[4], // imm
+      openings.t_read_opening,
+    ]]
+  }
+  fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    vec![[
+      openings.a_read_write_opening,
+      openings.v_read_write_openings[0], // opcode
+      openings.v_read_write_openings[1], // rd
+      openings.v_read_write_openings[2], // rs1
+      openings.v_read_write_openings[3], // rs2
+      openings.v_read_write_openings[4], // imm
+      openings.t_read_opening + F::one(),
+    ]]
+  }
+  fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    vec![[
+      openings.a_init_final.unwrap(),
+      openings.v_init_final[0], // opcode
+      openings.v_init_final[1], // rd
+      openings.v_init_final[2], // rs1
+      openings.v_init_final[3], // rs2
+      openings.v_init_final[4], // imm
+      F::zero(),
+    ]]
+  }
+  fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    vec![[
+      openings.a_init_final.unwrap(),
+      openings.v_init_final[0], // opcode
+      openings.v_init_final[1], // rd
+      openings.v_init_final[2], // rs1
+      openings.v_init_final[3], // rs2
+      openings.v_init_final[4], // imm
+      openings.t_final,
+    ]]
   }
 }
 
-impl<F: PrimeField> MemBatchInfo for PCPolys<F> {
-  fn ops_size(&self) -> usize {
-    self.a_read_write.len()
-  }
+pub struct PCReadWriteOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  a_read_write_opening: F,
+  v_read_write_openings: Vec<F>,
+  t_read_opening: F,
 
-  fn mem_size(&self) -> usize {
-    self.v_init_final.opcode.len()
-  }
-
-  fn num_memories(&self) -> usize {
-    1
-  }
+  read_write_opening_proof: CombinedTableEvalProof<G>,
 }
 
-impl<F: PrimeField> BGPCInterpretable<F> for PCPolys<F> {
-  fn a_ops(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    self.a_read_write[leaf_index]
+impl<F, G> StructuredOpeningProof<F, G, PCPolys<F, G>> for PCReadWriteOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  type Openings = (F, Vec<F>, F);
+
+  fn open(polynomials: &PCPolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    (
+      polynomials.a_read_write.evaluate(&opening_point),
+      polynomials.v_read_write.evaluate(&opening_point),
+      polynomials.t_read.evaluate(&opening_point),
+    )
   }
 
-  fn a_mem(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    F::from(leaf_index as u64)
-  }
-
-  fn v_mem(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    unimplemented!("should not be called by fingerprinting functions");
-  }
-
-  fn v_ops(&self, _memory_index: usize, _leaf_index: usize) -> F {
-    unimplemented!("should not be called by fingerprinting functions");
-  }
-
-  fn t_final(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    self.t_final[leaf_index]
-  }
-
-  fn t_read(&self, memory_index: usize, leaf_index: usize) -> F {
-    debug_assert_eq!(memory_index, 0);
-    self.t_read[leaf_index]
-  }
-
-  // Overrides
-  fn fingerprint_init(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_mem(memory_index, leaf_index);
-    let v = self.v_init_final.fingerprint_term(leaf_index, gamma);
-    let t = self.t_init(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint_final(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_mem(memory_index, leaf_index);
-    let v = self.v_init_final.fingerprint_term(leaf_index, gamma);
-    let t = self.t_final(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint_read(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_ops(memory_index, leaf_index);
-    let v = self.v_read_write.fingerprint_term(leaf_index, gamma);
-    let t = self.t_read(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint_write(&self, memory_index: usize, leaf_index: usize, gamma: &F, tau: &F) -> F {
-    debug_assert_eq!(memory_index, 0);
-    let a = self.a_ops(memory_index, leaf_index);
-    let v = self.v_read_write.fingerprint_term(leaf_index, gamma);
-    let t = self.t_write(memory_index, leaf_index);
-    Self::fingerprint(a, v, t, gamma, tau)
-  }
-
-  fn fingerprint(a: F, v: F, t: F, gamma: &F, tau: &F) -> F {
-    // Assumes the v passed in is v.opcode * gamma + v.rd * gamma^2 + ... + v.imm * gamma^5
-    let t_gamma: F = *gamma * gamma * gamma * gamma * gamma * gamma;
-    t * t_gamma + v + a - tau
-  }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PCFingerprintProof<G: CurveGroup> {
-  eval_a_read_write: G::ScalarField,
-
-  eval_v_read_write: Vec<G::ScalarField>,
-  eval_v_init_final: Vec<G::ScalarField>,
-
-  eval_t_read: G::ScalarField,
-  eval_t_final: G::ScalarField,
-
-  proof_read_write: CombinedTableEvalProof<G>,
-  proof_init_final: CombinedTableEvalProof<G>,
-}
-
-impl<G: CurveGroup> FingerprintStrategy<G> for PCFingerprintProof<G> {
-  type Polynomials = PCPolys<G::ScalarField>;
-  type Generators = ProgramCommitmentGens<G>;
-  type Commitments = ProgramCommitment<G>;
-
-  fn prove(
-    rand: (&Vec<<G>::ScalarField>, &Vec<<G>::ScalarField>),
-    polynomials: &Self::Polynomials,
-    generators: &Self::Generators,
-    transcript: &mut merlin::Transcript,
-    random_tape: &mut utils::random::RandomTape<G>,
+  fn prove_openings(
+    polynomials: &BatchedPCPolys<F>,
+    commitment: &ProgramCommitment<G>,
+    opening_point: &Vec<F>,
+    openings: (F, Vec<F>, F),
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
   ) -> Self {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+    let a_read_write_opening = openings.0;
+    let v_read_write_openings = openings.1;
+    let t_read_opening = openings.2;
 
-    let (rand_mem, rand_ops) = rand;
+    let mut combined_openings: Vec<F> = vec![a_read_write_opening.clone(), t_read_opening.clone()];
+    combined_openings.extend(v_read_write_openings.iter());
 
-    let eval_a_read_write = polynomials.a_read_write.evaluate(&rand_ops);
-    let eval_v_read_write: Vec<G::ScalarField> = polynomials.v_read_write.evaluate(&rand_ops);
-    let eval_v_init_final: Vec<G::ScalarField> = polynomials.v_init_final.evaluate(&rand_mem);
-    let eval_t_read = polynomials.t_read.evaluate(&rand_ops);
-    let eval_t_final = polynomials.t_final.evaluate(&rand_mem);
-
-    let mut evals_read_write: Vec<G::ScalarField> =
-      vec![eval_a_read_write.clone(), eval_t_read.clone()];
-    evals_read_write.extend(eval_v_read_write.iter());
-
-    let proof_read_write = CombinedTableEvalProof::prove(
+    let read_write_opening_proof = CombinedTableEvalProof::prove(
       &polynomials.combined_read_write,
-      &evals_read_write,
-      &rand_ops,
-      &generators.gens_read_write,
-      transcript,
-      random_tape,
-    );
-
-    let mut evals_init_final: Vec<G::ScalarField> = vec![eval_t_final.clone()];
-    evals_init_final.extend(eval_v_init_final.iter());
-    let proof_init_final = CombinedTableEvalProof::prove(
-      &polynomials.combined_init_final,
-      &evals_init_final,
-      &rand_mem,
-      &generators.gens_init_final,
+      &combined_openings,
+      &opening_point,
+      &commitment.generators.gens_read_write,
       transcript,
       random_tape,
     );
 
     Self {
-      eval_a_read_write,
-
-      eval_v_read_write,
-      eval_v_init_final,
-
-      eval_t_read,
-      eval_t_final,
-
-      proof_read_write,
-      proof_init_final,
+      a_read_write_opening,
+      v_read_write_openings,
+      t_read_opening,
+      read_write_opening_proof,
     }
   }
 
-  fn verify<F1: Fn(usize) -> usize, F2: Fn(usize, &[<G>::ScalarField]) -> <G>::ScalarField>(
+  fn verify_openings(
     &self,
-    rand: (&Vec<<G>::ScalarField>, &Vec<<G>::ScalarField>),
-    grand_product_claims: &[GPEvals<<G>::ScalarField>],
-    // TODO(JOLT-47): Refactor from interface
-    _memory_to_dimension_index: F1,
-    _evaluate_memory_mle: F2,
-    commitments: &Self::Commitments,
-    generators: &Self::Generators,
-    r_hash: &<G>::ScalarField,
-    r_multiset_check: &<G>::ScalarField,
-    transcript: &mut merlin::Transcript,
+    commitment: &ProgramCommitment<G>,
+    opening_point: &Vec<F>,
+    transcript: &mut Transcript,
   ) -> Result<(), ProofVerifyError> {
-    <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+    let mut combined_openings: Vec<F> = vec![
+      self.a_read_write_opening.clone(),
+      self.t_read_opening.clone(),
+    ];
+    combined_openings.extend(self.v_read_write_openings.iter());
 
-    let (rand_mem, rand_ops) = rand;
-
-    let mut evals_read_write: Vec<G::ScalarField> = vec![self.eval_a_read_write, self.eval_t_read];
-    evals_read_write.extend(self.eval_v_read_write.iter());
-    self.proof_read_write.verify(
-      rand_ops,
-      &evals_read_write,
-      &generators.gens_read_write,
-      &commitments.read_write_commitments,
+    self.read_write_opening_proof.verify(
+      opening_point,
+      &combined_openings,
+      &commitment.generators.gens_read_write,
+      &commitment.read_write_commitments,
       transcript,
-    )?;
-
-    let mut evals_init_final: Vec<G::ScalarField> = vec![self.eval_t_final];
-    evals_init_final.extend(self.eval_v_init_final.iter());
-    self.proof_init_final.verify(
-      rand_mem,
-      &evals_init_final,
-      &generators.gens_init_final,
-      &commitments.init_final_commitments,
-      transcript,
-    )?;
-
-    debug_assert_eq!(self.eval_v_read_write.len(), 5);
-    debug_assert_eq!(self.eval_v_init_final.len(), 5);
-    // compute v.opcode * gamma + v.rd * gamma^2 + v.rs1 * gamma^3 + v.rs2 * gamma^4 + v.imm * gamma^5
-    let mut gamma_term = r_hash.clone();
-    let mut eval_v_read_write = self.eval_v_read_write[0] * gamma_term;
-    let mut eval_v_init_final = self.eval_v_init_final[0] * gamma_term;
-    gamma_term *= r_hash;
-    eval_v_read_write += self.eval_v_read_write[1] * gamma_term;
-    eval_v_init_final += self.eval_v_init_final[1] * gamma_term;
-    gamma_term *= r_hash;
-    eval_v_read_write += self.eval_v_read_write[2] * gamma_term;
-    eval_v_init_final += self.eval_v_init_final[2] * gamma_term;
-    gamma_term *= r_hash;
-    eval_v_read_write += self.eval_v_read_write[3] * gamma_term;
-    eval_v_init_final += self.eval_v_init_final[3] * gamma_term;
-    gamma_term *= r_hash;
-    eval_v_read_write += self.eval_v_read_write[4] * gamma_term;
-    eval_v_init_final += self.eval_v_init_final[4] * gamma_term;
-    gamma_term *= r_hash;
-
-    debug_assert_eq!(grand_product_claims.len(), 1);
-    let claim = &grand_product_claims[0];
-    let a_init_final = IdentityPolynomial::new(rand_mem.len()).evaluate(rand_mem);
-    let hash_init = Self::Polynomials::fingerprint(
-      a_init_final,
-      eval_v_init_final,
-      G::ScalarField::zero(),
-      r_hash,
-      r_multiset_check,
-    );
-    assert_eq!(claim.hash_init, hash_init);
-
-    let hash_read = Self::Polynomials::fingerprint(
-      self.eval_a_read_write,
-      eval_v_read_write,
-      self.eval_t_read,
-      r_hash,
-      r_multiset_check,
-    );
-    assert_eq!(claim.hash_read, hash_read);
-    let hash_write = Self::Polynomials::fingerprint(
-      self.eval_a_read_write,
-      eval_v_read_write,
-      self.eval_t_read + G::ScalarField::one(),
-      r_hash,
-      r_multiset_check,
-    );
-    assert_eq!(claim.hash_write, hash_write);
-
-    let hash_final = Self::Polynomials::fingerprint(
-      a_init_final,
-      eval_v_init_final,
-      self.eval_t_final,
-      r_hash,
-      r_multiset_check,
-    );
-    assert_eq!(claim.hash_final, hash_final);
-
-    Ok(())
+    )
   }
 }
 
-impl<G: CurveGroup> PCFingerprintProof<G> {
-  fn protocol_name() -> &'static [u8] {
-    b"PCFingerprintProof"
+pub struct PCInitFinalOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  a_init_final: Option<F>, // Computed by verifier
+  v_init_final: Vec<F>,
+  t_final: F,
+
+  init_final_opening_proof: CombinedTableEvalProof<G>,
+}
+
+impl<F, G> StructuredOpeningProof<F, G, PCPolys<F, G>> for PCInitFinalOpenings<F, G>
+where
+  F: PrimeField,
+  G: CurveGroup<ScalarField = F>,
+{
+  type Openings = (Vec<F>, F);
+
+  fn open(polynomials: &PCPolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    (
+      polynomials.v_init_final.evaluate(&opening_point),
+      polynomials.t_final.evaluate(&opening_point),
+    )
+  }
+
+  fn prove_openings(
+    polynomials: &BatchedPCPolys<F>,
+    commitment: &ProgramCommitment<G>,
+    opening_point: &Vec<F>,
+    openings: Self::Openings,
+    transcript: &mut Transcript,
+    random_tape: &mut RandomTape<G>,
+  ) -> Self {
+    let v_init_final = openings.0;
+    let t_final = openings.1;
+
+    let mut combined_openings: Vec<F> = vec![t_final];
+    combined_openings.extend(v_init_final.iter());
+    let init_final_opening_proof = CombinedTableEvalProof::prove(
+      &polynomials.combined_init_final,
+      &combined_openings,
+      &opening_point,
+      &commitment.generators.gens_init_final,
+      transcript,
+      random_tape,
+    );
+
+    Self {
+      a_init_final: None, // Computed by verifier
+      v_init_final,
+      t_final,
+      init_final_opening_proof,
+    }
+  }
+
+  fn verify_openings(
+    &self,
+    commitment: &ProgramCommitment<G>,
+    opening_point: &Vec<F>,
+    transcript: &mut Transcript,
+  ) -> Result<(), ProofVerifyError> {
+    let mut combined_openings: Vec<F> = vec![self.t_final.clone()];
+    combined_openings.extend(self.v_init_final.iter());
+
+    self.init_final_opening_proof.verify(
+      opening_point,
+      &combined_openings,
+      &commitment.generators.gens_init_final,
+      &commitment.init_final_commitments,
+      transcript,
+    )
   }
 }
 
 #[cfg(test)]
 mod tests {
-  use std::collections::HashSet;
-
-  use crate::subprotocols::grand_product::BGPCInterpretable;
-  use crate::{
-    lasso::memory_checking::{MemoryCheckingProof, ProductLayerProof},
-    poly::dense_mlpoly::DensePolynomial,
-    utils::random::RandomTape,
-  };
+  use super::*;
   use ark_curve25519::{EdwardsProjective, Fr};
-  use merlin::Transcript;
-
-  use super::{ELFRow, FiveTuplePoly, PCFingerprintProof, PCPolys};
+  use std::collections::HashSet;
 
   #[test]
   fn five_tuple_poly() {
@@ -557,15 +600,6 @@ mod tests {
     assert_eq!(tuple.rs1, expected_rs1);
     assert_eq!(tuple.rs2, expected_rs2);
     assert_eq!(tuple.imm, expected_imm);
-
-    let gamma = Fr::from(100);
-    let fingerprint = tuple.fingerprint_term(2, &gamma);
-    let expected_fingerprint = gamma * Fr::from(12)
-      + gamma * gamma * Fr::from(13)
-      + gamma * gamma * gamma * Fr::from(14)
-      + gamma * gamma * gamma * gamma * Fr::from(15)
-      + gamma * gamma * gamma * gamma * gamma * Fr::from(16);
-    assert_eq!(fingerprint, expected_fingerprint);
   }
 
   fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
@@ -586,11 +620,20 @@ mod tests {
       ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
     ];
-    let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
+    let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
 
-    let r_fingerprints = (&Fr::from(100), &Fr::from(35));
-    let (init_leaves, read_leaves, write_leaves, final_leaves) =
-      polys.compute_leaves(0, r_fingerprints);
+    let (gamma, tau)= (&Fr::from(100), &Fr::from(35));
+    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
+    let init_leaves: Vec<DensePolynomial<Fr>> = pc_prover.init_leaves(&polys, gamma, tau);
+    let read_leaves: Vec<DensePolynomial<Fr>> = pc_prover.read_leaves(&polys, gamma, tau);
+    let write_leaves: Vec<DensePolynomial<Fr>> = pc_prover.write_leaves(&polys, gamma, tau);
+    let final_leaves: Vec<DensePolynomial<Fr>> = pc_prover.final_leaves(&polys, gamma, tau);
+
+    let init_leaves = &init_leaves[0];
+    let read_leaves = &read_leaves[0];
+    let write_leaves = &write_leaves[0];
+    let final_leaves = &final_leaves[0];
+
     let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
     let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();
     let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
@@ -598,7 +641,7 @@ mod tests {
   }
 
   #[test]
-  fn product_layer_proof() {
+  fn e2e_memchecking() {
     let program = vec![
       ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
       ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
@@ -609,16 +652,18 @@ mod tests {
       ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
     ];
-    let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-    let mut transcript = Transcript::new(b"test_transcript");
-    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    let (proof, _, _) =
-      ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
+    let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>); // TODO(sragss): Why is this necessary? -- default?
 
     let mut transcript = Transcript::new(b"test_transcript");
-    proof
-      .verify::<EdwardsProjective>(&mut transcript)
-      .expect("proof should work");
+    let mut random_tape = RandomTape::new(b"test_tape");
+
+    let batched_polys = polys.batch();
+    let commitments = PCPolys::commit(&batched_polys);
+    let proof = pc_prover.prove_memory_checking(&polys, &batched_polys, &commitments, &mut transcript, &mut random_tape);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    PCProof::verify_memory_checking(proof, &commitments, &mut transcript).expect("proof should verify");
   }
 
   #[test]
@@ -636,61 +681,6 @@ mod tests {
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
       ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
     ];
-    let _polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-    // let (gens, commitments) = polys.commit::<EdwardsProjective>();
-    // let mut transcript = Transcript::new(b"test_transcript");
-    // let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    // let (proof, _, _) =
-    //   ProductLayerProof::prove::<EdwardsProjective, _>(&polys, r_fingerprints, &mut transcript);
-
-    // let mut transcript = Transcript::new(b"test_transcript");
-    // proof
-    //   .verify::<EdwardsProjective>(&mut transcript)
-    //   .expect("proof should work");
-  }
-
-  #[test]
-  fn e2e_mem_checking() {
-    let program = vec![
-      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-    ];
-    let trace = vec![
-      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-    ];
-    let polys: PCPolys<Fr> = PCPolys::new_program(program, trace);
-    let (gens, commitments) = polys.commit::<EdwardsProjective>();
-
-    let mut transcript = Transcript::new(b"test_transcript");
-    let mut random_tape = RandomTape::new(b"test_tape");
-    let r_fingerprints = (&Fr::from(12), &Fr::from(35));
-    let memory_checking_proof =
-      MemoryCheckingProof::<EdwardsProjective, PCFingerprintProof<EdwardsProjective>>::prove(
-        &polys,
-        r_fingerprints,
-        &gens,
-        &mut transcript,
-        &mut random_tape,
-      );
-
-    let memory_to_dimension_index = |memory_index: usize| {
-      assert_eq!(memory_index, 0);
-      0
-    };
-    let evaluate_memory_mle = |_: usize, _: &[Fr]| unimplemented!("shouldn't be called");
-    let mut transcript = Transcript::new(b"test_transcript");
-    memory_checking_proof
-      .verify(
-        &commitments,
-        &gens,
-        memory_to_dimension_index,
-        evaluate_memory_mle,
-        r_fingerprints,
-        &mut transcript,
-      )
-      .expect("should verify");
+    let _polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
   }
 }
