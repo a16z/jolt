@@ -67,6 +67,7 @@ mod test {
   use super::SRAInstruction;
 
   #[test]
+  #[ignore = "M is too big, very slow"]
   fn sra_instruction_e2e() {
     let mut rng = test_rng();
     const C: usize = 6;

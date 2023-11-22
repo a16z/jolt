@@ -2,6 +2,7 @@
 
 use ark_ff::PrimeField;
 
+use ark_std::test_rng;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
@@ -87,6 +88,15 @@ pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
   let high_chunk = (item >> num_bits) & max_value; // Shift the item to the right and extract the next set of bits
 
   (high_chunk, low_chunk)
+}
+
+pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+  let mut rng = test_rng();
+  let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+  for _ in 0..memory_bits {
+    r_i.push(F::rand(&mut rng));
+  }
+  r_i
 }
 
 #[cfg(test)]
