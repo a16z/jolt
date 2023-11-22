@@ -8,6 +8,9 @@ use std::any::TypeId;
 use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
 
+#[cfg(feature = "multicore")]
+use rayon::prelude::*;
+
 use crate::{
   jolt::{
     instruction::{JoltInstruction, Opcode},
@@ -980,8 +983,12 @@ where
       let mle_len = eq_poly.len();
       let mle_half = mle_len / 2;
 
-      let mut evaluations = vec![F::zero(); num_eval_points];
-      let evaluate_mles_iterator = (0..mle_half).into_iter();
+      #[cfg(feature = "multicore")]
+      let evaluate_mles_iterator = (0..mle_half).into_par_iter();
+
+      // TODO(sragss): Broken due to variable signature reduce on parallel.
+      #[cfg(not(feature = "multicore"))]
+      let evaluate_mles_iterator = 0..mle_half;
 
       // Loop over half MLE size (size of MLE next round)
       //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
@@ -994,7 +1001,7 @@ where
         "PrimarySumcheck.evaluate_mles_iterator"
       );
       let _enter = _span.enter();
-      for low_index in evaluate_mles_iterator {
+      let evaluations: Vec<F> = evaluate_mles_iterator.map(|low_index| {
         let high_index = mle_half + low_index;
 
         let mut eq_evals: Vec<F> = vec![F::zero(); num_eval_points];
@@ -1053,10 +1060,13 @@ where
             inner_sum[eval_index] += flag_eval * instruction_collation_eval;
           }
         }
-        for eval_index in 0..num_eval_points {
-          evaluations[eval_index] += eq_evals[eval_index] * inner_sum[eval_index];
-        } // End accumulation
-      }
+        let evaluations: Vec<F> = 
+          (0..num_eval_points).map(|eval_index| eq_evals[eval_index] * inner_sum[eval_index]).collect();
+        evaluations
+      }).reduce(|| vec![F::zero(); num_eval_points], |running, new| {
+        debug_assert_eq!(running.len(), new.len());
+        running.iter().zip(new.iter()).map(|(r, n)| *r + n).collect()
+      });
       drop(_enter);
       drop(_span);
 
