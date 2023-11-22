@@ -146,12 +146,13 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
   ];
-  for _ in 0..5 {
+  for _ in 0..10 {
     ops.extend(ops.clone());
   }
 
   let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
   let work = Box::new(|| {
+    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
     let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
       RV32IJoltVM::prove_instruction_lookups(ops, r.clone(), &mut prover_transcript);
