@@ -149,6 +149,7 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
   for _ in 0..10 {
     ops.extend(ops.clone());
   }
+  println!("Running {:?}", ops.len());
 
   let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
   let work = Box::new(|| {
