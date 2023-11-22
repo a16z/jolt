@@ -71,9 +71,10 @@ mod test {
     let operand_size = 22 / 2;
 
     for _ in 0..8 {
-      let (x, y) = (rng.next_u64(), rng.next_u64() % operand_size);
+      let (x, y) = (rng.next_u64(), rng.next_u64());
 
-      let entry: u64 = x.checked_shl((y) as u32).unwrap_or(0);
+      // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
+      let entry: u64 = x.checked_shl((y % 64) as u32).unwrap_or(0);
 
       jolt_instruction_test!(SLLInstruction(x, y), entry.into());
     }

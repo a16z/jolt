@@ -77,8 +77,6 @@ pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<u
 pub fn chunk_and_concatenate_for_shift(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
   let operand_bits: usize = log_M / 2;
   let operand_bit_mask: usize = (1 << operand_bits) - 1;
-  // Only the lowest chunk of y is used, thus y should not exceed one operand's size
-  assert!(y <= (operand_bit_mask as u64));
 
   let y_lowest_chunk: usize = y as usize & operand_bit_mask;
 
@@ -187,15 +185,5 @@ mod tests {
     assert_eq!(chunks[1], 0b01_01);
     // x_2 | y = 0b11 | 0b01
     assert_eq!(chunks[2], 0b11_01);
-  }
-
-  #[test]
-  #[should_panic]
-  fn chunk_and_concatenate_for_shift_test_y_too_large() {
-    let x = 0b10_01_11;
-    let y = 0b00_01_01; // y should only be 2-bits
-    let C = 3;
-    let log_M = 4;
-    chunk_and_concatenate_for_shift(x, y, C, log_M);
   }
 }
