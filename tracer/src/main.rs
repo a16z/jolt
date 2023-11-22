@@ -1,12 +1,11 @@
 extern crate tracer;
 
-use tracer::trace;
+use tracer::{trace, decode};
 
 pub fn main() {
-    let rows = trace("../jolt-compiler/target/riscv32i-unknown-none-elf/release/program".into());
-    for row in &rows {
-        println!("{:?}\n", row);
-    }
+    let rows = trace("./target/riscv32i-unknown-none-elf/release/fibonacci".into());
+    println!("{:?}", rows);
 
-    println!("trace lenth: {}", rows.len());
+    let instructions = decode("./target/riscv32i-unknown-none-elf/release/fibonacci".into());
+    println!("{:?}", instructions);
 }
