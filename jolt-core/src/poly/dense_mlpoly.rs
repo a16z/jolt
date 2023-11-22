@@ -234,7 +234,6 @@ impl<F: PrimeField> DensePolynomial<F> {
     let chis = EqPolynomial::new(r.to_vec()).evals();
     assert_eq!(chis.len(), self.Z.len());
     compute_dotproduct(&self.Z, &chis)
-  }
 
   fn vec(&self) -> &Vec<F> {
     &self.Z

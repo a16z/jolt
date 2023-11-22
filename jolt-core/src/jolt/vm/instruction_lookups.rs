@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use merlin::Transcript;
+use rayon::iter::IntoParallelIterator;
 use std::any::TypeId;
 use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
@@ -170,6 +171,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
     unimplemented!("Openings are output by sumcheck protocol");
   }
 
+  #[tracing::instrument(skip_all, name = "Sumcheck.prove_primary_openings")]
   fn prove_openings(
     polynomials: &BatchedInstructionPolynomials<F>,
     commitment: &InstructionCommitment<G>,
@@ -951,6 +953,7 @@ where
   /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
   /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
   /// - `transcript`: Fiat-shamir transcript.
+  #[tracing::instrument(skip_all, name = "Sumcheck.primary_sumcheck")]
   fn prove_primary_sumcheck(
     _claim: &F,
     num_rounds: usize,
@@ -983,6 +986,7 @@ where
         vec![vec![Vec::with_capacity(num_eval_points); mle_half]; Self::NUM_INSTRUCTIONS];
       let mut multi_memory_evals: Vec<Vec<Vec<F>>> =
         vec![vec![Vec::with_capacity(num_eval_points); mle_half]; Self::NUM_MEMORIES];
+
 
       let evaluate_mles_iterator = (0..mle_half).into_iter();
 

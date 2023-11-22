@@ -74,6 +74,7 @@ where
   type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
   type MemoryTuple = (F, F, F); // (a, v, t)
 
+  #[tracing::instrument(skip_all, name = "MemoryCheckingProver.prove")]
   fn prove_memory_checking(
     &self,
     polynomials: &Polynomials,

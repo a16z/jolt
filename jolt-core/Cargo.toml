@@ -73,3 +73,7 @@ ark-msm = [] # run with arkworks MSM without small field element optimization
 [[bench]]
 name = "sumcheck"
 harness = false
+
+[[bench]]
+name = "dense_mlpoly"
+harness = false
