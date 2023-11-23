@@ -3,8 +3,8 @@
 pub mod JoltPaths {
     use std::{path::PathBuf, env};
 
-    // Traces will be stored at   <target dir>/<TRACE_DIR_NAME>/<program name>.<TRACE_FILE_SUFFIX>
-    // Programs will be stored at <target dir>/<TRACE_DIR_NAME>/<program name>.<ELF_TRACE_FILE_SUFFIX>
+    // Traces:    <target dir>/<TRACE_DIR_NAME>/<program name>.<TRACE_FILE_SUFFIX>
+    // Programs:  <target dir>/<TRACE_DIR_NAME>/<program name>.<ELF_TRACE_FILE_SUFFIX>
     const TRACE_DIR_NAME: &'static str = "traces";
     const TRACE_FILE_SUFFIX: &'static str = "jolt";
     const ELF_TRACE_FILE_SUFFIX: &'static str = "joltprogram";
