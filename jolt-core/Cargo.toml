@@ -58,6 +58,8 @@ strum = "0.25.0"
 strum_macros = "0.25.2"
 enum_dispatch = "0.3.12"
 
+common = { path = "../common" }
+
 [dev-dependencies]
 criterion = "0.3.1"
 
