@@ -3,13 +3,13 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct RVTraceRow {
-    pub instruction: Instruction,
+    pub instruction: ELFInstruction,
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Instruction {
+pub struct ELFInstruction {
     pub address: u64,
     pub opcode: RV32IM,
     pub rs1: Option<u64>,

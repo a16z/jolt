@@ -6,8 +6,8 @@ use tracer::{trace, decode};
 use common::serializable::Serializable;
 
 pub fn main() {
-    // Note: ../target paths are hacks because we don't have access to the workspace root programatically
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    // Note: ../target paths are hacks because we don't have access to the workspace root programatically
     let elf_location = root.join("../target/riscv32i-unknown-none-elf/release/fibonacci").canonicalize().unwrap();
     let trace_destination = root.join("../target/traces/trace.jolt").canonicalize().unwrap();
     let instruction_destination = root.join("../target/traces/elf.jolt").canonicalize().unwrap();

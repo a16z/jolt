@@ -11,7 +11,7 @@ mod trace;
 mod decode;
 mod emulator;
 
-pub use common::{RVTraceRow, Instruction, RegisterState, MemoryState};
+pub use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
 
 use crate::decode::decode_raw;
 
@@ -49,7 +49,7 @@ pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     output
 }
 
-pub fn decode(elf: &PathBuf) -> Vec<Instruction> {
+pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();
     elf_file.read_to_end(&mut elf_contents).unwrap();
