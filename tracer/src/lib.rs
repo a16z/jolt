@@ -15,7 +15,7 @@ pub use common::{RVTraceRow, Instruction, RegisterState, MemoryState};
 
 use crate::decode::decode_raw;
 
-pub fn trace(elf: PathBuf) -> Vec<RVTraceRow> {
+pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
@@ -49,7 +49,7 @@ pub fn trace(elf: PathBuf) -> Vec<RVTraceRow> {
     output
 }
 
-pub fn decode(elf: PathBuf) -> Vec<Instruction> {
+pub fn decode(elf: &PathBuf) -> Vec<Instruction> {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();
     elf_file.read_to_end(&mut elf_contents).unwrap();
