@@ -2,6 +2,8 @@ use std::cell::RefCell;
 
 use common::{TraceRow, Instruction, RegisterState, MemoryState};
 
+use crate::emulator::cpu::Xlen;
+
 pub struct Tracer {
     pub rows: RefCell<Vec<TraceRow>>,
     open: RefCell<bool>,
@@ -23,7 +25,7 @@ impl Tracer {
         });
     }
 
-    pub fn capture_pre_state(&self, reg: [i64; 32]) {
+    pub fn capture_pre_state(&self, reg: [i64; 32], xlen: &Xlen) {
         if !*self.open.try_borrow().unwrap() {
             return;
         }
@@ -31,11 +33,11 @@ impl Tracer {
         let mut rows = self.rows.try_borrow_mut().unwrap();
         let row = rows.last_mut().unwrap();
         if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_pre_val = Some(reg[rd as usize] as u64);
+            row.register_state.rd_pre_val = Some(normalize_register_value(reg[rd as usize], xlen));
         }
     }
 
-    pub fn capture_post_state(&self, reg: [i64; 32]) {
+    pub fn capture_post_state(&self, reg: [i64; 32], xlen: &Xlen) {
         if !*self.open.try_borrow().unwrap() {
             return;
         }
@@ -44,15 +46,15 @@ impl Tracer {
         let row = rows.last_mut().unwrap();
 
         if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_post_val = Some(reg[rd as usize] as u64);
+            row.register_state.rd_post_val = Some(normalize_register_value(reg[rd as usize], xlen));
         }
 
         if let Some(rs1) = row.instruction.rs1 {
-            row.register_state.rs1_val = Some(reg[rs1 as usize] as u64);
+            row.register_state.rs1_val = Some(normalize_register_value(reg[rs1 as usize], xlen));
         }
 
         if let Some(rs2) = row.instruction.rs2 {
-            row.register_state.rs2_val = Some(reg[rs2 as usize] as u64);
+            row.register_state.rs2_val = Some(normalize_register_value(reg[rs2 as usize], xlen));
         }
     }
 
@@ -71,3 +73,9 @@ impl Tracer {
     }
 }
 
+fn normalize_register_value(value: i64, xlen: &Xlen) -> u64 {
+    match xlen {
+        Xlen::Bit32 => value as u32 as u64,
+        Xlen::Bit64 => value as u64,
+    }
+}
