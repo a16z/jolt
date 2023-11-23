@@ -80,6 +80,66 @@ impl RVTraceRow {
     res
   }
 
+  // TODO(sragss): Hack. Move to common format and rm this conversion.
+  fn from_common(
+    common: common::RVTraceRow
+  ) -> Self {
+    let mut memory_bytes_before = None;
+    let mut memory_bytes_after = None;
+    let trunc = |value: u64, position: usize| (value >> (position * 8)) as u8;
+
+    if let Some(memory_state) = common.memory_state {
+        memory_bytes_before = match common.instruction.opcode {
+            RV32IM::LB | RV32IM::LBU | RV32IM::SB => match memory_state {
+                common::MemoryState::Read { address, value } => Some(vec![value as u8]),
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8])
+            },
+            RV32IM::LH | RV32IM::LHU | RV32IM::SH => match memory_state {
+                common::MemoryState::Read { address, value } => Some(vec![value as u8, trunc(value, 1)]),
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8, trunc(pre_value, 1)])
+            },
+            RV32IM::LW | RV32IM::SW => match memory_state {
+                common::MemoryState::Read { address, value } => Some(vec![value as u8, trunc(value, 1), trunc(value, 2), trunc(value, 3)]),
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8, trunc(pre_value, 1), trunc(pre_value, 2), trunc(pre_value, 3)])
+            },
+            _ => panic!("memory_bytes_before shouldn't exist")
+          };
+
+        memory_bytes_after = match common.instruction.opcode {
+            RV32IM::LB | RV32IM::LBU | RV32IM::LH | RV32IM::LHU | RV32IM::LW => None,
+
+            RV32IM::SB => match memory_state {
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8]),
+                _ => panic!("shouldn't happen")
+            },
+            RV32IM::SH => match memory_state {
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8, trunc(pre_value, 1)]),
+                _ => panic!("shouldn't happen")
+            },
+            RV32IM::SW => match memory_state {
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8, trunc(pre_value, 1), trunc(pre_value, 2), trunc(pre_value, 3)]),
+                _ => panic!("shouldn't happen")
+            },
+            _ => panic!("memory_bytes_after shouldn't exist")
+          }
+    }
+
+    Self::new(
+        common.instruction.address, 
+        common.instruction.opcode, 
+        common.instruction.rd, 
+        common.instruction.rs1, 
+        common.instruction.rs2, 
+        common.instruction.imm, 
+        common.register_state.rd_pre_val, 
+        common.register_state.rd_post_val, 
+        common.register_state.rs1_val, 
+        common.register_state.rs2_val, 
+        memory_bytes_before, 
+        memory_bytes_after
+    )
+  }
+
   fn RType(
     pc: u64,
     opcode: RV32IM,
@@ -129,14 +189,14 @@ impl RVTraceRow {
   fn validate(&self) {
     let register_bits = 5;
     let register_max: u64 = (1 << register_bits) - 1;
-    let register_value_max: u64 = (1 << 32) - 1;
+    let register_value_max: u64 = (1u64 << 32) - 1;
     let assert_rd = || {
       assert!(self.rd.is_some());
       assert!(self.rd_pre_val.is_some());
       assert!(self.rd_post_val.is_some());
       assert!(self.rd.unwrap() <= register_max);
       assert!(self.rd_pre_val.unwrap() <= register_value_max);
-      assert!(self.rd_post_val.unwrap() <= register_value_max);
+      assert!(self.rd_post_val.unwrap() <= register_value_max, "{} larger than register max of {}", self.rd_post_val.unwrap(), register_value_max);
     };
 
     let assert_rs1 = || {
@@ -595,7 +655,9 @@ impl JoltProvableTrace for RVTraceRow {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
+    use std::convert;
+
 
   #[test]
   fn to_pc_trace() {
@@ -630,5 +692,27 @@ mod tests {
       MemoryOp::no_op()
     ];
     assert_eq!(add_ram_ops, expected_memory_ops);
+  }
+
+  #[test]
+  fn load_conversion() {
+    // 1. Load common::RVTraceRow from file
+    // 2. Convert via RVTraceRow::from_common
+    // 3. Run validation
+    // 4. ...
+    // 5. Profit
+
+    use common::serializable::Serializable;
+    use common::path::JoltPaths;
+    use std::env;
+    use std::path::PathBuf;
+
+    let trace_location = JoltPaths::trace_path("fibonacci");
+    let loaded_trace: Vec<common::RVTraceRow> = Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location).expect("deserialization failed");
+
+    let converted_trace: Vec<RVTraceRow> = loaded_trace.into_iter().map(|common| {
+        println!("done");
+        RVTraceRow::from_common(common)
+    }).collect();
   }
 }

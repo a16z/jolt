@@ -4,13 +4,14 @@ use std::{env, path::PathBuf};
 
 use tracer::{trace, decode};
 use common::serializable::Serializable;
+use common::path::JoltPaths;
 
 pub fn main() {
-    let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    // Note: ../target paths are hacks because we don't have access to the workspace root programatically
-    let elf_location = root.join("../target/riscv32i-unknown-none-elf/release/fibonacci").canonicalize().unwrap();
-    let trace_destination = root.join("../target/traces/trace.jolt").canonicalize().unwrap();
-    let instruction_destination = root.join("../target/traces/elf.jolt").canonicalize().unwrap();
+    // Note: assumes program is already compiled
+    let program_name = "fibonacci";
+    let elf_location = JoltPaths::elf_path(program_name);
+    let trace_destination = JoltPaths::trace_path(program_name);
+    let instruction_destination = JoltPaths::elf_trace_path(program_name);
 
     if !elf_location.exists() {
         println!("Could not find ELF file at location {:?}", elf_location);
