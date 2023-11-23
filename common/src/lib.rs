@@ -1,5 +1,5 @@
 #[derive(Debug, PartialEq)]
-pub struct TraceRow {
+pub struct RVTraceRow {
     pub instruction: Instruction,
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,

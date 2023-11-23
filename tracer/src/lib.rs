@@ -11,11 +11,11 @@ mod trace;
 mod decode;
 mod emulator;
 
-pub use common::{TraceRow, Instruction, RegisterState, MemoryState};
+pub use common::{RVTraceRow, Instruction, RegisterState, MemoryState};
 
 use crate::decode::decode_raw;
 
-pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
+pub fn trace(elf: PathBuf) -> Vec<RVTraceRow> {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
