@@ -59,6 +59,7 @@ strum_macros = "0.25.2"
 enum_dispatch = "0.3.12"
 
 common = { path = "../common" }
+eyre = "0.6.9"
 
 [dev-dependencies]
 criterion = "0.3.1"

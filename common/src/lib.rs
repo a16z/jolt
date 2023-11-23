@@ -169,8 +169,9 @@ impl RV32IM {
         RV32IM::ADDI | RV32IM::XORI | RV32IM::ORI | RV32IM::ANDI
         | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI | RV32IM::SLTI | RV32IM::SLTIU => RV32InstructionFormat::I,
         
-        RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU
-        | RV32IM::SB | RV32IM::SH | RV32IM::SW => RV32InstructionFormat::S,
+        RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU => RV32InstructionFormat::I,
+
+        RV32IM::SB | RV32IM::SH | RV32IM::SW => RV32InstructionFormat::S,
         
         RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU => RV32InstructionFormat::SB,
         

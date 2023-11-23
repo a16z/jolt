@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
+use eyre::{ensure, bail};
 use strum_macros::{EnumCount, EnumIter, FromRepr};
 
 use crate::jolt::instruction::add::ADD32Instruction;
@@ -28,6 +29,7 @@ use common::{RV32IM, RV32InstructionFormat};
 use super::{JoltProvableTrace, MemoryOp};
 
 
+#[derive(Debug, Clone, PartialEq)]
 struct RVTraceRow {
   pc: u64,
   opcode: RV32IM,
@@ -76,7 +78,7 @@ impl RVTraceRow {
       memory_bytes_before,
       memory_bytes_after,
     };
-    res.validate();
+    res.validate().expect("validation failed");
     res
   }
 
@@ -124,20 +126,20 @@ impl RVTraceRow {
           }
     }
 
-    Self::new(
-        common.instruction.address, 
-        common.instruction.opcode, 
-        common.instruction.rd, 
-        common.instruction.rs1, 
-        common.instruction.rs2, 
-        common.instruction.imm, 
-        common.register_state.rd_pre_val, 
-        common.register_state.rd_post_val, 
-        common.register_state.rs1_val, 
-        common.register_state.rs2_val, 
-        memory_bytes_before, 
-        memory_bytes_after
-    )
+    RVTraceRow {
+        pc: common.instruction.address,
+        opcode: common.instruction.opcode,
+        rd: common.instruction.rd,
+        rs1: common.instruction.rs1,
+        rs2: common.instruction.rs2,
+        imm: common.instruction.imm,
+        rd_pre_val: common.register_state.rd_pre_val,
+        rd_post_val: common.register_state.rd_post_val,
+        rs1_val: common.register_state.rs1_val,
+        rs2_val: common.register_state.rs2_val,
+        memory_bytes_before: memory_bytes_before,
+        memory_bytes_after: memory_bytes_after,
+    }
   }
 
   fn RType(
@@ -186,125 +188,134 @@ impl RVTraceRow {
     )
   }
 
-  fn validate(&self) {
+  #[must_use]
+  fn validate(&self) -> Result<(), eyre::Report> {
     let register_bits = 5;
     let register_max: u64 = (1 << register_bits) - 1;
     let register_value_max: u64 = (1u64 << 32) - 1;
-    let assert_rd = || {
-      assert!(self.rd.is_some());
-      assert!(self.rd_pre_val.is_some());
-      assert!(self.rd_post_val.is_some());
-      assert!(self.rd.unwrap() <= register_max);
-      assert!(self.rd_pre_val.unwrap() <= register_value_max);
-      assert!(self.rd_post_val.unwrap() <= register_value_max, "{} larger than register max of {}", self.rd_post_val.unwrap(), register_value_max);
+    let assert_rd = || -> Result<(), eyre::Report> {
+      ensure!(self.rd.is_some(), "Line {}: rd is None", line!());
+      ensure!(self.rd_pre_val.is_some(), "Line {}: rd_pre_val is None", line!());
+      ensure!(self.rd_post_val.is_some(), "Line {}: rd_post_val is None", line!());
+      ensure!(self.rd.unwrap() <= register_max, "Line {}: rd is larger than register max", line!());
+      ensure!(self.rd_pre_val.unwrap() <= register_value_max, "Line {}: rd_pre_val is larger than register value max", line!());
+      ensure!(self.rd_post_val.unwrap() <= register_value_max, "Line {}: rd_post_val {} is larger than register max {}", line!(), self.rd_post_val.unwrap(), register_value_max);
+      Ok(())
     };
 
-    let assert_rs1 = || {
-      assert!(self.rs1.is_some());
-      assert!(self.rs1_val.is_some());
-      assert!(self.rs1.unwrap() <= register_max);
-      assert!(self.rs1_val.unwrap() <= register_value_max);
+    let assert_rs1 = || -> Result<(), eyre::Report> {
+      ensure!(self.rs1.is_some(), "Line {}: rs1 is None", line!());
+      ensure!(self.rs1_val.is_some(), "Line {}: rs1_val is None", line!());
+      ensure!(self.rs1.unwrap() <= register_max, "Line {}: rs1 is larger than register max", line!());
+      ensure!(self.rs1_val.unwrap() <= register_value_max, "Line {}: rs1_val is larger than register value max", line!());
+      Ok(())
     };
 
-    let assert_rs2 = || {
-      assert!(self.rs2.is_some());
-      assert!(self.rs2_val.is_some());
-      assert!(self.rs2.unwrap() <= register_max);
-      assert!(self.rs2_val.unwrap() <= register_value_max);
+    let assert_rs2 = || -> Result<(), eyre::Report> {
+      ensure!(self.rs2.is_some(), "Line {}: rs2 is None", line!());
+      ensure!(self.rs2_val.is_some(), "Line {}: rs2_val is None", line!());
+      ensure!(self.rs2.unwrap() <= register_max, "Line {}: rs2 is larger than register max", line!());
+      ensure!(self.rs2_val.unwrap() <= register_value_max, "Line {}: rs2_val is larger than register value max", line!());
+      Ok(())
     };
 
-    let assert_no_memory = || {
-      assert!(self.memory_bytes_before.is_none());
-      assert!(self.memory_bytes_after.is_none());
+    let assert_no_memory = || -> Result<(), eyre::Report> {
+      ensure!(self.memory_bytes_before.is_none(), "Line {}: memory_bytes_before is not None", line!());
+      ensure!(self.memory_bytes_after.is_none(), "Line {}: memory_bytes_after is not None", line!());
+      Ok(())
     };
 
-    let assert_imm = |imm_bits: usize| {
-      assert!(self.imm.is_some());
+    let assert_imm = |imm_bits: usize| -> Result<(), eyre::Report> {
+      ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
       let imm_max: i32 = (1 << imm_bits) - 1;
-      assert!(self.imm.unwrap() <= imm_max);
+      ensure!(self.imm.unwrap() <= imm_max, "Line {}: imm is larger than imm max", line!());
+      Ok(())
     };
 
     // TODO(sragss): Assert register addresses are in our preconfigured region.
     match self.opcode.instruction_type() {
       RV32InstructionFormat::R => {
-        assert_rd();
-        assert_rs1();
-        assert_rs2();
-        assert!(self.imm.is_none());
+        assert_rd()?;
+        assert_rs1()?;
+        assert_rs2()?;
+        ensure!(self.imm.is_none(), "Line {}: imm is not None", line!());
 
-        assert_no_memory();
+        assert_no_memory()?;
       }
       RV32InstructionFormat::I => {
-        assert_rd();
-        assert_rs1();
-        assert!(self.rs2.is_none());
-        assert!(self.rs2_val.is_none());
-        assert_imm(12);
+        assert_rd()?;
+        assert_rs1()?;
+        ensure!(self.rs2.is_none(), "Line {}: rs2 is not None", line!());
+        ensure!(self.rs2_val.is_none(), "Line {}: rs2_val is not None", line!());
+        assert_imm(12)?;
 
-        assert_no_memory();
+        assert_no_memory()?;
       },
       RV32InstructionFormat::S => {
-        assert_rd();
-        assert_rs1();
-        assert!(self.rs2.is_none());
-        assert_imm(12);
+        ensure!(self.rd.is_none(), "Line {}: rd is not None", line!());
+        assert_rs1()?;
+        assert_rs2()?;
+        assert_imm(12)?;
 
         // Memory handled below
       },
-      RV32InstructionFormat::SB => todo!(),
+      RV32InstructionFormat::SB => bail!("Not yet implemented"),
       RV32InstructionFormat::U => {
-        assert_rd();
-        assert_imm(20);
+        assert_rd()?;
+        assert_imm(20)?;
 
-        assert!(self.rs1.is_none());
-        assert!(self.rs1_val.is_none());
-        assert!(self.rs2.is_none());
-        assert!(self.rs2_val.is_none());
+        ensure!(self.rs1.is_none(), "Line {}: rs1 is not None", line!());
+        ensure!(self.rs1_val.is_none(), "Line {}: rs1_val is not None", line!());
+        ensure!(self.rs2.is_none(), "Line {}: rs2 is not None", line!());
+        ensure!(self.rs2_val.is_none(), "Line {}: rs2_val is not None", line!());
 
-        assert_no_memory();
+        assert_no_memory()?;
 
         // Assert correct values in rd
         match self.opcode {
           RV32IM::LUI => {
-            assert!(self.imm.is_some());
-            assert!(self.imm.unwrap() >= 0);
+            ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
+            ensure!(self.imm.unwrap() >= 0, "Line {}: imm is negative", line!());
             let expected_rd = (self.imm.unwrap() as u64) << 12u64; // Load upper 20 bits
-            assert_eq!(self.rd_post_val.unwrap(), expected_rd);
+            ensure!(self.rd_post_val.unwrap() == expected_rd, "Line {}: rd_post_val does not match expected_rd", line!());
           },
           RV32IM::AUIPC => {
-            assert!(self.imm.is_some());
-            assert!(self.imm.unwrap() >= 0);
+            ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
+            ensure!(self.imm.unwrap() >= 0, "Line {}: imm is negative", line!());
             let expected_offset = (self.imm.unwrap() as u64) << 12u64;
             let expected_rd = expected_offset + self.pc;
-            assert_eq!(self.rd_post_val.unwrap(), expected_rd);
+            ensure!(self.rd_post_val.unwrap() == expected_rd, "Line {}: rd_post_val does not match expected_rd", line!());
           },
           _ => unreachable!()
         };
       }
-      RV32InstructionFormat::UJ => todo!(),
+      RV32InstructionFormat::UJ => bail!("Not yet implemented"),
     }
 
     // Check memory_before / memory_after
-    let assert_load = |size: usize| {
-      assert!(self.memory_bytes_before.is_some());
-      assert!(self.memory_bytes_after.is_none());
-      assert_eq!(self.memory_bytes_before.as_ref().unwrap().len(), size);
+    let assert_load = |size: usize| -> Result<(), eyre::Report> {
+      ensure!(self.memory_bytes_before.is_some(), "Line {}: memory_bytes_before is None", line!());
+      ensure!(self.memory_bytes_after.is_none(), "Line {}: memory_bytes_after is not None", line!());
+      ensure!(self.memory_bytes_before.as_ref().unwrap().len() == size, "Line {}: memory_bytes_before length does not match size", line!());
+      Ok(())
     };
-    let assert_store= |size: usize| {
-      assert!(self.memory_bytes_before.is_some());
-      assert!(self.memory_bytes_after.is_some());
-      assert_eq!(self.memory_bytes_before.as_ref().unwrap().len(), size);
-      assert_eq!(self.memory_bytes_after.as_ref().unwrap().len(), size);
+    let assert_store= |size: usize| -> Result<(), eyre::Report> {
+      ensure!(self.memory_bytes_before.is_some(), "Line {}: memory_bytes_before is None", line!());
+      ensure!(self.memory_bytes_after.is_some(), "Line {}: memory_bytes_after is None", line!());
+      ensure!(self.memory_bytes_before.as_ref().unwrap().len() == size, "Line {}: memory_bytes_before length does not match size", line!());
+      ensure!(self.memory_bytes_after.as_ref().unwrap().len() == size, "Line {}: memory_bytes_after length does not match size", line!());
+      Ok(())
     };
     match self.opcode {
-      RV32IM::LB | RV32IM::LBU => assert_load(1),
-      RV32IM::LH | RV32IM::LHU => assert_load(2),
-      RV32IM::LW => assert_load(4),
-      RV32IM::SB => assert_store(1),
-      RV32IM::SH => assert_store(2),
-      RV32IM::SW => assert_store(4),
+      RV32IM::LB | RV32IM::LBU => assert_load(1)?,
+      RV32IM::LH | RV32IM::LHU => assert_load(2)?,
+      RV32IM::LW => assert_load(4)?,
+      RV32IM::SB => assert_store(1)?,
+      RV32IM::SH => assert_store(2)?,
+      RV32IM::SW => assert_store(4)?,
       _ => {}
     };
+    Ok(())
   }
 }
 
@@ -710,9 +721,18 @@ mod tests {
     let trace_location = JoltPaths::trace_path("fibonacci");
     let loaded_trace: Vec<common::RVTraceRow> = Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location).expect("deserialization failed");
 
-    let converted_trace: Vec<RVTraceRow> = loaded_trace.into_iter().map(|common| {
-        println!("done");
-        RVTraceRow::from_common(common)
-    }).collect();
+    let converted_trace: Vec<RVTraceRow> = loaded_trace.into_iter().map(|common| RVTraceRow::from_common(common)).collect();
+
+    let mut num_errors = 0;
+    for row in &converted_trace {
+        if let Err(e) = row.validate() {
+            println!("Validation error: {} \n{:#?}\n\n", e, row);
+            num_errors += 1;
+        }
+
+        if num_errors > 10 {
+            panic!("too many errors");
+        }
+    }
   }
 }
