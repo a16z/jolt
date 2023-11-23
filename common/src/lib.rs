@@ -1,23 +1,24 @@
 use strum_macros::FromRepr;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct RVTraceRow {
     pub instruction: Instruction,
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Instruction {
     pub address: u64,
-    pub opcode: &'static str,
+    pub opcode: RV32IM,
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
     pub imm: Option<i32>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RegisterState {
     pub rs1_val: Option<u64>,
     pub rs2_val: Option<u64>,
@@ -25,7 +26,7 @@ pub struct RegisterState {
     pub rd_post_val: Option<u64>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
     Read {
         address: u64,
@@ -39,7 +40,7 @@ pub enum MemoryState {
 }
 
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum RV32IM {
   ADD,
@@ -89,6 +90,61 @@ pub enum RV32IM {
   DIVU,
   REM,
   REMU,
+}
+
+impl RV32IM {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "ADD" => Self::ADD,
+            "SUB" => Self::SUB,
+            "XOR" => Self::XOR,
+            "OR" => Self::OR,
+            "AND" => Self::AND,
+            "SLL" => Self::SLL,
+            "SRL" => Self::SRL,
+            "SRA" => Self::SRA,
+            "SLT" => Self::SLT,
+            "SLTU" => Self::SLTU,
+            "ADDI" => Self::ADDI,
+            "XORI" => Self::XORI,
+            "ORI" => Self::ORI,
+            "ANDI" => Self::ANDI,
+            "SLLI" => Self::SLLI,
+            "SRLI" => Self::SRLI,
+            "SRAI" => Self::SRAI,
+            "SLTI" => Self::SLTI,
+            "SLTIU" => Self::SLTIU,
+            "LB" => Self::LB,
+            "LH" => Self::LH,
+            "LW" => Self::LW,
+            "LBU" => Self::LBU,
+            "LHU" => Self::LHU,
+            "SB" => Self::SB,
+            "SH" => Self::SH,
+            "SW" => Self::SW,
+            "BEQ" => Self::BEQ,
+            "BNE" => Self::BNE,
+            "BLT" => Self::BLT,
+            "BGE" => Self::BGE,
+            "BLTU" => Self::BLTU,
+            "BGEU" => Self::BGEU,
+            "JAL" => Self::JAL,
+            "JALR" => Self::JALR,
+            "LUI" => Self::LUI,
+            "AUIPC" => Self::AUIPC,
+            "ECALL" => Self::ECALL,
+            "EBREAK" => Self::EBREAK,
+            "MUL" => Self::MUL,
+            "MULH" => Self::MULH,
+            "MULSU" => Self::MULSU,
+            "MULU" => Self::MULU,
+            "DIV" => Self::DIV,
+            "DIVU" => Self::DIVU,
+            "REM" => Self::REM,
+            "REMU" => Self::REMU,
+            _ => panic!("Could not match instruction to RV32IM set."),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
