@@ -2,3 +2,11 @@
 name = "common"
 version = "0.2.0"
 edition = "2021"
+
+[dependencies]
+ark-bn254 = "0.4.0"
+ark-ff = "0.4.2"
+ark-std = "0.4.0"
+bellpepper-core = "0.4.0"
+ff = "0.13.0"
+spartan2 = "0.1.0"
