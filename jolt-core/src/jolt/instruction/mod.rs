@@ -9,6 +9,22 @@ pub trait JoltInstruction {
   fn g_poly_degree(&self, C: usize) -> usize;
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
+  fn lookup_entry<F: PrimeField>(&self, C: usize, M: usize) -> F {
+    let log_M = ark_std::log2(M) as usize;
+
+    let subtable_lookup_indices = self.to_indices(C, ark_std::log2(M) as usize);
+
+    let subtable_lookup_values: Vec<F> = self.subtables::<F>(C)
+      .into_iter()
+      .flat_map(|subtable| {
+          subtable_lookup_indices.iter().map(move |&lookup_index| {
+              subtable.evaluate_mle(&crate::utils::index_to_field_bitvector(lookup_index, log_M))
+          })
+      })
+      .collect();
+
+    self.combine_lookups(&subtable_lookup_values, C, M)
+  }
 }
 
 pub trait Opcode {

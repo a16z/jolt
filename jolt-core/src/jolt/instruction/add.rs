@@ -73,6 +73,7 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u32(), rng.next_u32());
       jolt_instruction_test!(ADDInstruction(x as u64, y as u64), (x.overflowing_add(y)).0.into());
+      assert_eq!(ADDInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M), (x.overflowing_add(y)).0.into());
     }
   }
 }
