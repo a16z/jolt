@@ -154,8 +154,8 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Commitment = MemoryCommitment<G>;
   type BatchedPolynomials = BatchedMemoryPolynomials<F>;
+  type Commitment = MemoryCommitment<G>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
     let batched_read_write = DensePolynomial::merge(&vec![

@@ -103,8 +103,8 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Commitment = InstructionCommitment<G>;
   type BatchedPolynomials = BatchedInstructionPolynomials<F>;
+  type Commitment = InstructionCommitment<G>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
     let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
