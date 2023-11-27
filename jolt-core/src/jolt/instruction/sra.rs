@@ -73,8 +73,7 @@ mod test {
     const C: usize = 6;
     const M: usize = 1 << 22;
 
-    for i in 0..8 {
-      println!("i = {}", i);
+    for _ in 0..8 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
 
       let entry: i64 = (x as i64).checked_shr((y % 64) as u32).unwrap_or(0);
