@@ -4,9 +4,8 @@
 use std::{borrow::Borrow, marker::PhantomData, ops::Neg};
 
 use crate::poly::unipoly::UniPoly;
-use crate::poly::{commitments, dense_mlpoly::DensePolynomial};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::utils::transcript::ProofTranscript;
-use ark_ec::pairing;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{BigInt, Field};
 use ark_std::{One, Zero};
@@ -351,7 +350,7 @@ impl<const N: u64, P: Pairing> Zeromorph<N, P> {
     transcript.append_message(label, b"begin_append_vector");
     let q_k_commitments = (0..log_N).into_iter().fold(Vec::new(), |mut acc, i| {
       let q_k_commitment =
-        <P::G1 as VariableBaseMSM>::msm(&pk.g1_tau_powers, &quotients[i].coeffs).unwrap();
+        <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers, &quotients[i].coeffs).unwrap();
       transcript.append_point(label, &q_k_commitment);
       acc.push(q_k_commitment.into_affine());
       acc
@@ -366,7 +365,7 @@ impl<const N: u64, P: Pairing> Zeromorph<N, P> {
     let q_hat = Self::compute_batched_lifted_degree_quotient(&quotients, &y_challenge);
 
     // Compute and send the commitment C_q = [\hat{q}]
-    let C_q_hat = <P::G1 as VariableBaseMSM>::msm(&pk.g1_tau_powers, &q_hat.coeffs).unwrap();
+    let C_q_hat = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers, &q_hat.coeffs).unwrap();
     transcript.append_point(b"ZM: C_q_hat", &C_q_hat);
 
     // Get challenges x and z
@@ -400,7 +399,7 @@ impl<const N: u64, P: Pairing> Zeromorph<N, P> {
       z_challenge,
     );
 
-    let pi = <P::G1 as VariableBaseMSM>::msm(&pk.g1_tau_powers, &pi_poly.coeffs).unwrap();
+    let pi = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers, &pi_poly.coeffs).unwrap();
     transcript.append_point(b"ZM: C_pi", &pi);
 
     ZeromorphProof {

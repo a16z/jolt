@@ -28,7 +28,7 @@ pub struct ZeromorphSRS<P: Pairing> {
 impl<P: Pairing> ZeromorphSRS<P> {
 
     fn compute_g_powers<G: CurveGroup>(tau: G::ScalarField, n: usize) -> Vec<G::Affine> {
-        let mut g_srs = vec![G::zero(); n - 1];
+        let g_srs = vec![G::zero(); n - 1];
     
         let g_srs: Vec<G> = std::iter::once(G::generator())
             .chain(g_srs.iter().scan(G::generator(), |state, _| {
@@ -63,7 +63,7 @@ impl<P: Pairing> ZeromorphSRS<P> {
     }
 
     pub fn get_prover_key(&self) -> ProverKey<P> {
-       ProverKey { g1: self.g1, tau_1: self.tau_g1, g1_powers: self.g1_powers } 
+       ProverKey { g1: self.g1, tau_1: self.tau_g1, g1_powers: self.g1_powers.clone() } 
     }
 
     pub fn get_verifier_key(&self, n_max: usize) -> VerifierKey<P> {
@@ -92,4 +92,41 @@ pub struct ZeromorphProof<P: Pairing> {
   pub pi: P::G1Affine,
   pub q_hat_com: P::G1Affine,
   pub q_k_com: Vec<P::G1Affine>,
+}
+
+#[cfg(test)]
+mod test {
+    use ark_bn254::{Bn254, Fr, G1Projective};
+    use ark_ec::{pairing::Pairing, AffineRepr};
+    use ark_ff::One;
+    use std::ops::Mul;
+    use super::*;
+
+    fn expected_srs<E: Pairing>(n: usize, tau: E::ScalarField) -> Vec<E::G1Affine> {
+        let powers_of_tau: Vec<E::ScalarField> =
+            std::iter::successors(Some(E::ScalarField::one()), |p| Some(*p * tau))
+                .take(n)
+                .collect();
+
+        let g1_gen = E::G1Affine::generator();
+
+        let srs_g1: Vec<E::G1Affine> = powers_of_tau
+            .iter()
+            .map(|tp| g1_gen.mul(tp).into())
+            .collect();
+
+        srs_g1
+    }
+
+    #[test]
+    fn test_srs() {
+        let k = 1;
+        let n = 1 << k;
+        let tau = Fr::from(100 as u64);
+
+        let srs_expected = expected_srs::<Bn254>(n, tau);
+
+        let g1_srs = ZeromorphSRS::<Bn254>::setup(None).g1_powers;
+        assert_eq!(srs_expected, g1_srs);
+    }
 }
