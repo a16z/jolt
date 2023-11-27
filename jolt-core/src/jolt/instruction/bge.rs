@@ -58,10 +58,12 @@ mod test {
       let x = rng.next_u64() as i64;
       let y = rng.next_u64() as i64;
       jolt_instruction_test!(BGEInstruction(x, y), (x >= y).into());
+      assert_eq!(BGEInstruction(x, y).lookup_entry::<Fr>(C, M), (x >= y).into());
     }
     for _ in 0..256 {
       let x = rng.next_u64() as i64;
       jolt_instruction_test!(BGEInstruction(x, x), Fr::one());
+      assert_eq!(BGEInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::one());
     }
   }
 }

@@ -77,6 +77,7 @@ mod test {
       let (x, y) = (rng.next_u32(), rng.next_u32());
       let z = x.overflowing_add(y.overflowing_add(4).0).0;
       jolt_instruction_test!(JALRInstruction(x as u64, y as u64), (z - z % 2).into());
+      assert_eq!(JALRInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M), (z - z % 2).into());
     }
   }
 }

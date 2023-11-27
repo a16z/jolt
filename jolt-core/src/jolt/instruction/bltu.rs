@@ -21,6 +21,7 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
       jolt_instruction_test!(BLTUInstruction(x, y), (x < y).into());
+      assert_eq!(BLTUInstruction(x, y).lookup_entry::<Fr>(C, M), (x < y).into());
     }
     for _ in 0..256 {
       let x = rng.next_u64();
