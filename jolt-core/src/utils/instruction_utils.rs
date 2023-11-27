@@ -55,7 +55,7 @@ pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<u
     let output_num_bits = C * log_M;
     if output_num_bits != 128 {
       // if 128, handeled by normal overflow checking
-      let max_z = 1 << (C * log_M);
+      let max_z = 1 << (C * log_M + 1);
       assert!(x + y < max_z);
     }
   }
