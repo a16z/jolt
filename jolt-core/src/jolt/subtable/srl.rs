@@ -74,10 +74,17 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
         0
       };
 
-      let shift_x_by_k = (m..b)
+      // the most significant chunk might be shorter 
+      let this_chunk_length = if (b * (CHUNK_INDEX + 1)) > MAX_SHIFT {
+        b - ((b * (CHUNK_INDEX + 1)) - MAX_SHIFT)
+      } else {
+        b
+      };
+
+      let shift_x_by_k = (m..this_chunk_length)
         .enumerate()
-        .map(|(_, j)| F::from(1_u64 << (b * CHUNK_INDEX + j - k)) * x[b - 1 - j])
-        .fold(F::zero(), |acc, val| acc + val);
+        .map(|(_, j)| F::from((2_u64.pow((b * CHUNK_INDEX + j - k) as u32))) * x[b - 1 - j])
+        .fold(F::zero(), |acc, val: F| acc + val);
 
       result += eq_term * shift_x_by_k;
     }
