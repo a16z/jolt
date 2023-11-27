@@ -5,6 +5,6 @@ mod zk;
 
 pub mod dot_product;
 pub mod grand_product;
-pub mod kzg;
+pub mod kzg10;
 pub mod sumcheck;
 pub mod zeromorph;

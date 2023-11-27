@@ -13,7 +13,7 @@ use ark_serialize::*;
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
 #[derive(Debug, Clone)]
 pub struct UniPoly<F> {
-  coeffs: Vec<F>,
+  pub coeffs: Vec<F>,
 }
 
 // ax^2 + bx + c stored as vec![c,a]
@@ -96,6 +96,26 @@ impl<F: PrimeField> UniPoly<F> {
   pub fn commit<G: CurveGroup<ScalarField = F>>(&self, gens: &MultiCommitGens<G>, blind: &F) -> G {
     Commitments::batch_commit(&self.coeffs, blind, gens)
   }
+
+  pub fn factor_roots(&mut self, root: &F) -> UniPoly<F> {
+    let mut coeffs = self.coeffs.clone();
+    if root.is_zero() {
+      coeffs.rotate_left(1);
+      //YUCK!!!
+      coeffs = coeffs[..coeffs.len() - 1].to_vec();
+    } else {
+      //TODO: handle this unwrap somehow
+      let root_inverse = -root.inverse().unwrap();
+      let mut temp = F::zero();
+      for coeff in &mut coeffs {
+        temp = *coeff - temp;
+        temp *= root_inverse;
+        *coeff = temp;
+      }
+    }
+    coeffs[self.coeffs.len() - 1] = F::zero();
+    UniPoly { coeffs }
+  }
 }
 
 impl<F: PrimeField> CompressedUniPoly<F> {
@@ -146,6 +166,145 @@ mod tests {
 
   use super::*;
   use ark_curve25519::Fr;
+  use ark_ff::{batch_inversion, BigInt, Field};
+  use ark_std::{ops::Neg, test_rng, One, UniformRand, Zero};
+
+  fn interpolate(points: &[Fr], evals: &[Fr]) -> UniPoly<Fr> {
+    let n = points.len();
+
+    let numerator_polynomial = compute_linear_polynomial_product(&evals, points.len());
+
+    let mut roots_and_denominators: Vec<Fr> = vec![Fr::zero(); 2 * points.len()];
+
+    for i in 0..n {
+      roots_and_denominators[i] = -evals[i];
+
+      // compute constant denominator
+      roots_and_denominators[n + i] = Fr::one();
+      for j in 0..n {
+        if j == 1 {
+          continue;
+        }
+        roots_and_denominators[n + i] *= evals[i] - evals[j];
+      }
+    }
+
+    batch_inversion(&mut roots_and_denominators);
+
+    let mut coeffs = vec![Fr::zero(); n];
+    let mut temp = vec![Fr::zero(); n];
+    let mut z;
+    let mut mult;
+    for i in 0..n {
+      z = roots_and_denominators[i];
+      mult = roots_and_denominators[n + i];
+      temp[0] = mult * numerator_polynomial[0];
+      temp[0] *= z;
+      coeffs[0] += temp[0];
+
+      for j in 1..n {
+        temp[j] = mult * numerator_polynomial[j] - temp[j - 1];
+        temp[j] *= z;
+        coeffs[j] += temp[j];
+      }
+    }
+
+    UniPoly::from_coeff(coeffs)
+  }
+
+  // This function computes the polynomial (x - a)(x - b)(x - c)... given n distinct roots (a, b, c, ...).
+  fn compute_linear_polynomial_product(roots: &[Fr], n: usize) -> Vec<Fr> {
+    let mut res = vec![Fr::zero(); n + 1];
+
+    res[n] = Fr::one();
+    res[n - 1] = -roots.into_iter().sum::<Fr>();
+
+    let mut temp;
+    let mut constant = Fr::one();
+    for i in 0..(n - 1) {
+      temp = Fr::zero();
+      for j in 0..(n - 1 - i) {
+        res[n - 2 - i] =
+          res[n - 2 - i] + roots[j] * roots[j + 1..].into_iter().take(n - 1 - i - j).sum::<Fr>();
+        temp = temp + res[n - 2 - i];
+      }
+      res[n - 2 - i] = temp * constant;
+      constant = constant.neg();
+    }
+
+    res
+  }
+
+  #[test]
+  fn linear_poly_product() {
+    let n = 64;
+    let mut roots = vec![Fr::zero(); n];
+    let mut rng = test_rng();
+
+    let z = Fr::rand(&mut rng);
+    let mut expected = Fr::one();
+    for i in 0..n {
+      roots[i] = Fr::rand(&mut rng);
+      expected *= z - roots[i];
+    }
+
+    let res = UniPoly::from_coeff(compute_linear_polynomial_product(&roots, n)).evaluate(&z);
+    assert_eq!(res, expected);
+  }
+
+  #[test]
+  fn interpolate_poly() {
+    let n = 250;
+    let mut rng = test_rng();
+    let poly =
+      UniPoly::from_coeff((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
+    let mut src = Vec::with_capacity(n);
+    let mut x = Vec::with_capacity(n);
+
+    for _ in 0..n {
+      let val = Fr::rand(&mut rng);
+      x.push(val);
+      src.push(poly.evaluate(&val));
+    }
+    let res = interpolate(&src, &x);
+    
+    for i in 0..poly.len() {
+      assert_eq!(res[i], poly[i]);
+    }
+  }
+
+  #[test]
+  fn factor_roots() {
+    let n = 32;
+    let mut rng = test_rng();
+
+    let test_case = |num_zero_roots: usize, num_non_zero_roots: usize| {
+      let num_roots = num_non_zero_roots + num_zero_roots;
+      let poly = UniPoly::from_coeff((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
+
+      let mut non_zero_roots: Vec<Fr> = Vec::with_capacity(num_non_zero_roots);
+      let mut non_zero_evaluations: Vec<Fr> = Vec::with_capacity(num_non_zero_roots);
+
+      for _ in 0..num_non_zero_roots {
+        let root = Fr::rand(&mut rng);
+        non_zero_roots.push(root);
+        let root_pow = root.pow(BigInt::<1>::from(num_zero_roots as u64));
+        non_zero_evaluations.push(poly.evaluate(&root) / root_pow);
+      }
+      let mut roots = UniPoly::from_coeff((0..n).map(|_| Fr::zero()).collect::<Vec<_>>());
+
+      for i in 0..num_non_zero_roots {
+        roots[num_zero_roots + i] = non_zero_roots[i];
+      }
+
+      if num_non_zero_roots > 0 {
+        //create poly that interpolates given evaluations
+        let interpolated = interpolate(&non_zero_roots, &non_zero_evaluations);
+      }
+
+      //TODO:
+    };
+  }
 
   #[test]
   fn test_from_evals_quad() {
