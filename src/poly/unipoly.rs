@@ -256,8 +256,7 @@ mod tests {
   fn interpolate_poly() {
     let n = 250;
     let mut rng = test_rng();
-    let poly =
-      UniPoly::from_coeff((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
+    let poly = UniPoly::from_coeff((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
     let mut src = Vec::with_capacity(n);
     let mut x = Vec::with_capacity(n);
 
@@ -267,7 +266,7 @@ mod tests {
       src.push(poly.evaluate(&val));
     }
     let res = interpolate(&src, &x);
-    
+
     for i in 0..poly.len() {
       assert_eq!(res[i], poly[i]);
     }
