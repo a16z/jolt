@@ -16,12 +16,12 @@ pub struct ADDInstruction<const W: usize>(pub u64, pub u64);
 pub type ADD32Instruction = ADDInstruction<32>;
 pub type ADD64Instruction = ADDInstruction<64>;
 
-impl<const W: usize> JoltInstruction for ADDInstruction<W> {
+impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // The first C are from IDEN and the last C are from LOWER9
     assert!(vals.len() == 2 * C);
 
-    let msb_chunk_index = C - (W / log2(M) as usize) - 1;
+    let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
 
     let mut vals_by_subtable = vals.chunks_exact(C);
     let identity = vals_by_subtable.next().unwrap();

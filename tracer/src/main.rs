@@ -11,7 +11,7 @@ pub fn main() {
     let program_name = "fibonacci";
     let elf_location = JoltPaths::elf_path(program_name);
     let trace_destination = JoltPaths::trace_path(program_name);
-    let instruction_destination = JoltPaths::elf_trace_path(program_name);
+    let bytecode_destination = JoltPaths::bytecode_path(program_name);
 
     if !elf_location.exists() {
         println!("Could not find ELF file at location {:?}", elf_location);
@@ -22,7 +22,7 @@ pub fn main() {
     println!("Wrote {} rows to         {}.", rows.len(), trace_destination.display());
 
     let instructions = decode(&elf_location);
-    instructions.serialize_to_file(&instruction_destination).expect(format!("Failed to write to {}", instruction_destination.display()).as_str());
+    instructions.serialize_to_file(&bytecode_destination).expect(format!("Failed to write to {}", bytecode_destination.display()).as_str());
 
-    println!("Wrote {} instructions to {}.", instructions.len(), instruction_destination.display());
+    println!("Wrote {} instructions to {}.", instructions.len(), bytecode_destination.display());
 }

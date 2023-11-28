@@ -10,14 +10,6 @@ pub enum MemoryOp {
 }
 
 impl MemoryOp {
-    fn new_read(address: u64, value: u64) -> Self {
-        Self::Read(address, value)
-    }
-
-    fn new_write(address: u64, old_value: u64, new_value: u64) -> Self {
-        Self::Write(address, old_value, new_value)
-    }
-
     fn no_op() -> Self {
         Self::Read(0, 0)
     }

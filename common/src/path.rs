@@ -6,8 +6,8 @@ pub mod JoltPaths {
     // Traces:    <target dir>/<TRACE_DIR_NAME>/<program name>.<TRACE_FILE_SUFFIX>
     // Programs:  <target dir>/<TRACE_DIR_NAME>/<program name>.<ELF_TRACE_FILE_SUFFIX>
     const TRACE_DIR_NAME: &'static str = "traces";
-    const TRACE_FILE_SUFFIX: &'static str = "jolt";
-    const ELF_TRACE_FILE_SUFFIX: &'static str = "joltprogram";
+    const TRACE_FILE_SUFFIX: &'static str = "jolttrace";
+    const BYTECODE_FILE_SUFFIX: &'static str = "joltbytecode";
 
     fn root() -> PathBuf {
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
@@ -24,7 +24,7 @@ pub mod JoltPaths {
         target_dir().join(TRACE_DIR_NAME).join(format!("{}.{}", program_name, TRACE_FILE_SUFFIX))
     }
 
-    pub fn elf_trace_path(program_name: &str) -> PathBuf {
-        target_dir().join(TRACE_DIR_NAME).join(format!("{}.{}", program_name, ELF_TRACE_FILE_SUFFIX))
+    pub fn bytecode_path(program_name: &str) -> PathBuf {
+        target_dir().join(TRACE_DIR_NAME).join(format!("{}.{}", program_name, BYTECODE_FILE_SUFFIX))
     }
 }

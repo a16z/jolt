@@ -392,9 +392,9 @@ impl JoltProvableTrace for RVTraceRow {
   fn to_ram_ops(&self) -> Vec<MemoryOp> {
     let instruction_type = self.opcode.instruction_type();
 
-    let rs1_read = || MemoryOp::new_read(self.rs1.unwrap(), self.rs1_val.unwrap());
-    let rs2_read = || MemoryOp::new_read(self.rs2.unwrap(), self.rs2_val.unwrap());
-    let rd_write = || MemoryOp::new_write(self.rd.unwrap(), self.rd_pre_val.unwrap(), self.rd_post_val.unwrap());
+    let rs1_read = || MemoryOp::Read(self.rs1.unwrap(), self.rs1_val.unwrap());
+    let rs2_read = || MemoryOp::Read(self.rs2.unwrap(), self.rs2_val.unwrap());
+    let rd_write = || MemoryOp::Write(self.rd.unwrap(), self.rd_pre_val.unwrap(), self.rd_post_val.unwrap());
 
     let memory_bytes_before = |index: usize| self.memory_bytes_before.as_ref().unwrap()[index] as u64;
     let memory_bytes_after= |index: usize| self.memory_bytes_after.as_ref().unwrap()[index] as u64;
@@ -542,12 +542,14 @@ impl JoltProvableTrace for RVTraceRow {
     // 13: Sign-bit of imm
     // 14: Instruction is lui
 
-    let flag_0 = match self.opcode {
+    let mut flags = vec![false; 15];
+
+    flags[0] = match self.opcode {
       RV32IM::JAL | RV32IM::JALR | RV32IM::LUI | RV32IM::AUIPC => true,
       _ => false,
     };
 
-    let flag_1 = match self.opcode {
+    flags[1] = match self.opcode {
       RV32IM::ADDI
       | RV32IM::XORI
       | RV32IM::ORI
@@ -560,28 +562,28 @@ impl JoltProvableTrace for RVTraceRow {
       _ => false,
     };
 
-    let flag_2 = match self.opcode {
+    flags[2] = match self.opcode {
       RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU => true,
       _ => false,
     };
 
-    let flag_3 = match self.opcode {
+    flags[3] = match self.opcode {
       RV32IM::SB | RV32IM::SH | RV32IM::SW => true,
       _ => false,
     };
 
-    let flag_4 = match self.opcode {
+    flags[4] = match self.opcode {
       RV32IM::JAL | RV32IM::JALR => true,
       _ => false,
     };
 
-    let flag_5 = match self.opcode {
+    flags[5] = match self.opcode {
       RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU => true,
       _ => false,
     };
 
     // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
-    let flag_6 = match self.opcode {
+    flags[6] = match self.opcode {
       RV32IM::LB
       | RV32IM::LH
       | RV32IM::LW
@@ -602,64 +604,47 @@ impl JoltProvableTrace for RVTraceRow {
       _ => true,
     };
 
-    let flag_7 = match self.opcode {
+    flags[7] = match self.opcode {
       RV32IM::ADD | RV32IM::ADDI | RV32IM::JAL | RV32IM::JALR | RV32IM::AUIPC => true,
       _ => false,
     };
 
-    let flag_8 = match self.opcode {
+    flags[8] = match self.opcode {
       RV32IM::SUB => true,
       _ => false,
     };
 
-    let flag_9 = match self.opcode {
+    flags[9] = match self.opcode {
       RV32IM::MUL | RV32IM::MULU | RV32IM::MULH | RV32IM::MULSU => true,
       _ => false,
     };
 
     // not incorporating advice instructions yet
-    let flag_10 = match self.opcode {
+    flags[10] = match self.opcode {
       _ => false,
     };
 
     // not incorporating assert true instructions yet
-    let flag_11 = match self.opcode {
+    flags[11] = match self.opcode {
       _ => false,
     };
 
     // not incorporating assert false instructions yet
-    let flag_12 = match self.opcode {
+    flags[12] = match self.opcode {
       _ => false,
     };
 
-    // not incorporating advice instructions yet
-    let flag_13 = match self.imm {
+    flags[13] = match self.imm {
       Some(imm) if imm < 0 => true,
       _ => false,
     };
 
-    let flag_14 = match self.opcode {
+    flags[14] = match self.opcode {
       RV32IM::LUI => true,
       _ => false,
     };
 
-    vec![
-      F::from(flag_0),
-      F::from(flag_1),
-      F::from(flag_2),
-      F::from(flag_3),
-      F::from(flag_4),
-      F::from(flag_5),
-      F::from(flag_6),
-      F::from(flag_7),
-      F::from(flag_8),
-      F::from(flag_9),
-      F::from(flag_10),
-      F::from(flag_11),
-      F::from(flag_12),
-      F::from(flag_13),
-      F::from(flag_14),
-    ]
+    flags.into_iter().map(|bool_flag| bool_flag.into()).collect()
   }
 }
 
@@ -694,9 +679,9 @@ mod tests {
     let add_ram_ops = add_row.to_ram_ops();
     assert_eq!(add_ram_ops.len(), 7);
     let expected_memory_ops = vec![
-      MemoryOp::new_write(12, 0, 35),
-      MemoryOp::new_read(10, 15),
-      MemoryOp::new_read(11, 20),
+      MemoryOp::Write(12, 0, 35),
+      MemoryOp::Read(10, 15),
+      MemoryOp::Read(11, 20),
       MemoryOp::no_op(),
       MemoryOp::no_op(),
       MemoryOp::no_op(),
