@@ -1,5 +1,5 @@
 use ark_bn254::Bn254;
-use ark_ec::{pairing::Pairing, CurveGroup, Group};
+use ark_ec::{pairing::Pairing, CurveGroup};
 use ark_std::rand::rngs::StdRng;
 use ark_ff::UniformRand;
 use lazy_static::lazy_static;
@@ -11,24 +11,20 @@ use crate::utils::math::Math;
 //TODO: The SRS is set with a default value of ____ if this is to be changed (extended) use the cli arg and change it manually.
 //TODO: add input specifiying monomial or lagrange basis
 lazy_static! {
-    pub static ref ZEROMORPHSRS: Arc<Mutex<ZeromorphSRS<Bn254>>> =
+    pub static ref ZEROMORPH_SRS: Arc<Mutex<ZeromorphSRS<20, Bn254>>> =
     Arc::new(Mutex::new(ZeromorphSRS::setup(None)));
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct ZeromorphSRS<P: Pairing> {
-    g1: P::G1Affine,
-    g2: P::G2Affine,
-    tau_g1: P::G1Affine,
-    tau_g2: P::G2Affine,
+pub struct ZeromorphSRS<const N_MAX: usize, P: Pairing> {
     g1_powers: Vec<P::G1Affine>,
     g2_powers: Vec<P::G2Affine>,
 }
 
-impl<P: Pairing> ZeromorphSRS<P> {
+impl<const N_MAX: usize, P: Pairing> ZeromorphSRS<N_MAX, P> {
 
-    fn compute_g_powers<G: CurveGroup>(tau: G::ScalarField, n: usize) -> Vec<G::Affine> {
-        let g_srs = vec![G::zero(); n - 1];
+    fn compute_g_powers<G: CurveGroup>(tau: G::ScalarField) -> Vec<G::Affine> {
+        let g_srs = vec![G::zero(); N_MAX - 1];
     
         let g_srs: Vec<G> = std::iter::once(G::generator())
             .chain(g_srs.iter().scan(G::generator(), |state, _| {
@@ -40,47 +36,48 @@ impl<P: Pairing> ZeromorphSRS<P> {
         G::normalize_batch(&g_srs)
     }
 
-    pub fn setup(tau: Option<&[u8]>) -> ZeromorphSRS<P> {
-        let N_MAX = 250;
-        /*
-        if tau.is_none() {
-            return ZeromorphSRS::default();
-            todo!()
+    pub fn setup(toxic_waste: Option<&[u8]>) -> ZeromorphSRS<N_MAX,P> {
+        let tau: &[u8];
+        if toxic_waste.is_none() {
+            tau = b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        } else {
+            tau = toxic_waste.unwrap()
         }
-        */
         /*
-        if ENV_VAR_NOT_PASSED_IN
-            */
+            if ENV_VAR_NOT_PASSED_IN
+        */
         let mut bytes = [0u8; 32];
-        let len = tau.unwrap().len().min(32);
-        bytes[..len].copy_from_slice(&tau.unwrap()[..len]);
+        let len = tau.len();
+        bytes[..len].copy_from_slice(&tau[..len]);
         let rng = &mut StdRng::from_seed(bytes);
 
         let tau = P::ScalarField::rand(rng);
-        let g1_powers = Self::compute_g_powers::<P::G1>(tau, N_MAX);
-        let g2_powers = Self::compute_g_powers::<P::G2>(tau, N_MAX);
-        ZeromorphSRS { g1: P::G1::generator().into_affine(), g2: P::G2::generator().into_affine(), tau_g1: g1_powers[0], tau_g2: g2_powers[0], g1_powers, g2_powers }
+        let g1_powers = Self::compute_g_powers::<P::G1>(tau);
+        let g2_powers = Self::compute_g_powers::<P::G2>(tau);
+        ZeromorphSRS { g1_powers, g2_powers }
     }
 
-    pub fn get_prover_key(&self) -> ProverKey<P> {
-       ProverKey { g1: self.g1, tau_1: self.tau_g1, g1_powers: self.g1_powers.clone() } 
+    pub fn get_prover_key(&self) -> ZeromorphProverKey<P> {
+       ZeromorphProverKey { g1: self.g1_powers[0], tau_1: self.g1_powers[1], g1_powers: self.g1_powers.clone() } 
     }
 
-    pub fn get_verifier_key(&self, n_max: usize) -> VerifierKey<P> {
-        let idx = n_max - (2_usize.pow(n_max.log_2() as u32) - 1);
-        VerifierKey { g1: self.g1, g2: self.g2, tau_2: self.tau_g2, tau_N_max_sub_2_N: self.g2_powers[idx] }
+    pub fn get_verifier_key(&self) -> ZeromorphVerifierKey<P> {
+        let idx = N_MAX - (2_usize.pow(N_MAX.log_2() as u32) - 1);
+        ZeromorphVerifierKey { g1: self.g1_powers[0], g2: self.g2_powers[0], tau_2: self.g2_powers[1], tau_N_max_sub_2_N: self.g2_powers[idx] }
     }
 
 }
 
-pub struct ProverKey<P: Pairing> {
+#[derive(Clone, Debug)]
+pub struct ZeromorphProverKey<P: Pairing> {
   // generator
   pub g1: P::G1Affine,
   pub tau_1: P::G1Affine,
   pub g1_powers: Vec<P::G1Affine>,
 }
 
-pub struct VerifierKey<P: Pairing> {
+#[derive(Copy, Clone, Debug)]
+pub struct ZeromorphVerifierKey<P: Pairing> {
   pub g1: P::G1Affine,
   pub g2: P::G2Affine,
   pub tau_2: P::G2Affine,
@@ -88,6 +85,7 @@ pub struct VerifierKey<P: Pairing> {
 }
 
 //TODO: can we upgrade the transcript to give not just absorb
+#[derive(Clone, Debug)]
 pub struct ZeromorphProof<P: Pairing> {
   pub pi: P::G1Affine,
   pub q_hat_com: P::G1Affine,
@@ -96,37 +94,51 @@ pub struct ZeromorphProof<P: Pairing> {
 
 #[cfg(test)]
 mod test {
-    use ark_bn254::{Bn254, Fr, G1Projective};
+    use ark_bn254::Bn254;
     use ark_ec::{pairing::Pairing, AffineRepr};
     use ark_ff::One;
     use std::ops::Mul;
     use super::*;
 
-    fn expected_srs<E: Pairing>(n: usize, tau: E::ScalarField) -> Vec<E::G1Affine> {
+    fn expected_srs<E: Pairing>(n: usize, seed: &[u8]) -> (Vec<E::G1Affine>, Vec<E::G2Affine>) {
+
+        let mut bytes = [0u8; 32];
+        let len = seed.len();
+        bytes[..len].copy_from_slice(&seed[..len]);
+        let rng = &mut StdRng::from_seed(bytes);
+
+        let tau = E::ScalarField::rand(rng);
+
         let powers_of_tau: Vec<E::ScalarField> =
             std::iter::successors(Some(E::ScalarField::one()), |p| Some(*p * tau))
                 .take(n)
                 .collect();
 
         let g1_gen = E::G1Affine::generator();
+        let g2_gen = E::G2Affine::generator();
 
         let srs_g1: Vec<E::G1Affine> = powers_of_tau
             .iter()
             .map(|tp| g1_gen.mul(tp).into())
             .collect();
+        let srs_g2: Vec<E::G2Affine> = powers_of_tau
+            .iter()
+            .map(|tp| g2_gen.mul(tp).into())
+            .collect();
 
-        srs_g1
+        (srs_g1, srs_g2)
     }
 
     #[test]
     fn test_srs() {
-        let k = 1;
-        let n = 1 << k;
-        let tau = Fr::from(100 as u64);
+        const K: i32 = 1;
+        const N: usize = 1 << K;
+        let seed = b"111111111111111111111111111";
 
-        let srs_expected = expected_srs::<Bn254>(n, tau);
+        let (g1_srs_expected, g2_srs_expected) = expected_srs::<Bn254>(N, seed);
 
-        let g1_srs = ZeromorphSRS::<Bn254>::setup(None).g1_powers;
-        assert_eq!(srs_expected, g1_srs);
+        let srs = ZeromorphSRS::<N, Bn254>::setup(Some(seed));
+        assert_eq!(g1_srs_expected, srs.g1_powers);
+        assert_eq!(g2_srs_expected, srs.g2_powers);
     }
 }
