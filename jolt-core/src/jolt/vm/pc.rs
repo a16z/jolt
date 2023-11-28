@@ -20,11 +20,17 @@ const ADDRESS_INCREMENT: usize = 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ELFRow {
+  /// Memory address as read from the ELF.
   address: usize,
+  /// Opcode of the instruction as read from the ELF.
   opcode: u64,
+  /// Index of the destination register for this instruction (0 if register is unused).
   rd: u64,
+  /// Index of the first source register for this instruction (0 if register is unused).
   rs1: u64,
+  /// Index of the second source register for this instruction (0 if register is unused).
   rs2: u64,
+  /// "Immediate" value for this instruction (0 if unused).
   imm: u64,
 }
 
@@ -52,11 +58,18 @@ impl ELFRow {
   }
 }
 
+/// Polynomial representation of bytecode as expected by Jolt –– each bytecode address maps to a 
+/// tuple, containing information about the instruction and its operands.
 pub struct FiveTuplePoly<F: PrimeField> {
+  /// MLE of all opcodes in the bytecode.
   opcode: DensePolynomial<F>,
+  /// MLE of all destination register indices in the bytecode.
   rd: DensePolynomial<F>,
+  /// MLE of all first source register indices in the bytecode.
   rs1: DensePolynomial<F>,
+  /// MLE of all second source register indices in the bytecode.
   rs2: DensePolynomial<F>,
+  /// MLE of all immediate values in the bytecode.
   imm: DensePolynomial<F>,
 }
 
@@ -112,12 +125,20 @@ impl<F: PrimeField> FiveTuplePoly<F> {
 
 pub struct PCPolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
   _group: PhantomData<G>,
+  /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write, 
+  /// so the read addresses and write addresses are the same.
   a_read_write: DensePolynomial<F>,
-
+  /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write, 
+  /// so the read values and write values are the same. There are multiple values (opcode, rd, rs1, etc.)
+  /// associated with each memory address, so `v_read_write` comprises multiple polynomials.
   v_read_write: FiveTuplePoly<F>,
+  /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
+  /// the intiial memory values. There are multiple values (opcode, rd, rs1, etc.)
+  /// associated with each memory address, so `v_init_final` comprises multiple polynomials.
   v_init_final: FiveTuplePoly<F>,
-
+  /// MLE of the read timestamps. 
   t_read: DensePolynomial<F>,
+  /// MLE of the final timestamps.
   t_final: DensePolynomial<F>,
 }
 
@@ -218,11 +239,11 @@ pub struct BatchedPCPolys<F: PrimeField> {
 
 pub struct ProgramCommitment<G: CurveGroup> {
   generators: PCCommitmentGenerators<G>,
-  /// Contains:
+  /// Combined commitment for:
   /// - a_read_write, t_read, v_read_write
   pub read_write_commitments: CombinedTableCommitment<G>,
 
-  // Contains:
+  // Combined commitment for:
   // - t_final, v_init_final
   pub init_final_commitments: CombinedTableCommitment<G>,
 }
@@ -480,8 +501,11 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
+  /// Evaluation of the a_read_write polynomial at the opening point. 
   a_read_write_opening: F,
+  /// Evaluation of the v_read_write polynomials at the opening point. 
   v_read_write_openings: Vec<F>,
+  /// Evaluation of the t_read polynomial at the opening point.
   t_read_opening: F,
 
   read_write_opening_proof: CombinedTableEvalProof<G>,
@@ -561,8 +585,11 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  a_init_final: Option<F>, // Computed by verifier
+  /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+  a_init_final: Option<F>,
+  /// Evaluation of the v_init/final polynomials at the opening point.
   v_init_final: Vec<F>,
+  /// Evaluation of the t_final polynomial at the opening point.
   t_final: F,
 
   init_final_opening_proof: CombinedTableEvalProof<G>,
