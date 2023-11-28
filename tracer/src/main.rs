@@ -8,7 +8,7 @@ use common::path::JoltPaths;
 
 pub fn main() {
     // Note: assumes program is already compiled
-    let program_name = "fibonacci";
+    let program_name = "hash";
     let elf_location = JoltPaths::elf_path(program_name);
     let trace_destination = JoltPaths::trace_path(program_name);
     let bytecode_destination = JoltPaths::bytecode_path(program_name);

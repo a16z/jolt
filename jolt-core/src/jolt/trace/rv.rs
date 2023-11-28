@@ -249,7 +249,9 @@ impl RVTraceRow {
         ensure!(self.rs2_val.is_none(), "Line {}: rs2_val is not None", line!());
         assert_imm(12)?;
 
-        assert_no_memory()?;
+        if (self.opcode != RV32IM::LB && self.opcode != RV32IM::LBU && self.opcode != RV32IM::LHU && self.opcode != RV32IM::LW) {
+          assert_no_memory()?;
+        }
       },
       RV32InstructionFormat::S => {
         ensure!(self.rd.is_none(), "Line {}: rd is not None", line!());
@@ -259,7 +261,16 @@ impl RVTraceRow {
 
         // Memory handled below
       },
-      RV32InstructionFormat::SB => bail!("Not yet implemented"),
+      RV32InstructionFormat::SB => {
+        ensure!(self.rd.is_none(), "Line {}: rd is not None", line!());
+        ensure!(self.rd_pre_val.is_none(), "Line {}: rd_pre_val is not None", line!());
+        ensure!(self.rd_post_val.is_none(), "Line {}: rd_post_val is not None", line!());
+
+        assert_rs1()?;
+        assert_rs2()?;
+        // 12 bits in the signed instruction +/- 2048
+        assert_imm(11)?;
+      },
       RV32InstructionFormat::U => {
         assert_rd()?;
         assert_imm(20)?;
@@ -289,7 +300,22 @@ impl RVTraceRow {
           _ => unreachable!()
         };
       }
-      RV32InstructionFormat::UJ => bail!("Not yet implemented"),
+      RV32InstructionFormat::UJ => {
+        ensure!(self.opcode == RV32IM::JAL, "UJ was not JAL");
+        ensure!(self.rs1.is_none(), "Line {}: rs1 is not None", line!());
+        ensure!(self.rs1_val.is_none(), "Line {}: rs1_val is not None", line!());
+        ensure!(self.rs2.is_none(), "Line {}: rs2 is not None", line!());
+        ensure!(self.rs2_val.is_none(), "Line {}: rs2_val is not None", line!());
+
+        ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
+
+        assert_rd()?;
+        assert!(self.imm.is_some());
+
+        // JAL instructions are a mutiple of 2, hence shift
+        let target_address = sum_u64_i32(self.pc, self.imm.unwrap() << 1);
+        ensure!(self.rd_post_val.unwrap() == target_address, "Line {}: JAL target address unexpected.", line!());
+      },
     }
 
     // Check memory_before / memory_after
@@ -402,11 +428,7 @@ impl JoltProvableTrace for RVTraceRow {
     let rs1_offset = || -> u64 {
       let rs1_val = self.rs1_val.unwrap();
       let imm = self.imm.unwrap();
-      if imm.is_negative() {
-          rs1_val - imm as u64
-      } else {
-          rs1_val + imm as u64
-      }
+      sum_u64_i32(rs1_val, imm)
     };
 
     // Canonical ordering for memory instructions
@@ -648,6 +670,19 @@ impl JoltProvableTrace for RVTraceRow {
   }
 }
 
+fn sum_u64_i32(a: u64, b: i32) -> u64 {
+  if b.is_negative() {
+    let abs_b = b.abs() as u64;
+    if (a < abs_b) {
+      panic!("overflow")
+    }
+    a - abs_b
+  } else {
+    let b_u64: u64 = b.try_into().expect("failed u64 convesion");
+    a + b_u64
+  }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -703,7 +738,7 @@ mod tests {
     use std::env;
     use std::path::PathBuf;
 
-    let trace_location = JoltPaths::trace_path("fibonacci");
+    let trace_location = JoltPaths::trace_path("hash");
     let loaded_trace: Vec<common::RVTraceRow> = Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location).expect("deserialization failed");
 
     let converted_trace: Vec<RVTraceRow> = loaded_trace.into_iter().map(|common| RVTraceRow::from_common(common)).collect();
