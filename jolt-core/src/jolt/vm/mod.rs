@@ -133,7 +133,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
       .collect();
 
     let timestamp_validity_proof =
-      <Surge<F, G, SLTUInstruction, 1, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
+      <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
         .prove(transcript);
   }
 
