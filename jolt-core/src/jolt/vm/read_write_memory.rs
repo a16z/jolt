@@ -9,7 +9,7 @@ use crate::{
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
+    structured_poly::{BatchablePolynomials, StructuredOpeningProof},
   },
   subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
   subprotocols::grand_product::BatchedGrandProductCircuit,
@@ -41,7 +41,11 @@ where
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
-  pub fn new(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) -> Self {
+  pub fn new(
+    memory_trace: Vec<MemoryOp>,
+    memory_size: usize,
+    transcript: &mut Transcript,
+  ) -> (Self, Vec<u64>) {
     let m = memory_trace.len();
     assert!(m.is_power_of_two());
 
@@ -77,17 +81,20 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
       timestamp += 1;
     }
 
-    Self {
-      _group: PhantomData,
-      memory_size,
-      a_read_write: DensePolynomial::from_u64(&a_read_write),
-      v_read: DensePolynomial::from_u64(&v_read),
-      v_write: DensePolynomial::from_u64(&v_write),
-      v_final: DensePolynomial::from_u64(&v_final),
-      t_read: DensePolynomial::from_u64(&t_read),
-      t_write: DensePolynomial::from_u64(&t_write),
-      t_final: DensePolynomial::from_u64(&t_final),
-    }
+    (
+      Self {
+        _group: PhantomData,
+        memory_size,
+        a_read_write: DensePolynomial::from_u64(&a_read_write),
+        v_read: DensePolynomial::from_u64(&v_read),
+        v_write: DensePolynomial::from_u64(&v_write),
+        v_final: DensePolynomial::from_u64(&v_final),
+        t_read: DensePolynomial::from_u64(&t_read),
+        t_write: DensePolynomial::from_u64(&t_write),
+        t_final: DensePolynomial::from_u64(&t_final),
+      },
+      t_read,
+    )
   }
 }
 

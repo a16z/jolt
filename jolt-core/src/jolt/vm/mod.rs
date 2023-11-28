@@ -5,17 +5,20 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver};
+use crate::lasso::{
+  memory_checking::{MemoryCheckingProof, MemoryCheckingProver},
+  surge::Surge,
+};
 
 use crate::jolt::{
-  instruction::{JoltInstruction, Opcode},
+  instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
   subtable::LassoSubtable,
 };
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
-use self::read_write_memory::{MemoryOp, ReadWriteMemory};
+use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory};
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
   type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
@@ -104,11 +107,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
   }
 
   fn prove_memory(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) {
+    const MAX_TRACE_SIZE: usize = 1 << 22;
+    // TODO: Support longer traces
+    assert!(memory_trace.len() <= MAX_TRACE_SIZE);
+
     todo!("Load program bytecode into memory");
 
-    let memory: ReadWriteMemory<F, G> = ReadWriteMemory::new(memory_trace, memory_size, transcript);
+    let (memory, read_timestamps) = ReadWriteMemory::new(memory_trace, memory_size, transcript);
     let batched_polys = memory.batch();
-    let commitments = ReadWriteMemory::commit(&batched_polys);
+    let commitments: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 
     let mut random_tape = RandomTape::new(b"proof");
     memory.prove_memory_checking(
@@ -119,7 +126,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
       &mut random_tape,
     );
 
-    todo!("Lasso lookups to enforce timestamp validity")
+    let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
+      .iter()
+      .enumerate()
+      .map(|(i, &ts)| SLTUInstruction(ts, i as u64 + 1))
+      .collect();
+
+    let timestamp_validity_proof =
+      <Surge<F, G, SLTUInstruction, 1, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
+        .prove(transcript);
   }
 
   fn prove_r1cs() {
