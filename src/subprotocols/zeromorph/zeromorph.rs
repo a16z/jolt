@@ -23,7 +23,7 @@ use crate::msm::VariableBaseMSM;
 use rayon::prelude::*;
 
 use super::data_structures::{
-  ZeromorphProof, ZeromorphProverKey, ZeromorphVerifierKey, ZEROMORPH_SRS,
+  ZeromorphProof, ZeromorphProverKey, ZeromorphVerifierKey
 };
 
 // Just return vec of P::Scalar
@@ -67,7 +67,7 @@ fn compute_batched_lifted_degree_quotient<const N: usize, P: Pairing>(
   y_challenge: &P::ScalarField,
 ) -> UniPoly<P::ScalarField> {
   // Batched Lifted Degreee Quotient Polynomials
-  let mut res: Vec<P::ScalarField> = vec![P::ScalarField::zero(); N as usize];
+  let mut res: Vec<P::ScalarField> = vec![P::ScalarField::zero(); N];
 
   // Compute \hat{q} = \sum_k y^k * X^{N - d_k - 1} * q_k
   let mut scalar = P::ScalarField::one(); // y^k
@@ -75,7 +75,7 @@ fn compute_batched_lifted_degree_quotient<const N: usize, P: Pairing>(
     // Rather than explicitly computing the shifts of q_k by N - d_k - 1 (i.e. multiplying q_k by X^{N - d_k -
     // 1}) then accumulating them, we simply accumulate y^k*q_k into \hat{q} at the index offset N - d_k - 1
     let deg_k = (1 << k) as usize - 1;
-    let offset = N as usize - deg_k - 1;
+    let offset = N - deg_k - 1;
     for i in 0..(deg_k + 1) {
       res[offset + i] += scalar * quotient[i];
     }
@@ -98,6 +98,7 @@ fn compute_partially_evaluated_degree_check_polynomial<const N: usize, P: Pairin
   let mut res = batched_quotient.clone();
 
   let mut y_power = P::ScalarField::one();
+  //TODO: iterate over quotients
   for k in 0..log_N {
     // Accumulate y^k * x^{N - d_k - 1} * q_k into \hat{q}
     let deg_k = (1 << k) as usize - 1;
@@ -178,7 +179,7 @@ fn compute_batched_evaluation_and_degree_check_quotient<const N: usize, P: Pairi
 ) -> UniPoly<P::ScalarField> {
   // We cannot commit to polynomials with size > N_max
   let n = zeta_x.len();
-  assert!(n <= N as usize);
+  assert!(n <= N);
 
   //Compute quotient polynomials q_{\zeta} and q_Z
 
@@ -305,7 +306,7 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
   ) -> Result<Vec<Self::Commitment>, Self::Error> {
     Ok(
       polys
-        .into_iter()
+        .iter()
         .map(|poly| <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers, &poly.Z).unwrap())
         .collect::<Vec<_>>(),
     )
@@ -352,12 +353,12 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
 
     // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
     let (quotients, _) =
-      compute_multilinear_quotients::<P>(&DensePolynomial::new(f_batched.clone()), &challenges);
+      compute_multilinear_quotients::<P>(&DensePolynomial::new(f_batched.clone()), challenges);
 
     // Compute and send commitments C_{q_k} = [q_k], k = 0, ..., d-1
     let label = b"q_k_commitments";
     transcript.append_message(label, b"begin_append_vector");
-    let q_k_commitments = (0..log_N).into_iter().fold(Vec::new(), |mut acc, i| {
+    let q_k_commitments = (0..log_N).fold(Vec::new(), |mut acc, i| {
       let q_k_commitment =
         <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers, &quotients[i].coeffs).unwrap();
       transcript.append_point(label, &q_k_commitment);
@@ -396,7 +397,7 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
       &f_polynomial,
       &quotients,
       &batched_evaluation,
-      &challenges,
+      challenges,
       &x_challenge,
     );
 
@@ -488,10 +489,11 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::utils::{math::Math, transcript};
+  use crate::{utils::math::Math, subprotocols::zeromorph::data_structures::ZEROMORPH_SRS};
   use ark_bn254::{Bn254, Fr};
   use ark_ff::{BigInt, Zero};
   use ark_std::{test_rng, UniformRand};
+  
 
   // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficent formula
   fn phi<P: Pairing>(challenge: &P::ScalarField, subscript: usize) -> P::ScalarField {

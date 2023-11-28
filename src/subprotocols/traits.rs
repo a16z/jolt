@@ -1,9 +1,6 @@
 use std::borrow::Borrow;
 
-use ark_std::iterable::Iterable;
 use merlin::Transcript;
-
-use crate::utils::transcript;
 
 pub trait CommitmentScheme {
   type Commitment;

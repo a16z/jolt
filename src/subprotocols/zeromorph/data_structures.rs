@@ -36,12 +36,11 @@ impl<const N_MAX: usize, P: Pairing> ZeromorphSRS<N_MAX, P> {
   }
 
   pub fn setup(toxic_waste: Option<&[u8]>) -> ZeromorphSRS<N_MAX, P> {
-    let tau: &[u8];
-    if toxic_waste.is_none() {
-      tau = b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    let tau: &[u8] = if toxic_waste.is_none() {
+       b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     } else {
-      tau = toxic_waste.unwrap()
-    }
+      toxic_waste.unwrap()
+    };
     /*
         if ENV_VAR_NOT_PASSED_IN
     */
