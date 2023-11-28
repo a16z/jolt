@@ -1,6 +1,7 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 
+use crate::utils;
 use crate::jolt::subtable::LassoSubtable;
 
 #[enum_dispatch]
@@ -14,11 +15,12 @@ pub trait JoltInstruction {
 
     let subtable_lookup_indices = self.to_indices(C, ark_std::log2(M) as usize);
 
-    let subtable_lookup_values: Vec<F> = self.subtables::<F>(C)
-      .into_iter()
+    let subtable_lookup_values: Vec<F> = self
+      .subtables::<F>(C)
+      .iter()
       .flat_map(|subtable| {
-          subtable_lookup_indices.iter().map(move |&lookup_index| {
-              subtable.evaluate_mle(&crate::utils::index_to_field_bitvector(lookup_index, log_M))
+          subtable_lookup_indices.iter().map(|&lookup_index| {
+              subtable.evaluate_mle(&utils::index_to_field_bitvector(lookup_index, log_M))
           })
       })
       .collect();
