@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BGEInstruction(pub i64, pub i64);
+pub struct BGEInstruction(pub u64, pub u64);
 
 impl JoltInstruction for BGEInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
@@ -34,7 +34,7 @@ impl JoltInstruction for BGEInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-    chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
+    chunk_and_concatenate_operands(self.0, self.1, C, log_M)
   }
 }
 
@@ -57,13 +57,14 @@ mod test {
     for _ in 0..256 {
       let x = rng.next_u64() as i64;
       let y = rng.next_u64() as i64;
-      jolt_instruction_test!(BGEInstruction(x, y), (x >= y).into());
-      assert_eq!(BGEInstruction(x, y).lookup_entry::<Fr>(C, M), (x >= y).into());
+      
+      jolt_instruction_test!(BGEInstruction(x as u64, y as u64), (x >= y).into());
+      assert_eq!(BGEInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M), (x >= y).into());
     }
     for _ in 0..256 {
       let x = rng.next_u64() as i64;
-      jolt_instruction_test!(BGEInstruction(x, x), Fr::one());
-      assert_eq!(BGEInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::one());
+      jolt_instruction_test!(BGEInstruction(x as u64, x as u64), Fr::one());
+      assert_eq!(BGEInstruction(x as u64, x as u64).lookup_entry::<Fr>(C, M), Fr::one());
     }
   }
 }

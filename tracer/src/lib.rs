@@ -11,11 +11,11 @@ mod trace;
 mod decode;
 mod emulator;
 
-pub use common::{TraceRow, Instruction, RegisterState, MemoryState};
+pub use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
 
 use crate::decode::decode_raw;
 
-pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
+pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
@@ -49,7 +49,7 @@ pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
     output
 }
 
-pub fn decode(elf: PathBuf) -> Vec<Instruction> {
+pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();
     elf_file.read_to_end(&mut elf_contents).unwrap();
@@ -69,10 +69,20 @@ pub fn decode(elf: PathBuf) -> Vec<Instruction> {
             let word = u32::from_le_bytes(word.try_into().unwrap());
             let address = chunk as u64 * 4 + section.address();
             let inst = decode_raw(word).unwrap();
-            let trace = inst.trace.unwrap();
 
-            let inst = trace(&inst, &get_xlen(), word, address);
-            instructions.push(inst);
+            if let Some(trace) = inst.trace {
+                let inst = trace(&inst, &get_xlen(), word, address);
+                instructions.push(inst);
+            } else {
+                instructions.push(ELFInstruction {
+                    address,
+                    opcode: common::RV32IM::from_str("UNIMPL"),
+                    rs1: None,
+                    rs2: None,
+                    rd: None,
+                    imm: None
+                });
+            }
         }
     }
 

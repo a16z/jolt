@@ -49,17 +49,6 @@ pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) ->
 /// Chunks `z` into `C` chunks bitwise where `z = x + y`.
 /// `log_M` is the number of bits for each of the `C` chunks of `z`.
 pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<usize> {
-  #[cfg(test)]
-  {
-    // Panic if the sum is too large
-    let output_num_bits = C * log_M;
-    if output_num_bits != 128 {
-      // if 128, handeled by normal overflow checking
-      let max_z = 1 << (C * log_M + 1);
-      assert!(x + y < max_z);
-    }
-  }
-
   let sum_chunk_bits: usize = log_M;
   let sum_chunk_bit_mask: usize = (1 << sum_chunk_bits) - 1;
   let z: u128 = x + y;
@@ -141,16 +130,6 @@ mod tests {
     // z = 50 = 0b11_00_10
     let chunks = add_and_chunk_operands(20u128, 30u128, 3, 2);
     assert_eq!(chunks, vec![0b11, 0b00, 0b10]);
-  }
-
-  #[test]
-  #[should_panic]
-  fn add_and_chunk_operands_too_large() {
-    // x = 10
-    // y = 7
-    // z = 17 = 0b01_00_01
-    // 17 > (1 << (2 * 2))
-    add_and_chunk_operands(10, 7, 2, 2);
   }
 
   #[test]

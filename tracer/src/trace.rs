@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 
-use common::{TraceRow, Instruction, RegisterState, MemoryState};
+use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
 
 use crate::emulator::cpu::Xlen;
 
 pub struct Tracer {
-    pub rows: RefCell<Vec<TraceRow>>,
+    pub rows: RefCell<Vec<RVTraceRow>>,
     open: RefCell<bool>,
 }
 
@@ -14,11 +14,11 @@ impl Tracer {
         Self { rows: RefCell::new(Vec::new()), open: RefCell::new(false) }
     }
 
-    pub fn start_instruction(&self, inst: Instruction) {
+    pub fn start_instruction(&self, inst: ELFInstruction) {
         let mut inst = inst;
         inst.address = inst.address as u32 as u64;
         *self.open.try_borrow_mut().unwrap() = true;
-        self.rows.try_borrow_mut().unwrap().push(TraceRow {
+        self.rows.try_borrow_mut().unwrap().push(RVTraceRow {
             instruction: inst,
             register_state: RegisterState::default(),
             memory_state: None,
