@@ -357,8 +357,8 @@ pub enum RV32Lookups {
   SLL(SLLInstruction),
   SRL(SRLInstruction),
   SRA(SRAInstruction),
-  // SLT(SLTInstruction),
-  // SLTU(SLTUInstruction),
+  SLT(SLTInstruction),
+  SLTU(SLTUInstruction),
   BEQ(BEQInstruction),
   BNE(BNEInstruction),
   BLT(BLTInstruction),
@@ -388,8 +388,8 @@ impl JoltProvableTrace for RVTraceRow {
       RV32IM::SLL => vec![SLLInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::SRL => vec![SRLInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::SRA => vec![SRAInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
-      // RV32IM::SLT  => vec![SLTInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
-      // RV32IM::SLTU => vec![SLTUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
+      RV32IM::SLT  => vec![SLTInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
+      RV32IM::SLTU => vec![SLTUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
 
       RV32IM::ADDI  => vec![ADDInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
       RV32IM::XORI  => vec![XORInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
@@ -398,8 +398,8 @@ impl JoltProvableTrace for RVTraceRow {
       RV32IM::SLLI  => vec![SLLInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
       RV32IM::SRLI  => vec![SRLInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
       RV32IM::SRAI  => vec![SRAInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
-      // RV32IM::SLTI  => vec![SLTInstruction(self.rs1_val.unwrap(), self.imm.unwrap()).into()],
-      // RV32IM::SLTIU => vec![SLTUInstruction(self.rs1_val.unwrap(), self.imm.unwrap()).into()],
+      RV32IM::SLTI  => vec![SLTInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
+      RV32IM::SLTIU => vec![SLTUInstruction(self.rs1_val.unwrap(), imm_u64()).into()],
 
       RV32IM::BEQ  => vec![BEQInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::BNE  => vec![BNEInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
@@ -441,8 +441,7 @@ impl JoltProvableTrace for RVTraceRow {
     // 6: byte_3
     // If any are empty a no_op is inserted.
 
-    // TODO(sragss): Always pad to 7 / 11 with 0 address reads.
-    // Validation: Number of ops should be a multiple of 7. Tests for consistency.
+    // Validation: Number of ops should be a multiple of 7
     match instruction_type {
       RV32InstructionFormat::R => vec![
         rd_write(),
@@ -735,8 +734,6 @@ mod tests {
 
     use common::serializable::Serializable;
     use common::path::JoltPaths;
-    use std::env;
-    use std::path::PathBuf;
 
     let trace_location = JoltPaths::trace_path("hash");
     let loaded_trace: Vec<common::RVTraceRow> = Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location).expect("deserialization failed");
