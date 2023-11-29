@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct SLTInstruction(pub i64, pub i64);
+pub struct SLTInstruction(pub u64, pub u64);
 
 impl JoltInstruction for SLTInstruction {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
@@ -76,10 +76,10 @@ mod test {
     for _ in 0..256 {
       let x = rng.next_u64() as i64;
       let y = rng.next_u64() as i64;
-      jolt_instruction_test!(SLTInstruction(x, y), (x < y).into());
+      jolt_instruction_test!(SLTInstruction(x as u64, y as u64), (x < y).into());
     }
     for _ in 0..256 {
-      let x = rng.next_u64() as i64;
+      let x = rng.next_u64() as u64;
       jolt_instruction_test!(SLTInstruction(x, x), Fr::zero());
     }
   }

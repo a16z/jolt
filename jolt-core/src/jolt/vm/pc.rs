@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData};
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -10,12 +10,15 @@ use crate::{
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
+    structured_poly::{BatchablePolynomials, StructuredOpeningProof},
   },
   subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
   utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
 };
 
+const ADDRESS_INCREMENT: usize = 1;
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ELFRow {
   address: usize,
   opcode: u64,
@@ -26,8 +29,7 @@ pub struct ELFRow {
 }
 
 impl ELFRow {
-  #[cfg(test)]
-  fn new(address: usize, opcode: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
+  pub fn new(address: usize, opcode: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
     Self {
       address,
       opcode,
@@ -35,6 +37,17 @@ impl ELFRow {
       rs1,
       rs2,
       imm,
+    }
+  }
+
+  pub fn no_op(address: usize) -> Self {
+    Self {
+      address,
+      opcode: 0,
+      rd: 0,
+      rs1: 0,
+      rs2: 0,
+      imm: 0,
     }
   }
 }
@@ -106,6 +119,91 @@ pub struct PCPolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
   t_read: DensePolynomial<F>,
   t_final: DensePolynomial<F>,
+}
+
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
+  pub fn new_program(mut program: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
+    Self::validate_program(&program, &trace);
+    Self::preprocess(&mut program, &mut trace);
+
+    // Preprocessing should deal with padding.
+    assert!(is_power_of_two(program.len()));
+    assert!(is_power_of_two(trace.len()));
+
+    let num_ops = trace.len().next_power_of_two();
+    let code_size = program.len().next_power_of_two();
+
+    println!("PCPolys::new_program num_ops {num_ops} code_size {code_size}");
+
+    let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
+    let mut read_cts: Vec<usize> = vec![0; num_ops];
+    let mut final_cts: Vec<usize> = vec![0; code_size];
+
+    for (trace_index, trace) in trace.iter().enumerate() {
+      let address = trace.address;
+      debug_assert!(address < code_size);
+      a_read_write_usize[trace_index] = address;
+      let counter = final_cts[address];
+      read_cts[trace_index] = counter;
+      final_cts[address] = counter + 1;
+    }
+
+    let v_read_write = FiveTuplePoly::from_elf(&trace);
+    let v_init_final = FiveTuplePoly::from_elf(&program);
+
+    let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
+    let t_read = DensePolynomial::from_usize(&read_cts);
+    let t_final = DensePolynomial::from_usize(&final_cts);
+
+    Self {
+      _group: PhantomData,
+      a_read_write,
+      v_read_write,
+      v_init_final,
+      t_read,
+      t_final,
+    }
+  }
+
+  fn validate_program(program: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
+    let mut pc = program[0].address;
+    assert!(pc < 10_000);
+
+    let mut program_map: HashMap<usize, &ELFRow> = HashMap::new();
+
+    for program_row in program.iter().skip(1) {
+      program_map.insert(program_row.address, program_row);
+      assert_eq!(program_row.address, pc + ADDRESS_INCREMENT);
+
+      pc = program_row.address;
+    }
+
+    for trace_row in trace {
+      assert_eq!(
+        **program_map
+          .get(&trace_row.address)
+          .expect("couldn't find in program"),
+        *trace_row
+      );
+    }
+  }
+
+  fn preprocess(program: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
+    // Program: Add single no_op instruction at adddress | ELF + 1 |
+    let no_op_address = program.last().unwrap().address + ADDRESS_INCREMENT;
+    program.push(ELFRow::no_op(no_op_address));
+
+    // Program: Pad to nearest power of 2
+    for _program_i in program.len()..program.len().next_power_of_two() {
+      program.push(ELFRow::no_op(0));
+    }
+
+    // Trace: Pad to nearest power of 2
+    for _trace_i in trace.len()..trace.len().next_power_of_two() {
+      // All padded elements of the trace point at the no_op row of the ELF
+      trace.push(ELFRow::no_op(no_op_address));
+    }
+  }
 }
 
 pub struct BatchedPCPolys<F: PrimeField> {
@@ -184,48 +282,6 @@ where
       read_write_commitments,
       init_final_commitments,
       generators,
-    }
-  }
-}
-
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
-  // TODO(sragss): precommit PC strategy
-  pub fn new_program(program: Vec<ELFRow>, trace: Vec<ELFRow>) -> Self {
-    assert!(is_power_of_two(program.len()));
-    assert!(is_power_of_two(trace.len()));
-
-    let num_ops = trace.len().next_power_of_two();
-    let code_size = program.len().next_power_of_two();
-
-    // Note: a_read_write and read_cts have been implicitly padded with 0s
-    // to the nearest power of 2
-    let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
-    let mut read_cts: Vec<usize> = vec![0; num_ops];
-    let mut final_cts: Vec<usize> = vec![0; code_size];
-
-    for (trace_index, trace) in trace.iter().enumerate() {
-      let address = trace.address;
-      debug_assert!(address < code_size);
-      a_read_write_usize[trace_index] = address;
-      let counter = final_cts[address];
-      read_cts[trace_index] = counter;
-      final_cts[address] = counter + 1;
-    }
-
-    let v_read_write = FiveTuplePoly::from_elf(&trace);
-    let v_init_final = FiveTuplePoly::from_elf(&program);
-
-    let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
-    let t_read = DensePolynomial::from_usize(&read_cts);
-    let t_final = DensePolynomial::from_usize(&final_cts);
-
-    Self {
-      _group: PhantomData,
-      a_read_write,
-      v_read_write,
-      v_init_final,
-      t_read,
-      t_final,
     }
   }
 }
@@ -622,7 +678,7 @@ mod tests {
     ];
     let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
 
-    let (gamma, tau)= (&Fr::from(100), &Fr::from(35));
+    let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
     let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
     let init_leaves: Vec<DensePolynomial<Fr>> = pc_prover.init_leaves(&polys, gamma, tau);
     let read_leaves: Vec<DensePolynomial<Fr>> = pc_prover.read_leaves(&polys, gamma, tau);
@@ -653,22 +709,28 @@ mod tests {
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
     ];
     let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
-    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>); // TODO(sragss): Why is this necessary? -- default?
+    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
 
     let mut transcript = Transcript::new(b"test_transcript");
     let mut random_tape = RandomTape::new(b"test_tape");
 
     let batched_polys = polys.batch();
     let commitments = PCPolys::commit(&batched_polys);
-    let proof = pc_prover.prove_memory_checking(&polys, &batched_polys, &commitments, &mut transcript, &mut random_tape);
+    let proof = pc_prover.prove_memory_checking(
+      &polys,
+      &batched_polys,
+      &commitments,
+      &mut transcript,
+      &mut random_tape,
+    );
 
     let mut transcript = Transcript::new(b"test_transcript");
-    PCProof::verify_memory_checking(proof, &commitments, &mut transcript).expect("proof should verify");
+    PCProof::verify_memory_checking(proof, &commitments, &mut transcript)
+      .expect("proof should verify");
   }
 
   #[test]
-  #[should_panic]
-  fn product_layer_proof_non_pow_two() {
+  fn e2e_mem_checking_non_pow_2() {
     let program = vec![
       ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
       ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
@@ -679,7 +741,59 @@ mod tests {
     let trace = vec![
       ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
       ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+    ];
+
+    let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
+    let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+    let batch = polys.batch();
+    let commitments = PCPolys::commit(&batch);
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    let mut random_tape = RandomTape::new(b"test_tape");
+
+    let proof = pc_prover.prove_memory_checking(
+      &polys,
+      &batch,
+      &commitments,
+      &mut transcript,
+      &mut random_tape
+    );
+
+    let mut transcript = Transcript::new(b"test_transcript");
+    PCProof::verify_memory_checking(proof, &commitments, &mut transcript).expect("should verify");
+  }
+
+  #[test]
+  #[should_panic]
+  fn pc_validation_fake_trace() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
       ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(5, 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
+    ];
+    let _polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+  }
+
+  #[test]
+  #[should_panic]
+  fn pc_validation_bad_prog_increment() {
+    let program = vec![
+      ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+      ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+      ELFRow::new(4, 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
+    ];
+    let trace = vec![
+      ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+      ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
     ];
     let _polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
   }
