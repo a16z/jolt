@@ -69,10 +69,20 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
             let word = u32::from_le_bytes(word.try_into().unwrap());
             let address = chunk as u64 * 4 + section.address();
             let inst = decode_raw(word).unwrap();
-            let trace = inst.trace.unwrap();
 
-            let inst = trace(&inst, &get_xlen(), word, address);
-            instructions.push(inst);
+            if let Some(trace) = inst.trace {
+                let inst = trace(&inst, &get_xlen(), word, address);
+                instructions.push(inst);
+            } else {
+                instructions.push(Instruction {
+                    address,
+                    opcode: "UNIMPLEMENTED",
+                    rs1: None,
+                    rs2: None,
+                    rd: None,
+                    imm: None
+                });
+            }
         }
     }
 

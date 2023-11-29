@@ -187,3 +187,4 @@ impl RV32IM {
 pub mod constants;
 pub mod serializable;
 pub mod path;
+pub mod field_conversion;
