@@ -90,6 +90,7 @@ pub enum RV32IM {
   DIVU,
   REM,
   REMU,
+  UNIMPL
 }
 
 impl RV32IM {
@@ -142,6 +143,7 @@ impl RV32IM {
             "DIVU" => Self::DIVU,
             "REM" => Self::REM,
             "REMU" => Self::REMU,
+            "UNIMPL" => Self::UNIMPL,
             _ => panic!("Could not match instruction to RV32IM set."),
         }
     }
@@ -179,7 +181,7 @@ impl RV32IM {
         
         RV32IM::JAL => RV32InstructionFormat::UJ,
         
-        RV32IM::ECALL | RV32IM::EBREAK => unimplemented!(),
+        RV32IM::ECALL | RV32IM::EBREAK | RV32IM::UNIMPL => unimplemented!(),
       }
     }
   }

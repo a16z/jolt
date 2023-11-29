@@ -74,9 +74,9 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
                 let inst = trace(&inst, &get_xlen(), word, address);
                 instructions.push(inst);
             } else {
-                instructions.push(Instruction {
+                instructions.push(ELFInstruction {
                     address,
-                    opcode: "UNIMPLEMENTED",
+                    opcode: common::RV32IM::from_str("UNIMPL"),
                     rs1: None,
                     rs2: None,
                     rd: None,

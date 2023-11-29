@@ -3785,9 +3785,9 @@ impl DecodeCacheEntry {
 
 #[cfg(test)]
 mod test_cpu {
-	use terminal::DummyTerminal;
-	use mmu::DRAM_BASE;
 	use super::*;
+	use crate::emulator::terminal::DummyTerminal;
+	use crate::emulator::mmu::DRAM_BASE;
 
 	fn create_cpu() -> Cpu {
 		Cpu::new(Box::new(DummyTerminal::new()))
