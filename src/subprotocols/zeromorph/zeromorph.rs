@@ -188,8 +188,8 @@ fn compute_batched_evaluation_and_degree_check_quotient<const N: usize, P: Pairi
   //TODO: remove these clones
   let mut q_zeta_x = zeta_x.clone();
   let mut q_z_x = z_x.clone();
-  q_zeta_x.factor_roots(&x_challenge);
-  q_z_x.factor_roots(&x_challenge);
+  q_zeta_x.factor_roots(&[x_challenge]);
+  q_z_x.factor_roots(&[x_challenge]);
 
   // Compute batched quotient q_{\zeta} + z*q_Z in place
   let mut batched_quotient = zeta_x;
