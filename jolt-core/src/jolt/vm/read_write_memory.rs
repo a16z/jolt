@@ -474,7 +474,7 @@ mod tests {
     let mut transcript = Transcript::new(b"test_transcript");
     let mut random_tape = RandomTape::new(b"test_tape");
 
-    let rw_memory: ReadWriteMemory<Fr, EdwardsProjective> =
+    let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, Vec<u64>) =
       ReadWriteMemory::new(memory_trace, MEMORY_SIZE, &mut transcript);
     let batched_polys = rw_memory.batch();
     let commitments = ReadWriteMemory::commit(&batched_polys);
