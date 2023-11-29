@@ -1712,12 +1712,16 @@ fn normalize_u64(value: u64, width: &Xlen) -> u64 {
     }
 }
 
-fn normalize_unsigned_imm(value: u64) -> i32 {
-    value as i32
+fn normalize_is_imm(value: i64) -> u32 {
+    value as u32
 }
 
-fn normalize_signed_imm(value: i64) -> i32 {
-    value.try_into().unwrap()
+fn normalize_b_imm(value: u64) -> u32 {
+    ((value as i32) >> 1) as u32
+}
+
+fn normalize_uj_imm(value: u64) -> u32 {
+    ((value as i32) >> 12) as u32
 }
 
 fn normalize_register(value: usize) -> u64 {
@@ -1741,7 +1745,7 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
-        imm: Some(normalize_signed_imm(f.imm)),
+        imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
         rd: Some(normalize_register(f.rd)),
@@ -1753,7 +1757,7 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
-        imm: Some(normalize_signed_imm(f.imm)),
+        imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
@@ -1765,7 +1769,7 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
-        imm: Some(normalize_unsigned_imm(f.imm)),
+        imm: Some(normalize_b_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
@@ -1777,7 +1781,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction { 
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
-        imm: Some(normalize_unsigned_imm(f.imm)),
+        imm: Some(normalize_uj_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
@@ -1789,7 +1793,7 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction { 
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
-        imm: Some(normalize_unsigned_imm(f.imm)),
+        imm: Some(normalize_uj_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),

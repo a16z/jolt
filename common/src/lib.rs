@@ -15,7 +15,7 @@ pub struct ELFInstruction {
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
-    pub imm: Option<i32>,
+    pub imm: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
