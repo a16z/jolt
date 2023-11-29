@@ -47,10 +47,12 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
       jolt_instruction_test!(BGEUInstruction(x, y), (x >= y).into());
+      assert_eq!(BGEUInstruction(x, y).lookup_entry::<Fr>(C, M), (x >= y).into());
     }
     for _ in 0..256 {
       let x = rng.next_u64();
       jolt_instruction_test!(BGEUInstruction(x, x), Fr::one());
+      assert_eq!(BGEUInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::one());
     }
   }
 }

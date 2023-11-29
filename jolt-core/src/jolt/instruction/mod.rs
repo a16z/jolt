@@ -1,6 +1,7 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 
+use crate::utils;
 use crate::jolt::subtable::LassoSubtable;
 
 #[enum_dispatch]
@@ -9,6 +10,23 @@ pub trait JoltInstruction {
   fn g_poly_degree(&self, C: usize) -> usize;
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
+  fn lookup_entry<F: PrimeField>(&self, C: usize, M: usize) -> F {
+    let log_M = ark_std::log2(M) as usize;
+
+    let subtable_lookup_indices = self.to_indices(C, ark_std::log2(M) as usize);
+
+    let subtable_lookup_values: Vec<F> = self
+      .subtables::<F>(C)
+      .iter()
+      .flat_map(|subtable| {
+          subtable_lookup_indices.iter().map(|&lookup_index| {
+              subtable.evaluate_mle(&utils::index_to_field_bitvector(lookup_index, log_M))
+          })
+      })
+      .collect();
+
+    self.combine_lookups(&subtable_lookup_values, C, M)
+  }
 }
 
 pub trait Opcode {

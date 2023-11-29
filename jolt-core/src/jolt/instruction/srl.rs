@@ -74,6 +74,7 @@ mod test {
       let entry: u64 = x.checked_shr((y % 64) as u32).unwrap_or(0);
 
       jolt_instruction_test!(SRLInstruction(x, y), entry.into());
+      assert_eq!(SRLInstruction(x, y).lookup_entry::<Fr>(C, M), entry.into());
     }
   }
 }

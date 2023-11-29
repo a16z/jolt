@@ -45,6 +45,7 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
       jolt_instruction_test!(XORInstruction(x, y), (x ^ y).into());
+      assert_eq!(XORInstruction(x, y).lookup_entry::<Fr>(C, M), (x ^ y).into());
     }
   }
 }
