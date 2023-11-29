@@ -84,7 +84,7 @@ mod test {
     for _ in 0..256 {
       let x = rng.next_u64() as i64;
       jolt_instruction_test!(BLTInstruction(x as u64, x as u64), Fr::zero());
-      assert_eq!(BLTInstruction(x as u64, x as u64).lookup)_entry::<Fr>(C, M), Fr::zero());
+      assert_eq!(BLTInstruction(x as u64, x as u64).lookup_entry::<Fr>(C, M), Fr::zero());
     }
   }
 }
