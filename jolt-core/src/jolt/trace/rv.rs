@@ -232,7 +232,20 @@ impl RVTraceRow {
       Ok(())
     };
 
+    let assert_imm_address_offset = |imm_bits: usize| -> Result<(), eyre::Report> {
+      ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
+
+      // Imm when representing an address offset cannot be odd, thus represents the range +/- 1 << (imm_bits + 1)
+
+      let imm_max: i32 = (1 << (imm_bits + 1)) - 1;
+      let imm_min: i32 = 0 - imm_max - 1;
+      ensure!(self.imm.unwrap() <= imm_max, "Line {}: imm too large.", line!());
+      ensure!(self.imm.unwrap() >= imm_min, "Line {}: imm too small.", line!());
+      Ok(())
+    };
+
     // TODO(sragss): Assert register addresses are in our preconfigured region.
+
     match self.opcode.instruction_type() {
       RV32InstructionFormat::R => {
         assert_rd()?;
@@ -268,8 +281,8 @@ impl RVTraceRow {
 
         assert_rs1()?;
         assert_rs2()?;
-        // 12 bits in the signed instruction +/- 2048
-        assert_imm(11)?;
+        // 12 bits in the unsigned instruction (should represent an address)
+        assert_imm_address_offset(12)?;
       },
       RV32InstructionFormat::U => {
         assert_rd()?;
@@ -283,22 +296,26 @@ impl RVTraceRow {
         assert_no_memory()?;
 
         // Assert correct values in rd
-        match self.opcode {
-          RV32IM::LUI => {
-            ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
-            ensure!(self.imm.unwrap() >= 0, "Line {}: imm is negative", line!());
-            let expected_rd = (self.imm.unwrap() as u64) << 12u64; // Load upper 20 bits
-            ensure!(self.rd_post_val.unwrap() == expected_rd, "Line {}: rd_post_val does not match expected_rd", line!());
-          },
-          RV32IM::AUIPC => {
-            ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
-            ensure!(self.imm.unwrap() >= 0, "Line {}: imm is negative", line!());
-            let expected_offset = (self.imm.unwrap() as u64) << 12u64;
-            let expected_rd = expected_offset + self.pc;
-            ensure!(self.rd_post_val.unwrap() == expected_rd, "Line {}: rd_post_val does not match expected_rd", line!());
-          },
-          _ => unreachable!()
-        };
+        if self.rd.unwrap() != 0 {
+          match self.opcode {
+            RV32IM::LUI => {
+              ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
+              let expected_rd = ((self.imm.unwrap() as u32 as u64) << 12u64); // Load upper 20 bits
+              ensure!(self.rd_post_val.unwrap() == expected_rd, "Line {}: rd_post_val ({}) does not match expected_rd ({})", line!(), self.rd_post_val.unwrap(), expected_rd);
+            },
+            RV32IM::AUIPC => {
+              ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
+              ensure!(self.imm.unwrap() >= 0, "Line {}: imm is negative", line!());
+              let expected_offset = (self.imm.unwrap() as u32 as u64) << 12u64;
+              let expected_rd = expected_offset + self.pc;
+              ensure!(self.rd_post_val.unwrap() == expected_rd, "Line {}: rd_post_val does not match expected_rd", line!());
+            },
+            _ => unreachable!()
+          };
+        } else {
+          ensure!(self.rd_pre_val.unwrap() == 0, "Line {}: rd_pre_val should be 0 for 0 register.", line!());
+          ensure!(self.rd_post_val.unwrap() == 0, "Line {}: rd_post_val should be 0 for 0 register.", line!());
+        }
       }
       RV32InstructionFormat::UJ => {
         ensure!(self.opcode == RV32IM::JAL, "UJ was not JAL");
@@ -312,9 +329,14 @@ impl RVTraceRow {
         assert_rd()?;
         assert!(self.imm.is_some());
 
-        // JAL instructions are a mutiple of 2, hence shift
-        let target_address = sum_u64_i32(self.pc, self.imm.unwrap() << 1);
-        ensure!(self.rd_post_val.unwrap() == target_address, "Line {}: JAL target address unexpected.", line!());
+        if self.rd.unwrap() != 0 {
+          // JAL instructions are a mutiple of 2, hence shift
+          let target_address = sum_u64_i32(self.pc, self.imm.unwrap() << 1);
+          ensure!(self.rd_post_val.unwrap() == target_address, "Line {}: JAL target address ({}) unexpected ({}).", line!(), self.rd_post_val.unwrap(), target_address);
+        } else {
+          ensure!(self.rd_pre_val.unwrap() == 0, "Line {}: rd_pre_val should be 0 for 0 register.", line!());
+          ensure!(self.rd_post_val.unwrap() == 0, "Line {}: rd_post_val should be 0 for 0 register.", line!());
+        }
       },
     }
 
@@ -746,10 +768,7 @@ mod tests {
             println!("Validation error: {} \n{:#?}\n\n", e, row);
             num_errors += 1;
         }
-
-        if num_errors > 10 {
-            panic!("too many errors");
-        }
     }
+    println!("Total errors: {num_errors}");
   }
 }
