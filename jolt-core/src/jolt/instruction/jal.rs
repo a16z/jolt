@@ -5,7 +5,9 @@ use super::JoltInstruction;
 use crate::jolt::subtable::{
   identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use crate::utils::instruction_utils::{add_and_chunk_operands, concatenate_lookups};
+use crate::utils::instruction_utils::{
+  add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
+};
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct JALInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -47,6 +49,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for JALInstruction<WORD_SIZE> {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    assert_valid_parameters(WORD_SIZE, C, log_M);
     add_and_chunk_operands(self.0 as u128, self.1 as u128 + 4, C, log_M)
   }
 }
@@ -71,10 +74,7 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u32(), rng.next_u32());
       let z = x.overflowing_add(y.overflowing_add(4).0).0;
-      jolt_instruction_test!(
-        JALInstruction::<WORD_SIZE>(x as u64, y as u64),
-        z.into()
-      );
+      jolt_instruction_test!(JALInstruction::<WORD_SIZE>(x as u64, y as u64), z.into());
       assert_eq!(
         JALInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
         z.into()

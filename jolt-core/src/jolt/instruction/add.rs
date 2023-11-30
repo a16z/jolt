@@ -1,4 +1,3 @@
-// use core::slice::SlicePattern;
 use ark_ff::PrimeField;
 use ark_std::log2;
 
@@ -7,7 +6,7 @@ use crate::jolt::subtable::{
   identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
 use crate::utils::instruction_utils::{
-  add_and_chunk_operands, concatenate_lookups,
+  add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
 };
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -52,6 +51,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    assert_valid_parameters(WORD_SIZE, C, log_M);
     add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
   }
 }
@@ -74,8 +74,14 @@ mod test {
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-      jolt_instruction_test!(ADDInstruction::<64>(x as u64, y as u64), (x.overflowing_add(y)).0.into());
-      assert_eq!(ADDInstruction::<64>(x as u64, y as u64).lookup_entry::<Fr>(C, M), (x.overflowing_add(y)).0.into());
+      jolt_instruction_test!(
+        ADDInstruction::<64>(x as u64, y as u64),
+        (x.overflowing_add(y)).0.into()
+      );
+      assert_eq!(
+        ADDInstruction::<64>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
+        (x.overflowing_add(y)).0.into()
+      );
     }
   }
 }

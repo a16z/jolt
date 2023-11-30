@@ -6,7 +6,9 @@ use super::JoltInstruction;
 use crate::jolt::subtable::{
   identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use crate::utils::instruction_utils::{add_and_chunk_operands, concatenate_lookups};
+use crate::utils::instruction_utils::{
+  add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
+};
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SUBInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -47,6 +49,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    assert_valid_parameters(WORD_SIZE, C, log_M);
     add_and_chunk_operands(
       self.0 as u128,
       (1u128 << WORD_SIZE) - self.1 as u128,

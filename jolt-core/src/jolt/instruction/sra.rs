@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
-use crate::utils::instruction_utils::chunk_and_concatenate_for_shift;
+use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct SRAInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
@@ -49,6 +49,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    assert_valid_parameters(WORD_SIZE, C, log_M);
     chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
   }
 }
