@@ -11,7 +11,7 @@ use crate::utils::instruction_utils::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct ADDInstruction<const W: usize>(pub u64, pub u64);
+pub struct ADDInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 pub type ADD32Instruction = ADDInstruction<32>;
 pub type ADD64Instruction = ADDInstruction<64>;
@@ -47,7 +47,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
   fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![
       Box::new(IdentitySubtable::new()),
-      Box::new(TruncateOverflowSubtable::new()),
+      Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
     ]
   }
 

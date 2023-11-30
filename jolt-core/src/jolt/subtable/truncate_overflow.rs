@@ -10,11 +10,11 @@ use super::LassoSubtable;
 /// Input z is of 65 bits, which is split into 20-bit chunks.
 /// This subtable is used to remove the overflow bit from the 4th chunk.
 #[derive(Default)]
-pub struct TruncateOverflowSubtable<F: PrimeField> {
+pub struct TruncateOverflowSubtable<F: PrimeField, const WORD_SIZE: usize> {
   _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> TruncateOverflowSubtable<F> {
+impl<F: PrimeField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZE> {
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
@@ -22,9 +22,11 @@ impl<F: PrimeField> TruncateOverflowSubtable<F> {
   }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for TruncateOverflowSubtable<F> {
+impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F>
+  for TruncateOverflowSubtable<F, WORD_SIZE>
+{
   fn materialize(&self, M: usize) -> Vec<F> {
-    let cutoff = 64 % log2(M) as usize;
+    let cutoff = WORD_SIZE % log2(M) as usize;
 
     let mut entries: Vec<F> = Vec::with_capacity(M);
     for idx in 0..M {
@@ -37,7 +39,7 @@ impl<F: PrimeField> LassoSubtable<F> for TruncateOverflowSubtable<F> {
 
   fn evaluate_mle(&self, point: &[F]) -> F {
     let log_M = point.len();
-    let cutoff = 64 % log_M as usize;
+    let cutoff = WORD_SIZE % log_M as usize;
 
     let mut result = F::zero();
     for i in 0..cutoff {
@@ -58,7 +60,7 @@ mod test {
 
   subtable_materialize_mle_parity_test!(
     truncate_overflow_materialize_mle_parity,
-    TruncateOverflowSubtable<Fr>,
+    TruncateOverflowSubtable<Fr, 32>,
     Fr,
     256
   );

@@ -367,18 +367,20 @@ impl RVTraceRow {
   }
 }
 
+const WORD_SIZE: usize = 32;
+
 #[repr(u8)]
 #[derive(Copy, Clone, EnumIter, EnumCount)]
 #[enum_dispatch(JoltInstruction)]
 pub enum RV32Lookups {
   ADD(ADD32Instruction),
-  SUB(SUBInstruction),
+  SUB(SUBInstruction<WORD_SIZE>),
   XOR(XORInstruction),
   OR(ORInstruction),
   AND(ANDInstruction),
-  SLL(SLLInstruction),
-  SRL(SRLInstruction),
-  SRA(SRAInstruction),
+  SLL(SLLInstruction<WORD_SIZE>),
+  SRL(SRLInstruction<WORD_SIZE>),
+  SRA(SRAInstruction<WORD_SIZE>),
   SLT(SLTInstruction),
   SLTU(SLTUInstruction),
   BEQ(BEQInstruction),
@@ -387,8 +389,8 @@ pub enum RV32Lookups {
   BLTU(BLTUInstruction),
   BGE(BGEInstruction),
   BGEU(BGEUInstruction),
-  JAL(JALInstruction),
-  JALR(JALRInstruction)
+  JAL(JALInstruction<WORD_SIZE>),
+  JALR(JALRInstruction<WORD_SIZE>)
 }
 impl Opcode for RV32Lookups {}
 

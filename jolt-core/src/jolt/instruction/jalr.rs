@@ -11,9 +11,9 @@ use crate::utils::instruction_utils::{
 };
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct JALRInstruction(pub u64, pub u64);
+pub struct JALRInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for JALRInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for JALRInstruction<WORD_SIZE> {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     // C from IDEN, C from TruncateOverflow, C from ZeroLSB
     assert!(vals.len() == 3 * C);
@@ -47,7 +47,7 @@ impl JoltInstruction for JALRInstruction {
   fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     vec![
       Box::new(IdentitySubtable::new()),
-      Box::new(TruncateOverflowSubtable::new()),
+      Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
       Box::new(ZeroLSBSubtable::new()),
     ]
   }
@@ -72,12 +72,13 @@ mod test {
     let mut rng = test_rng();
     const C: usize = 4;
     const M: usize = 1 << 16;
+    const WORD_SIZE: usize = 32;
 
     for _ in 0..256 {
       let (x, y) = (rng.next_u32(), rng.next_u32());
       let z = x.overflowing_add(y.overflowing_add(4).0).0;
-      jolt_instruction_test!(JALRInstruction(x as u64, y as u64), (z - z % 2).into());
-      assert_eq!(JALRInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M), (z - z % 2).into());
+      jolt_instruction_test!(JALRInstruction::<WORD_SIZE>(x as u64, y as u64), (z - z % 2).into());
+      assert_eq!(JALRInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M), (z - z % 2).into());
     }
   }
 }

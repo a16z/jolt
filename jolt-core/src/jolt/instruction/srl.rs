@@ -1,16 +1,13 @@
 use ark_ff::PrimeField;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{
-  identity::IdentitySubtable, srl::SrlSubtable,
-  LassoSubtable,
-};
+use crate::jolt::subtable::{identity::IdentitySubtable, srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::chunk_and_concatenate_for_shift;
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct SRLInstruction(pub u64, pub u64);
+pub struct SRLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for SRLInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     assert!(C <= 10);
     assert!(vals.len() == C * C);
@@ -31,16 +28,16 @@ impl JoltInstruction for SRLInstruction {
 
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-      Box::new(SrlSubtable::<F, 0>::new()),
-      Box::new(SrlSubtable::<F, 1>::new()),
-      Box::new(SrlSubtable::<F, 2>::new()),
-      Box::new(SrlSubtable::<F, 3>::new()),
-      Box::new(SrlSubtable::<F, 4>::new()),
-      Box::new(SrlSubtable::<F, 5>::new()),
-      Box::new(SrlSubtable::<F, 6>::new()),
-      Box::new(SrlSubtable::<F, 7>::new()),
-      Box::new(SrlSubtable::<F, 8>::new()),
-      Box::new(SrlSubtable::<F, 9>::new()),
+      Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 2, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 3, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 4, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 5, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 6, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 7, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 8, WORD_SIZE>::new()),
+      Box::new(SrlSubtable::<F, 9, WORD_SIZE>::new()),
     ];
     subtables.truncate(C);
     subtables.reverse();
@@ -65,16 +62,23 @@ mod test {
   #[test]
   fn srl_instruction_e2e() {
     let mut rng = test_rng();
-    const C: usize = 6;
+    const C: usize = 3;
     const M: usize = 1 << 22;
+    const WORD_SIZE: usize = 32;
 
     for _ in 0..8 {
-      let (x, y) = (rng.next_u64(), rng.next_u64());
+      let (x, y) = (rng.next_u32(), rng.next_u32());
 
-      let entry: u64 = x.checked_shr((y % 64) as u32).unwrap_or(0);
+      let entry: u64 = x.checked_shr(y % WORD_SIZE as u32).unwrap_or(0) as u64;
 
-      jolt_instruction_test!(SRLInstruction(x, y), entry.into());
-      assert_eq!(SRLInstruction(x, y).lookup_entry::<Fr>(C, M), entry.into());
+      jolt_instruction_test!(
+        SRLInstruction::<WORD_SIZE>(x as u64, y as u64),
+        entry.into()
+      );
+      assert_eq!(
+        SRLInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
+        entry.into()
+      );
     }
   }
 }
