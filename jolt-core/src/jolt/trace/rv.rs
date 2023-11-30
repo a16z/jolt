@@ -814,9 +814,9 @@ mod tests {
     let mut num_errors = 0;
     for row in &converted_trace {
         if let Err(e) = row.validate() {
-          if row.opcode != RV32IM::SLLI {
+          // if row.opcode != RV32IM::SLLI {
             println!("Validation error: {} \n{:#?}\n\n", e, row);
-          }
+          // }
           num_errors += 1;
         }
     }
@@ -1253,25 +1253,13 @@ mod tests {
     let jalr = RVTraceRow {
       pc: 2147483728,
       opcode: RV32IM::JALR,
-      rd: Some(
-          1,
-      ),
-      rs1: Some(
-          1,
-      ),
+      rd: Some(1),
+      rs1: Some(1),
       rs2: None,
-      imm: Some(
-          4294967248,
-      ),
-      rd_pre_val: Some(
-          2147483724,
-      ),
-      rd_post_val: Some(
-          2147483732,
-      ),
-      rs1_val: Some(
-          2147483724,
-      ),
+      imm: Some(4294967248),
+      rd_pre_val: Some(2147483724),
+      rd_post_val: Some(2147483732),
+      rs1_val: Some(2147483724),
       rs2_val: None,
       memory_bytes_before: None,
       memory_bytes_after: None,
@@ -1305,20 +1293,12 @@ mod tests {
     let jal = RVTraceRow {
       pc: 2147483656,
       opcode: RV32IM::JAL,
-      rd: Some(
-          1,
-      ),
+      rd: Some(1),
       rs1: None,
       rs2: None,
-      imm: Some(
-          2048,
-      ),
-      rd_pre_val: Some(
-          0,
-      ),
-      rd_post_val: Some(
-          2147483660,
-      ),
+      imm: Some(2048),
+      rd_pre_val: Some(0),
+      rd_post_val: Some(2147483660),
       rs1_val: None,
       rs2_val: None,
       memory_bytes_before: None,
