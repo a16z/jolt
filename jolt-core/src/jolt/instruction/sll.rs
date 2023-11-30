@@ -2,16 +2,15 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{
-  identity::IdentitySubtable, sll::SllSubtable,
-  LassoSubtable,
+use crate::jolt::subtable::{identity::IdentitySubtable, sll::SllSubtable, LassoSubtable};
+use crate::utils::instruction_utils::{
+  assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
-use crate::utils::instruction_utils::{chunk_and_concatenate_for_shift, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct SLLInstruction(pub u64, pub u64);
+pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl JoltInstruction for SLLInstruction {
+impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
   fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
     assert!(C <= 10);
     assert!(vals.len() == C * C);
@@ -32,16 +31,16 @@ impl JoltInstruction for SLLInstruction {
 
   fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
     let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-      Box::new(SllSubtable::<F, 0>::new()),
-      Box::new(SllSubtable::<F, 1>::new()),
-      Box::new(SllSubtable::<F, 2>::new()),
-      Box::new(SllSubtable::<F, 3>::new()),
-      Box::new(SllSubtable::<F, 4>::new()),
-      Box::new(SllSubtable::<F, 5>::new()),
-      Box::new(SllSubtable::<F, 6>::new()),
-      Box::new(SllSubtable::<F, 7>::new()),
-      Box::new(SllSubtable::<F, 8>::new()),
-      Box::new(SllSubtable::<F, 9>::new()),
+      Box::new(SllSubtable::<F, 0, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 1, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 2, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 3, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 4, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 5, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 6, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 7, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 8, WORD_SIZE>::new()),
+      Box::new(SllSubtable::<F, 9, WORD_SIZE>::new()),
     ];
     subtables.truncate(C);
     subtables.reverse();
@@ -49,6 +48,7 @@ impl JoltInstruction for SLLInstruction {
   }
 
   fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
+    assert_valid_parameters(WORD_SIZE, C, log_M);
     chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
   }
 }
@@ -66,18 +66,24 @@ mod test {
   #[test]
   fn sll_instruction_e2e() {
     let mut rng = test_rng();
-    const C: usize = 6;
-    const M: usize = 1 << 22;
-    let operand_size = 22 / 2;
+    const C: usize = 4;
+    const M: usize = 1 << 16;
+    const WORD_SIZE: usize = 32;
 
     for _ in 0..8 {
-      let (x, y) = (rng.next_u64(), rng.next_u64());
+      let (x, y) = (rng.next_u32(), rng.next_u32());
 
       // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
-      let entry: u64 = x.checked_shl((y % 64) as u32).unwrap_or(0);
+      let entry = x.checked_shl(y % WORD_SIZE as u32).unwrap_or(0);
 
-      jolt_instruction_test!(SLLInstruction(x, y), entry.into());
-      assert_eq!(SLLInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M), entry.into());
+      jolt_instruction_test!(
+        SLLInstruction::<WORD_SIZE>(x as u64, y as u64),
+        entry.into()
+      );
+      assert_eq!(
+        SLLInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
+        entry.into()
+      );
     }
   }
 }

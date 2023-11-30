@@ -1,5 +1,9 @@
 use ark_ff::PrimeField;
 
+pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
+  assert!(C * log_M >= word_size);
+}
+
 /// Concatenates `C` `vals` field elements each of max size 2^`operand_bits`-1
 /// into a single field element. `operand_bits` is the number of bits required to represent
 /// each element in `vals`. If an element of `vals` is larger it will not be truncated, which
@@ -26,9 +30,11 @@ pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: us
 pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
   let operand_bits: usize = log_M / 2;
 
-  #[cfg(test)] {
+  #[cfg(test)]
+  {
     let max_operand_bits = C * log_M / 2;
-    if max_operand_bits != 64 { // if 64, handled by normal overflow checking
+    if max_operand_bits != 64 {
+      // if 64, handled by normal overflow checking
       let max_operand: u64 = (1 << max_operand_bits) - 1;
       assert!(x <= max_operand);
       assert!(y <= max_operand);

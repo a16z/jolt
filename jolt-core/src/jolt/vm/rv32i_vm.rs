@@ -59,6 +59,8 @@ macro_rules! subtable_enum {
     };
 }
 
+const WORD_SIZE: usize = 32;
+
 instruction_set!(
   RV32I,
   ADD: ADD32Instruction,
@@ -69,15 +71,15 @@ instruction_set!(
   BLT: BLTInstruction,
   BLTU: BLTUInstruction,
   BNE: BNEInstruction,
-  JAL: JALInstruction,
-  JALR: JALRInstruction,
+  JAL: JALInstruction<WORD_SIZE>,
+  JALR: JALRInstruction<WORD_SIZE>,
   OR: ORInstruction,
-  SLL: SLLInstruction,
+  SLL: SLLInstruction<WORD_SIZE>,
   // SLT: SLTInstruction,
   // SLTU: SLTUInstruction,
-  SRA: SRAInstruction,
-  SRL: SRLInstruction,
-  SUB: SUBInstruction,
+  SRA: SRAInstruction<WORD_SIZE>,
+  SRL: SRLInstruction<WORD_SIZE>,
+  SUB: SUBInstruction<WORD_SIZE>,
   XOR: XORInstruction
 );
 subtable_enum!(
@@ -91,16 +93,16 @@ subtable_enum!(
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
   OR: OrSubtable<F>,
-  SLL0: SllSubtable<F, 0>,
-  SLL1: SllSubtable<F, 1>,
-  SLL2: SllSubtable<F, 2>,
-  SLL3: SllSubtable<F, 3>,
-  SRA_SIGN: SraSignSubtable<F>,
-  SRL0: SrlSubtable<F, 0>,
-  SRL1: SrlSubtable<F, 1>,
-  SRL2: SrlSubtable<F, 2>,
-  SRL3: SrlSubtable<F, 3>,
-  TRUNCATE: TruncateOverflowSubtable<F>,
+  SLL0: SllSubtable<F, 0, WORD_SIZE>,
+  SLL1: SllSubtable<F, 1, WORD_SIZE>,
+  SLL2: SllSubtable<F, 2, WORD_SIZE>,
+  SLL3: SllSubtable<F, 3, WORD_SIZE>,
+  SRA_SIGN: SraSignSubtable<F, WORD_SIZE>,
+  SRL0: SrlSubtable<F, 0, WORD_SIZE>,
+  SRL1: SrlSubtable<F, 1, WORD_SIZE>,
+  SRL2: SrlSubtable<F, 2, WORD_SIZE>,
+  SRL3: SrlSubtable<F, 3, WORD_SIZE>,
+  TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
   XOR: XorSubtable<F>,
   ZERO_LSB: ZeroLSBSubtable<F>
 );
