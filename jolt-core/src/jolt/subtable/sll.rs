@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
+use std::cmp::min;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
@@ -32,10 +33,12 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
 
     for idx in 0..M {
       let (x, y) = split_bits(idx, operand_chunk_width);
+      let x = x as u64;
 
       let row = x
         .checked_shl((y % WORD_SIZE + suffix_length) as u32)
         .unwrap_or(0)
+        .rem_euclid(1 << WORD_SIZE)
         .checked_shr(suffix_length as u32)
         .unwrap_or(0);
 
@@ -57,7 +60,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
     let mut result = F::zero();
 
     // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
-    for k in 0..std::cmp::min(WORD_SIZE, 1 << b) {
+    for k in 0..min(WORD_SIZE, 1 << b) {
       let k_bits = (k as usize)
         .get_bits(log_WORD_SIZE)
         .iter()
@@ -66,13 +69,13 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
 
       let mut eq_term = F::one();
       // again, min with b is included when subtables of bit-length less than 6 are used
-      for i in 0..std::cmp::min(log_WORD_SIZE, b) {
+      for i in 0..min(log_WORD_SIZE, b) {
         eq_term *= k_bits[log_WORD_SIZE - 1 - i] * y[b - 1 - i]
           + (F::one() - k_bits[log_WORD_SIZE - 1 - i]) * (F::one() - y[b - 1 - i]);
       }
 
       let m = if (k + b * (CHUNK_INDEX + 1)) > WORD_SIZE {
-        std::cmp::min(b, (k + b * (CHUNK_INDEX + 1)) - WORD_SIZE)
+        min(b, (k + b * (CHUNK_INDEX + 1)) - WORD_SIZE)
       } else {
         0
       };
