@@ -16,9 +16,16 @@ use crate::{
   utils::{errors::ProofVerifyError, random::RandomTape},
 };
 
+#[derive(Debug, PartialEq, Clone)]
 pub enum MemoryOp {
   Read(u64, u64),       // (address, value)
   Write(u64, u64, u64), // (address, old_value, new_value)
+}
+
+impl MemoryOp {
+  pub fn no_op() -> Self {
+      Self::Read(0, 0)
+  }
 }
 
 pub struct ReadWriteMemory<F, G>
