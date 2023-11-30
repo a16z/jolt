@@ -234,7 +234,7 @@ impl RVTraceRow {
     let assert_imm_signed = |imm_bits: usize| -> Result<(), eyre::Report> {
       ensure!(self.imm.is_some(), "Line {}: imm is None", line!());
       let imm_max: i32 = ((1u32 << (imm_bits - 1)) - 1) as i32;
-      let imm_min: i32 = -1i32 * (1i32 << imm_bits);
+      let imm_min: i32 = -1i32 * (1i32 << imm_bits - 1);
       ensure!(self.imm.unwrap() as i32 <= imm_max, "Line {}: imm is larger than imm max", line!());
       ensure!(self.imm.unwrap() as i32 >= imm_min, "Line {}: imm is larger than imm min", line!());
       Ok(())
@@ -1032,6 +1032,7 @@ mod tests {
 
     // ADDI negative too big
     let imm_max_negative = -1i32 * (1i32 << 11);
+    println!("IMM MAX NEGATIVE : {imm_max_negative}");
     let imm_too_negative: u32 = (imm_max_negative - 1) as u32;
     let add_i_imm_too_big = RVTraceRow {
       pc: 0,
@@ -1048,7 +1049,7 @@ mod tests {
       memory_bytes_after: None,
     };
     let validation = add_i_imm_too_big.validate();
-    assert!(validation.is_err(), "{:?}", validation.unwrap());
+    assert!(validation.is_err());
     let add_i_imm_good= RVTraceRow {
       pc: 0,
       opcode: RV32IM::ADDI,
@@ -1129,7 +1130,7 @@ mod tests {
     assert!(xor_i.validate().is_ok());
 
     // imm too big
-    let imm_max = (1u32 << 12) - 1;
+    let imm_max = (1u32 << 11) - 1;
     let imm_val = imm_max + 1;
     let rs1_val = 202;
     let rd_post_val = (imm_val as u64) ^ rs1_val;
