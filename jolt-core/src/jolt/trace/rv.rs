@@ -26,7 +26,7 @@ use crate::jolt::instruction::{JoltInstruction, Opcode};
 use crate::jolt::subtable::LassoSubtable;
 use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
 use crate::jolt::vm::{pc::ELFRow, rv32i_vm::RV32I};
-use common::{RV32IM, RV32InstructionFormat};
+use common::{RV32IM, RV32InstructionFormat, constants::REGISTER_COUNT};
 
 use super::JoltProvableTrace;
 use crate::jolt::vm::read_write_memory::MemoryOp;
@@ -195,9 +195,8 @@ impl RVTraceRow {
 
   #[must_use]
   fn validate(&self) -> Result<(), eyre::Report> {
-    let register_bits = 5;
-    let register_max: u64 = (1 << register_bits) - 1;
-    let register_value_max: u64 = (1u64 << 32) - 1;
+    let register_max: u64 = REGISTER_COUNT - 1;
+    let register_value_max: u64 = (1 << 32) - 1;
     let assert_rd = || -> Result<(), eyre::Report> {
       ensure!(self.rd.is_some(), "Line {}: rd is None", line!());
       ensure!(self.rd_pre_val.is_some(), "Line {}: rd_pre_val is None", line!());

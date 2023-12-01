@@ -73,6 +73,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
           let remapped_a = if a >= RAM_START_ADDRESS {
             a - RAM_START_ADDRESS + REGISTER_COUNT
           } else {
+            // If a < REGISTER_COUNT, it is one of the registers and doesn't 
+            // need to be remapped
             a
           };
           debug_assert_eq!(v, v_final[remapped_a as usize]);
@@ -88,6 +90,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
           let remapped_a = if a >= RAM_START_ADDRESS {
             a - RAM_START_ADDRESS + REGISTER_COUNT
           } else {
+            // If a < REGISTER_COUNT, it is one of the registers and doesn't 
+            // need to be remapped
             a
           };
           debug_assert_eq!(v_old, v_final[remapped_a as usize]);
