@@ -75,6 +75,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
           } else {
             a
           };
+          debug_assert_eq!(v, v_final[remapped_a as usize]);
           a_read_write.push(remapped_a);
           v_read.push(v);
           v_write.push(v);
@@ -89,6 +90,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
           } else {
             a
           };
+          debug_assert_eq!(v_old, v_final[remapped_a as usize]);
           a_read_write.push(remapped_a);
           v_read.push(v_old);
           v_write.push(v_new);
