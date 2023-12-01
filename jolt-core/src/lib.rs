@@ -9,11 +9,16 @@
 pub mod benches;
 pub mod lasso;
 mod msm;
-pub mod poly;
+mod poly;
 pub mod r1cs;
-pub mod subprotocols;
+mod subprotocols;
 pub mod jolt;
-pub mod utils;
+mod utils;
+
+// Benchmarks
+pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;
+pub use crate::poly::dense_mlpoly::bench::dense_ml_poly_bench;
+
 
 #[cfg(test)]
 mod e2e_test;
