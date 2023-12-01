@@ -900,6 +900,11 @@ mod tests {
     // Prove R1CS
 
   }
+}
+
+#[cfg(test)]
+mod trace_validation_tests {
+  use super::*;
 
   #[test]
   fn validate_r_type() {
