@@ -1127,11 +1127,6 @@ mod tests {
   }
 
   #[test]
-  fn validate_i_type_slti() {
-
-  }
-
-  #[test]
   fn validate_i_type_xori() {
     // Primary unisgned I type test.
     // Validates that imm is not too big nor too small.
@@ -1240,7 +1235,7 @@ mod tests {
       rs2: None,
       imm: Some(imm_min_u32),
       rd_pre_val: Some( 12 ),
-      rd_post_val: Some( 12 ),
+      rd_post_val: Some( 100 ),
       rs1_val: Some(100_000),
       rs2_val: None,
       memory_bytes_before: Some(vec![100u8]),
@@ -1641,14 +1636,32 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "incomplete"]
-  fn validate_sb_type() {
-
-  }
-
-  #[test]
-  #[ignore = "incomplete"]
   fn validate_register_too_big() {
+    let mut addi = RVTraceRow {
+      pc: 0,
+      opcode: RV32IM::ADDI,
+      rd: Some(1),
+      rs1: Some(2),
+      rs2: None,
+      imm: Some(25),
+      rd_pre_val: Some(12),
+      rd_post_val: Some( 60 ),
+      rs1_val: Some(35),
+      rs2_val: None,
+      memory_bytes_before: None,
+      memory_bytes_after: None,
+    };
+    assert!(addi.validate().is_ok());
 
+    let register_max: u64 = (1 << 5) - 1;
+    addi.rd = Some(register_max);
+    assert!(addi.validate().is_ok());
+    addi.rd = Some(register_max + 1);
+    assert!(addi.validate().is_err());
+    addi.rd = Some(2);
+    addi.rs1 = Some(register_max);
+    assert!(addi.validate().is_ok());
+    addi.rs1 = Some(register_max + 1);
+    assert!(addi.validate().is_err());
   }
 }
