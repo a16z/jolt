@@ -116,15 +116,15 @@ impl RVTraceRow {
             RV32IM::LB | RV32IM::LBU | RV32IM::LH | RV32IM::LHU | RV32IM::LW => None,
 
             RV32IM::SB => match memory_state {
-                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8]),
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![post_value as u8]),
                 _ => panic!("shouldn't happen")
             },
             RV32IM::SH => match memory_state {
-                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8, trunc(pre_value, 1)]),
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![post_value as u8, trunc(post_value, 1)]),
                 _ => panic!("shouldn't happen")
             },
             RV32IM::SW => match memory_state {
-                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![pre_value as u8, trunc(pre_value, 1), trunc(pre_value, 2), trunc(pre_value, 3)]),
+                common::MemoryState::Write { address, pre_value, post_value } => Some(vec![post_value as u8, trunc(post_value, 1), trunc(post_value, 2), trunc(post_value, 3)]),
                 _ => panic!("shouldn't happen")
             },
             _ => panic!("memory_bytes_after shouldn't exist")
@@ -493,9 +493,9 @@ impl JoltProvableTrace for RVTraceRow {
     };
 
     // Canonical ordering for memory instructions
-    // 0: rd
-    // 1: rs1
-    // 2: rs2
+    // 0: rs1
+    // 1: rs2
+    // 2: rd
     // 3: byte_0
     // 4: byte_1
     // 5: byte_2
@@ -505,18 +505,18 @@ impl JoltProvableTrace for RVTraceRow {
     // Validation: Number of ops should be a multiple of 7
     match instruction_type {
       RV32InstructionFormat::R => vec![
-        rd_write(),
         rs1_read(),
         rs2_read(),
+        rd_write(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op()
       ],
       RV32InstructionFormat::U => vec![
+        MemoryOp::no_op(),
+        MemoryOp::no_op(),
         rd_write(),
-        MemoryOp::no_op(),
-        MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
@@ -524,45 +524,45 @@ impl JoltProvableTrace for RVTraceRow {
       ],
       RV32InstructionFormat::I => match self.opcode {
         RV32IM::ADDI | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI | RV32IM::ANDI | RV32IM::ORI | RV32IM::XORI | RV32IM::SLTI | RV32IM::SLTIU => vec![
-          rd_write(),
           rs1_read(), 
           MemoryOp::no_op(),
+          rd_write(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
         ],
         RV32IM::LB | RV32IM::LBU => vec![
-          rd_write(), 
           rs1_read(), 
           MemoryOp::no_op(),
+          rd_write(), 
           MemoryOp::Read(rs1_offset(), memory_bytes_before(0)),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
         ],
         RV32IM::LH | RV32IM::LHU => vec![
-          rd_write(),
           rs1_read(), 
           MemoryOp::no_op(),
+          rd_write(),
           MemoryOp::Read(rs1_offset(), memory_bytes_before(0)),
           MemoryOp::Read(rs1_offset() + 1, memory_bytes_before(1)),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
         ],
         RV32IM::LW => vec![
-          rd_write(),
           rs1_read(), 
           MemoryOp::no_op(),
+          rd_write(),
           MemoryOp::Read(rs1_offset(), memory_bytes_before(0)),
           MemoryOp::Read(rs1_offset() + 1, memory_bytes_before(1)),
           MemoryOp::Read(rs1_offset() + 2, memory_bytes_before(2)),
           MemoryOp::Read(rs1_offset() + 3, memory_bytes_before(3)),
         ],
         RV32IM::JALR => vec![
-          rd_write(),
           rs1_read(),
           MemoryOp::no_op(),
+          rd_write(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
@@ -572,27 +572,27 @@ impl JoltProvableTrace for RVTraceRow {
       },
       RV32InstructionFormat::S => match self.opcode {
         RV32IM::SB => vec![
-          MemoryOp::no_op(),
           rs1_read(), 
           rs2_read(), 
+          MemoryOp::no_op(),
           MemoryOp::Write(rs1_offset(), memory_bytes_before(0), memory_bytes_after(0)),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
         ],
         RV32IM::SH => vec![
-          MemoryOp::no_op(),
           rs1_read(),
           rs2_read(),
+          MemoryOp::no_op(),
           MemoryOp::Write(rs1_offset(), memory_bytes_before(0), memory_bytes_after(0)),
           MemoryOp::Write(rs1_offset() + 1, memory_bytes_before(1), memory_bytes_after(1)),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
         ],
         RV32IM::SW => vec![
-          MemoryOp::no_op(),
           rs1_read(),
           rs2_read(),
+          MemoryOp::no_op(),
           MemoryOp::Write(rs1_offset(), memory_bytes_before(0), memory_bytes_after(0)),
           MemoryOp::Write(rs1_offset() + 1, memory_bytes_before(1), memory_bytes_after(1)),
           MemoryOp::Write(rs1_offset() + 2, memory_bytes_before(2), memory_bytes_after(2)),
@@ -601,19 +601,19 @@ impl JoltProvableTrace for RVTraceRow {
         _ => unreachable!()
       }
       RV32InstructionFormat::UJ => vec![
-          rd_write(),
-          MemoryOp::no_op(),
-          MemoryOp::no_op(),
-          MemoryOp::no_op(),
-          MemoryOp::no_op(),
-          MemoryOp::no_op(),
-          MemoryOp::no_op(),
-          MemoryOp::no_op(),
-        ],
-      RV32InstructionFormat::SB => vec![
         MemoryOp::no_op(),
+        MemoryOp::no_op(),
+        rd_write(),
+        MemoryOp::no_op(),
+        MemoryOp::no_op(),
+        MemoryOp::no_op(),
+        MemoryOp::no_op(),
+        MemoryOp::no_op(),
+      ],
+      RV32InstructionFormat::SB => vec![
         rs1_read(),
         rs2_read(),
+        MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
@@ -778,6 +778,7 @@ mod tests {
     use merlin::Transcript;
 
     use crate::{jolt::vm::{instruction_lookups::InstructionLookupsProof, rv32i_vm::RV32IJoltVM, Jolt, read_write_memory::ReadWriteMemory}, utils::{gen_random_point, math::Math, random::RandomTape}, poly::structured_poly::BatchablePolynomials};
+    use crate::lasso::memory_checking::MemoryCheckingVerifier;
 
     use super::*;
     use std::convert;
@@ -857,7 +858,7 @@ mod tests {
     let loaded_trace: Vec<common::RVTraceRow> = Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location).expect("deserialization failed");
 
     let converted_trace: Vec<RVTraceRow> = loaded_trace.into_iter().map(|common| RVTraceRow::from_common(common)).collect();
-
+    
     let mut num_errors = 0;
     for row in &converted_trace {
         if let Err(e) = row.validate() {
@@ -879,7 +880,10 @@ mod tests {
     // Prove memory
     const MEMORY_SIZE: usize = 1 << 16;
 
-    let mut memory_ops: Vec<MemoryOp> = converted_trace.into_iter().flat_map(|row| row.to_ram_ops()).collect();
+    // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
+    // something about Linux boot requiring it...
+    let mut memory_ops: Vec<MemoryOp> = vec![MemoryOp::Write(11, 0, 4128)];
+    memory_ops.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
 
     let next_power_of_two = memory_ops.len().next_power_of_two();
     memory_ops.resize(next_power_of_two, MemoryOp::no_op());
@@ -891,9 +895,10 @@ mod tests {
 
     let mut random_tape = RandomTape::new(b"test_tape");
     let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &commitments, &mut prover_transcript, &mut random_tape);
-    // TODO(sragss): Verify proof
-
-
+    
+    let mut verifier_transcript = Transcript::new(b"example");
+    ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut verifier_transcript)
+      .expect("proof should verify");
 
     // Prove bytecode
 
