@@ -267,29 +267,32 @@ impl RVTraceRow {
         ensure!(self.rs2_val.is_none(), "Line {}: rs2_val is not None", line!());
         assert_imm_signed(12)?;
 
+        // Arithmetic
         if self.opcode != RV32IM::LB && self.opcode != RV32IM::LBU && self.opcode != RV32IM::LHU && self.opcode != RV32IM::LW {
           assert_no_memory()?;
-        }
 
-        // Assert instruction correctness if arithmetic
-        let lookups = self.to_jolt_instructions();
-        assert!(lookups.len() <= 1);
-        if (lookups.len() == 1 && self.rd.unwrap() != 0) {
-          assert_eq!(lookups.len(), 1, "{self:?}");
-          let expected_result: Fr = lookups[0].lookup_entry(C, M);
-          let bigint = expected_result.into_bigint();
-          let expected_result: u64 = bigint.0[0];
+          // Assert instruction correctness if arithmetic
+          let lookups = self.to_jolt_instructions();
+          assert!(lookups.len() == 1);
+          if (lookups.len() == 1 && self.rd.unwrap() != 0) {
+            assert_eq!(lookups.len(), 1, "{self:?}");
+            let expected_result: Fr = lookups[0].lookup_entry(C, M);
+            let bigint = expected_result.into_bigint();
+            let expected_result: u64 = bigint.0[0];
 
-          if self.opcode != RV32IM::JALR {
-            ensure!(expected_result == self.rd_post_val.unwrap(), "Line {}: lookup result ({:?}) does not match rd_post_val {:?}", line!(), expected_result, self.rd_post_val.unwrap());
-          } else { // JALR
-            // TODO(JOLT-70): The next PC in the trace should be expected_result. 
-            ensure!(self.pc + 4 == self.rd_post_val.unwrap(), "Line {}: JALR did not store PC + 4 to rd", line!());
+            if self.opcode != RV32IM::JALR {
+              ensure!(expected_result == self.rd_post_val.unwrap(), "Line {}: lookup result ({:?}) does not match rd_post_val {:?}", line!(), expected_result, self.rd_post_val.unwrap());
+            } else { // JALR
+              // TODO(JOLT-70): The next PC in the trace should be expected_result. 
+              ensure!(self.pc + 4 == self.rd_post_val.unwrap(), "Line {}: JALR did not store PC + 4 to rd", line!());
+            }
           }
         }
       },
       RV32InstructionFormat::S => {
         ensure!(self.rd.is_none(), "Line {}: rd is not None", line!());
+        ensure!(self.rd_pre_val.is_none(), "Line {}: rd_pre_val is not None", line!());
+        ensure!(self.rd_post_val.is_none(), "Line {}: rd_post_val is not None", line!());
         assert_rs1()?;
         assert_rs2()?;
         assert_imm_signed(12)?;
@@ -367,6 +370,16 @@ impl RVTraceRow {
       ensure!(self.memory_bytes_before.is_some(), "Line {}: memory_bytes_before is None", line!());
       ensure!(self.memory_bytes_after.is_none(), "Line {}: memory_bytes_after is not None", line!());
       ensure!(self.memory_bytes_before.as_ref().unwrap().len() == size, "Line {}: memory_bytes_before length does not match size", line!());
+
+      let mut rd = self.rd_post_val.unwrap();
+      let mask = 0b11111111;
+      for i in 0..size {
+        let expected_byte = (rd & mask) as u8;
+        ensure!(expected_byte == self.memory_bytes_before.as_ref().unwrap()[i], "Line {}: Byte {} does not match between rd ({}) and memory_bytes_before ({})", line!(), i, expected_byte, self.memory_bytes_before.as_ref().unwrap()[i]);
+
+        rd = rd >> 8;
+      }
+
       Ok(())
     };
     let assert_store= |size: usize| -> Result<(), eyre::Report> {
@@ -374,6 +387,16 @@ impl RVTraceRow {
       ensure!(self.memory_bytes_after.is_some(), "Line {}: memory_bytes_after is None", line!());
       ensure!(self.memory_bytes_before.as_ref().unwrap().len() == size, "Line {}: memory_bytes_before length does not match size", line!());
       ensure!(self.memory_bytes_after.as_ref().unwrap().len() == size, "Line {}: memory_bytes_after length does not match size", line!());
+
+      // Check that memory_bytes_after == rs2
+      let mut store_val = self.rs2_val.unwrap();
+      let mask = 0b11111111;
+      for i in 0..size {
+        let expected_byte = (store_val & mask) as u8;
+        ensure!(expected_byte == self.memory_bytes_after.as_ref().unwrap()[i], "Line {}: Byte {} does not match between rs2 ({}) and memory_bytes_after ({})", line!(), i, expected_byte, self.memory_bytes_after.as_ref().unwrap()[i]);
+        store_val = store_val >> 8;
+      }
+
       Ok(())
     };
     match self.opcode {
@@ -845,29 +868,29 @@ mod tests {
     println!("Total errors: {num_errors}");
 
     // Prove lookups
-    // let lookup_ops: Vec<RV32I> = converted_trace.into_iter().flat_map(|row| row.to_jolt_instructions()).collect();
-    // let r: Vec<Fr> = gen_random_point::<Fr>(lookup_ops.len().log_2());
-    // let mut prover_transcript = Transcript::new(b"example");
-    // let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-    //   RV32IJoltVM::prove_instruction_lookups(lookup_ops, r.clone(), &mut prover_transcript);
-    // let mut verifier_transcript = Transcript::new(b"example");
-    // assert!(RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok());
+    let lookup_ops: Vec<RV32I> = converted_trace.clone().into_iter().flat_map(|row| row.to_jolt_instructions()).collect();
+    let r: Vec<Fr> = gen_random_point::<Fr>(lookup_ops.len().log_2());
+    let mut prover_transcript = Transcript::new(b"example");
+    let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
+      RV32IJoltVM::prove_instruction_lookups(lookup_ops, r.clone(), &mut prover_transcript);
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok());
 
     // Prove memory
-    // const MEMORY_SIZE: usize = 1 << 16;
+    const MEMORY_SIZE: usize = 1 << 16;
 
-    // let mut memory_ops: Vec<MemoryOp> = converted_trace.into_iter().flat_map(|row| row.to_ram_ops()).collect();
+    let mut memory_ops: Vec<MemoryOp> = converted_trace.into_iter().flat_map(|row| row.to_ram_ops()).collect();
 
-    // let next_power_of_two = memory_ops.len().next_power_of_two();
-    // memory_ops.resize(next_power_of_two, MemoryOp::no_op());
+    let next_power_of_two = memory_ops.len().next_power_of_two();
+    memory_ops.resize(next_power_of_two, MemoryOp::no_op());
 
-    // let mut prover_transcript = Transcript::new(b"example");
-    // let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) = ReadWriteMemory::new(memory_ops, MEMORY_SIZE, &mut prover_transcript);
-    // let batched_polys = rw_memory.batch();
-    // let commitments = ReadWriteMemory::commit(&batched_polys);
+    let mut prover_transcript = Transcript::new(b"example");
+    let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) = ReadWriteMemory::new(memory_ops, MEMORY_SIZE, &mut prover_transcript);
+    let batched_polys = rw_memory.batch();
+    let commitments = ReadWriteMemory::commit(&batched_polys);
 
-    // let mut random_tape = RandomTape::new(b"test_tape");
-    // let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &commitments, &mut prover_transcript, &mut random_tape);
+    let mut random_tape = RandomTape::new(b"test_tape");
+    let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &commitments, &mut prover_transcript, &mut random_tape);
     // TODO(sragss): Verify proof
 
 
@@ -1032,7 +1055,6 @@ mod tests {
 
     // ADDI negative too big
     let imm_max_negative = -1i32 * (1i32 << 11);
-    println!("IMM MAX NEGATIVE : {imm_max_negative}");
     let imm_too_negative: u32 = (imm_max_negative - 1) as u32;
     let add_i_imm_too_big = RVTraceRow {
       pc: 0,
@@ -1187,10 +1209,11 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "incomplete"]
   fn validate_i_type_loads() {
+    let imm_max = (1u32 << 11) - 1;
+    let imm_min: i32 = -1i32 * (1i32 << 11);
+    let imm_min_u32 = imm_min as u32;
     // LB
-
     // imm positive
     let lb = RVTraceRow {
       pc: 20,
@@ -1198,7 +1221,7 @@ mod tests {
       rd: Some(2),
       rs1: Some(2),
       rs2: None,
-      imm: Some(12),
+      imm: Some(imm_max),
       rd_pre_val: Some( 12 ),
       rd_post_val: Some( 12 ),
       rs1_val: Some(100_000),
@@ -1206,23 +1229,58 @@ mod tests {
       memory_bytes_before: Some(vec![12u8]),
       memory_bytes_after: None,
     };
-    assert!(lb.validate().is_ok(), "{:?}", lb.validate().unwrap_err());
+    assert!(lb.validate().is_ok());
 
     // imm negative
+    let lb = RVTraceRow {
+      pc: 20,
+      opcode: RV32IM::LB,
+      rd: Some(2),
+      rs1: Some(2),
+      rs2: None,
+      imm: Some(imm_min_u32),
+      rd_pre_val: Some( 12 ),
+      rd_post_val: Some( 12 ),
+      rs1_val: Some(100_000),
+      rs2_val: None,
+      memory_bytes_before: Some(vec![100u8]),
+      memory_bytes_after: None,
+    };
+    assert!(lb.validate().is_ok());
 
     // imm positive too big
+    let lb = RVTraceRow {
+      pc: 20,
+      opcode: RV32IM::LB,
+      rd: Some(2),
+      rs1: Some(2),
+      rs2: None,
+      imm: Some(imm_max + 1),
+      rd_pre_val: Some( 12 ),
+      rd_post_val: Some( 12 ),
+      rs1_val: Some(100_000),
+      rs2_val: None,
+      memory_bytes_before: Some(vec![100u8]),
+      memory_bytes_after: None,
+    };
+    assert!(lb.validate().is_err());
 
     // imm negative too big
-
-
-    // LBU
-
-  }
-
-  #[test]
-  #[ignore = "incomplete"]
-  fn validate_load_store_packing() {
-
+    let lb = RVTraceRow {
+      pc: 20,
+      opcode: RV32IM::LB,
+      rd: Some(2),
+      rs1: Some(2),
+      rs2: None,
+      imm: Some((imm_min - 1) as u32),
+      rd_pre_val: Some( 12 ),
+      rd_post_val: Some( 12 ),
+      rs1_val: Some(100_000),
+      rs2_val: None,
+      memory_bytes_before: Some(vec![100u8]),
+      memory_bytes_after: None,
+    };
+    assert!(lb.validate().is_err());
   }
 
 
@@ -1365,15 +1423,221 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "incomplete"]
   fn validate_u_type() {
+    let mut lui = RVTraceRow {
+      pc: 2147484868,
+      opcode: RV32IM::LUI,
+      rd: Some(11),
+      rs1: None,
+      rs2: None,
+      imm: Some(4294443009),
+      rd_pre_val: Some(192),
+      rd_post_val: Some(2147487744),
+      rs1_val: None,
+      rs2_val: None,
+      memory_bytes_before: None,
+      memory_bytes_after: None,
+    };
+    // rs1 / rs1_val / rs2 / rs2_val should not be set
+    assert!(lui.validate().is_ok());
+    lui.rs1 = Some(12);
+    assert!(lui.validate().is_err());
+    lui.rs1 = None;
+    lui.rs1_val = Some(12);
+    assert!(lui.validate().is_err());
+    lui.rs1_val = None;
+    lui.rs2 = Some(12);
+    assert!(lui.validate().is_err());
+    lui.rs2 = None;
+    lui.rs2_val = Some(12);
+    assert!(lui.validate().is_err());
+    lui.rs2_val = None;
+    assert!(lui.validate().is_ok());
+
+    let imm_max: u32 = (1u32 << 19) - 1;
+    let imm_min: i32 = -1i32 * (1i32 << 19);
+
+    // wrong rd_post_val
+    let mut lui = RVTraceRow {
+      pc: 12,
+      opcode: RV32IM::LUI,
+      rd: Some(11),
+      rs1: None,
+      rs2: None,
+      imm: Some(imm_max),
+      rd_pre_val: Some(10),
+      rd_post_val: Some( (imm_max as u64) << 12u64 + 1 ), // WRONG
+      rs1_val: None,
+      rs2_val: None,
+      memory_bytes_before: None,
+      memory_bytes_after: None
+    };
+    assert!(lui.validate().is_err());
+
+    // imm positive too big
+    let mut lui = RVTraceRow {
+      pc: 12,
+      opcode: RV32IM::LUI,
+      rd: Some(11),
+      rs1: None,
+      rs2: None,
+      imm: Some(imm_max),
+      rd_pre_val: Some(10),
+      rd_post_val: Some( (imm_max as u64) << 12u64 ),
+      rs1_val: None,
+      rs2_val: None,
+      memory_bytes_before: None,
+      memory_bytes_after: None
+    };
+    assert!(lui.validate().is_ok());
+    lui.imm = Some(imm_max + 1);
+    lui.rd_post_val = Some( ((imm_max + 1) as u64) << 12u64); // imm too big by 1
+    assert!(lui.validate().is_err());
+
+    // imm negative too big
+    lui.imm = Some(imm_min as u32);
+    lui.rd_post_val = Some( ((imm_min as u32) << 12u32) as u64);
+    assert!(lui.validate().is_ok(), "{:?}" , lui.validate().unwrap_err());
+    lui.imm = Some((imm_min - 1) as u32);
+    lui.rd_post_val = Some( (((imm_min - 1) as u32) << 12u32) as u64); // imm too negative by 1
+    assert!(lui.validate().is_err());
+
+    // AUIPC rd_post_val correctness
+
+    // positive
+    let pc: u64 = 100;
+    let imm = imm_max;
+    let rd_expected: u64 = (imm << 12u32) as u64 + pc;
+    let mut auipc = RVTraceRow {
+      pc: pc,
+      opcode: RV32IM::AUIPC,
+      rd: Some(12),
+      rs1: None,
+      rs2: None,
+
+      imm: Some(imm),
+
+      rd_pre_val: Some(10),
+      rd_post_val: Some( rd_expected ),
+
+      rs1_val: None,
+      rs2_val: None,
+      memory_bytes_before: None,
+      memory_bytes_after: None
+    };
+    assert!(auipc.validate().is_ok());
+    auipc.rd_post_val = Some(auipc.rd_post_val.unwrap() + 1);
+    assert!(auipc.validate().is_err());
 
   }
 
   #[test]
-  #[ignore = "incomplete"]
   fn validate_s_type() {
+    // Check errors on correct number of memories
+    let mut sb = RVTraceRow {
+      pc: 44,
+      opcode: RV32IM::SB,
+      rd: None,
+      rs1: Some(12),
+      rs2: Some(13),
+      imm: Some(10),
+      rd_pre_val: None,
+      rd_post_val: None,
+      rs1_val: Some(80),
+      rs2_val: Some(12),
+      memory_bytes_before: Some(vec![0u8]),
+      memory_bytes_after: Some(vec![12u8]),
+    };
+    assert!(sb.validate().is_ok());
 
+    // SB wrong memory_bytes_before/after sizes
+    sb.memory_bytes_before = None;
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_before = Some(vec![]);
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_before = Some(vec![0u8, 0u8]);
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_before = Some(vec![12u8]);
+    assert!(sb.validate().is_ok());
+    sb.memory_bytes_after = None;
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_after = Some(vec![]);
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_after = Some(vec![0u8, 0u8]);
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_after = Some(vec![12u8]);
+    assert!(sb.validate().is_ok());
+
+    // SB wrong memory_bytes_after
+    sb.memory_bytes_after = Some(vec![10u8]);
+    assert!(sb.validate().is_err());
+    sb.memory_bytes_after = Some(vec![12u8]);
+    assert!(sb.validate().is_ok());
+
+    // SH wrong memory_bytes_before/after sizes
+    let rs2_val = 0b00000011_00000010;
+    let mut sh = RVTraceRow {
+      pc: 44,
+      opcode: RV32IM::SH,
+      rd: None,
+      rs1: Some(12),
+      rs2: Some(13),
+      imm: Some(10),
+      rd_pre_val: None,
+      rd_post_val: None,
+      rs1_val: Some(80),
+      rs2_val: Some(rs2_val),
+      memory_bytes_before: Some(vec![0u8, 0u8]),
+      memory_bytes_after: Some(vec![2u8, 3u8]),
+    };
+    assert!(sh.validate().is_ok());
+    sh.memory_bytes_before = None;
+    assert!(sh.validate().is_err());
+    sh.memory_bytes_before = Some(vec![0u8]);
+    assert!(sh.validate().is_err());
+    sh.memory_bytes_before = Some(vec![0u8, 0u8, 0u8]);
+    assert!(sh.validate().is_err());
+    sh.memory_bytes_before = Some(vec![0u8, 0u8]);
+    assert!(sh.validate().is_ok());
+
+    sh.memory_bytes_after = None;
+    assert!(sh.validate().is_err());
+    sh.memory_bytes_after = Some(vec![2u8]);
+    assert!(sh.validate().is_err());
+    sh.memory_bytes_after = Some(vec![2u8, 3u8, 0u8]);
+    assert!(sh.validate().is_err());
+    sh.memory_bytes_after = Some(vec![2u8, 3u8]);
+    assert!(sh.validate().is_ok());
+
+    // SH wrong memory_bytes_after
+    sh.memory_bytes_after = Some(vec![100, 100]);
+    assert!(sh.validate().is_err());
+
+    // SW wrong memory_bytes_before/after sizes
+    let rs2_val = 0b00000111_00000100_00000011_00000010;
+    let mut sw = RVTraceRow {
+      pc: 44,
+      opcode: RV32IM::SW,
+      rd: None,
+      rs1: Some(12),
+      rs2: Some(13),
+      imm: Some(10),
+      rd_pre_val: None,
+      rd_post_val: None,
+      rs1_val: Some(80),
+      rs2_val: Some(rs2_val),
+      memory_bytes_before: Some(vec![0u8, 0u8, 0u8, 10u8]),
+      memory_bytes_after: Some(vec![2u8, 3u8, 4u8, 7u8]),
+    };
+    assert!(sw.validate().is_ok());
+    sw.memory_bytes_before = None;
+    assert!(sw.validate().is_err());
+    sw.memory_bytes_before = Some(vec![0u8, 0u8]);
+    assert!(sw.validate().is_err());
+
+    // SW wrong memory_bytes_after
+    sw.memory_bytes_after = Some(vec![2u8, 3u8, 4u8, 10u8]); // WRONG
+    assert!(sw.validate().is_err());
   }
 
   #[test]
