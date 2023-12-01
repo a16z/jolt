@@ -470,20 +470,25 @@ mod tests {
     let mut memory_trace = Vec::with_capacity(num_ops);
 
     for _ in 0..num_ops {
-      if rng.next_u32() % 2 == 0 {
-        let address: usize = rng.next_u32() as usize % memory_size;
-        let value = memory[address];
-        memory_trace.push(MemoryOp::Read(address as u64 + RAM_START_ADDRESS, value));
+      let mut address = if rng.next_u32() % 3 == 0 {
+        rng.next_u64() % memory_size as u64
       } else {
-        let address: usize = rng.next_u32() as usize % memory_size;
-        let old_value = memory[address];
+        rng.next_u64() % REGISTER_COUNT
+      };
+      if rng.next_u32() % 2 == 0 {
+        let value = memory[address as usize];
+        if address >= REGISTER_COUNT {
+          address = address + RAM_START_ADDRESS;
+        }
+        memory_trace.push(MemoryOp::Read(address, value));
+      } else {
+        let old_value = memory[address as usize];
         let new_value = rng.next_u64();
-        memory_trace.push(MemoryOp::Write(
-          address as u64 + RAM_START_ADDRESS,
-          old_value,
-          new_value,
-        ));
-        memory[address] = new_value;
+        memory[address as usize] = new_value;
+        if address >= REGISTER_COUNT {
+          address = address + RAM_START_ADDRESS;
+        }
+        memory_trace.push(MemoryOp::Write(address, old_value, new_value));
       }
     }
     memory_trace
