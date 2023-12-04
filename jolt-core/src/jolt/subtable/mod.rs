@@ -4,18 +4,18 @@ use std::any::TypeId;
 
 #[enum_dispatch]
 pub trait LassoSubtable<F: PrimeField>: 'static {
-  /// Returns the TypeId of this subtable. 
-  /// The `Jolt` trait has associated enum types `InstructionSet` and `Subtables`. 
-  /// This function is used to resolve the many-to-many mapping between `InstructionSet` variants
-  /// and `Subtables` variants, 
-  fn subtable_id(&self) -> TypeId {
-    TypeId::of::<Self>()
-  }
-  /// Fully materializes a subtable of size `M`, reprensented as a Vec of length `M`.
-  fn materialize(&self, M: usize) -> Vec<F>;
-  /// Evaluates the multilinear extension polynomial for this subtable at the given `point`, 
-  /// interpreted to be of size log_2(M), where M is the size of the subtable. 
-  fn evaluate_mle(&self, point: &[F]) -> F;
+    /// Returns the TypeId of this subtable.
+    /// The `Jolt` trait has associated enum types `InstructionSet` and `Subtables`.
+    /// This function is used to resolve the many-to-many mapping between `InstructionSet` variants
+    /// and `Subtables` variants,
+    fn subtable_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+    /// Fully materializes a subtable of size `M`, reprensented as a Vec of length `M`.
+    fn materialize(&self, M: usize) -> Vec<F>;
+    /// Evaluates the multilinear extension polynomial for this subtable at the given `point`,
+    /// interpreted to be of size log_2(M), where M is the size of the subtable.
+    fn evaluate_mle(&self, point: &[F]) -> F;
 }
 
 pub mod and;

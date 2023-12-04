@@ -7,12 +7,12 @@
 #![feature(generic_const_exprs)]
 
 pub mod benches;
+pub mod jolt;
 pub mod lasso;
 mod msm;
 mod poly;
 pub mod r1cs;
 mod subprotocols;
-pub mod jolt;
 mod utils;
 
 #[cfg(test)]

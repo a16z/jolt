@@ -8,49 +8,49 @@ use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
 pub trait BatchablePolynomials {
-  /// The batched form of these polynomials.
-  type BatchedPolynomials;
-  /// The batched commitment to these polynomials.
-  type Commitment;
+    /// The batched form of these polynomials.
+    type BatchedPolynomials;
+    /// The batched commitment to these polynomials.
+    type Commitment;
 
-  /// Organizes polynomials into a batch, to be subsequently committed. Typically 
-  /// uses `DensePolynomial::merge` to combine polynomials of the same size. 
-  fn batch(&self) -> Self::BatchedPolynomials;
-  /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
-  fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment;
+    /// Organizes polynomials into a batch, to be subsequently committed. Typically
+    /// uses `DensePolynomial::merge` to combine polynomials of the same size.
+    fn batch(&self) -> Self::BatchedPolynomials;
+    /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
+    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment;
 }
 
-/// Encapsulates the pattern of opening a batched polynomial commitment at a single point. 
+/// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
 /// Note that there may be a one-to-many mapping from `BatchablePolynomials` to `StructuredOpeningProof`:
-/// different subset of the same polynomials may be opened at different points, resulting in 
+/// different subset of the same polynomials may be opened at different points, resulting in
 /// different opening proofs.
 pub trait StructuredOpeningProof<F, G, Polynomials>
 where
-  F: PrimeField,
-  G: CurveGroup<ScalarField = F>,
-  Polynomials: BatchablePolynomials + ?Sized,
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+    Polynomials: BatchablePolynomials + ?Sized,
 {
-  type Openings;
+    type Openings;
 
-  /// Evaluates each fo the given `polynomials` at the given `opening_point`. 
-  fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self::Openings;
+    /// Evaluates each fo the given `polynomials` at the given `opening_point`.
+    fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self::Openings;
 
-  /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
-  /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
-  fn prove_openings(
-    polynomials: &Polynomials::BatchedPolynomials,
-    commitment: &Polynomials::Commitment,
-    opening_point: &Vec<F>,
-    openings: Self::Openings,
-    transcript: &mut Transcript,
-    random_tape: &mut RandomTape<G>,
-  ) -> Self;
+    /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
+    /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
+    fn prove_openings(
+        polynomials: &Polynomials::BatchedPolynomials,
+        commitment: &Polynomials::Commitment,
+        opening_point: &Vec<F>,
+        openings: Self::Openings,
+        transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
+    ) -> Self;
 
-  /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
-  fn verify_openings(
-    &self,
-    commitment: &Polynomials::Commitment,
-    opening_point: &Vec<F>,
-    transcript: &mut Transcript,
-  ) -> Result<(), ProofVerifyError>;
+    /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
+    fn verify_openings(
+        &self,
+        commitment: &Polynomials::Commitment,
+        opening_point: &Vec<F>,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerifyError>;
 }
