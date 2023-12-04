@@ -116,6 +116,7 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
   ]
 }
 
+#[rustfmt::skip]
 fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
   let mut rng = test_rng();
 

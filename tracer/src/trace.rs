@@ -1,9 +1,11 @@
 use std::cell::RefCell;
 
-use common::{TraceRow, Instruction, RegisterState, MemoryState};
+use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
+
+use crate::emulator::cpu::Xlen;
 
 pub struct Tracer {
-    pub rows: RefCell<Vec<TraceRow>>,
+    pub rows: RefCell<Vec<RVTraceRow>>,
     open: RefCell<bool>,
 }
 
@@ -12,47 +14,48 @@ impl Tracer {
         Self { rows: RefCell::new(Vec::new()), open: RefCell::new(false) }
     }
 
-    pub fn start_instruction(&self, inst: Instruction) {
+    pub fn start_instruction(&self, inst: ELFInstruction) {
         let mut inst = inst;
         inst.address = inst.address as u32 as u64;
         *self.open.try_borrow_mut().unwrap() = true;
-        self.rows.try_borrow_mut().unwrap().push(TraceRow {
+        self.rows.try_borrow_mut().unwrap().push(RVTraceRow {
             instruction: inst,
             register_state: RegisterState::default(),
             memory_state: None,
         });
     }
 
-    pub fn capture_pre_state(&self, reg: [i64; 32]) {
+    pub fn capture_pre_state(&self, reg: [i64; 32], xlen: &Xlen) {
         if !*self.open.try_borrow().unwrap() {
             return;
         }
 
         let mut rows = self.rows.try_borrow_mut().unwrap();
         let row = rows.last_mut().unwrap();
-        if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_pre_val = Some(reg[rd as usize] as u64);
-        }
-    }
-
-    pub fn capture_post_state(&self, reg: [i64; 32]) {
-        if !*self.open.try_borrow().unwrap() {
-            return;
-        }
-
-        let mut rows = self.rows.try_borrow_mut().unwrap();
-        let row = rows.last_mut().unwrap();
-
-        if let Some(rd) = row.instruction.rd {
-            row.register_state.rd_post_val = Some(reg[rd as usize] as u64);
-        }
 
         if let Some(rs1) = row.instruction.rs1 {
-            row.register_state.rs1_val = Some(reg[rs1 as usize] as u64);
+            row.register_state.rs1_val = Some(normalize_register_value(reg[rs1 as usize], xlen));
         }
 
         if let Some(rs2) = row.instruction.rs2 {
-            row.register_state.rs2_val = Some(reg[rs2 as usize] as u64);
+            row.register_state.rs2_val = Some(normalize_register_value(reg[rs2 as usize], xlen));
+        }
+
+        if let Some(rd) = row.instruction.rd {
+            row.register_state.rd_pre_val = Some(normalize_register_value(reg[rd as usize], xlen));
+        }
+    }
+
+    pub fn capture_post_state(&self, reg: [i64; 32], xlen: &Xlen) {
+        if !*self.open.try_borrow().unwrap() {
+            return;
+        }
+
+        let mut rows = self.rows.try_borrow_mut().unwrap();
+        let row = rows.last_mut().unwrap();
+
+        if let Some(rd) = row.instruction.rd {
+            row.register_state.rd_post_val = Some(normalize_register_value(reg[rd as usize], xlen));
         }
     }
 
@@ -71,3 +74,9 @@ impl Tracer {
     }
 }
 
+fn normalize_register_value(value: i64, xlen: &Xlen) -> u64 {
+    match xlen {
+        Xlen::Bit32 => value as u32 as u64,
+        Xlen::Bit64 => value as u64,
+    }
+}

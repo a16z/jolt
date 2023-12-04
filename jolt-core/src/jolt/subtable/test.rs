@@ -1,4 +1,7 @@
 #[macro_export]
+/// Tests the consistency of a subtable's `materialize` and `evaluate_mle` methods. 
+/// Specifically, checks that the `evaluate_mle` method outputs the same value as the 
+/// materialized subtable over the entire Boolean hypercube. 
 macro_rules! subtable_materialize_mle_parity_test {
   ($test_name:ident, $subtable_type:ty, $F:ty, $M:expr) => {
     #[test]

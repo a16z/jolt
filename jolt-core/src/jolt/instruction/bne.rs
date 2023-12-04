@@ -46,10 +46,12 @@ mod test {
     for _ in 0..256 {
       let (x, y) = (rng.next_u64(), rng.next_u64());
       jolt_instruction_test!(BNEInstruction(x, y), (x != y).into());
+      assert_eq!(BNEInstruction(x, y).lookup_entry::<Fr>(C, M), (x != y).into());
     }
     for _ in 0..256 {
       let x = rng.next_u64();
       jolt_instruction_test!(BNEInstruction(x, x), Fr::zero());
+      assert_eq!(BNEInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
     }
   }
 }

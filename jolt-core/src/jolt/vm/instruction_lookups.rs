@@ -37,8 +37,7 @@ use crate::{
   },
 };
 
-// TODO(65): Refactor to make more specific.
-/// All vectors to be committed in polynomial form.
+/// All polynomials associated with Jolt instruction lookups.
 pub struct InstructionPolynomials<F, G>
 where
   F: PrimeField,
@@ -47,11 +46,11 @@ where
   _group: PhantomData<G>,
   /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
   /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
-  /// `sparsity`.
+  /// `m` (# lookups).
   pub dim: Vec<DensePolynomial<F>>,
 
   /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
-  /// read access counts to the memory. Each `DensePolynomial` has size `sparsity`.
+  /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
   pub read_cts: Vec<DensePolynomial<F>>,
 
   /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
@@ -60,40 +59,49 @@ where
 
   /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
   /// the evaluation of memory accessed at each step of the CPU. Each `DensePolynomial` has
-  /// size `sparsity`.
+  /// size `m` (# lookups).
   pub E_polys: Vec<DensePolynomial<F>>,
 
   /// Polynomial encodings for flag polynomials for each instruction.
-  /// Polynomial encodings for flag polynomials for each instruction.
   /// If using a single instruction this will be empty.
-  /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (sparsity).
+  /// NUM_INSTRUCTIONS sized, each polynomial of length 'm' (# lookups).
   ///
-  /// Stored independently for use in sumchecking, combined into single DensePolynomial for commitment.
+  /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
   pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
-  /// NUM_SUBTABLES sized – uncommitted but used by the prover for GrandProducts sumchecking. Can be derived by verifier
-  /// via summation of all instruction_flags used by a given subtable (/memory)
+  /// NUM_SUBTABLES sized – uncommitted but used by the prover for grand products. Can be derived by verifier
+  /// via summation of all instruction_flags that use a given subtable
   pub subtable_flag_polys: Vec<DensePolynomial<F>>,
 }
 
+/// Batched version of InstructionPolynomials.
 pub struct BatchedInstructionPolynomials<F: PrimeField> {
+  /// dim_i and read_cts_i polynomials, batched together. 
   batched_dim_read: DensePolynomial<F>,
+  /// final_cts_i polynomials, batched together.
   batched_final: DensePolynomial<F>,
+  /// E_i polynomials, batched together.
   batched_E: DensePolynomial<F>,
+  /// flag polynomials, batched together.
   batched_flag: DensePolynomial<F>,
 }
 
+/// Commitments to BatchedInstructionPolynomials. 
 pub struct InstructionCommitment<G: CurveGroup> {
+  /// Group generators used for commitments.
   pub generators: InstructionCommitmentGenerators<G>,
 
+  /// Commitment to dim_i and read_cts_i polynomials.
   pub dim_read_commitment: CombinedTableCommitment<G>,
+  /// Commitment to final_cts_i polynomials.
   pub final_commitment: CombinedTableCommitment<G>,
+  /// Commitment to E_i polynomials.
   pub E_commitment: CombinedTableCommitment<G>,
+  /// Commitment to flag polynomials.
   pub instruction_flag_commitment: CombinedTableCommitment<G>,
 }
 
-/// Container for generators for polynomial commitments. These preallocate memory
-/// and allow commitments to `DensePolynomials`.
+/// Contains generators used to commit to InstructionPolynomials. 
 pub struct InstructionCommitmentGenerators<G: CurveGroup> {
   pub dim_read_commitment_gens: PolyCommitmentGens<G>,
   pub final_commitment_gens: PolyCommitmentGens<G>,
@@ -107,8 +115,8 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Commitment = InstructionCommitment<G>;
   type BatchedPolynomials = BatchedInstructionPolynomials<F>;
+  type Commitment = InstructionCommitment<G>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
     let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
@@ -153,12 +161,15 @@ where
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+/// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
 struct PrimarySumcheckOpenings<F, G>
 where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
+  /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
   E_poly_openings: Vec<F>,
+  /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
   flag_openings: Vec<F>,
 
   E_poly_opening_proof: CombinedTableEvalProof<G>,
@@ -241,10 +252,14 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  dim_openings: Vec<F>,    // C-sized
-  read_openings: Vec<F>,   // NUM_MEMORIES-sized
-  E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
-  flag_openings: Vec<F>,   // NUM_INSTRUCTIONS-sized
+  /// Evaluations of the dim_i polynomials at the opening point. Vector is of length C.
+  dim_openings: Vec<F>,
+  /// Evaluations of the read_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
+  read_openings: Vec<F>,
+  /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
+  E_poly_openings: Vec<F>,
+  /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
+  flag_openings: Vec<F>,
 
   dim_read_opening_proof: CombinedTableEvalProof<G>,
   E_poly_opening_proof: CombinedTableEvalProof<G>,
@@ -370,10 +385,13 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  final_openings: Vec<F>, // NUM_MEMORIES-sized
+  /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
+  final_openings: Vec<F>,
   final_opening_proof: CombinedTableEvalProof<G>,
-  a_init_final: Option<F>,      // Computed by verifier
-  v_init_final: Option<Vec<F>>, // Computed by verifier
+  /// Evaluation of the a_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+  a_init_final: Option<F>,
+  /// Evaluation of the v_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+  v_init_final: Option<Vec<F>>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
@@ -681,7 +699,7 @@ where
   }
 }
 
-/// Proof of a single Jolt execution.
+/// Proof of instruction lookups for a single Jolt program execution.
 pub struct InstructionLookupsProof<F, G>
 where
   F: PrimeField,
@@ -690,9 +708,10 @@ where
   /// Commitments to all polynomials
   commitment: InstructionCommitment<G>,
 
-  /// Primary collation sumcheck proof
+  /// "Primary" sumcheck, i.e. proving \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x))
   primary_sumcheck: PrimarySumcheck<F, G>,
 
+  /// Memory checking proof, showing that E_i polynomials are well-formed.
   memory_checking: MemoryCheckingProof<
     G,
     InstructionPolynomials<F, G>,
@@ -876,6 +895,7 @@ where
     Ok(())
   }
 
+  /// Constructs the polynomials used in the primary sumcheck and memory checking.
   fn polynomialize(&self) -> InstructionPolynomials<F, G> {
     let m: usize = self.ops.len().next_power_of_two();
 
@@ -1142,6 +1162,11 @@ where
     claim
   }
 
+  /// Combines the subtable values given by `vals` and the flag values given by `flags`.
+  /// This function corresponds to the "primary" sumcheck expression: 
+  /// \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x))
+  /// where `vals` corresponds to E_1, ..., E_\alpha,
+  /// and `flags` corresponds to the flag_i's
   fn combine_lookups(vals: &[F], flags: &[F]) -> F {
     assert_eq!(vals.len(), Self::NUM_MEMORIES);
     assert_eq!(flags.len(), Self::NUM_INSTRUCTIONS);
@@ -1160,6 +1185,9 @@ where
     sum
   }
 
+  /// Converts instruction flag values into subtable flag vales. A subtable flag value
+  /// can be computed by summing over the instructions that use that subtable: if a given execution step
+  /// accesses the subtable, it must be executing exactly one of those instructions.
   fn subtable_flags(instruction_flags: &Vec<F>) -> Vec<F> {
     let mut subtable_flags = vec![F::zero(); Self::NUM_SUBTABLES];
     for (i, instruction) in InstructionSet::iter().enumerate() {
@@ -1176,6 +1204,9 @@ where
     subtable_flags
   }
 
+  /// Converts instruction flag polynomials into subtable flag polynomials. A subtable flag polynomial
+  /// can be computed by summing over the instructions that use that subtable: if a given execution step
+  /// accesses the subtable, it must be executing exactly one of those instructions.
   fn subtable_flag_polys(
     instruction_flag_polys: &Vec<DensePolynomial<F>>,
   ) -> Vec<DensePolynomial<F>> {
@@ -1196,7 +1227,8 @@ where
     subtable_flag_polys
   }
 
-  #[inline]
+  /// Converts an instruction into the memory indices that it "accesses". Each instruction uses some 
+  /// subset of `Subtables`, and each subtable in turn maps to some contiguous range of memory indices.
   fn instruction_to_memory_indices(op: &InstructionSet) -> Vec<usize> {
     let instruction_subtables: Vec<Subtables> = op
       .subtables::<F>(C)
@@ -1213,6 +1245,9 @@ where
     memory_indices
   }
 
+  /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression
+  /// is \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x)), the degree is 
+  /// the max over all the instructions' `g_i` polynomial degrees, plus two (one for \tilde{eq}, one for flag_i)
   fn sumcheck_poly_degree() -> usize {
     InstructionSet::iter()
       .map(|instruction| instruction.g_poly_degree(C))
@@ -1221,6 +1256,7 @@ where
       + 2 // eq and flag
   }
 
+  /// Materializes all subtables used by this Jolt instance. 
   fn materialize_subtables() -> Vec<Vec<F>> {
     let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Subtables::COUNT);
     for subtable in Subtables::iter() {
@@ -1229,6 +1265,8 @@ where
     subtables
   }
 
+  /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
+  /// The output is `C` vectors, each of length `m`. 
   fn subtable_lookup_indices(ops: &Vec<InstructionSet>) -> Vec<Vec<usize>> {
     let m = ops.len().next_power_of_two();
     let log_M = M.log_2();

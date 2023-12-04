@@ -2,23 +2,23 @@
 
 use std::{path::PathBuf, fs::File, io::Read};
 
-use emulator::{default_terminal::DefaultTerminal, Emulator, cpu};
+use emulator::{default_terminal::DefaultTerminal, Emulator, cpu::{self, Xlen}};
 use common;
 
+use object::{Object, ObjectSection, SectionKind};
+
 mod trace;
+mod decode;
 mod emulator;
 
-pub use common::{TraceRow, Instruction, RegisterState, MemoryState};
+pub use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
 
-pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
+use crate::decode::decode_raw;
+
+pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
-
-    match common::constants::XLEN {
-        32 => emulator.update_xlen(cpu::Xlen::Bit32),
-        64 => emulator.update_xlen(cpu::Xlen::Bit64),
-        _ => panic!("Emulator only supports 32 / 64 bit registers.")
-    };
+    emulator.update_xlen(get_xlen());
 
     let mut elf_file = File::open(elf).unwrap();
 
@@ -47,4 +47,52 @@ pub fn trace(elf: PathBuf) -> Vec<TraceRow> {
     output.append(&mut rows);
 
     output
+}
+
+pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
+    let mut elf_file = File::open(elf).unwrap();
+    let mut elf_contents = Vec::new();
+    elf_file.read_to_end(&mut elf_contents).unwrap();
+
+    let obj = object::File::parse(&*elf_contents).unwrap();
+
+    let text_sections = obj
+        .sections()
+        .filter(|s| s.kind() == SectionKind::Text)
+        .collect::<Vec<_>>();
+
+    let mut instructions = Vec::new();
+    for section in text_sections {
+        let data = section.data().unwrap();
+
+        for (chunk, word) in data.chunks(4).enumerate() {
+            let word = u32::from_le_bytes(word.try_into().unwrap());
+            let address = chunk as u64 * 4 + section.address();
+            let inst = decode_raw(word).unwrap();
+
+            if let Some(trace) = inst.trace {
+                let inst = trace(&inst, &get_xlen(), word, address);
+                instructions.push(inst);
+            } else {
+                instructions.push(ELFInstruction {
+                    address,
+                    opcode: common::RV32IM::from_str("UNIMPL"),
+                    rs1: None,
+                    rs2: None,
+                    rd: None,
+                    imm: None
+                });
+            }
+        }
+    }
+
+    instructions
+}
+
+fn get_xlen() -> Xlen {
+    match common::constants::XLEN {
+        32 => cpu::Xlen::Bit32,
+        64 => cpu::Xlen::Bit64,
+        _ => panic!("Emulator only supports 32 / 64 bit registers.")
+    }
 }

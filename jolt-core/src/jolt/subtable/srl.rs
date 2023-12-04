@@ -7,11 +7,13 @@ use crate::utils::math::Math;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct SrlSubtable<F: PrimeField, const CHUNK_INDEX: usize> {
+pub struct SrlSubtable<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> {
   _field: PhantomData<F>,
 }
 
-impl<F: PrimeField, const CHUNK_INDEX: usize> SrlSubtable<F, CHUNK_INDEX> {
+impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize>
+  SrlSubtable<F, CHUNK_INDEX, WORD_SIZE>
+{
   pub fn new() -> Self {
     Self {
       _field: PhantomData,
@@ -19,7 +21,9 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> SrlSubtable<F, CHUNK_INDEX> {
   }
 }
 
-impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F, CHUNK_INDEX> {
+impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtable<F>
+  for SrlSubtable<F, CHUNK_INDEX, WORD_SIZE>
+{
   fn materialize(&self, M: usize) -> Vec<F> {
     let mut entries: Vec<F> = Vec::with_capacity(M);
 
@@ -32,7 +36,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
       let row = x
         .checked_shl(suffix_length as u32)
         .unwrap_or(0)
-        .checked_shr((y as u32) % 64)
+        .checked_shr((y % WORD_SIZE) as u32)
         .unwrap_or(0);
 
       entries.push(F::from(row as u64));
@@ -45,8 +49,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
     // and second half is always chunk Y_0
     debug_assert!(point.len() % 2 == 0);
 
-    const MAX_SHIFT: usize = 64;
-    let log_MAX_SHIFT = log2(MAX_SHIFT) as usize;
+    let log_WORD_SIZE = log2(WORD_SIZE) as usize;
 
     let b = point.len() / 2;
     let (x, y) = point.split_at(b);
@@ -54,18 +57,18 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
     let mut result = F::zero();
 
     // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
-    for k in 0..std::cmp::min(MAX_SHIFT, 1 << b) {
+    for k in 0..std::cmp::min(WORD_SIZE, 1 << b) {
       let k_bits = (k as usize)
-        .get_bits(log_MAX_SHIFT)
+        .get_bits(log_WORD_SIZE)
         .iter()
         .map(|bit| F::from(*bit as u64))
         .collect::<Vec<F>>(); // big-endian
 
       let mut eq_term = F::one();
       // again, min with b is included when subtables of bit-length less than 6 are used
-      for i in 0..std::cmp::min(log_MAX_SHIFT, b) {
-        eq_term *= k_bits[log_MAX_SHIFT - 1 - i] * y[b - 1 - i]
-          + (F::one() - k_bits[log_MAX_SHIFT - 1 - i]) * (F::one() - y[b - 1 - i]);
+      for i in 0..std::cmp::min(log_WORD_SIZE, b) {
+        eq_term *= k_bits[log_WORD_SIZE - 1 - i] * y[b - 1 - i]
+          + (F::one() - k_bits[log_WORD_SIZE - 1 - i]) * (F::one() - y[b - 1 - i]);
       }
 
       let m = if k > b * CHUNK_INDEX {
@@ -74,10 +77,17 @@ impl<F: PrimeField, const CHUNK_INDEX: usize> LassoSubtable<F> for SrlSubtable<F
         0
       };
 
-      let shift_x_by_k = (m..b)
+      // the most significant chunk might be shorter
+      let chunk_length = if (b * (CHUNK_INDEX + 1)) > WORD_SIZE {
+        b - ((b * (CHUNK_INDEX + 1)) - WORD_SIZE)
+      } else {
+        b
+      };
+
+      let shift_x_by_k = (m..chunk_length)
         .enumerate()
         .map(|(_, j)| F::from(1_u64 << (b * CHUNK_INDEX + j - k)) * x[b - 1 - j])
-        .fold(F::zero(), |acc, val| acc + val);
+        .fold(F::zero(), |acc, val: F| acc + val);
 
       result += eq_term * shift_x_by_k;
     }
@@ -94,10 +104,8 @@ mod test {
     subtable_materialize_mle_parity_test,
   };
 
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity0, SrlSubtable<Fr, 0>, Fr, 256);
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity1, SrlSubtable<Fr, 1>, Fr, 256);
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity2, SrlSubtable<Fr, 2>, Fr, 256);
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity3, SrlSubtable<Fr, 3>, Fr, 256);
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity4, SrlSubtable<Fr, 4>, Fr, 256);
-  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity5, SrlSubtable<Fr, 5>, Fr, 256);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity0, SrlSubtable<Fr, 0, 32>, Fr, 1 << 10);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity1, SrlSubtable<Fr, 1, 32>, Fr, 1 << 10);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity2, SrlSubtable<Fr, 2, 32>, Fr, 1 << 10);
+  subtable_materialize_mle_parity_test!(srl_materialize_mle_parity3, SrlSubtable<Fr, 3, 32>, Fr, 1 << 10);
 }

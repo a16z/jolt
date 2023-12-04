@@ -6,6 +6,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::{instruction_lookups::InstructionLookups, Jolt};
+use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
   add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
   bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
@@ -21,6 +22,8 @@ use crate::jolt::subtable::{
   LassoSubtable,
 };
 
+/// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
+/// are callable on the enum type via enum_dispatch.
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(u8)]
@@ -33,6 +36,8 @@ macro_rules! instruction_set {
 
 // TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with
 //     combined trait/function to_enum_index(subtable: &dyn LassoSubtable<F>) => usize
+/// Generates an enum out of a list of LassoSubtable types. All LassoSubtable methods
+/// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(usize)]
@@ -58,9 +63,11 @@ macro_rules! subtable_enum {
     };
 }
 
+const WORD_SIZE: usize = 32;
+
 instruction_set!(
   RV32I,
-  ADD: ADDInstruction,
+  ADD: ADD32Instruction,
   AND: ANDInstruction,
   BEQ: BEQInstruction,
   BGE: BGEInstruction,
@@ -68,15 +75,15 @@ instruction_set!(
   BLT: BLTInstruction,
   BLTU: BLTUInstruction,
   BNE: BNEInstruction,
-  JAL: JALInstruction,
-  JALR: JALRInstruction,
+  JAL: JALInstruction<WORD_SIZE>,
+  JALR: JALRInstruction<WORD_SIZE>,
   OR: ORInstruction,
-  SLL: SLLInstruction,
-  // SLT: SLTInstruction,
-  // SLTU: SLTUInstruction,
-  SRA: SRAInstruction,
-  SRL: SRLInstruction,
-  SUB: SUBInstruction,
+  SLL: SLLInstruction<WORD_SIZE>,
+  SLT: SLTInstruction,
+  SLTU: SLTUInstruction,
+  SRA: SRAInstruction<WORD_SIZE>,
+  SRL: SRLInstruction<WORD_SIZE>,
+  SUB: SUBInstruction<WORD_SIZE>,
   XOR: XORInstruction
 );
 subtable_enum!(
@@ -90,16 +97,16 @@ subtable_enum!(
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
   OR: OrSubtable<F>,
-  SLL0: SllSubtable<F, 0>,
-  SLL1: SllSubtable<F, 1>,
-  SLL2: SllSubtable<F, 2>,
-  SLL3: SllSubtable<F, 3>,
-  SRA_SIGN: SraSignSubtable<F>,
-  SRL0: SrlSubtable<F, 0>,
-  SRL1: SrlSubtable<F, 1>,
-  SRL2: SrlSubtable<F, 2>,
-  SRL3: SrlSubtable<F, 3>,
-  TRUNCATE: TruncateOverflowSubtable<F>,
+  SLL0: SllSubtable<F, 0, WORD_SIZE>,
+  SLL1: SllSubtable<F, 1, WORD_SIZE>,
+  SLL2: SllSubtable<F, 2, WORD_SIZE>,
+  SLL3: SllSubtable<F, 3, WORD_SIZE>,
+  SRA_SIGN: SraSignSubtable<F, WORD_SIZE>,
+  SRL0: SrlSubtable<F, 0, WORD_SIZE>,
+  SRL1: SrlSubtable<F, 1, WORD_SIZE>,
+  SRL2: SrlSubtable<F, 2, WORD_SIZE>,
+  SRL3: SrlSubtable<F, 3, WORD_SIZE>,
+  TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
   XOR: XorSubtable<F>,
   ZERO_LSB: ZeroLSBSubtable<F>
 );
@@ -167,12 +174,12 @@ mod tests {
       RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BGE(BGEInstruction(rng.next_u32() as i64, rng.next_u32() as i64)),
+      RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::BGEU(BGEUInstruction(
         rng.next_u32() as u64,
         rng.next_u32() as u64,
       )),
-      RV32I::BLT(BLTInstruction(rng.next_u32() as i64, rng.next_u32() as i64)),
+      RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
       RV32I::BLTU(BLTUInstruction(
         rng.next_u32() as u64,
         rng.next_u32() as u64,

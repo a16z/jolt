@@ -9,16 +9,24 @@ use crate::{
   poly::{
     dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
     identity_poly::IdentityPolynomial,
-    structured_poly::{StructuredOpeningProof, BatchablePolynomials},
+    structured_poly::{BatchablePolynomials, StructuredOpeningProof},
   },
   subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
   subprotocols::grand_product::BatchedGrandProductCircuit,
   utils::{errors::ProofVerifyError, random::RandomTape},
 };
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 
+#[derive(Debug, PartialEq, Clone)]
 pub enum MemoryOp {
   Read(u64, u64),       // (address, value)
   Write(u64, u64, u64), // (address, old_value, new_value)
+}
+
+impl MemoryOp {
+  pub fn no_op() -> Self {
+    Self::Read(0, 0)
+  }
 }
 
 pub struct ReadWriteMemory<F, G>
@@ -27,21 +35,31 @@ where
   G: CurveGroup<ScalarField = F>,
 {
   _group: PhantomData<G>,
+  /// Size of entire address space (i.e. RAM + registers for RISC-V)
   memory_size: usize,
-
+  /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
+  /// and vice versa, so the read addresses and write addresses are the same.
   a_read_write: DensePolynomial<F>,
-
+  /// MLE of the read values. 
   v_read: DensePolynomial<F>,
+  /// MLE of the write values.
   v_write: DensePolynomial<F>,
+  /// MLE of the final memory state. 
   v_final: DensePolynomial<F>,
-
+  /// MLE of the read timestamps.
   t_read: DensePolynomial<F>,
+  /// MLE of the write timestamps.
   t_write: DensePolynomial<F>,
+  /// MLE of the final timestamps.
   t_final: DensePolynomial<F>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
-  pub fn new(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) -> Self {
+  pub fn new(
+    memory_trace: Vec<MemoryOp>,
+    memory_size: usize,
+    transcript: &mut Transcript,
+  ) -> (Self, Vec<u64>) {
     let m = memory_trace.len();
     assert!(m.is_power_of_two());
 
@@ -57,37 +75,58 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     for memory_access in memory_trace {
       match memory_access {
         MemoryOp::Read(a, v) => {
-          a_read_write.push(a);
+          assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+          let remapped_a = if a >= RAM_START_ADDRESS {
+            a - RAM_START_ADDRESS + REGISTER_COUNT
+          } else {
+            // If a < REGISTER_COUNT, it is one of the registers and doesn't 
+            // need to be remapped
+            a
+          };
+          debug_assert_eq!(v, v_final[remapped_a as usize]);
+          a_read_write.push(remapped_a);
           v_read.push(v);
           v_write.push(v);
-          t_read.push(t_final[a as usize]);
+          t_read.push(t_final[remapped_a as usize]);
           t_write.push(timestamp + 1);
-          t_final[a as usize] = timestamp + 1;
+          t_final[remapped_a as usize] = timestamp + 1;
         }
         MemoryOp::Write(a, v_old, v_new) => {
-          a_read_write.push(a);
+          assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+          let remapped_a = if a >= RAM_START_ADDRESS {
+            a - RAM_START_ADDRESS + REGISTER_COUNT
+          } else {
+            // If a < REGISTER_COUNT, it is one of the registers and doesn't 
+            // need to be remapped
+            a
+          };
+          debug_assert_eq!(v_old, v_final[remapped_a as usize]);
+          a_read_write.push(remapped_a);
           v_read.push(v_old);
           v_write.push(v_new);
-          v_final[a as usize] = v_new;
-          t_read.push(t_final[a as usize]);
+          v_final[remapped_a as usize] = v_new;
+          t_read.push(t_final[remapped_a as usize]);
           t_write.push(timestamp + 1);
-          t_final[a as usize] = timestamp + 1;
+          t_final[remapped_a as usize] = timestamp + 1;
         }
       }
       timestamp += 1;
     }
 
-    Self {
-      _group: PhantomData,
-      memory_size,
-      a_read_write: DensePolynomial::from_u64(&a_read_write),
-      v_read: DensePolynomial::from_u64(&v_read),
-      v_write: DensePolynomial::from_u64(&v_write),
-      v_final: DensePolynomial::from_u64(&v_final),
-      t_read: DensePolynomial::from_u64(&t_read),
-      t_write: DensePolynomial::from_u64(&t_write),
-      t_final: DensePolynomial::from_u64(&t_final),
-    }
+    (
+      Self {
+        _group: PhantomData,
+        memory_size,
+        a_read_write: DensePolynomial::from_u64(&a_read_write),
+        v_read: DensePolynomial::from_u64(&v_read),
+        v_write: DensePolynomial::from_u64(&v_write),
+        v_final: DensePolynomial::from_u64(&v_final),
+        t_read: DensePolynomial::from_u64(&t_read),
+        t_write: DensePolynomial::from_u64(&t_write),
+        t_final: DensePolynomial::from_u64(&t_final),
+      },
+      t_read,
+    )
   }
 }
 
@@ -102,11 +141,11 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
 
 pub struct MemoryCommitment<G: CurveGroup> {
   generators: MemoryCommitmentGenerators<G>,
-  /// Contains:
+  /// Commitments for:
   /// a_read_write, v_read, v_write, t_read, t_write
   pub read_write_commitments: CombinedTableCommitment<G>,
 
-  /// Contains:
+  /// Commitments for:
   /// v_final, t_final
   pub init_final_commitments: CombinedTableCommitment<G>,
 }
@@ -121,8 +160,8 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Commitment = MemoryCommitment<G>;
   type BatchedPolynomials = BatchedMemoryPolynomials<F>;
+  type Commitment = MemoryCommitment<G>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
     let batched_read_write = DensePolynomial::merge(&vec![
@@ -166,12 +205,16 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
+  /// Evaluation of the a_read_write polynomial at the opening point.
   a_read_write_opening: F,
+  /// Evaluation of the v_read polynomial at the opening point.
   v_read_opening: F,
+  /// Evaluation of the v_write polynomial at the opening point.
   v_write_opening: F,
+  /// Evaluation of the t_read polynomial at the opening point.
   t_read_opening: F,
+  /// Evaluation of the t_write polynomial at the opening point.
   t_write_opening: F,
-
   read_write_opening_proof: CombinedTableEvalProof<G>,
 }
 
@@ -248,8 +291,11 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  a_init_final: Option<F>, // Computed by verifier
+  /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+  a_init_final: Option<F>,
+  /// Evaluation of the v_final polynomial at the opening point.
   v_final: F,
+  /// Evaluation of the t_final polynomial at the opening point.
   t_final: F,
 
   init_final_opening_proof: CombinedTableEvalProof<G>,
@@ -443,16 +489,25 @@ mod tests {
     let mut memory_trace = Vec::with_capacity(num_ops);
 
     for _ in 0..num_ops {
-      if rng.next_u32() % 2 == 0 {
-        let address: usize = rng.next_u32() as usize % memory_size;
-        let value = memory[address];
-        memory_trace.push(MemoryOp::Read(address as u64, value));
+      let mut address = if rng.next_u32() % 3 == 0 {
+        rng.next_u64() % memory_size as u64
       } else {
-        let address: usize = rng.next_u32() as usize % memory_size;
-        let old_value = memory[address];
+        rng.next_u64() % REGISTER_COUNT
+      };
+      if rng.next_u32() % 2 == 0 {
+        let value = memory[address as usize];
+        if address >= REGISTER_COUNT {
+          address = address + RAM_START_ADDRESS;
+        }
+        memory_trace.push(MemoryOp::Read(address, value));
+      } else {
+        let old_value = memory[address as usize];
         let new_value = rng.next_u64();
-        memory_trace.push(MemoryOp::Write(address as u64, old_value, new_value));
-        memory[address] = new_value;
+        memory[address as usize] = new_value;
+        if address >= REGISTER_COUNT {
+          address = address + RAM_START_ADDRESS;
+        }
+        memory_trace.push(MemoryOp::Write(address, old_value, new_value));
       }
     }
     memory_trace
@@ -467,7 +522,7 @@ mod tests {
     let mut transcript = Transcript::new(b"test_transcript");
     let mut random_tape = RandomTape::new(b"test_tape");
 
-    let rw_memory: ReadWriteMemory<Fr, EdwardsProjective> =
+    let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, Vec<u64>) =
       ReadWriteMemory::new(memory_trace, MEMORY_SIZE, &mut transcript);
     let batched_polys = rw_memory.batch();
     let commitments = ReadWriteMemory::commit(&batched_polys);
