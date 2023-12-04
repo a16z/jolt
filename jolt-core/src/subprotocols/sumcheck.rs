@@ -98,12 +98,22 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
 
     #[inline]
     pub fn combine_prod(l: &F, r: &F, eq: &F) -> F {
+      if *l == F::one() && *r == F::one() {
+        *eq
+      } else {
         *l * r * eq
+      }
     }
 
     #[inline]
     pub fn combine_flags(h: &F, flag: &F, eq: &F) -> F {
+      if *flag == F::zero() {
+        *eq
+      } else if *flag == F::one() {
+        *eq * *h
+      } else {
         *eq * (*flag * h + (F::one() - flag))
+      }
     }
 
     pub fn pairs_iter(
@@ -200,64 +210,183 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
         for _j in 0..params.num_rounds {
-            #[cfg(feature = "multicore")]
-            let iterator = params.pairs_par_iter();
+            // #[cfg(feature = "multicore")]
+            // let iterator = params.pairs_par_iter();
 
-            #[cfg(not(feature = "multicore"))]
-            let iterator = params.pairs_iter();
+            // #[cfg(not(feature = "multicore"))]
+            // let iterator = params.pairs_iter();
 
-            let evals: Vec<(F, F, F)> = iterator
-                .map(|(poly_A, poly_B, eq)| {
-                    let len = poly_A.len() / 2;
+            // TODO(sragss): Compute eq, flags upfront.
+            // let _span = tracing::span!(
+            //   tracing::Level::TRACE,
+            //   "BatchedSumcheck.eq_poly"
+            // );
+            // let _enter = _span.enter();
+            let len = params.poly_As[0].len() / 2;
+            let eq_evals: Vec<(F, F, F)> = (0..len).map(|i| {
+              let low = i;
+              let high = len + i;
 
-                    #[cfg(feature = "multicore")]
-                    let iterator = (0..len).into_par_iter();
+              let eq = &params.poly_eq;
 
-                    #[cfg(not(feature = "multicore"))]
-                    let iterator = (0..len).into_iter();
+              let eval_point_0 = eq[low];
+              let m_eq = eq[high] - eq[low];
+              let eval_point_2 = eq[high] + m_eq;
+              let eval_point_3 = eval_point_2 + m_eq;
+              (eval_point_0, eval_point_2, eval_point_3)
+            }).collect();
+            // drop(_enter);
+            // drop(_span);
 
-                    let (eval_point_0, eval_point_2, eval_point_3) = iterator
-                        .map(|i| {
-                            // eval 0: bound_func is A(low)
-                            let eval_point_0 = params.combine(&poly_A[i], &poly_B[i], &eq[i]);
+            let _span = tracing::span!(
+              tracing::Level::TRACE,
+              "BatchedSumcheck.flag_poly"
+            );
+            let _enter = _span.enter();
+            // Batch<MLEIndex<(eval_0, eval_2, eval_3)>>
+            let flag_evals: Vec<Vec<(F, F, F)>> = (0..params.poly_Bs.len()).into_par_iter().map(|batch_index| {
+              let mle_evals: Vec<(F,F,F)> = (0..len).map(|mle_index| {
+                let low = mle_index;
+                let high = len + mle_index;
 
-                            let high = len + i;
-                            let low = i;
-                            let m_a = poly_A[high] - poly_A[low];
-                            let m_b = poly_B[high] - poly_B[low];
-                            let m_eq = eq[high] - eq[low];
+                let poly = &params.poly_Bs[batch_index];
 
-                            // eval 2: bound_func is -A(low) + 2*A(high)
-                            let poly_A_bound_point = poly_A[high] + m_a;
-                            let poly_B_bound_point = poly_B[high] + m_b;
-                            let poly_C_bound_point = eq[high] + m_eq;
-                            let eval_point_2 = params.combine(
-                                &poly_A_bound_point,
-                                &poly_B_bound_point,
-                                &poly_C_bound_point,
-                            );
+                let eval_point_0 = poly[low];
+                let m_eq = poly[high] - poly[low];
+                let eval_point_2 = poly[high] + m_eq;
+                let eval_point_3 = eval_point_2 + m_eq;
+                (eval_point_0, eval_point_2, eval_point_3)
+              }).collect();
+              mle_evals
+            }).collect();
+            drop(_enter);
+            drop(_span);
 
-                            // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-                            let poly_A_bound_point = poly_A_bound_point + m_a;
-                            let poly_B_bound_point = poly_B_bound_point + m_b;
-                            let poly_C_bound_point = poly_C_bound_point + m_eq;
+            let _span = tracing::span!(
+              tracing::Level::TRACE,
+              "BatchedSumcheck.main_poly"
+            );
+            let _enter = _span.enter();
+            let evals: Vec<(F,F,F)> = (0..params.poly_As.len()).into_par_iter().map(|batch_index| {
+              let thing: (F,F,F) = (0..len).map(|mle_index| {
+                let low = mle_index;
+                let high = len + mle_index;
 
-                            let eval_point_3 = params.combine(
-                                &poly_A_bound_point,
-                                &poly_B_bound_point,
-                                &poly_C_bound_point,
-                            );
+                let poly_0 = params.poly_As[batch_index][low];
+                let poly_m = params.poly_As[batch_index][high] - params.poly_As[batch_index][low];
+                let poly_2 = params.poly_As[batch_index][high] + poly_m;
+                let poly_3 = poly_2 + poly_m;
 
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        })
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        );
+                let eval_point_0 = params.combine(&poly_0, &flag_evals[params.a_to_b[batch_index]][mle_index].0, &eq_evals[mle_index].0);
+                let eval_point_2 = params.combine(&poly_2, &flag_evals[params.a_to_b[batch_index]][mle_index].1, &eq_evals[mle_index].1);
+                let eval_point_3 = params.combine(&poly_3, &flag_evals[params.a_to_b[batch_index]][mle_index].2, &eq_evals[mle_index].2);
 
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
+
+                // let flag_index = params.a_to_b[batch_index];
+                // let flag_0 = &flag_evals[flag_index][mle_index].0;
+                // let flag_2 = &flag_evals[flag_index][mle_index].1;
+                // let flag_3 = &flag_evals[flag_index][mle_index].2;
+                // let eval_point_0 = if *flag_0 == F::zero() {
+                //   eq_evals[mle_index].0
+                // } else {
+                //   params.combine(&poly_0, &flag_evals[params.a_to_b[batch_index]][mle_index].0, &eq_evals[mle_index].0)
+                // };
+
+                // let poly_m = params.poly_As[batch_index][high] - params.poly_As[batch_index][low];
+                // let eval_point_2 = if *flag_2 == F::zero() {
+                //   eq_evals[mle_index].1
+                // } else {
+                //   let poly_2 = params.poly_As[batch_index][high] + poly_m;
+                //   params.combine(&poly_2, &flag_evals[params.a_to_b[batch_index]][mle_index].1, &eq_evals[mle_index].1)
+                // };
+
+                // let eval_point_3 = if *flag_3 == F::zero() {
+                //   eq_evals[mle_index].2
+                // } else {
+                //   let poly_2 = params.poly_As[batch_index][high] + poly_m; // TODO(sragss): excessive
+                //   let poly_3 = poly_2 + poly_m;
+                //   params.combine(&poly_3, &flag_evals[params.a_to_b[batch_index]][mle_index].2, &eq_evals[mle_index].2)
+                // };
+
+
+                (eval_point_0, eval_point_2, eval_point_3)
+
+              }).fold(
+                (F::zero(), F::zero(), F::zero()),
+                |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c));
+              
+              thing
+            }).collect();
+            drop(_enter);
+            drop(_span);
+
+            // let evals: Vec<(F, F, F)> = iterator
+            //     .map(|(poly_A, poly_B, eq)| {
+            //         let len = poly_A.len() / 2;
+                    
+
+            //         #[cfg(feature = "multicore")]
+            //         let iterator = (0..len).into_par_iter();
+
+            //         #[cfg(not(feature = "multicore"))]
+            //         let iterator = (0..len).into_iter();
+
+            //         let (eval_point_0, eval_point_2, eval_point_3) = iterator
+            //             .map(|i| {
+            //                 let high = len + i;
+            //                 let low = i;
+
+            //                 // if poly_B[0] == F::zero() {
+            //                 //   let eval_point_0 = poly_B[low];
+            //                 //   let m_b = poly_B[high] - eval_point_0;
+            //                 //   let eval_point_2 = poly_B[high] + m_b;
+            //                 //   let eval_point_3 = poly_B[high] + m_b;
+            //                 //   return (eval_point_0, eval_point_2, eval_point_3);
+            //                 // }
+
+            //                 // eval 0: bound_func is A(low)
+            //                 // let eval_point_0 = if poly_B[low] != F::zero() {
+            //                 //   params.combine(&poly_A[low], &poly_B[low], &eq[low])
+            //                 // } else {
+            //                 //   eq[low]
+            //                 // };
+            //                 let eval_point_0 = params.combine(&poly_A[low], &poly_B[low], &eq[low]);
+
+            //                 let m_a = poly_A[high] - poly_A[low];
+            //                 let m_b = poly_B[high] - poly_B[low];
+            //                 let m_eq = eq[high] - eq[low];
+
+            //                 // eval 2: bound_func is -A(low) + 2*A(high)
+            //                 let poly_A_bound_point = poly_A[high] + m_a;
+            //                 let poly_B_bound_point = poly_B[high] + m_b;
+            //                 let poly_C_bound_point = eq[high] + m_eq;
+            //                 let eval_point_2 = params.combine(
+            //                     &poly_A_bound_point,
+            //                     &poly_B_bound_point,
+            //                     &poly_C_bound_point,
+            //                 );
+
+            //                 // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
+            //                 let poly_A_bound_point = poly_A_bound_point + m_a;
+            //                 let poly_B_bound_point = poly_B_bound_point + m_b;
+            //                 let poly_C_bound_point = poly_C_bound_point + m_eq;
+
+            //                 let eval_point_3 = params.combine(
+            //                     &poly_A_bound_point,
+            //                     &poly_B_bound_point,
+            //                     &poly_C_bound_point,
+            //                 );
+
+            //                 return (eval_point_0, eval_point_2, eval_point_3);
+            //             })
+            //             .reduce(
+            //                 || (F::zero(), F::zero(), F::zero()),
+            //                 |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+            //             );
+
+            //         (eval_point_0, eval_point_2, eval_point_3)
+            //     })
+            //     .collect();
 
             let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
