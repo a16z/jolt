@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct RVTraceRow {
@@ -43,54 +43,54 @@ pub enum MemoryState {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum RV32IM {
-  ADD,
-  SUB,
-  XOR,
-  OR,
-  AND,
-  SLL,
-  SRL,
-  SRA,
-  SLT,
-  SLTU,
-  ADDI,
-  XORI,
-  ORI,
-  ANDI,
-  SLLI,
-  SRLI,
-  SRAI,
-  SLTI,
-  SLTIU,
-  LB,
-  LH,
-  LW,
-  LBU,
-  LHU,
-  SB,
-  SH,
-  SW,
-  BEQ,
-  BNE,
-  BLT,
-  BGE,
-  BLTU,
-  BGEU,
-  JAL,
-  JALR,
-  LUI,
-  AUIPC,
-  ECALL,
-  EBREAK,
-  MUL,
-  MULH,
-  MULSU,
-  MULU,
-  DIV,
-  DIVU,
-  REM,
-  REMU,
-  UNIMPL
+    ADD,
+    SUB,
+    XOR,
+    OR,
+    AND,
+    SLL,
+    SRL,
+    SRA,
+    SLT,
+    SLTU,
+    ADDI,
+    XORI,
+    ORI,
+    ANDI,
+    SLLI,
+    SRLI,
+    SRAI,
+    SLTI,
+    SLTIU,
+    LB,
+    LH,
+    LW,
+    LBU,
+    LHU,
+    SB,
+    SH,
+    SW,
+    BEQ,
+    BNE,
+    BLT,
+    BGE,
+    BLTU,
+    BGEU,
+    JAL,
+    JALR,
+    LUI,
+    AUIPC,
+    ECALL,
+    EBREAK,
+    MUL,
+    MULH,
+    MULSU,
+    MULU,
+    DIV,
+    DIVU,
+    REM,
+    REMU,
+    UNIMPL,
 }
 
 impl RV32IM {
@@ -151,12 +151,12 @@ impl RV32IM {
 
 #[derive(Debug, PartialEq)]
 pub enum RV32InstructionFormat {
-  R,
-  I,
-  S,
-  SB,
-  U,
-  UJ,
+    R,
+    I,
+    S,
+    SB,
+    U,
+    UJ,
 }
 
 impl RV32IM {
@@ -167,26 +167,26 @@ impl RV32IM {
         | RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLT | RV32IM::SLTU
         | RV32IM::MUL | RV32IM::MULH | RV32IM::MULSU | RV32IM::MULU
         | RV32IM::DIV | RV32IM::DIVU | RV32IM::REM | RV32IM::REMU => RV32InstructionFormat::R,
-        
+
         RV32IM::ADDI | RV32IM::XORI | RV32IM::ORI | RV32IM::ANDI
         | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI | RV32IM::SLTI | RV32IM::SLTIU => RV32InstructionFormat::I,
-        
+
         RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU | RV32IM::JALR => RV32InstructionFormat::I,
 
         RV32IM::SB | RV32IM::SH | RV32IM::SW => RV32InstructionFormat::S,
-        
+
         RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU => RV32InstructionFormat::SB,
-        
+
         RV32IM::LUI | RV32IM::AUIPC => RV32InstructionFormat::U,
-        
+
         RV32IM::JAL => RV32InstructionFormat::UJ,
-        
+
         RV32IM::ECALL | RV32IM::EBREAK | RV32IM::UNIMPL => unimplemented!(),
       }
     }
-  }
+}
 
 pub mod constants;
-pub mod serializable;
-pub mod path;
 pub mod field_conversion;
+pub mod path;
+pub mod serializable;

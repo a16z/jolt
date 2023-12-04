@@ -11,57 +11,57 @@ use super::LassoSubtable;
 /// This subtable is used to remove the overflow bit from the 4th chunk.
 #[derive(Default)]
 pub struct TruncateOverflowSubtable<F: PrimeField, const WORD_SIZE: usize> {
-  _field: PhantomData<F>,
+    _field: PhantomData<F>,
 }
 
 impl<F: PrimeField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZE> {
-  pub fn new() -> Self {
-    Self {
-      _field: PhantomData,
+    pub fn new() -> Self {
+        Self {
+            _field: PhantomData,
+        }
     }
-  }
 }
 
 impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F>
-  for TruncateOverflowSubtable<F, WORD_SIZE>
+    for TruncateOverflowSubtable<F, WORD_SIZE>
 {
-  fn materialize(&self, M: usize) -> Vec<F> {
-    let cutoff = WORD_SIZE % log2(M) as usize;
+    fn materialize(&self, M: usize) -> Vec<F> {
+        let cutoff = WORD_SIZE % log2(M) as usize;
 
-    let mut entries: Vec<F> = Vec::with_capacity(M);
-    for idx in 0..M {
-      let (_, lower_bits) = split_bits(idx, cutoff);
-      let row = F::from(lower_bits as u64);
-      entries.push(row);
+        let mut entries: Vec<F> = Vec::with_capacity(M);
+        for idx in 0..M {
+            let (_, lower_bits) = split_bits(idx, cutoff);
+            let row = F::from(lower_bits as u64);
+            entries.push(row);
+        }
+        entries
     }
-    entries
-  }
 
-  fn evaluate_mle(&self, point: &[F]) -> F {
-    let log_M = point.len();
-    let cutoff = WORD_SIZE % log_M as usize;
+    fn evaluate_mle(&self, point: &[F]) -> F {
+        let log_M = point.len();
+        let cutoff = WORD_SIZE % log_M as usize;
 
-    let mut result = F::zero();
-    for i in 0..cutoff {
-      result += F::from(1u64 << i) * point[point.len() - 1 - i];
+        let mut result = F::zero();
+        for i in 0..cutoff {
+            result += F::from(1u64 << i) * point[point.len() - 1 - i];
+        }
+        result
     }
-    result
-  }
 }
 
 #[cfg(test)]
 mod test {
-  use ark_curve25519::Fr;
+    use ark_curve25519::Fr;
 
-  use crate::{
-    jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable},
-    subtable_materialize_mle_parity_test,
-  };
+    use crate::{
+        jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable},
+        subtable_materialize_mle_parity_test,
+    };
 
-  subtable_materialize_mle_parity_test!(
-    truncate_overflow_materialize_mle_parity,
-    TruncateOverflowSubtable<Fr, 32>,
-    Fr,
-    256
-  );
+    subtable_materialize_mle_parity_test!(
+      truncate_overflow_materialize_mle_parity,
+      TruncateOverflowSubtable<Fr, 32>,
+      Fr,
+      256
+    );
 }

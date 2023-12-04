@@ -4,7 +4,7 @@
 use core::arch::global_asm;
 use core::panic::PanicInfo;
 
-use sha3::{Keccak256, Digest};
+use sha3::{Digest, Keccak256};
 
 global_asm!(include_str!("entry.s"));
 
@@ -18,5 +18,5 @@ pub extern "C" fn main() {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-   loop {}
+    loop {}
 }

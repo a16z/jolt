@@ -1,17 +1,21 @@
 #![allow(dead_code)]
 
-use std::{path::PathBuf, fs::File, io::Read};
+use std::{fs::File, io::Read, path::PathBuf};
 
-use emulator::{default_terminal::DefaultTerminal, Emulator, cpu::{self, Xlen}};
 use common;
+use emulator::{
+    cpu::{self, Xlen},
+    default_terminal::DefaultTerminal,
+    Emulator,
+};
 
 use object::{Object, ObjectSection, SectionKind};
 
-mod trace;
 mod decode;
 mod emulator;
+mod trace;
 
-pub use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
+pub use common::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
 
 use crate::decode::decode_raw;
 
@@ -80,7 +84,7 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
                     rs1: None,
                     rs2: None,
                     rd: None,
-                    imm: None
+                    imm: None,
                 });
             }
         }
@@ -93,6 +97,6 @@ fn get_xlen() -> Xlen {
     match common::constants::XLEN {
         32 => cpu::Xlen::Bit32,
         64 => cpu::Xlen::Bit64,
-        _ => panic!("Emulator only supports 32 / 64 bit registers.")
+        _ => panic!("Emulator only supports 32 / 64 bit registers."),
     }
 }

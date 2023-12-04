@@ -15,11 +15,11 @@ fn fib(n: u32) -> u32 {
     if n <= 1 {
         1
     } else {
-        fib(n-1) + fib(n-2)
+        fib(n - 1) + fib(n - 2)
     }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-   loop {}
+    loop {}
 }

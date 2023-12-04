@@ -1,11 +1,10 @@
-use spartan2::provider::bn256_grumpkin::bn256::Base as Spartan2Fr;
 use ark_bn254::Fr as ArkFr;
-use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger, Field};
-use ark_std::Zero;
-use ff::Field as GenericField;
-use ff::PrimeField as GenericPrimeField;
-use ff::FromUniformBytes;
+use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
 
+
+
+use ff::PrimeField as GenericPrimeField;
+use spartan2::provider::bn256_grumpkin::bn256::Base as Spartan2Fr;
 
 pub fn ark_to_spartan(ark: ArkFr) -> Spartan2Fr {
     let bigint = ark.into_bigint();
@@ -20,7 +19,7 @@ pub fn spartan_to_ark(bell: Spartan2Fr) -> ArkFr {
 pub fn ark_to_ff<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ark: AF) -> FF {
     let repr = ark.into_bigint();
     let bytes: Vec<u8> = repr.to_bytes_le();
-    let bytes: [u8;32] = bytes.try_into().unwrap();
+    let bytes: [u8; 32] = bytes.try_into().unwrap();
 
     GenericPrimeField::from_repr(bytes).unwrap()
 }
@@ -32,7 +31,7 @@ pub fn ff_to_ark<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ff: 
 
 #[cfg(test)]
 mod tests {
-    use ark_std::{rand, UniformRand};
+    use ark_std::{rand};
 
     use super::*;
 
@@ -104,12 +103,14 @@ mod tests {
     fn test_round_trip_conversion_generic() {
         for _ in 0..10 {
             let ark_value = random_ark();
-            let new_ark_value = ff_to_ark::<Spartan2Fr, ArkFr>(ark_to_ff::<Spartan2Fr, ArkFr>(ark_value));
+            let new_ark_value =
+                ff_to_ark::<Spartan2Fr, ArkFr>(ark_to_ff::<Spartan2Fr, ArkFr>(ark_value));
             assert_eq!(ark_value, new_ark_value);
         }
         for _ in 0..10 {
             let spartan_value = random_spartan();
-            let new_spartan_value = ark_to_ff::<Spartan2Fr, ArkFr>(ff_to_ark::<Spartan2Fr, ArkFr>(spartan_value));
+            let new_spartan_value =
+                ark_to_ff::<Spartan2Fr, ArkFr>(ff_to_ark::<Spartan2Fr, ArkFr>(spartan_value));
 
             assert_eq!(spartan_value, new_spartan_value);
         }

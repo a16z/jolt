@@ -2,9 +2,9 @@ extern crate tracer;
 
 use std::env;
 
-use tracer::{trace, decode};
-use common::serializable::Serializable;
 use common::path::JoltPaths;
+use common::serializable::Serializable;
+use tracer::{decode, trace};
 
 pub fn main() {
     // Note: assumes program is already compiled
@@ -24,11 +24,22 @@ pub fn main() {
     }
 
     let rows = trace(&elf_location);
-    rows.serialize_to_file(&trace_destination).expect(format!("Failed to write to {}", trace_destination.display()).as_str());
-    println!("Wrote {} rows to         {}.", rows.len(), trace_destination.display());
+    rows.serialize_to_file(&trace_destination)
+        .expect(format!("Failed to write to {}", trace_destination.display()).as_str());
+    println!(
+        "Wrote {} rows to         {}.",
+        rows.len(),
+        trace_destination.display()
+    );
 
     let instructions = decode(&elf_location);
-    instructions.serialize_to_file(&bytecode_destination).expect(format!("Failed to write to {}", bytecode_destination.display()).as_str());
+    instructions
+        .serialize_to_file(&bytecode_destination)
+        .expect(format!("Failed to write to {}", bytecode_destination.display()).as_str());
 
-    println!("Wrote {} instructions to {}.", instructions.len(), bytecode_destination.display());
+    println!(
+        "Wrote {} instructions to {}.",
+        instructions.len(),
+        bytecode_destination.display()
+    );
 }

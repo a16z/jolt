@@ -2,30 +2,30 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
-use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::{instruction_lookups::InstructionLookups, Jolt};
+use super::Jolt;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
-  add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-  bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
-  jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
-  slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-  sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+    and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+    bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
+    jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
+    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
+    sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
 };
 use crate::jolt::subtable::{
-  and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
-  gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-  or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
-  truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, zero_lsb::ZeroLSBSubtable,
-  LassoSubtable,
+    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
+    gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
+    or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, zero_lsb::ZeroLSBSubtable,
+    LassoSubtable,
 };
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
 /// are callable on the enum type via enum_dispatch.
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[allow(non_camel_case_types)]
         #[repr(u8)]
         #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
         #[enum_dispatch(JoltInstruction)]
@@ -40,6 +40,7 @@ macro_rules! instruction_set {
 /// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[allow(non_camel_case_types)]
         #[repr(usize)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
@@ -120,108 +121,111 @@ const M: usize = 1 << 16;
 
 impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
 where
-  F: PrimeField,
-  G: CurveGroup<ScalarField = F>,
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
 {
-  type InstructionSet = RV32I;
-  type Subtables = RV32ISubtables<F>;
+    type InstructionSet = RV32I;
+    type Subtables = RV32ISubtables<F>;
 }
 
 // ==================== TEST ====================
 
 #[cfg(test)]
 mod tests {
-  use ark_curve25519::{EdwardsProjective, Fr};
-  use ark_ec::CurveGroup;
-  use ark_ff::PrimeField;
-  use ark_std::{log2, test_rng, One, Zero};
-  use enum_dispatch::enum_dispatch;
-  use merlin::Transcript;
-  use rand_chacha::rand_core::RngCore;
-  use std::collections::HashSet;
+    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_ec::CurveGroup;
+    use ark_ff::PrimeField;
+    use ark_std::{log2, test_rng, One, Zero};
+    use enum_dispatch::enum_dispatch;
+    use merlin::Transcript;
+    use rand_chacha::rand_core::RngCore;
+    use std::collections::HashSet;
 
-  use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
-    jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
-    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
-  };
-  use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
-  use crate::{
-    jolt::vm::rv32i_vm::{InstructionLookups, Jolt, RV32IJoltVM, C, M, RV32I},
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
-  };
-  use std::any::TypeId;
-  use strum::{EnumCount, IntoEnumIterator};
-  use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+    use crate::jolt::instruction::{
+        add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+        bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
+        jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
+        slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
+        sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+    };
+    use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
+    use crate::{
+        jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I},
+        subprotocols::sumcheck::SumcheckInstanceProof,
+        utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
+    };
+    use std::any::TypeId;
+    use strum::{EnumCount, IntoEnumIterator};
+    use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-  fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
-    let mut rng = test_rng();
-    let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
-    for _ in 0..memory_bits {
-      r_i.push(F::rand(&mut rng));
+    fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+        let mut rng = test_rng();
+        let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
+        for _ in 0..memory_bits {
+            r_i.push(F::rand(&mut rng));
+        }
+        r_i
     }
-    r_i
-  }
 
-  #[test]
-  fn instruction_lookups() {
-    let mut rng = test_rng();
+    #[test]
+    fn instruction_lookups() {
+        let mut rng = test_rng();
 
-    let ops: Vec<RV32I> = vec![
-      RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BGEU(BGEUInstruction(
-        rng.next_u32() as u64,
-        rng.next_u32() as u64,
-      )),
-      RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BLTU(BLTUInstruction(
-        rng.next_u32() as u64,
-        rng.next_u32() as u64,
-      )),
-      RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::JALR(JALRInstruction(
-        rng.next_u32() as u64,
-        rng.next_u32() as u64,
-      )),
-      RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    ];
+        let ops: Vec<RV32I> = vec![
+            RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::BGEU(BGEUInstruction(
+                rng.next_u32() as u64,
+                rng.next_u32() as u64,
+            )),
+            RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::BLTU(BLTUInstruction(
+                rng.next_u32() as u64,
+                rng.next_u32() as u64,
+            )),
+            RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::JALR(JALRInstruction(
+                rng.next_u32() as u64,
+                rng.next_u32() as u64,
+            )),
+            RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+            RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        ];
 
-    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
-    let mut prover_transcript = Transcript::new(b"example");
-    let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-      RV32IJoltVM::prove_instruction_lookups(ops, r.clone(), &mut prover_transcript);
-    let mut verifier_transcript = Transcript::new(b"example");
-    assert!(RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok());
-  }
-
-  #[test]
-  fn instruction_set_subtables() {
-    let mut subtable_set: HashSet<_> = HashSet::new();
-    for instruction in <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::InstructionSet::iter() {
-      for subtable in instruction.subtables::<Fr>(C) {
-        // panics if subtable cannot be cast to enum variant
-        let _ = <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::from(
-          subtable.subtable_id(),
+        let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
+        let mut prover_transcript = Transcript::new(b"example");
+        let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
+            RV32IJoltVM::prove_instruction_lookups(ops, r.clone(), &mut prover_transcript);
+        let mut verifier_transcript = Transcript::new(b"example");
+        assert!(
+            RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok()
         );
-        subtable_set.insert(subtable.subtable_id());
-      }
     }
-    assert_eq!(
-      subtable_set.len(),
-      <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::COUNT,
-      "Unused enum variants in Subtables"
-    );
-  }
+
+    #[test]
+    fn instruction_set_subtables() {
+        let mut subtable_set: HashSet<_> = HashSet::new();
+        for instruction in <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::InstructionSet::iter()
+        {
+            for subtable in instruction.subtables::<Fr>(C) {
+                // panics if subtable cannot be cast to enum variant
+                let _ = <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::from(
+                    subtable.subtable_id(),
+                );
+                subtable_set.insert(subtable.subtable_id());
+            }
+        }
+        assert_eq!(
+            subtable_set.len(),
+            <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::COUNT,
+            "Unused enum variants in Subtables"
+        );
+    }
 }

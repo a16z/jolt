@@ -1,7 +1,7 @@
 #[allow(non_snake_case)]
 /// For clean importing
 pub mod JoltPaths {
-    use std::{path::PathBuf, env};
+    use std::{env, path::PathBuf};
 
     // Traces:    <target dir>/<TRACE_DIR_NAME>/<program name>.<TRACE_FILE_SUFFIX>
     // Programs:  <target dir>/<TRACE_DIR_NAME>/<program name>.<ELF_TRACE_FILE_SUFFIX>
@@ -17,14 +17,21 @@ pub mod JoltPaths {
         root().join("../target").canonicalize().unwrap()
     }
     pub fn elf_path(program_name: &str) -> PathBuf {
-        target_dir().join(format!("riscv32i-unknown-none-elf/release/{}", program_name))
+        target_dir().join(format!(
+            "riscv32i-unknown-none-elf/release/{}",
+            program_name
+        ))
     }
 
     pub fn trace_path(program_name: &str) -> PathBuf {
-        target_dir().join(TRACE_DIR_NAME).join(format!("{}.{}", program_name, TRACE_FILE_SUFFIX))
+        target_dir()
+            .join(TRACE_DIR_NAME)
+            .join(format!("{}.{}", program_name, TRACE_FILE_SUFFIX))
     }
 
     pub fn bytecode_path(program_name: &str) -> PathBuf {
-        target_dir().join(TRACE_DIR_NAME).join(format!("{}.{}", program_name, BYTECODE_FILE_SUFFIX))
+        target_dir()
+            .join(TRACE_DIR_NAME)
+            .join(format!("{}.{}", program_name, BYTECODE_FILE_SUFFIX))
     }
 }

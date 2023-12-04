@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use common::{RVTraceRow, ELFInstruction, RegisterState, MemoryState};
+use common::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
 
 use crate::emulator::cpu::Xlen;
 
@@ -11,7 +11,10 @@ pub struct Tracer {
 
 impl Tracer {
     pub fn new() -> Self {
-        Self { rows: RefCell::new(Vec::new()), open: RefCell::new(false) }
+        Self {
+            rows: RefCell::new(Vec::new()),
+            open: RefCell::new(false),
+        }
     }
 
     pub fn start_instruction(&self, inst: ELFInstruction) {
