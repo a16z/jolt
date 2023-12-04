@@ -1,7 +1,9 @@
 use ark_ff::PrimeField;
 
-use super::{instruction::JoltInstruction, vm::{pc::ELFRow, read_write_memory::MemoryOp}};
-
+use super::{
+    instruction::JoltInstruction,
+    vm::{pc::ELFRow, read_write_memory::MemoryOp},
+};
 
 trait JoltProvableTrace {
     type JoltInstructionEnum: JoltInstruction;

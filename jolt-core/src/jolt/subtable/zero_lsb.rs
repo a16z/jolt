@@ -5,41 +5,46 @@ use super::LassoSubtable;
 
 #[derive(Default)]
 pub struct ZeroLSBSubtable<F: PrimeField> {
-  _field: PhantomData<F>,
+    _field: PhantomData<F>,
 }
 
 impl<F: PrimeField> ZeroLSBSubtable<F> {
-  pub fn new() -> Self {
-    Self {
-      _field: PhantomData,
+    pub fn new() -> Self {
+        Self {
+            _field: PhantomData,
+        }
     }
-  }
 }
 
 impl<F: PrimeField> LassoSubtable<F> for ZeroLSBSubtable<F> {
-  fn materialize(&self, M: usize) -> Vec<F> {
-    // always set LSB to 0
-    (0..M).map(|i| F::from((i-(i%2)) as u64)).collect()
-  }
-
-  fn evaluate_mle(&self, point: &[F]) -> F {
-    let mut result = F::zero();
-    // skip LSB
-    for i in 1..point.len() {
-      result += F::from(1u64 << i) * point[point.len() - 1 - i];
+    fn materialize(&self, M: usize) -> Vec<F> {
+        // always set LSB to 0
+        (0..M).map(|i| F::from((i - (i % 2)) as u64)).collect()
     }
-    result
-  }
+
+    fn evaluate_mle(&self, point: &[F]) -> F {
+        let mut result = F::zero();
+        // skip LSB
+        for i in 1..point.len() {
+            result += F::from(1u64 << i) * point[point.len() - 1 - i];
+        }
+        result
+    }
 }
 
 #[cfg(test)]
 mod test {
-  use ark_curve25519::Fr;
+    use ark_curve25519::Fr;
 
-  use crate::{
-    jolt::subtable::{zero_lsb::ZeroLSBSubtable, LassoSubtable},
-    subtable_materialize_mle_parity_test,
-  };
+    use crate::{
+        jolt::subtable::{zero_lsb::ZeroLSBSubtable, LassoSubtable},
+        subtable_materialize_mle_parity_test,
+    };
 
-  subtable_materialize_mle_parity_test!(zero_lsb_materialize_mle_parity, ZeroLSBSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(
+        zero_lsb_materialize_mle_parity,
+        ZeroLSBSubtable<Fr>,
+        Fr,
+        256
+    );
 }
