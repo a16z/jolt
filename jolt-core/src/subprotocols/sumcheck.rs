@@ -159,14 +159,30 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
 
     pub fn apply_bound_poly_var_top(&mut self, r_j: &F) {
-        // Apply on poly_As
-        for poly in &mut self.poly_As {
-            poly.bound_poly_var_top(r_j);
-        }
+        #[cfg(feature = "multicore")]
+        {
+            use rayon::prelude::*;
+            // Apply on poly_As in parallel
+            self.poly_As.par_iter_mut().for_each(|poly| {
+                poly.bound_poly_var_top(r_j);
+            });
 
-        // Apply on poly_Bs
-        for poly in &mut self.poly_Bs {
-            poly.bound_poly_var_top(r_j);
+            // Apply on poly_Bs in parallel
+            self.poly_Bs.par_iter_mut().for_each(|poly| {
+                poly.bound_poly_var_top(r_j);
+            });
+        }
+        #[cfg(not(feature = "multicore"))]
+        {
+            // Apply on poly_As
+            for poly in &mut self.poly_As {
+                poly.bound_poly_var_top(r_j);
+            }
+
+            // Apply on poly_Bs
+            for poly in &mut self.poly_Bs {
+                poly.bound_poly_var_top(r_j);
+            }
         }
 
         // Apply on poly_eq
