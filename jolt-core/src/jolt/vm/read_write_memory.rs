@@ -15,10 +15,18 @@ use crate::{
   subprotocols::grand_product::BatchedGrandProductCircuit,
   utils::{errors::ProofVerifyError, random::RandomTape},
 };
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 
+#[derive(Debug, PartialEq, Clone)]
 pub enum MemoryOp {
   Read(u64, u64),       // (address, value)
   Write(u64, u64, u64), // (address, old_value, new_value)
+}
+
+impl MemoryOp {
+  pub fn no_op() -> Self {
+    Self::Read(0, 0)
+  }
 }
 
 pub struct ReadWriteMemory<F, G>
@@ -61,21 +69,39 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     for memory_access in memory_trace {
       match memory_access {
         MemoryOp::Read(a, v) => {
-          a_read_write.push(a);
+          assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+          let remapped_a = if a >= RAM_START_ADDRESS {
+            a - RAM_START_ADDRESS + REGISTER_COUNT
+          } else {
+            // If a < REGISTER_COUNT, it is one of the registers and doesn't 
+            // need to be remapped
+            a
+          };
+          debug_assert_eq!(v, v_final[remapped_a as usize]);
+          a_read_write.push(remapped_a);
           v_read.push(v);
           v_write.push(v);
-          t_read.push(t_final[a as usize]);
+          t_read.push(t_final[remapped_a as usize]);
           t_write.push(timestamp + 1);
-          t_final[a as usize] = timestamp + 1;
+          t_final[remapped_a as usize] = timestamp + 1;
         }
         MemoryOp::Write(a, v_old, v_new) => {
-          a_read_write.push(a);
+          assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+          let remapped_a = if a >= RAM_START_ADDRESS {
+            a - RAM_START_ADDRESS + REGISTER_COUNT
+          } else {
+            // If a < REGISTER_COUNT, it is one of the registers and doesn't 
+            // need to be remapped
+            a
+          };
+          debug_assert_eq!(v_old, v_final[remapped_a as usize]);
+          a_read_write.push(remapped_a);
           v_read.push(v_old);
           v_write.push(v_new);
-          v_final[a as usize] = v_new;
-          t_read.push(t_final[a as usize]);
+          v_final[remapped_a as usize] = v_new;
+          t_read.push(t_final[remapped_a as usize]);
           t_write.push(timestamp + 1);
-          t_final[a as usize] = timestamp + 1;
+          t_final[remapped_a as usize] = timestamp + 1;
         }
       }
       timestamp += 1;
@@ -450,16 +476,25 @@ mod tests {
     let mut memory_trace = Vec::with_capacity(num_ops);
 
     for _ in 0..num_ops {
-      if rng.next_u32() % 2 == 0 {
-        let address: usize = rng.next_u32() as usize % memory_size;
-        let value = memory[address];
-        memory_trace.push(MemoryOp::Read(address as u64, value));
+      let mut address = if rng.next_u32() % 3 == 0 {
+        rng.next_u64() % memory_size as u64
       } else {
-        let address: usize = rng.next_u32() as usize % memory_size;
-        let old_value = memory[address];
+        rng.next_u64() % REGISTER_COUNT
+      };
+      if rng.next_u32() % 2 == 0 {
+        let value = memory[address as usize];
+        if address >= REGISTER_COUNT {
+          address = address + RAM_START_ADDRESS;
+        }
+        memory_trace.push(MemoryOp::Read(address, value));
+      } else {
+        let old_value = memory[address as usize];
         let new_value = rng.next_u64();
-        memory_trace.push(MemoryOp::Write(address as u64, old_value, new_value));
-        memory[address] = new_value;
+        memory[address as usize] = new_value;
+        if address >= REGISTER_COUNT {
+          address = address + RAM_START_ADDRESS;
+        }
+        memory_trace.push(MemoryOp::Write(address, old_value, new_value));
       }
     }
     memory_trace
