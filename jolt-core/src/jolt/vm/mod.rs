@@ -4,9 +4,12 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::lasso::{
-    memory_checking::MemoryCheckingProver,
-    surge::Surge,
+use crate::{
+    lasso::{
+        memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+        surge::{Surge, SurgeProof},
+    },
+    utils::math::Math,
 };
 
 use crate::jolt::{
@@ -17,7 +20,10 @@ use crate::poly::structured_poly::BatchablePolynomials;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
-use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory};
+use self::pc::{ELFRow, PCInitFinalOpenings, PCPolys, PCReadWriteOpenings, ProgramCommitment};
+use self::read_write_memory::{
+    MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
+};
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
@@ -35,77 +41,75 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
-        r: Vec<F>,
         transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
     ) -> InstructionLookupsProof<F, G> {
         let instruction_lookups =
             InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
-        instruction_lookups.prove_lookups(r, transcript)
+        instruction_lookups.prove_lookups(transcript, random_tape)
     }
 
     fn verify_instruction_lookups(
         proof: InstructionLookupsProof<F, G>,
-        r: Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
-            proof, &r, transcript,
+            proof, transcript,
         )
     }
 
     fn prove_program_code(
-        program_code: &[u64],
-        access_sequence: &[usize],
-        code_size: usize,
-        contiguous_reads_per_access: usize,
-        r_mem_check: &(F, F),
+        mut program: Vec<ELFRow>,
+        mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
+    ) -> (
+        MemoryCheckingProof<G, PCPolys<F, G>, PCReadWriteOpenings<F, G>, PCInitFinalOpenings<F, G>>,
+        ProgramCommitment<G>,
     ) {
-        // let (gamma, tau) = r_mem_check;
-        // let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
+        let polys: PCPolys<F, G> = PCPolys::new_program(program, trace);
+        let batched_polys = polys.batch();
+        let commitments = PCPolys::commit(&batched_polys);
 
-        // let m: usize = (access_sequence.len() * contiguous_reads_per_access).next_power_of_two();
-        // // TODO(moodlezoup): resize access_sequence?
-
-        // let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
-        // let mut final_cts: Vec<usize> = vec![0; code_size];
-        // let mut read_cts: Vec<usize> = Vec::with_capacity(m);
-        // let mut read_values: Vec<u64> = Vec::with_capacity(m);
-
-        // for (j, code_address) in access_sequence.iter().enumerate() {
-        //   debug_assert!(code_address + contiguous_reads_per_access <= code_size);
-        //   debug_assert!(code_address % contiguous_reads_per_access == 0);
-
-        //   for offset in 0..contiguous_reads_per_access {
-        //     let addr = code_address + offset;
-        //     let counter = final_cts[addr];
-        //     read_addrs.push(addr);
-        //     read_values.push(program_code[addr]);
-        //     read_cts.push(counter);
-        //     final_cts[addr] = counter + 1;
-        //   }
-        // }
-
-        // let E_poly: DensePolynomial<F> = DensePolynomial::from_u64(&read_values); // v_ops
-        // let dim: DensePolynomial<F> = DensePolynomial::from_usize(access_sequence); // a_ops
-        // let read_cts: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts); // t_read
-        // let final_cts: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts); // t_final
-        // let init_values: DensePolynomial<F> = DensePolynomial::from_u64(program_code); // v_mem
-
-        // let polys = PCPolys::new(dim, E_poly, init_values, read_cts, final_cts, 0);
-        // let (gens, commitments) = polys.commit::<G>();
-
-        todo!("decide how to represent nested proofs, gens, commitments");
-        // MemoryCheckingProof::<G, PCFingerprintProof<G>>::prove(
-        //   &polys,
-        //   r_fingerprints,
-        //   &gens,
-        //   &mut transcript,
-        //   &mut random_tape,
-        // )
+        (
+            polys.prove_memory_checking(
+                &polys,
+                &batched_polys,
+                &commitments,
+                transcript,
+                random_tape,
+            ),
+            commitments,
+        )
     }
 
-    fn prove_memory(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) {
+    fn verify_program_code(
+        proof: MemoryCheckingProof<
+            G,
+            PCPolys<F, G>,
+            PCReadWriteOpenings<F, G>,
+            PCInitFinalOpenings<F, G>,
+        >,
+        commitment: ProgramCommitment<G>,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerifyError> {
+        PCPolys::verify_memory_checking(proof, &commitment, transcript)
+    }
+
+    fn prove_memory(
+        memory_trace: Vec<MemoryOp>,
+        memory_size: usize,
+        transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
+    ) -> (
+        MemoryCheckingProof<
+            G,
+            ReadWriteMemory<F, G>,
+            MemoryReadWriteOpenings<F, G>,
+            MemoryInitFinalOpenings<F, G>,
+        >,
+        SurgeProof<F, G>,
+    ) {
         const MAX_TRACE_SIZE: usize = 1 << 22;
         // TODO: Support longer traces
         assert!(memory_trace.len() <= MAX_TRACE_SIZE);
@@ -116,13 +120,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let batched_polys = memory.batch();
         let commitments: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 
-        let mut random_tape = RandomTape::new(b"proof");
-        memory.prove_memory_checking(
+        let memory_checking_proof = memory.prove_memory_checking(
             &memory,
             &batched_polys,
             &commitments,
             transcript,
-            &mut random_tape,
+            random_tape,
         );
 
         let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
@@ -134,6 +137,27 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let timestamp_validity_proof =
             <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
                 .prove(transcript);
+
+        (memory_checking_proof, timestamp_validity_proof)
+    }
+
+    fn verify_memory(
+        memory_checking_proof: MemoryCheckingProof<
+            G,
+            ReadWriteMemory<F, G>,
+            MemoryReadWriteOpenings<F, G>,
+            MemoryInitFinalOpenings<F, G>,
+        >,
+        commitment: MemoryCommitment<G>,
+        transcript: &mut Transcript,
+        timestamp_validity_proof: SurgeProof<F, G>,
+    ) -> Result<(), ProofVerifyError> {
+        const MAX_TRACE_SIZE: usize = 1 << 22;
+        ReadWriteMemory::verify_memory_checking(memory_checking_proof, &commitment, transcript)?;
+        <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::verify(
+            timestamp_validity_proof,
+            transcript,
+        )
     }
 
     fn prove_r1cs() {

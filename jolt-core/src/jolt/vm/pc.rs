@@ -1,8 +1,9 @@
-use std::{collections::HashMap, marker::PhantomData};
-
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use std::{collections::HashMap, marker::PhantomData};
+
+use common::ELFInstruction;
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier},
@@ -54,6 +55,20 @@ impl ELFRow {
             rs2: 0,
             imm: 0,
         }
+    }
+}
+
+// TODO(JOLT-74): Consolidate ELFInstruction and ELFRow
+impl From<&ELFInstruction> for ELFRow {
+    fn from(value: &ELFInstruction) -> Self {
+        Self::new(
+            value.address as usize,
+            value.opcode as u64,
+            value.rd.unwrap_or(0),
+            value.rs1.unwrap_or(0),
+            value.rs2.unwrap_or(0),
+            value.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
+        )
     }
 }
 
@@ -306,9 +321,7 @@ where
     }
 }
 
-pub struct PCProof<F: PrimeField>(PhantomData<F>);
-
-impl<F, G> MemoryCheckingProver<F, G, PCPolys<F, G>> for PCProof<F>
+impl<F, G> MemoryCheckingProver<F, G, PCPolys<F, G>> for PCPolys<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -439,7 +452,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, PCPolys<F, G>> for PCProof<F>
+impl<F, G> MemoryCheckingVerifier<F, G, PCPolys<F, G>> for PCPolys<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -706,11 +719,10 @@ mod tests {
         let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
-        let init_leaves: Vec<DensePolynomial<Fr>> = pc_prover.init_leaves(&polys, gamma, tau);
-        let read_leaves: Vec<DensePolynomial<Fr>> = pc_prover.read_leaves(&polys, gamma, tau);
-        let write_leaves: Vec<DensePolynomial<Fr>> = pc_prover.write_leaves(&polys, gamma, tau);
-        let final_leaves: Vec<DensePolynomial<Fr>> = pc_prover.final_leaves(&polys, gamma, tau);
+        let init_leaves: Vec<DensePolynomial<Fr>> = polys.init_leaves(&polys, gamma, tau);
+        let read_leaves: Vec<DensePolynomial<Fr>> = polys.read_leaves(&polys, gamma, tau);
+        let write_leaves: Vec<DensePolynomial<Fr>> = polys.write_leaves(&polys, gamma, tau);
+        let final_leaves: Vec<DensePolynomial<Fr>> = polys.final_leaves(&polys, gamma, tau);
 
         let init_leaves = &init_leaves[0];
         let read_leaves = &read_leaves[0];
@@ -736,14 +748,13 @@ mod tests {
             ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
-        let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
 
         let mut transcript = Transcript::new(b"test_transcript");
         let mut random_tape = RandomTape::new(b"test_tape");
 
         let batched_polys = polys.batch();
         let commitments = PCPolys::commit(&batched_polys);
-        let proof = pc_prover.prove_memory_checking(
+        let proof = polys.prove_memory_checking(
             &polys,
             &batched_polys,
             &commitments,
@@ -752,7 +763,7 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        PCProof::verify_memory_checking(proof, &commitments, &mut transcript)
+        PCPolys::verify_memory_checking(proof, &commitments, &mut transcript)
             .expect("proof should verify");
     }
 
@@ -771,7 +782,6 @@ mod tests {
             ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let pc_prover: PCProof<Fr> = PCProof(PhantomData::<_>);
         let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
         let batch = polys.batch();
         let commitments = PCPolys::commit(&batch);
@@ -779,7 +789,7 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
         let mut random_tape = RandomTape::new(b"test_tape");
 
-        let proof = pc_prover.prove_memory_checking(
+        let proof = polys.prove_memory_checking(
             &polys,
             &batch,
             &commitments,
@@ -788,7 +798,7 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        PCProof::verify_memory_checking(proof, &commitments, &mut transcript)
+        PCPolys::verify_memory_checking(proof, &commitments, &mut transcript)
             .expect("should verify");
     }
 
