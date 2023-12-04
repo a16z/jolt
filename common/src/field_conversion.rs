@@ -31,7 +31,7 @@ pub fn ff_to_ark<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ff: 
 
 #[cfg(test)]
 mod tests {
-    use ark_std::{rand, UniformRand};
+    use ark_std::{rand};
 
     use super::*;
 
