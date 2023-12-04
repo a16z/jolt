@@ -1,12 +1,11 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::Read;
 use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::lasso::{
-    memory_checking::{MemoryCheckingProof, MemoryCheckingProver},
+    memory_checking::MemoryCheckingProver,
     surge::Surge,
 };
 

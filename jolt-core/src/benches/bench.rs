@@ -10,7 +10,6 @@ use crate::jolt::instruction::jal::JALInstruction;
 use crate::jolt::instruction::jalr::JALRInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
-use crate::jolt::instruction::slt::SLTInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
@@ -21,7 +20,7 @@ use crate::lasso::surge::Surge;
 use crate::utils::math::Math;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
-use ark_std::{log2, test_rng};
+use ark_std::{test_rng};
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
 

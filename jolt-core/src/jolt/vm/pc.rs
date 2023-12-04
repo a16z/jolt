@@ -2,7 +2,6 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{

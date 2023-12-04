@@ -2,13 +2,12 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
-use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::{instruction_lookups::InstructionLookups, Jolt};
+use super::Jolt;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
-    add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+    and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
     jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
     slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
@@ -26,6 +25,7 @@ use crate::jolt::subtable::{
 /// are callable on the enum type via enum_dispatch.
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[allow(non_camel_case_types)]
         #[repr(u8)]
         #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
         #[enum_dispatch(JoltInstruction)]
@@ -40,6 +40,7 @@ macro_rules! instruction_set {
 /// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
+        #[allow(non_camel_case_types)]
         #[repr(usize)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
@@ -149,7 +150,7 @@ mod tests {
     };
     use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
     use crate::{
-        jolt::vm::rv32i_vm::{InstructionLookups, Jolt, RV32IJoltVM, C, M, RV32I},
+        jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I},
         subprotocols::sumcheck::SumcheckInstanceProof,
         utils::{index_to_field_bitvector, math::Math, random::RandomTape, split_bits},
     };

@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{identity::IdentitySubtable, sll::SllSubtable, LassoSubtable};
+use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };

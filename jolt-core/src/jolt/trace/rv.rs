@@ -1,10 +1,7 @@
 use ark_curve25519::Fr;
 use ark_ff::PrimeField;
-use enum_dispatch::enum_dispatch;
-use eyre::{bail, ensure};
-use strum_macros::{EnumCount, EnumIter, FromRepr};
+use eyre::ensure;
 
-use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
@@ -22,9 +19,7 @@ use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, sub::SUBInstruction};
-use crate::jolt::instruction::{JoltInstruction, Opcode};
-use crate::jolt::subtable::LassoSubtable;
-use crate::jolt::vm::rv32i_vm::RV32IJoltVM;
+use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::{pc::ELFRow, rv32i_vm::RV32I};
 use common::{constants::REGISTER_COUNT, RV32InstructionFormat, RV32IM};
 
@@ -387,7 +382,7 @@ impl RVTraceRow {
                     // Assert instruction correctness if arithmetic
                     let lookups = self.to_jolt_instructions();
                     assert!(lookups.len() == 1);
-                    if (lookups.len() == 1 && self.rd.unwrap() != 0) {
+                    if lookups.len() == 1 && self.rd.unwrap() != 0 {
                         assert_eq!(lookups.len(), 1, "{self:?}");
                         let expected_result: Fr = lookups[0].lookup_entry(C, M);
                         let bigint = expected_result.into_bigint();
@@ -971,8 +966,9 @@ impl JoltProvableTrace for RVTraceRow {
             _ => false,
         };
 
+        let mask = 1u32 << 31;
         flags[13] = match self.imm {
-            Some(imm) if imm < 0 => true,
+            Some(imm) if imm & mask == mask => true,
             _ => false,
         };
 
@@ -991,7 +987,7 @@ impl JoltProvableTrace for RVTraceRow {
 fn sum_u64_i32(a: u64, b: i32) -> u64 {
     if b.is_negative() {
         let abs_b = b.abs() as u64;
-        if (a < abs_b) {
+        if a < abs_b {
             panic!("overflow")
         }
         a - abs_b

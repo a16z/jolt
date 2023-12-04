@@ -1,5 +1,4 @@
 use pasta_curves::vesta::Base as Fr;
-use std::env::current_dir;
 
 use spartan2::{
     provider::bn256_grumpkin::bn256,
@@ -73,8 +72,6 @@ fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>() {
 }
 
 mod test {
-    use std::process::Command;
-
     #[test]
     #[ignore = "Doesn't work yet"]
     fn test_jolt_snark() {

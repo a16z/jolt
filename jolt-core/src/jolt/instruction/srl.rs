@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 
 use super::JoltInstruction;
-use crate::jolt::subtable::{identity::IdentitySubtable, srl::SrlSubtable, LassoSubtable};
+use crate::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
 #[derive(Copy, Clone, Default, Debug)]

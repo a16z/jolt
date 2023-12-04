@@ -1085,7 +1085,7 @@ where
 
                         for eval_index in 0..num_eval_points {
                             let flag_eval = multi_flag_evals[eval_index][instruction_index];
-                            if (flag_eval == F::zero()) {
+                            if flag_eval == F::zero() {
                                 continue;
                             }; // Early exit if no contribution.
                                // TODO(sragss): On the final layer we can be even more creative about computing / not computing flags.

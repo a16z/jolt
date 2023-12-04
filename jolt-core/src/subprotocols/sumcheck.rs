@@ -119,7 +119,6 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
             let b_idx = match self.sumcheck_type {
                 CubicSumcheckType::Prod => i,
                 CubicSumcheckType::Flags => self.a_to_b[i],
-                _ => panic!("uh oh"),
             };
 
             let b = &self.poly_Bs[b_idx];
@@ -141,7 +140,6 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
             let b_idx = match self.sumcheck_type {
                 CubicSumcheckType::Prod => i,
                 CubicSumcheckType::Flags => self.a_to_b[i],
-                _ => panic!("uh oh"),
             };
 
             let b = &self.poly_Bs[b_idx];
@@ -680,7 +678,7 @@ pub mod bench {
         }
         let poly_a = DensePolynomial::new(vals1);
         let poly_b = DensePolynomial::new(vals2);
-        let mut r = vec![Fr::rand(&mut rng); num_vars];
+        let r = vec![Fr::rand(&mut rng); num_vars];
         let eq = DensePolynomial::new(EqPolynomial::new(r).evals());
         let params = CubicSumcheckParams::new_prod(
             vec![poly_a.clone()],

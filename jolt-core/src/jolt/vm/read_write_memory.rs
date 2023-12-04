@@ -12,7 +12,6 @@ use crate::{
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    subprotocols::grand_product::BatchedGrandProductCircuit,
     utils::{errors::ProofVerifyError, random::RandomTape},
 };
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};

@@ -9,9 +9,6 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use merlin::Transcript;
 
-#[cfg(feature = "multicore")]
-use rayon::prelude::*;
-
 #[derive(Debug, Clone)]
 pub struct GrandProductCircuit<F> {
     left_vec: Vec<DensePolynomial<F>>,
