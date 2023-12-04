@@ -124,12 +124,12 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::BGE(BGEInstruction(rng.next_u32() as i64, rng.next_u32() as i64)),
+    RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::BGEU(BGEUInstruction(
       rng.next_u32() as u64,
       rng.next_u32() as u64,
     )),
-    RV32I::BLT(BLTInstruction(rng.next_u32() as i64, rng.next_u32() as i64)),
+    RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::BLTU(BLTUInstruction(
       rng.next_u32() as u64,
       rng.next_u32() as u64,
@@ -147,12 +147,11 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
   ];
-  for _ in 0..15 {
+  for _ in 0..10 {
     ops.extend(ops.clone());
   }
   println!("Running {:?}", ops.len());
 
-  let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
   let work = Box::new(|| {
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
