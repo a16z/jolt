@@ -19,11 +19,18 @@ use crate::jolt::{
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 
+use self::bytecode::{
+    BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeReadWriteOpenings,
+    ELFRow,
+};
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
-use self::pc::{ELFRow, PCInitFinalOpenings, PCPolys, PCReadWriteOpenings, ProgramCommitment};
 use self::read_write_memory::{
     MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
 };
+
+struct JoltProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+    instruction_lookups: InstructionLookupsProof<F, G>,
+}
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
@@ -32,7 +39,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     fn prove() {
         // preprocess?
         // emulate
-        // prove_program_code
+        // prove_bytecode
         // prove_memory
         // prove_lookups
         // prove_r1cs
@@ -58,18 +65,23 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
-    fn prove_program_code(
-        mut program: Vec<ELFRow>,
+    fn prove_bytecode(
+        mut bytecode: Vec<ELFRow>,
         mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> (
-        MemoryCheckingProof<G, PCPolys<F, G>, PCReadWriteOpenings<F, G>, PCInitFinalOpenings<F, G>>,
-        ProgramCommitment<G>,
+        MemoryCheckingProof<
+            G,
+            BytecodePolynomials<F, G>,
+            BytecodeReadWriteOpenings<F, G>,
+            BytecodeInitFinalOpenings<F, G>,
+        >,
+        BytecodeCommitment<G>,
     ) {
-        let polys: PCPolys<F, G> = PCPolys::new_program(program, trace);
+        let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode, trace);
         let batched_polys = polys.batch();
-        let commitments = PCPolys::commit(&batched_polys);
+        let commitments = BytecodePolynomials::commit(&batched_polys);
 
         (
             polys.prove_memory_checking(
@@ -83,17 +95,17 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
-    fn verify_program_code(
+    fn verify_bytecode(
         proof: MemoryCheckingProof<
             G,
-            PCPolys<F, G>,
-            PCReadWriteOpenings<F, G>,
-            PCInitFinalOpenings<F, G>,
+            BytecodePolynomials<F, G>,
+            BytecodeReadWriteOpenings<F, G>,
+            BytecodeInitFinalOpenings<F, G>,
         >,
-        commitment: ProgramCommitment<G>,
+        commitment: BytecodeCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        PCPolys::verify_memory_checking(proof, &commitment, transcript)
+        BytecodePolynomials::verify_memory_checking(proof, &commitment, transcript)
     }
 
     fn prove_memory(
@@ -108,6 +120,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             MemoryReadWriteOpenings<F, G>,
             MemoryInitFinalOpenings<F, G>,
         >,
+        MemoryCommitment<G>,
         SurgeProof<F, G>,
     ) {
         const MAX_TRACE_SIZE: usize = 1 << 22;
@@ -138,7 +151,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
                 .prove(transcript);
 
-        (memory_checking_proof, timestamp_validity_proof)
+        (memory_checking_proof, commitments, timestamp_validity_proof)
     }
 
     fn verify_memory(
@@ -165,7 +178,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 }
 
+pub mod bytecode;
 pub mod instruction_lookups;
-pub mod pc;
 pub mod read_write_memory;
 pub mod rv32i_vm;
