@@ -137,7 +137,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
     }
 }
 
-pub struct PCPolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     _group: PhantomData<G>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
@@ -156,19 +156,19 @@ pub struct PCPolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     t_final: DensePolynomial<F>,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
-    pub fn new_program(mut program: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
-        Self::validate_program(&program, &trace);
-        Self::preprocess(&mut program, &mut trace);
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
+    pub fn new(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
+        Self::validate_bytecode(&bytecode, &trace);
+        Self::preprocess(&mut bytecode, &mut trace);
 
         // Preprocessing should deal with padding.
-        assert!(is_power_of_two(program.len()));
+        assert!(is_power_of_two(bytecode.len()));
         assert!(is_power_of_two(trace.len()));
 
         let num_ops = trace.len().next_power_of_two();
-        let code_size = program.len().next_power_of_two();
+        let code_size = bytecode.len().next_power_of_two();
 
-        println!("PCPolys::new_program num_ops {num_ops} code_size {code_size}");
+        println!("BytecodePolynomials::new num_ops {num_ops} code_size {code_size}");
 
         let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
         let mut read_cts: Vec<usize> = vec![0; num_ops];
@@ -184,7 +184,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
         }
 
         let v_read_write = FiveTuplePoly::from_elf(&trace);
-        let v_init_final = FiveTuplePoly::from_elf(&program);
+        let v_init_final = FiveTuplePoly::from_elf(&bytecode);
 
         let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
         let t_read = DensePolynomial::from_usize(&read_cts);
@@ -200,37 +200,37 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
         }
     }
 
-    fn validate_program(program: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
-        let mut pc = program[0].address;
+    fn validate_bytecode(bytecode: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
+        let mut pc = bytecode[0].address;
         assert!(pc < 10_000);
 
-        let mut program_map: HashMap<usize, &ELFRow> = HashMap::new();
+        let mut bytecode_map: HashMap<usize, &ELFRow> = HashMap::new();
 
-        for program_row in program.iter().skip(1) {
-            program_map.insert(program_row.address, program_row);
-            assert_eq!(program_row.address, pc + ADDRESS_INCREMENT);
+        for bytecode_row in bytecode.iter().skip(1) {
+            bytecode_map.insert(bytecode_row.address, bytecode_row);
+            assert_eq!(bytecode_row.address, pc + ADDRESS_INCREMENT);
 
-            pc = program_row.address;
+            pc = bytecode_row.address;
         }
 
         for trace_row in trace {
             assert_eq!(
-                **program_map
+                **bytecode_map
                     .get(&trace_row.address)
-                    .expect("couldn't find in program"),
+                    .expect("couldn't find in bytecode"),
                 *trace_row
             );
         }
     }
 
-    fn preprocess(program: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
-        // Program: Add single no_op instruction at adddress | ELF + 1 |
-        let no_op_address = program.last().unwrap().address + ADDRESS_INCREMENT;
-        program.push(ELFRow::no_op(no_op_address));
+    fn preprocess(bytecode: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
+        // Bytecode: Add single no_op instruction at adddress | ELF + 1 |
+        let no_op_address = bytecode.last().unwrap().address + ADDRESS_INCREMENT;
+        bytecode.push(ELFRow::no_op(no_op_address));
 
-        // Program: Pad to nearest power of 2
-        for _program_i in program.len()..program.len().next_power_of_two() {
-            program.push(ELFRow::no_op(0));
+        // Bytecode: Pad to nearest power of 2
+        for _ in bytecode.len()..bytecode.len().next_power_of_two() {
+            bytecode.push(ELFRow::no_op(0));
         }
 
         // Trace: Pad to nearest power of 2
@@ -241,7 +241,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
     }
 }
 
-pub struct BatchedPCPolys<F: PrimeField> {
+pub struct BatchedBytecodePolynomials<F: PrimeField> {
     /// Contains:
     /// - a_read_write, t_read, v_read_write
     combined_read_write: DensePolynomial<F>,
@@ -251,8 +251,8 @@ pub struct BatchedPCPolys<F: PrimeField> {
     combined_init_final: DensePolynomial<F>,
 }
 
-pub struct ProgramCommitment<G: CurveGroup> {
-    generators: PCCommitmentGenerators<G>,
+pub struct BytecodeCommitment<G: CurveGroup> {
+    generators: BytecodeCommitmentGenerators<G>,
     /// Combined commitment for:
     /// - a_read_write, t_read, v_read_write
     pub read_write_commitments: CombinedTableCommitment<G>,
@@ -262,18 +262,18 @@ pub struct ProgramCommitment<G: CurveGroup> {
     pub init_final_commitments: CombinedTableCommitment<G>,
 }
 
-pub struct PCCommitmentGenerators<G: CurveGroup> {
+pub struct BytecodeCommitmentGenerators<G: CurveGroup> {
     pub gens_read_write: PolyCommitmentGens<G>,
     pub gens_init_final: PolyCommitmentGens<G>,
 }
 
-impl<F, G> BatchablePolynomials for PCPolys<F, G>
+impl<F, G> BatchablePolynomials for BytecodePolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = BatchedPCPolys<F>;
-    type Commitment = ProgramCommitment<G>;
+    type BatchedPolynomials = BatchedBytecodePolynomials<F>;
+    type Commitment = BytecodeCommitment<G>;
 
     fn batch(&self) -> Self::BatchedPolynomials {
         let combined_read_write = DensePolynomial::merge(&vec![
@@ -303,12 +303,12 @@ where
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (gens_read_write, read_write_commitments) = batched_polys
             .combined_read_write
-            .combined_commit(b"BatchedPCPolys.read_write");
+            .combined_commit(b"BatchedBytecodePolynomials.read_write");
         let (gens_init_final, init_final_commitments) = batched_polys
             .combined_init_final
-            .combined_commit(b"BatchedPCPolys.init_final");
+            .combined_commit(b"BatchedBytecodePolynomials.init_final");
 
-        let generators = PCCommitmentGenerators {
+        let generators = BytecodeCommitmentGenerators {
             gens_read_write,
             gens_init_final,
         };
@@ -321,13 +321,13 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, PCPolys<F, G>> for PCPolys<F, G>
+impl<F, G> MemoryCheckingProver<F, G, BytecodePolynomials<F, G>> for BytecodePolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type ReadWriteOpenings = PCReadWriteOpenings<F, G>;
-    type InitFinalOpenings = PCInitFinalOpenings<F, G>;
+    type ReadWriteOpenings = BytecodeReadWriteOpenings<F, G>;
+    type InitFinalOpenings = BytecodeInitFinalOpenings<F, G>;
 
     // [a, opcode, rd, rs1, rs2, imm, t]
     type MemoryTuple = [F; 7];
@@ -344,14 +344,14 @@ where
 
     fn read_leaves(
         &self,
-        polynomials: &PCPolys<F, G>,
+        polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         let num_ops = polynomials.a_read_write.len();
         let read_fingerprints = (0..num_ops)
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
                     &[
                         polynomials.a_read_write[i],
                         polynomials.v_read_write.opcode[i],
@@ -370,14 +370,14 @@ where
     }
     fn write_leaves(
         &self,
-        polynomials: &PCPolys<F, G>,
+        polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         let num_ops = polynomials.a_read_write.len();
         let read_fingerprints = (0..num_ops)
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
                     &[
                         polynomials.a_read_write[i],
                         polynomials.v_read_write.opcode[i],
@@ -396,14 +396,14 @@ where
     }
     fn init_leaves(
         &self,
-        polynomials: &PCPolys<F, G>,
+        polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         let memory_size = polynomials.v_init_final.opcode.len();
         let init_fingerprints = (0..memory_size)
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
                     &[
                         F::from(i as u64),
                         polynomials.v_init_final.opcode[i],
@@ -422,14 +422,14 @@ where
     }
     fn final_leaves(
         &self,
-        polynomials: &PCPolys<F, G>,
+        polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         let memory_size = polynomials.v_init_final.opcode.len();
         let init_fingerprints = (0..memory_size)
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, PCPolys<F, G>>>::fingerprint(
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
                     &[
                         F::from(i as u64),
                         polynomials.v_init_final.opcode[i],
@@ -452,7 +452,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, PCPolys<F, G>> for PCPolys<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, BytecodePolynomials<F, G>> for BytecodePolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -508,7 +508,7 @@ where
     }
 }
 
-pub struct PCReadWriteOpenings<F, G>
+pub struct BytecodeReadWriteOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -523,14 +523,15 @@ where
     read_write_opening_proof: CombinedTableEvalProof<G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, PCPolys<F, G>> for PCReadWriteOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>>
+    for BytecodeReadWriteOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     type Openings = (F, Vec<F>, F);
 
-    fn open(polynomials: &PCPolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.a_read_write.evaluate(&opening_point),
             polynomials.v_read_write.evaluate(&opening_point),
@@ -539,8 +540,8 @@ where
     }
 
     fn prove_openings(
-        polynomials: &BatchedPCPolys<F>,
-        commitment: &ProgramCommitment<G>,
+        polynomials: &BatchedBytecodePolynomials<F>,
+        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: (F, Vec<F>, F),
         transcript: &mut Transcript,
@@ -573,7 +574,7 @@ where
 
     fn verify_openings(
         &self,
-        commitment: &ProgramCommitment<G>,
+        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -593,7 +594,7 @@ where
     }
 }
 
-pub struct PCInitFinalOpenings<F, G>
+pub struct BytecodeInitFinalOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -608,14 +609,15 @@ where
     init_final_opening_proof: CombinedTableEvalProof<G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, PCPolys<F, G>> for PCInitFinalOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>>
+    for BytecodeInitFinalOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     type Openings = (Vec<F>, F);
 
-    fn open(polynomials: &PCPolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.v_init_final.evaluate(&opening_point),
             polynomials.t_final.evaluate(&opening_point),
@@ -623,8 +625,8 @@ where
     }
 
     fn prove_openings(
-        polynomials: &BatchedPCPolys<F>,
-        commitment: &ProgramCommitment<G>,
+        polynomials: &BatchedBytecodePolynomials<F>,
+        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: Self::Openings,
         transcript: &mut Transcript,
@@ -654,7 +656,7 @@ where
 
     fn verify_openings(
         &self,
-        commitment: &ProgramCommitment<G>,
+        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -716,7 +718,8 @@ mod tests {
             ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
             ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+        let polys: BytecodePolynomials<Fr, EdwardsProjective> =
+            BytecodePolynomials::new(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
         let init_leaves: Vec<DensePolynomial<Fr>> = polys.init_leaves(&polys, gamma, tau);
@@ -747,13 +750,14 @@ mod tests {
             ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
             ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+        let polys: BytecodePolynomials<Fr, EdwardsProjective> =
+            BytecodePolynomials::new(program, trace);
 
         let mut transcript = Transcript::new(b"test_transcript");
         let mut random_tape = RandomTape::new(b"test_tape");
 
         let batched_polys = polys.batch();
-        let commitments = PCPolys::commit(&batched_polys);
+        let commitments = BytecodePolynomials::commit(&batched_polys);
         let proof = polys.prove_memory_checking(
             &polys,
             &batched_polys,
@@ -763,7 +767,7 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        PCPolys::verify_memory_checking(proof, &commitments, &mut transcript)
+        BytecodePolynomials::verify_memory_checking(proof, &commitments, &mut transcript)
             .expect("proof should verify");
     }
 
@@ -782,9 +786,10 @@ mod tests {
             ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+        let polys: BytecodePolynomials<Fr, EdwardsProjective> =
+            BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
-        let commitments = PCPolys::commit(&batch);
+        let commitments = BytecodePolynomials::commit(&batch);
 
         let mut transcript = Transcript::new(b"test_transcript");
         let mut random_tape = RandomTape::new(b"test_tape");
@@ -798,7 +803,7 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        PCPolys::verify_memory_checking(proof, &commitments, &mut transcript)
+        BytecodePolynomials::verify_memory_checking(proof, &commitments, &mut transcript)
             .expect("should verify");
     }
 
@@ -817,7 +822,8 @@ mod tests {
             ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
             ELFRow::new(5, 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        let _polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+        let _polys: BytecodePolynomials<Fr, EdwardsProjective> =
+            BytecodePolynomials::new(program, trace);
     }
 
     #[test]
@@ -833,6 +839,7 @@ mod tests {
             ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
             ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let _polys: PCPolys<Fr, EdwardsProjective> = PCPolys::new_program(program, trace);
+        let _polys: BytecodePolynomials<Fr, EdwardsProjective> =
+            BytecodePolynomials::new(program, trace);
     }
 }

@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 
 use super::{
     instruction::JoltInstruction,
-    vm::{pc::ELFRow, read_write_memory::MemoryOp},
+    vm::{bytecode::ELFRow, read_write_memory::MemoryOp},
 };
 
 trait JoltProvableTrace {

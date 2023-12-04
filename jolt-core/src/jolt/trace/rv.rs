@@ -20,7 +20,7 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, sub::SUBInstruction};
-use crate::jolt::vm::{pc::ELFRow, rv32i_vm::RV32I};
+use crate::jolt::vm::{bytecode::ELFRow, rv32i_vm::RV32I};
 use common::{constants::REGISTER_COUNT, RV32InstructionFormat, RV32IM};
 
 use super::JoltProvableTrace;
