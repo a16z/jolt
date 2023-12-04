@@ -254,8 +254,9 @@ impl<F: PrimeField> DensePolynomial<F> {
     assert_eq!(self.Z.len(), self.len);
   }
 
-  pub fn merge<T>(polys: &Vec<T>) -> DensePolynomial<F> 
-  where T: AsRef<DensePolynomial<F>>
+  pub fn merge<T>(polys: &Vec<T>) -> DensePolynomial<F>
+  where
+    T: AsRef<DensePolynomial<F>>,
   {
     let mut Z: Vec<F> = Vec::new();
     for poly in polys.iter() {
@@ -304,7 +305,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
 
 impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
   fn as_ref(&self) -> &DensePolynomial<F> {
-      self
+    self
   }
 }
 
@@ -441,6 +442,27 @@ impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
       len: self.len,
       Z: summed_evaluations,
     }
+  }
+}
+
+pub mod bench {
+  use super::*;
+  use crate::utils::gen_random_point;
+  use ark_curve25519::Fr;
+  use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
+
+  pub fn dense_ml_poly_bench(group: &mut BenchmarkGroup<'_, WallTime>) {
+    let evals: Vec<Fr> = gen_random_point::<Fr>(1 << 10);
+    let poly = DensePolynomial::new(evals.clone());
+
+    let r: Vec<Fr> = gen_random_point::<Fr>(10);
+
+    group.bench_function("evaluate", |b| {
+      b.iter(|| {
+        let result = black_box(poly.evaluate(&r));
+        criterion::black_box(result);
+      })
+    });
   }
 }
 

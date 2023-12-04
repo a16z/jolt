@@ -62,7 +62,6 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
   result
 }
 
-#[tracing::instrument(skip_all, name = "compute_dotproduct")]
 pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
   assert_eq!(a.len(), b.len());
 

@@ -86,6 +86,7 @@ where
   /// The data associated with each memory slot. A triple (a, v, t) by default. 
   type MemoryTuple = (F, F, F);
 
+  #[tracing::instrument(skip_all, name = "MemoryCheckingProver.prove")]
   /// Generates a memory checking proof for the given committed polynomials.
   fn prove_memory_checking(
     &self,

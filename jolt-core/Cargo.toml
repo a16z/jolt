@@ -72,3 +72,11 @@ path = "src/lib.rs"
 default = ["ark-ec/parallel", "ark-ff/parallel", "ark-std/parallel", "ark-ff/asm", "multicore"]
 multicore = ["rayon"]
 ark-msm = [] # run with arkworks MSM without small field element optimization
+
+[[bench]]
+name = "sumcheck"
+harness = false
+
+[[bench]]
+name = "dense_mlpoly"
+harness = false

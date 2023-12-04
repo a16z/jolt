@@ -118,31 +118,41 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
 #[rustfmt::skip]
 fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+  let mut rng = test_rng();
+
+  let mut ops: Vec<RV32I> = vec![
+    RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::BGEU(BGEUInstruction(
+      rng.next_u32() as u64,
+      rng.next_u32() as u64,
+    )),
+    RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::BLTU(BLTUInstruction(
+      rng.next_u32() as u64,
+      rng.next_u32() as u64,
+    )),
+    RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::JALR(JALRInstruction(
+      rng.next_u32() as u64,
+      rng.next_u32() as u64,
+    )),
+    RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+  ];
+  for _ in 0..10 {
+    ops.extend(ops.clone());
+  }
+  println!("Running {:?}", ops.len());
+
   let work = Box::new(|| {
-    let mut rng = test_rng();
-
-    let mut ops: Vec<RV32I> = vec![
-      RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BGEU(BGEUInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BLTU(BLTUInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::JALR(JALRInstruction(rng.next_u32() as u64,rng.next_u32() as u64)),
-      RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-      RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    ];
-    for _ in 0..10 {
-      ops.extend(ops.clone());
-    }
-
     let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
     let proof: InstructionLookupsProof<Fr, EdwardsProjective> =

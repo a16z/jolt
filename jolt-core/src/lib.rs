@@ -15,5 +15,10 @@ mod subprotocols;
 pub mod jolt;
 mod utils;
 
+// Benchmarks
+pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;
+pub use crate::poly::dense_mlpoly::bench::dense_ml_poly_bench;
+
+
 #[cfg(test)]
 mod e2e_test;
