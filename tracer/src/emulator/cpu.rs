@@ -3819,7 +3819,7 @@ impl DecodeCache {
 
         DecodeCache {
             hash_map: FnvHashMap::default(),
-            entries: entries,
+            entries,
             front_index: 0,
             back_index: DECODE_CACHE_ENTRY_NUM - 1,
             hit_count: 0,
@@ -3929,8 +3929,8 @@ impl DecodeCacheEntry {
         DecodeCacheEntry {
             word: 0,
             instruction_index: INVALID_CACHE_ENTRY,
-            next_index: next_index,
-            prev_index: prev_index,
+            next_index,
+            prev_index,
         }
     }
 }

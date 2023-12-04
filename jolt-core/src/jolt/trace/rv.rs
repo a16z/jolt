@@ -181,8 +181,8 @@ impl RVTraceRow {
             rd_post_val: common.register_state.rd_post_val,
             rs1_val: common.register_state.rs1_val,
             rs2_val: common.register_state.rs2_val,
-            memory_bytes_before: memory_bytes_before,
-            memory_bytes_after: memory_bytes_after,
+            memory_bytes_before,
+            memory_bytes_after,
         }
     }
 
@@ -1553,7 +1553,7 @@ mod trace_validation_tests {
         let rs1_val: u64 = 102;
         let imm_val: u32 = 202;
         let jalr = RVTraceRow {
-            pc: pc,
+            pc,
             opcode: RV32IM::JALR,
             rd: Some(1),
             rs1: Some(1),
@@ -1595,7 +1595,7 @@ mod trace_validation_tests {
         let rs1_val: u64 = 102;
         let imm_val: u32 = 202;
         let jalr = RVTraceRow {
-            pc: pc,
+            pc,
             opcode: RV32IM::JALR,
             rd: Some(1),
             rs1: Some(1),
@@ -1782,7 +1782,7 @@ mod trace_validation_tests {
         let imm = imm_max;
         let rd_expected: u64 = (imm << 12u32) as u64 + pc;
         let mut auipc = RVTraceRow {
-            pc: pc,
+            pc,
             opcode: RV32IM::AUIPC,
             rd: Some(12),
             rs1: None,

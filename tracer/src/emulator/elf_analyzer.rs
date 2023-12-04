@@ -199,7 +199,7 @@ impl ElfAnalyzer {
         */
 
         Header {
-            e_width: e_width,
+            e_width,
             _e_class: e_class,
             _e_endian: e_endian,
             _e_elf_version: e_elf_version,
@@ -208,15 +208,15 @@ impl ElfAnalyzer {
             _e_type: e_type,
             _e_machine: e_machine,
             _e_version: e_version,
-            e_entry: e_entry,
+            e_entry,
             _e_phoff: e_phoff,
-            e_shoff: e_shoff,
+            e_shoff,
             _e_flags: e_flags,
             _e_ehsize: e_ehsize,
             _e_phentsize: e_phentsize,
             _e_phnum: e_phnum,
             _e_shentsize: e_shentsize,
-            e_shnum: e_shnum,
+            e_shnum,
             _e_shstrndx: e_shstrndx,
         }
     }
@@ -476,12 +476,12 @@ impl ElfAnalyzer {
             */
 
             headers.push(SectionHeader {
-                sh_name: sh_name,
-                sh_type: sh_type,
+                sh_name,
+                sh_type,
                 _sh_flags: sh_flags,
-                sh_addr: sh_addr,
-                sh_offset: sh_offset,
-                sh_size: sh_size,
+                sh_addr,
+                sh_offset,
+                sh_size,
                 _sh_link: sh_link,
                 _sh_info: sh_info,
                 _sh_addralign: sh_addralign,
@@ -577,12 +577,12 @@ impl ElfAnalyzer {
                 */
 
                 entries.push(SymbolEntry {
-                    st_name: st_name,
-                    st_info: st_info,
-                    _st_other: _st_other,
-                    _st_shndx: _st_shndx,
-                    st_value: st_value,
-                    _st_size: _st_size,
+                    st_name,
+                    st_info,
+                    _st_other,
+                    _st_shndx,
+                    st_value,
+                    _st_size,
                 });
             }
         }

@@ -101,12 +101,12 @@ impl Mmu {
 
         Mmu {
             clock: 0,
-            xlen: xlen,
+            xlen,
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(tracer),
-            dtb: dtb,
+            dtb,
             disk: VirtioBlockDisk::new(),
             plic: Plic::new(),
             clint: Clint::new(),

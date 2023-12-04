@@ -42,7 +42,7 @@ impl Uart {
             scr: 0,
             thre_ip: false,
             interrupting: false,
-            terminal: terminal,
+            terminal,
         }
     }
 
