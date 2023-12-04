@@ -216,7 +216,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
           let iterator = (0..len).into_par_iter();
 
           #[cfg(not(feature = "multicore"))]
-          let iterator = (0..len).into_par_iter();
+          let iterator = (0..len).into_iter();
 
           let (eval_point_0, eval_point_2, eval_point_3) = iterator
             .map(|i| {
@@ -629,16 +629,16 @@ pub mod bench {
     let r2 = vec![Fr::rand(&mut rng); num_vars];
     let r3 = vec![Fr::rand(&mut rng); num_vars];
     let eq1 = DensePolynomial::new(EqPolynomial::new(r1).evals());
-    let eq2 = DensePolynomial::new(EqPolynomial::new(r2).evals());
-    let eq3 = DensePolynomial::new(EqPolynomial::new(r3).evals());
+    let left = DensePolynomial::new(EqPolynomial::new(r2).evals());
+    let right = DensePolynomial::new(EqPolynomial::new(r3).evals());
     let params =
-      CubicSumcheckParams::new_prod(vec![eq1.clone()], vec![eq2.clone()], eq3.clone(), num_vars);
+      CubicSumcheckParams::new_prod(vec![eq1.clone()], vec![left.clone()], right.clone(), num_vars);
 
     let mut claim = Fr::zero();
     for i in 0..num_vars {
       let eval1 = eq1.evaluate(&index_to_field_bitvector(i, num_vars));
-      let eval2 = eq2.evaluate(&index_to_field_bitvector(i, num_vars));
-      let eval3 = eq3.evaluate(&index_to_field_bitvector(i, num_vars));
+      let eval2 = left.evaluate(&index_to_field_bitvector(i, num_vars));
+      let eval3 = right.evaluate(&index_to_field_bitvector(i, num_vars));
 
       claim += eval1 * eval2 * eval3;
     }
