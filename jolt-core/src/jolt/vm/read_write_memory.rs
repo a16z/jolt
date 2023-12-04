@@ -35,16 +35,22 @@ where
   G: CurveGroup<ScalarField = F>,
 {
   _group: PhantomData<G>,
+  /// Size of entire address space (i.e. RAM + registers for RISC-V)
   memory_size: usize,
-
+  /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
+  /// and vice versa, so the read addresses and write addresses are the same.
   a_read_write: DensePolynomial<F>,
-
+  /// MLE of the read values. 
   v_read: DensePolynomial<F>,
+  /// MLE of the write values.
   v_write: DensePolynomial<F>,
+  /// MLE of the final memory state. 
   v_final: DensePolynomial<F>,
-
+  /// MLE of the read timestamps.
   t_read: DensePolynomial<F>,
+  /// MLE of the write timestamps.
   t_write: DensePolynomial<F>,
+  /// MLE of the final timestamps.
   t_final: DensePolynomial<F>,
 }
 
@@ -135,11 +141,11 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
 
 pub struct MemoryCommitment<G: CurveGroup> {
   generators: MemoryCommitmentGenerators<G>,
-  /// Contains:
+  /// Commitments for:
   /// a_read_write, v_read, v_write, t_read, t_write
   pub read_write_commitments: CombinedTableCommitment<G>,
 
-  /// Contains:
+  /// Commitments for:
   /// v_final, t_final
   pub init_final_commitments: CombinedTableCommitment<G>,
 }
@@ -154,8 +160,8 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Commitment = MemoryCommitment<G>;
   type BatchedPolynomials = BatchedMemoryPolynomials<F>;
+  type Commitment = MemoryCommitment<G>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
     let batched_read_write = DensePolynomial::merge(&vec![
@@ -199,12 +205,16 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
+  /// Evaluation of the a_read_write polynomial at the opening point.
   a_read_write_opening: F,
+  /// Evaluation of the v_read polynomial at the opening point.
   v_read_opening: F,
+  /// Evaluation of the v_write polynomial at the opening point.
   v_write_opening: F,
+  /// Evaluation of the t_read polynomial at the opening point.
   t_read_opening: F,
+  /// Evaluation of the t_write polynomial at the opening point.
   t_write_opening: F,
-
   read_write_opening_proof: CombinedTableEvalProof<G>,
 }
 
@@ -281,8 +291,11 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  a_init_final: Option<F>, // Computed by verifier
+  /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
+  a_init_final: Option<F>,
+  /// Evaluation of the v_final polynomial at the opening point.
   v_final: F,
+  /// Evaluation of the t_final polynomial at the opening point.
   t_final: F,
 
   init_final_opening_proof: CombinedTableEvalProof<G>,

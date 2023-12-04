@@ -22,6 +22,8 @@ use crate::jolt::subtable::{
   LassoSubtable,
 };
 
+/// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
+/// are callable on the enum type via enum_dispatch.
 macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(u8)]
@@ -34,6 +36,8 @@ macro_rules! instruction_set {
 
 // TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with
 //     combined trait/function to_enum_index(subtable: &dyn LassoSubtable<F>) => usize
+/// Generates an enum out of a list of LassoSubtable types. All LassoSubtable methods
+/// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[repr(usize)]

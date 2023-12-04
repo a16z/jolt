@@ -18,9 +18,13 @@ use merlin::Transcript;
 use std::marker::PhantomData;
 
 pub struct MultisetHashes<F: PrimeField> {
+  /// Multiset hash of "init" tuple(s)
   hash_init: F,
+  /// Multiset hash of "final" tuple(s)
   hash_final: F,
+  /// Multiset hash of "read" tuple(s)
   hash_read: F,
+  /// Multiset hash of "write" tuple(s)
   hash_write: F,
 }
 
@@ -57,10 +61,17 @@ where
   InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
   _polys: PhantomData<Polynomials>,
+  /// Multiset hashes (init, read, write, final) for each memory.
   multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
+  /// The read and write grand products for every memory has the same size, 
+  /// so they can be batched.
   read_write_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+  /// The init and final grand products for every memory has the same size, 
+  /// so they can be batched.
   init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+  /// The opening proofs associated with the read/write grand product.
   read_write_openings: ReadWriteOpenings,
+  /// The opening proofs associated with the init/final grand product.
   init_final_openings: InitFinalOpenings,
 }
 
@@ -72,8 +83,10 @@ where
 {
   type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
   type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
-  type MemoryTuple = (F, F, F); // (a, v, t)
+  /// The data associated with each memory slot. A triple (a, v, t) by default. 
+  type MemoryTuple = (F, F, F);
 
+  /// Generates a memory checking proof for the given committed polynomials.
   fn prove_memory_checking(
     &self,
     polynomials: &Polynomials,
@@ -121,6 +134,7 @@ where
     }
   }
 
+  /// Proves the grand products for the memory checking multisets (init, read, write, final).
   fn prove_grand_products(
     &self,
     polynomials: &Polynomials,
@@ -178,6 +192,8 @@ where
     )
   }
 
+  /// Constructs a batched grand product circuit for the read and write multisets associated
+  /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
   fn read_write_grand_product(
     &self,
     polynomials: &Polynomials,
@@ -208,6 +224,8 @@ where
     )
   }
 
+  /// Constructs a batched grand product circuit for the init and final multisets associated
+  /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
   fn init_final_grand_product(
     &self,
     polynomials: &Polynomials,
@@ -238,11 +256,19 @@ where
     )
   }
 
+  /// Computes the MLE of the leaves of the "read" grand product circuit; one per memory.
   fn read_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  /// Computes the MLE of the leaves of the "write" grand product circuit; one per memory.
   fn write_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  /// Computes the MLE of the leaves of the "init" grand product circuit; one per memory.
   fn init_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  /// Computes the MLE of the leaves of the "final" grand product circuit; one per memory.
   fn final_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>>;
+  /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.
+  /// Each individual "leaf" of a grand product circuit (as computed by `read_leaves`, etc.) should be
+  /// one such fingerprint.
   fn fingerprint(tuple: &Self::MemoryTuple, gamma: &F, tau: &F) -> F;
+  /// Name of the memory checking instance, used for Fiat-Shamir. 
   fn protocol_name() -> &'static [u8];
 }
 
@@ -253,6 +279,7 @@ where
   G: CurveGroup<ScalarField = F>,
   Polynomials: BatchablePolynomials,
 {
+  /// Verifies a memory checking proof, given its associated polynomial `commitment`.
   fn verify_memory_checking(
     mut proof: MemoryCheckingProof<
       G,
@@ -329,12 +356,21 @@ where
     Ok(())
   }
 
+  /// Often some of the fields in `InitFinalOpenings` do not require an opening proof provided by 
+  /// the prover, and instead can be efficiently computed by the verifier by itself. This function 
+  /// populates any such fields in `openings`.
   fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>);
+  /// Computes "read" memory tuples (one per memory) from the given `openings`.
   fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
+  /// Computes "write" memory tuples (one per memory) from the given `openings`.
   fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
+  /// Computes "init" memory tuples (one per memory) from the given `openings`.
   fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple>;
+  /// Computes "final" memory tuples (one per memory) from the given `openings`.
   fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple>;
 
+  /// Checks that the claimed multiset hashes (output by grand product) are consistent with the 
+  /// openings given by `read_write_openings` and `init_final_openings`.
   fn check_fingerprints(
     claims: Vec<MultisetHashes<F>>,
     read_write_openings: &Self::ReadWriteOpenings,

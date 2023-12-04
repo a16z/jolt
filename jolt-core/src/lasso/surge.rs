@@ -55,8 +55,8 @@ where
   F: PrimeField,
   G: CurveGroup<ScalarField = F>,
 {
-  type Commitment = SurgeCommitment<G>;
   type BatchedPolynomials = BatchedSurgePolynomials<F>;
+  type Commitment = SurgeCommitment<G>;
 
   fn batch(&self) -> Self::BatchedPolynomials {
     let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
