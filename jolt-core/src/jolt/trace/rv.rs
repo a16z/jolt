@@ -371,9 +371,8 @@ impl RVTraceRow {
       ensure!(self.memory_bytes_before.as_ref().unwrap().len() == size, "Line {}: memory_bytes_before length does not match size", line!());
 
       let mut rd = self.rd_post_val.unwrap();
-      let mask = 0b11111111;
       for i in 0..size {
-        let expected_byte = (rd & mask) as u8;
+        let expected_byte = rd as u8;
         ensure!(expected_byte == self.memory_bytes_before.as_ref().unwrap()[i], "Line {}: Byte {} does not match between rd ({}) and memory_bytes_before ({})", line!(), i, expected_byte, self.memory_bytes_before.as_ref().unwrap()[i]);
 
         rd = rd >> 8;
@@ -389,9 +388,8 @@ impl RVTraceRow {
 
       // Check that memory_bytes_after == rs2
       let mut store_val = self.rs2_val.unwrap();
-      let mask = 0b11111111;
       for i in 0..size {
-        let expected_byte = (store_val & mask) as u8;
+        let expected_byte = store_val as u8;
         ensure!(expected_byte == self.memory_bytes_after.as_ref().unwrap()[i], "Line {}: Byte {} does not match between rs2 ({}) and memory_bytes_after ({})", line!(), i, expected_byte, self.memory_bytes_after.as_ref().unwrap()[i]);
         store_val = store_val >> 8;
       }
@@ -807,9 +805,9 @@ mod tests {
     let add_ram_ops = add_row.to_ram_ops();
     assert_eq!(add_ram_ops.len(), 7);
     let expected_memory_ops = vec![
-      MemoryOp::Write(12, 0, 35),
       MemoryOp::Read(10, 15),
       MemoryOp::Read(11, 20),
+      MemoryOp::Write(12, 0, 35),
       MemoryOp::no_op(),
       MemoryOp::no_op(),
       MemoryOp::no_op(),
