@@ -39,18 +39,31 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
-    fn prove() -> JoltProof<F, G> {
-        // preprocess?
-        // emulate
-        // prove_bytecode
-        // prove_memory
-        // prove_lookups
-        // prove_r1cs
-        unimplemented!("todo");
+    fn prove(
+        mut bytecode: Vec<ELFRow>,
+        mut bytecode_trace: Vec<ELFRow>,
+        memory_trace: Vec<MemoryOp>,
+        memory_size: usize,
+        instructions: Vec<Self::InstructionSet>,
+    ) -> JoltProof<F, G> {
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        let mut random_tape = RandomTape::new(b"Jolt prover randomness");
+        let bytecode_proof =
+            Self::prove_bytecode(bytecode, bytecode_trace, &mut transcript, &mut random_tape);
+        let memory_proof =
+            Self::prove_memory(memory_trace, memory_size, &mut transcript, &mut random_tape);
+        let instruction_lookups =
+            Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+        todo!("rics");
+        JoltProof {
+            instruction_lookups,
+            read_write_memory: memory_proof,
+            bytecode: bytecode_proof,
+        }
     }
 
     fn verify(proof: JoltProof<F, G>) -> Result<(), ProofVerifyError> {
-        let mut transcript = Transcript::new(b"Jolt");
+        let mut transcript = Transcript::new(b"Jolt transcript");
         Self::verify_bytecode(proof.bytecode, &mut transcript)?;
         Self::verify_memory(proof.read_write_memory, &mut transcript)?;
         Self::verify_instruction_lookups(proof.instruction_lookups, &mut transcript)?;
