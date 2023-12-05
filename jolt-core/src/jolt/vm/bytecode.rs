@@ -6,7 +6,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use common::ELFInstruction;
 
 use crate::{
-    lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier},
+    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
         identity_poly::IdentityPolynomial,
@@ -17,6 +17,20 @@ use crate::{
 };
 
 const ADDRESS_INCREMENT: usize = 1;
+
+pub struct BytecodeProof<F, G>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
+    pub memory_checking_proof: MemoryCheckingProof<
+        G,
+        BytecodePolynomials<F, G>,
+        BytecodeReadWriteOpenings<F, G>,
+        BytecodeInitFinalOpenings<F, G>,
+    >,
+    pub commitment: BytecodeCommitment<G>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ELFRow {
