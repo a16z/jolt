@@ -6,7 +6,7 @@ use crate::jolt::subtable::LassoSubtable;
 use crate::utils::index_to_field_bitvector;
 
 #[enum_dispatch]
-pub trait JoltInstruction {
+pub trait JoltInstruction: std::marker::Sync {
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
     /// output of the instruction. This function can also be thought of as the low-degree extension

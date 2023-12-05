@@ -3,7 +3,7 @@ use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
 
 #[enum_dispatch]
-pub trait LassoSubtable<F: PrimeField>: 'static {
+pub trait LassoSubtable<F: PrimeField>: 'static + std::marker::Sync {
     /// Returns the TypeId of this subtable.
     /// The `Jolt` trait has associated enum types `InstructionSet` and `Subtables`.
     /// This function is used to resolve the many-to-many mapping between `InstructionSet` variants

@@ -476,6 +476,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionLookups.read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -483,6 +484,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
@@ -500,6 +502,8 @@ where
             })
             .collect()
     }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookups.write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -507,6 +511,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
@@ -524,6 +529,8 @@ where
             })
             .collect()
     }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookups.init_leaves")]
     fn init_leaves(
         &self,
         _polynomials: &InstructionPolynomials<F, G>,
@@ -531,6 +538,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let leaf_fingerprints = (0..M)
@@ -548,6 +556,8 @@ where
             })
             .collect()
     }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookups.final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -555,6 +565,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let leaf_fingerprints = (0..M)
@@ -574,6 +585,7 @@ where
     }
 
     /// Overrides default implementation to handle flags
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -585,11 +597,7 @@ where
             self.write_leaves(polynomials, gamma, tau);
         debug_assert_eq!(read_fingerprints.len(), write_fingerprints.len());
 
-        let mut circuits = Vec::with_capacity(2 * Self::NUM_MEMORIES);
-        let mut read_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
-        let mut write_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
-
-        for i in 0..Self::NUM_MEMORIES {
+        let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES).into_par_iter().flat_map(|i| {
             let mut toggled_read_fingerprints = read_fingerprints[i].evals();
             let mut toggled_write_fingerprints = write_fingerprints[i].evals();
             let subtable_index = Self::memory_to_subtable_index(i);
@@ -605,11 +613,10 @@ where
                 GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
             let write_circuit =
                 GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
-            read_hashes.push(read_circuit.evaluate());
-            write_hashes.push(write_circuit.evaluate());
-            circuits.push(read_circuit);
-            circuits.push(write_circuit);
-        }
+            vec![read_circuit, write_circuit]
+        }).collect();
+        let read_hashes: Vec<F> = circuits.par_iter().step_by(2).map(|circuit| circuit.evaluate()).collect();
+        let write_hashes: Vec<F> = circuits.par_iter().skip(1).step_by(2).map(|circuit| circuit.evaluate()).collect();
 
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
         let expanded_flag_map: Vec<usize> = (0..2 * Self::NUM_MEMORIES)
