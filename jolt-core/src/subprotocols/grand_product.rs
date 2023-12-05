@@ -63,6 +63,13 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         assert_eq!(self.right_vec[len - 1].get_num_vars(), 0);
         self.left_vec[len - 1][0] * self.right_vec[len - 1][0]
     }
+
+    pub fn take_layer(&mut self, layer_id: usize) -> (DensePolynomial<F>, DensePolynomial<F>) {
+        let left = std::mem::replace(&mut self.left_vec[layer_id], DensePolynomial::new(vec![F::zero()]));
+        let right = std::mem::replace(&mut self.right_vec[layer_id], DensePolynomial::new(vec![F::zero()]));
+        (left, right)
+    }
+
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -94,6 +101,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
 pub struct BatchedGrandProductCircuit<F: PrimeField> {
     pub circuits: Vec<GrandProductCircuit<F>>,
 
+    flags_present: bool,
     flags: Option<Vec<DensePolynomial<F>>>,
     flag_map: Option<Vec<usize>>,
     fingerprint_polys: Option<Vec<DensePolynomial<F>>>,
@@ -103,6 +111,8 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
     pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
         Self {
             circuits,
+
+            flags_present: false,
             flags: None,
             flag_map: None,
             fingerprint_polys: None,
@@ -121,6 +131,8 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
         Self {
             circuits,
+
+            flags_present: true,
             flags: Some(flags),
             flag_map: Some(flag_map),
             fingerprint_polys: Some(fingerprint_polys),
@@ -143,22 +155,26 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
         layer_id: usize,
         eq: DensePolynomial<F>,
     ) -> CubicSumcheckParams<F> {
-        if self.flags.is_some() && layer_id == 0 {
+        if self.flags_present && layer_id == 0 {
             let flags = self.flags.as_ref().unwrap();
             debug_assert_eq!(flags[0].len(), eq.len());
 
             let num_rounds = eq.get_num_vars();
+
+            // Each of these is needed exactly once, transfer ownership rather than clone.
             let fingerprint_polys = self.fingerprint_polys.take().unwrap();
+            let flags = self.flags.take().unwrap();
+            let flag_map = self.flag_map.take().unwrap();
             CubicSumcheckParams::new_flags(
                 fingerprint_polys,
-                self.flags.as_ref().unwrap().clone(),
+                flags,
                 eq,
-                self.flag_map.as_ref().unwrap().clone(),
+                flag_map,
                 num_rounds,
             )
         } else {
             // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
-            let layer_id = if self.flags.is_some() {
+            let layer_id = if self.flags_present {
                 layer_id - 1
             } else {
                 layer_id
@@ -166,16 +182,11 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
             let num_rounds = self.circuits[0].left_vec[layer_id].get_num_vars();
 
-            // TODO(sragss): rm clone – use remove / take
+            let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = 
+                self.circuits.iter_mut().map(|circuit| circuit.take_layer(layer_id)).unzip();
             CubicSumcheckParams::new_prod(
-                self.circuits
-                    .iter()
-                    .map(|circuit| circuit.left_vec[layer_id].clone())
-                    .collect(),
-                self.circuits
-                    .iter()
-                    .map(|circuit| circuit.right_vec[layer_id].clone())
-                    .collect(),
+                lefts,
+                rights,
                 eq,
                 num_rounds,
             )
