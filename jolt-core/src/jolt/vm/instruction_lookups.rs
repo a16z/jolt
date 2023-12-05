@@ -118,6 +118,7 @@ where
     type BatchedPolynomials = BatchedInstructionPolynomials<F>;
     type Commitment = InstructionCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "InstructionPolynomials.batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
 
@@ -129,6 +130,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionPolynomials.commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
             .batched_dim_read
@@ -912,6 +914,7 @@ where
     }
 
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
+    #[tracing::instrument(skip_all, name = "InstructionLookups.polynomialize")]
     fn polynomialize(&self) -> InstructionPolynomials<F, G> {
         let m: usize = self.ops.len().next_power_of_two();
 
@@ -921,6 +924,7 @@ where
         let mut E_polys: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&self.ops);
+
         for memory_index in 0..Self::NUM_MEMORIES {
             let dim_index = Self::memory_to_dimension_index(memory_index);
             let subtable_index = Self::memory_to_subtable_index(memory_index);
@@ -1300,6 +1304,7 @@ where
     }
 
     /// Materializes all subtables used by this Jolt instance.
+    #[tracing::instrument(skip_all, name = "InstructionLookups.materialize_subtables")]
     fn materialize_subtables() -> Vec<Vec<F>> {
         let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Subtables::COUNT);
         for subtable in Subtables::iter() {

@@ -109,6 +109,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     #[cfg(feature = "multicore")]
+    #[tracing::instrument(skip_all, name = "DensePolynomial.commit_inner")]
     fn commit_inner<G: CurveGroup<ScalarField = F>>(
         &self,
         blinds: &[F],
@@ -194,7 +195,7 @@ impl<F: PrimeField> DensePolynomial<F> {
             .into_par_iter()
             .map(|i| {
                 (0..L_size)
-                    .into_par_iter()
+                    .into_iter()
                     .map(|j| L[j] * self.Z[j * R_size + i])
                     .sum()
             })

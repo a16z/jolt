@@ -146,7 +146,7 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
   ];
-  for _ in 0..14 {
+  for _ in 0..16 {
     ops.extend(ops.clone());
   }
   println!("Running {:?}", ops.len());

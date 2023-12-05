@@ -41,6 +41,7 @@ impl<F: PrimeField> EqPolynomial<F> {
         (ell / 2, ell - ell / 2)
     }
 
+    #[tracing::instrument(skip_all, name = "EqPolynomial.compute_factored_evals")]
     pub fn compute_factored_evals(&self) -> (Vec<F>, Vec<F>) {
         let ell = self.r.len();
         let (left_num_vars, _right_num_vars) = Self::compute_factored_lens(ell);
