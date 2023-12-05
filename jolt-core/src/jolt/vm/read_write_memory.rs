@@ -70,13 +70,30 @@ where
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
-    pub fn new(
-        memory_trace: Vec<MemoryOp>,
-        memory_size: usize,
-        transcript: &mut Transcript,
-    ) -> (Self, Vec<u64>) {
+    pub fn new(memory_trace: Vec<MemoryOp>, transcript: &mut Transcript) -> (Self, Vec<u64>) {
         let m = memory_trace.len();
         assert!(m.is_power_of_two());
+
+        let remap_address = |a: u64| {
+            assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+            if a >= RAM_START_ADDRESS {
+                a - RAM_START_ADDRESS + REGISTER_COUNT
+            } else {
+                // If a < REGISTER_COUNT, it is one of the registers and doesn't
+                // need to be remapped
+                a
+            }
+        };
+
+        let max_memory_address = memory_trace
+            .iter()
+            .map(|op| match op {
+                MemoryOp::Read(a, _) => remap_address(*a),
+                MemoryOp::Write(a, _) => remap_address(*a),
+            })
+            .max()
+            .unwrap();
+        let memory_size = max_memory_address.next_power_of_two() as usize;
 
         let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
         let mut v_read: Vec<u64> = Vec::with_capacity(m);
@@ -90,14 +107,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         for memory_access in memory_trace {
             match memory_access {
                 MemoryOp::Read(a, v) => {
-                    assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
-                    let remapped_a = if a >= RAM_START_ADDRESS {
-                        a - RAM_START_ADDRESS + REGISTER_COUNT
-                    } else {
-                        // If a < REGISTER_COUNT, it is one of the registers and doesn't
-                        // need to be remapped
-                        a
-                    };
+                    let remapped_a = remap_address(a);
                     debug_assert_eq!(v, v_final[remapped_a as usize]);
                     a_read_write.push(remapped_a);
                     v_read.push(v);
@@ -107,14 +117,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     t_final[remapped_a as usize] = timestamp + 1;
                 }
                 MemoryOp::Write(a, v_new) => {
-                    assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
-                    let remapped_a = if a >= RAM_START_ADDRESS {
-                        a - RAM_START_ADDRESS + REGISTER_COUNT
-                    } else {
-                        // If a < REGISTER_COUNT, it is one of the registers and doesn't
-                        // need to be remapped
-                        a
-                    };
+                    let remapped_a = remap_address(a);
                     let v_old = v_final[remapped_a as usize];
                     a_read_write.push(remapped_a);
                     v_read.push(v_old);
@@ -538,7 +541,7 @@ mod tests {
         let mut random_tape = RandomTape::new(b"test_tape");
 
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, Vec<u64>) =
-            ReadWriteMemory::new(memory_trace, MEMORY_SIZE, &mut transcript);
+            ReadWriteMemory::new(memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
