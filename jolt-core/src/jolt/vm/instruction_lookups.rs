@@ -282,11 +282,12 @@ where
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         [
-            polynomials.dim.map(evaluate).collect(),
-            polynomials.read_cts.map(evaluate).collect(),
-            polynomials.E_polys.map(evaluate).collect(),
+            polynomials.dim.iter().map(evaluate).collect(),
+            polynomials.read_cts.iter().map(evaluate).collect(),
+            polynomials.E_polys.iter().map(evaluate).collect(),
             polynomials
                 .instruction_flag_polys
+                .iter()
                 .map(evaluate)
                 .collect(),
         ]
