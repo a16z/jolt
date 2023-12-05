@@ -137,8 +137,9 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GrandProduct.sumcheck_layer_params")]
     fn sumcheck_layer_params(
-        &self,
+        &mut self,
         layer_id: usize,
         eq: DensePolynomial<F>,
     ) -> CubicSumcheckParams<F> {
@@ -147,14 +148,9 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
             debug_assert_eq!(flags[0].len(), eq.len());
 
             let num_rounds = eq.get_num_vars();
-            // TODO(sragss): Handle .as_ref().unwrap().clone() without cloning.
+            let fingerprint_polys = self.fingerprint_polys.take().unwrap();
             CubicSumcheckParams::new_flags(
-                self.fingerprint_polys
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .map(|poly| poly.clone())
-                    .collect(),
+                fingerprint_polys,
                 self.flags.as_ref().unwrap().clone(),
                 eq,
                 self.flag_map.as_ref().unwrap().clone(),
@@ -195,7 +191,7 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
     pub fn prove<G>(
-        batch: BatchedGrandProductCircuit<F>,
+        mut batch: BatchedGrandProductCircuit<F>,
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>)
     where
@@ -208,6 +204,9 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
         let mut rand = Vec::new();
         for layer_id in (0..batch.num_layers()).rev() {
+            let span = tracing::span!(tracing::Level::TRACE, "grand_product_layer", layer_id);
+            let _enter = span.enter();
+
             // produce a fresh set of coeffs and a joint claim
             let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(
                 transcript,
@@ -279,6 +278,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                     combine_prod: false,
                 });
             }
+            drop(_enter);
         }
 
         (
