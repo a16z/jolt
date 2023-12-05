@@ -1138,12 +1138,9 @@ mod tests {
                 &mut random_tape,
             );
         let mut verifier_transcript = Transcript::new(b"example");
-        assert!(
-            RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok()
-        );
+        assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
 
         // Prove memory
-        const MEMORY_SIZE: usize = 1 << 16;
 
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // something about Linux boot requiring it...
@@ -1155,7 +1152,7 @@ mod tests {
 
         let mut prover_transcript = Transcript::new(b"example");
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(memory_ops, MEMORY_SIZE, &mut prover_transcript);
+            ReadWriteMemory::new(memory_ops, &mut prover_transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
