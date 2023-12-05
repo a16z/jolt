@@ -17,10 +17,12 @@ use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
+use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use crate::utils::math::Math;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::{test_rng};
+use criterion::black_box;
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
 
@@ -29,6 +31,7 @@ pub enum BenchType {
     JoltDemo,
     Halo2Comparison,
     RV32,
+    Poly
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -37,6 +40,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::JoltDemo => jolt_demo_benchmarks(),
         BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
         BenchType::RV32 => rv32i_lookup_benchmarks(),
+        BenchType::Poly => dense_ml_poly(),
         _ => panic!("BenchType does not have a mapping"),
     }
 }
@@ -186,4 +190,17 @@ fn random_surge_test<const C: usize, const M: usize>(num_ops: usize) -> Box<dyn 
     };
 
     Box::new(func)
+}
+
+fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let log_sizes = [10, 16, 20];
+    let mut tasks = Vec::new();
+    for &log_size in &log_sizes {
+        let (gens, poly) = init_commit_bench(log_size);
+        let task = move || {
+            black_box(run_commit_bench(gens, poly));
+        };
+        tasks.push((tracing::info_span!("commit", log_size = log_size), Box::new(task) as Box<dyn FnOnce()>));
+    }
+    tasks
 }

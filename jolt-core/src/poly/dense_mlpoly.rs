@@ -455,7 +455,7 @@ impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
 pub mod bench {
     use super::*;
     use crate::utils::gen_random_point;
-    use ark_curve25519::Fr;
+    use ark_curve25519::{Fr, EdwardsProjective};
     use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
 
     pub fn dense_ml_poly_bench(group: &mut BenchmarkGroup<'_, WallTime>) {
@@ -467,9 +467,33 @@ pub mod bench {
         group.bench_function("evaluate", |b| {
             b.iter(|| {
                 let result = black_box(poly.evaluate(&r));
-                criterion::black_box(result);
+                black_box(result);
             })
         });
+
+        let log_sizes = [10, 16];
+        for &log_size in &log_sizes {
+            group.bench_function(format!("commit {}", log_size), |b| {
+                b.iter_with_setup(
+                    || init_commit_bench(log_size),
+                    |(gens, poly)| {
+                        black_box(run_commit_bench(gens, poly));
+                    }
+                )
+            });
+        }
+    }
+
+    pub fn init_commit_bench(log_size: usize) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
+        let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
+        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
+        let poly = DensePolynomial::new(evals.clone());
+        (gens, poly)
+    }
+
+    pub fn run_commit_bench(gens: PolyCommitmentGens<EdwardsProjective>, poly: DensePolynomial<Fr>) {
+        let result = black_box(poly.commit::<EdwardsProjective>(&gens, None));
+        black_box(result);
     }
 }
 
