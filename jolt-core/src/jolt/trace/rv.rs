@@ -843,7 +843,7 @@ impl JoltProvableTrace for RVTraceRow {
     }
   }
 
-    fn to_pc_trace(&self) -> ELFRow {
+    fn to_bytecode_trace(&self) -> ELFRow {
         ELFRow::new(
             self.pc.try_into().unwrap(),
             self.opcode as u64,
@@ -1016,10 +1016,10 @@ mod tests {
     use std::convert;
 
     #[test]
-    fn to_pc_trace() {
+    fn to_bytecode_trace() {
         // ADD
         let add_row = RVTraceRow::RType(2, RV32IM::ADD, 12, 10, 11, 0, 35, 15, 20);
-        let add_pc = add_row.to_pc_trace();
+        let add_pc = add_row.to_bytecode_trace();
         let expected_pc = ELFRow::new(2, RV32IM::ADD as u64, 12, 10, 11, 0u64);
         assert_eq!(add_pc, expected_pc);
 
@@ -1027,7 +1027,7 @@ mod tests {
         let imm = 20;
         let rd_update = 20 << 12;
         let lui_row = RVTraceRow::UType(0, RV32IM::LUI, 10, 0, rd_update, imm);
-        let lui_pc = lui_row.to_pc_trace();
+        let lui_pc = lui_row.to_bytecode_trace();
         let expected_pc = ELFRow::new(0, RV32IM::LUI as u64, 10, 0, 0, 20u64);
         assert_eq!(lui_pc, expected_pc);
     }
@@ -1072,7 +1072,7 @@ mod tests {
             .collect();
         let _: Vec<ELFRow> = converted_trace
             .iter()
-            .map(|row| row.to_pc_trace())
+            .map(|row| row.to_bytecode_trace())
             .collect();
 
         let mut num_errors = 0;
