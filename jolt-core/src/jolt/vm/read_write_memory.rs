@@ -34,8 +34,8 @@ where
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum MemoryOp {
-    Read(u64, u64),       // (address, value)
-    Write(u64, u64, u64), // (address, old_value, new_value)
+    Read(u64, u64),  // (address, value)
+    Write(u64, u64), // (address, new_value)
 }
 
 impl MemoryOp {
@@ -106,7 +106,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     t_write.push(timestamp + 1);
                     t_final[remapped_a as usize] = timestamp + 1;
                 }
-                MemoryOp::Write(a, v_old, v_new) => {
+                MemoryOp::Write(a, v_new) => {
                     assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
                     let remapped_a = if a >= RAM_START_ADDRESS {
                         a - RAM_START_ADDRESS + REGISTER_COUNT
@@ -115,7 +115,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                         // need to be remapped
                         a
                     };
-                    debug_assert_eq!(v_old, v_final[remapped_a as usize]);
+                    let v_old = v_final[remapped_a as usize];
                     a_read_write.push(remapped_a);
                     v_read.push(v_old);
                     v_write.push(v_new);
@@ -522,7 +522,7 @@ mod tests {
                 if address >= REGISTER_COUNT {
                     address = address + RAM_START_ADDRESS;
                 }
-                memory_trace.push(MemoryOp::Write(address, old_value, new_value));
+                memory_trace.push(MemoryOp::Write(address, new_value));
             }
         }
         memory_trace
