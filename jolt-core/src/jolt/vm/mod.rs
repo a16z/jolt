@@ -4,6 +4,12 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
+use crate::jolt::{
+    instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
+    subtable::LassoSubtable,
+};
+use crate::poly::structured_poly::BatchablePolynomials;
+use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 use crate::{
     lasso::{
         memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -12,31 +18,28 @@ use crate::{
     utils::math::Math,
 };
 
-use crate::jolt::{
-    instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
-    subtable::LassoSubtable,
-};
-use crate::poly::structured_poly::BatchablePolynomials;
-use crate::utils::{errors::ProofVerifyError, random::RandomTape};
-
 use self::bytecode::{
-    BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeReadWriteOpenings,
-    ELFRow,
+    BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeProof,
+    BytecodeReadWriteOpenings, ELFRow,
 };
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
 use self::read_write_memory::{
     MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
+    ReadWriteMemoryProof,
 };
 
 struct JoltProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     instruction_lookups: InstructionLookupsProof<F, G>,
+    read_write_memory: ReadWriteMemoryProof<F, G>,
+    bytecode: BytecodeProof<F, G>,
+    // TODO: r1cs
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
-    fn prove() {
+    fn prove() -> JoltProof<F, G> {
         // preprocess?
         // emulate
         // prove_bytecode
@@ -44,6 +47,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // prove_lookups
         // prove_r1cs
         unimplemented!("todo");
+    }
+
+    fn verify(proof: JoltProof<F, G>) -> Result<(), ProofVerifyError> {
+        let mut transcript = Transcript::new(b"Jolt");
+        Self::verify_bytecode(proof.bytecode, &mut transcript)?;
+        Self::verify_memory(proof.read_write_memory, &mut transcript)?;
+        Self::verify_instruction_lookups(proof.instruction_lookups, &mut transcript)?;
+        todo!("r1cs");
     }
 
     fn prove_instruction_lookups(
@@ -70,42 +81,33 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> (
-        MemoryCheckingProof<
-            G,
-            BytecodePolynomials<F, G>,
-            BytecodeReadWriteOpenings<F, G>,
-            BytecodeInitFinalOpenings<F, G>,
-        >,
-        BytecodeCommitment<G>,
-    ) {
+    ) -> BytecodeProof<F, G> {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode, trace);
         let batched_polys = polys.batch();
-        let commitments = BytecodePolynomials::commit(&batched_polys);
+        let commitment = BytecodePolynomials::commit(&batched_polys);
 
-        (
-            polys.prove_memory_checking(
-                &polys,
-                &batched_polys,
-                &commitments,
-                transcript,
-                random_tape,
-            ),
-            commitments,
-        )
+        let memory_checking_proof = polys.prove_memory_checking(
+            &polys,
+            &batched_polys,
+            &commitment,
+            transcript,
+            random_tape,
+        );
+        BytecodeProof {
+            memory_checking_proof,
+            commitment,
+        }
     }
 
     fn verify_bytecode(
-        proof: MemoryCheckingProof<
-            G,
-            BytecodePolynomials<F, G>,
-            BytecodeReadWriteOpenings<F, G>,
-            BytecodeInitFinalOpenings<F, G>,
-        >,
-        commitment: BytecodeCommitment<G>,
+        proof: BytecodeProof<F, G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        BytecodePolynomials::verify_memory_checking(proof, &commitment, transcript)
+        BytecodePolynomials::verify_memory_checking(
+            proof.memory_checking_proof,
+            &proof.commitment,
+            transcript,
+        )
     }
 
     fn prove_memory(
@@ -113,16 +115,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         memory_size: usize,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> (
-        MemoryCheckingProof<
-            G,
-            ReadWriteMemory<F, G>,
-            MemoryReadWriteOpenings<F, G>,
-            MemoryInitFinalOpenings<F, G>,
-        >,
-        MemoryCommitment<G>,
-        SurgeProof<F, G>,
-    ) {
+    ) -> ReadWriteMemoryProof<F, G> {
         const MAX_TRACE_SIZE: usize = 1 << 22;
         // TODO: Support longer traces
         assert!(memory_trace.len() <= MAX_TRACE_SIZE);
@@ -131,12 +124,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let (memory, read_timestamps) = ReadWriteMemory::new(memory_trace, memory_size, transcript);
         let batched_polys = memory.batch();
-        let commitments: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
+        let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 
         let memory_checking_proof = memory.prove_memory_checking(
             &memory,
             &batched_polys,
-            &commitments,
+            &commitment,
             transcript,
             random_tape,
         );
@@ -151,24 +144,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
                 .prove(transcript);
 
-        (memory_checking_proof, commitments, timestamp_validity_proof)
+        ReadWriteMemoryProof {
+            memory_checking_proof,
+            commitment,
+            timestamp_validity_proof,
+        }
     }
 
     fn verify_memory(
-        memory_checking_proof: MemoryCheckingProof<
-            G,
-            ReadWriteMemory<F, G>,
-            MemoryReadWriteOpenings<F, G>,
-            MemoryInitFinalOpenings<F, G>,
-        >,
-        commitment: MemoryCommitment<G>,
+        proof: ReadWriteMemoryProof<F, G>,
         transcript: &mut Transcript,
-        timestamp_validity_proof: SurgeProof<F, G>,
     ) -> Result<(), ProofVerifyError> {
         const MAX_TRACE_SIZE: usize = 1 << 22;
-        ReadWriteMemory::verify_memory_checking(memory_checking_proof, &commitment, transcript)?;
+        ReadWriteMemory::verify_memory_checking(
+            proof.memory_checking_proof,
+            &proof.commitment,
+            transcript,
+        )?;
         <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::verify(
-            timestamp_validity_proof,
+            proof.timestamp_validity_proof,
             transcript,
         )
     }
