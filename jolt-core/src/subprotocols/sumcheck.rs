@@ -254,11 +254,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // drop(_enter);
             // drop(_span);
 
-            let _span = tracing::span!(
-              tracing::Level::TRACE,
-              "BatchedSumcheck.flag_poly"
-            );
-            let _enter = _span.enter();
+            // let _span = tracing::span!(
+            //   tracing::Level::TRACE,
+            //   "BatchedSumcheck.flag_poly"
+            // );
+            // let _enter = _span.enter();
             // Batch<MLEIndex<(eval_0, eval_2, eval_3)>>
             let flag_evals: Vec<Vec<(F, F, F)>> = (0..params.poly_Bs.len()).into_par_iter().map(|batch_index| {
               let mle_evals: Vec<(F,F,F)> = (0..len).map(|mle_index| {
@@ -275,14 +275,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               }).collect();
               mle_evals
             }).collect();
-            drop(_enter);
-            drop(_span);
+            // drop(_enter);
+            // drop(_span);
 
-            let _span = tracing::span!(
-              tracing::Level::TRACE,
-              "BatchedSumcheck.main_poly"
-            );
-            let _enter = _span.enter();
+            // let _span = tracing::span!(
+            //   tracing::Level::TRACE,
+            //   "BatchedSumcheck.main_poly"
+            // );
+            // let _enter = _span.enter();
             let evals: Vec<(F,F,F)> = (0..params.poly_As.len()).into_par_iter().map(|batch_index| {
               let thing: (F,F,F) = (0..len).map(|mle_index| {
                 let low = mle_index;
@@ -333,8 +333,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
               
               thing
             }).collect();
-            drop(_enter);
-            drop(_span);
+            // drop(_enter);
+            // drop(_span);
 
             // let evals: Vec<(F, F, F)> = iterator
             //     .map(|(poly_A, poly_B, eq)| {

@@ -235,6 +235,10 @@ impl<F: PrimeField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
 
+    pub fn evaluate_at_chi(&self, chis: &Vec<F>) -> F {
+        compute_dotproduct(&self.Z, &chis)
+    }
+
     fn vec(&self) -> &Vec<F> {
         &self.Z
     }

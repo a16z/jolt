@@ -278,19 +278,21 @@ where
     type Openings = [Vec<F>; 4];
 
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
-        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate(&opening_point) };
+        // All of these evaluations share the lagrange basis polynomials.
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         [
-            polynomials.dim.iter().map(evaluate).collect(),
-            polynomials.read_cts.iter().map(evaluate).collect(),
-            polynomials.E_polys.iter().map(evaluate).collect(),
+            polynomials.dim.map(evaluate).collect(),
+            polynomials.read_cts.map(evaluate).collect(),
+            polynomials.E_polys.map(evaluate).collect(),
             polynomials
                 .instruction_flag_polys
-                .iter()
                 .map(evaluate)
                 .collect(),
         ]
     }
 
+    #[tracing::instrument(skip_all, name="InstructionReadWriteOpenings.prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
@@ -413,6 +415,7 @@ where
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name="InstructionFinalOpenings.prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
