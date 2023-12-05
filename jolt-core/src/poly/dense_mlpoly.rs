@@ -118,13 +118,15 @@ impl<F: PrimeField> DensePolynomial<F> {
         let L_size = blinds.len();
         let R_size = self.Z.len() / L_size;
         assert_eq!(L_size * R_size, self.Z.len());
+
+        let gens = CurveGroup::normalize_batch(&gens.G);
+
         let C = (0..L_size)
             .into_par_iter()
             .map(|i| {
-                Commitments::batch_commit(
+                Commitments::batch_commit_normalized(
                     self.Z[R_size * i..R_size * (i + 1)].as_ref(),
-                    &blinds[i],
-                    gens,
+                    &gens,
                 )
             })
             .collect();
@@ -152,7 +154,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         PolyCommitment { C }
     }
 
-    #[tracing::instrument(skip_all, name = "DensePolynomial.commit")]
     pub fn commit<G>(
         &self,
         gens: &PolyCommitmentGens<G>,

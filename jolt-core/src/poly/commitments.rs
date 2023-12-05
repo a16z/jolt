@@ -71,6 +71,8 @@ impl<G: CurveGroup> MultiCommitGens<G> {
 pub trait Commitments<G: CurveGroup>: Sized {
     fn commit(&self, blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G;
     fn batch_commit(inputs: &[Self], blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G;
+    // TODO(sragss): Make this a JOLT-TODO. Replace batch_commit rather than duplicate
+    fn batch_commit_normalized(inputs: &[Self], bases: &[G::Affine]) -> G;
 }
 
 impl<G: CurveGroup> Commitments<G> for G::ScalarField {
@@ -81,18 +83,20 @@ impl<G: CurveGroup> Commitments<G> for G::ScalarField {
         gens_n.G[0] * self + gens_n.h * blind
     }
 
-    #[tracing::instrument(skip_all, name = "Commitments.batch_commit")]
     fn batch_commit(inputs: &[Self], blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G {
         assert_eq!(gens_n.n, inputs.len());
 
-        let span = tracing::span!(tracing::Level::TRACE, "batch_commit_preparation");
-        let _enter = span.enter();
         let mut bases = CurveGroup::normalize_batch(gens_n.G.as_ref());
         let mut scalars = inputs.to_vec();
         bases.push(gens_n.h.into_affine());
         scalars.push(*blind);
-        drop(_enter);
 
         VariableBaseMSM::msm(bases.as_ref(), scalars.as_ref()).unwrap()
+    }
+
+    fn batch_commit_normalized(inputs: &[Self], bases: &[G::Affine]) -> G {
+        assert_eq!(bases.len(), inputs.len());
+
+        VariableBaseMSM::msm(&bases, &inputs).unwrap()
     }
 }
