@@ -314,7 +314,7 @@ impl Emulator {
     ///
     /// # Arguments
     /// * `s` Symbol strings
-    pub fn get_addredd_of_symbol(&self, s: &String) -> Option<u64> {
+    pub fn get_address_of_symbol(&self, s: &String) -> Option<u64> {
         match self.symbol_map.get(s) {
             Some(address) => Some(*address),
             None => None,
