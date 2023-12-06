@@ -1107,6 +1107,10 @@ mod tests {
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
+        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        let loaded_bytecode =
+            Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
+                .expect("deserialization failed");
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -1152,7 +1156,7 @@ mod tests {
 
         let mut prover_transcript = Transcript::new(b"example");
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(memory_ops, &mut prover_transcript);
+            ReadWriteMemory::new(loaded_bytecode, memory_ops, &mut prover_transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
