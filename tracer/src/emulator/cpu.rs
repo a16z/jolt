@@ -1834,6 +1834,7 @@ fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, xlen),
+        raw: word,
         imm: None,
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
@@ -1846,6 +1847,7 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
+        raw: word,
         imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
@@ -1858,6 +1860,7 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
+        raw: word,
         imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
@@ -1870,6 +1873,7 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
+        raw: word,
         imm: Some(normalize_b_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
@@ -1882,6 +1886,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
+        raw: word,
         imm: Some(normalize_uj_imm(f.imm)),
         rs1: None,
         rs2: None,
@@ -1894,6 +1899,7 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
+        raw: word,
         imm: Some(normalize_uj_imm(f.imm)),
         rs1: None,
         rs2: None,

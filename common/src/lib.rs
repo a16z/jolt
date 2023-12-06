@@ -12,6 +12,7 @@ pub struct RVTraceRow {
 pub struct ELFInstruction {
     pub address: u64,
     pub opcode: RV32IM,
+    pub raw: u32,
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
