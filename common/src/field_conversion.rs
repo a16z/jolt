@@ -1,8 +1,6 @@
 use ark_bn254::Fr as ArkFr;
 use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
 
-
-
 use ff::PrimeField as GenericPrimeField;
 use spartan2::provider::bn256_grumpkin::bn256::Base as Spartan2Fr;
 
@@ -31,7 +29,7 @@ pub fn ff_to_ark<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ff: 
 
 #[cfg(test)]
 mod tests {
-    use ark_std::{rand};
+    use ark_std::rand;
 
     use super::*;
 

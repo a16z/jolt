@@ -65,11 +65,16 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     }
 
     pub fn take_layer(&mut self, layer_id: usize) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        let left = std::mem::replace(&mut self.left_vec[layer_id], DensePolynomial::new(vec![F::zero()]));
-        let right = std::mem::replace(&mut self.right_vec[layer_id], DensePolynomial::new(vec![F::zero()]));
+        let left = std::mem::replace(
+            &mut self.left_vec[layer_id],
+            DensePolynomial::new(vec![F::zero()]),
+        );
+        let right = std::mem::replace(
+            &mut self.right_vec[layer_id],
+            DensePolynomial::new(vec![F::zero()]),
+        );
         (left, right)
     }
-
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -165,13 +170,7 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
             let fingerprint_polys = self.fingerprint_polys.take().unwrap();
             let flags = self.flags.take().unwrap();
             let flag_map = self.flag_map.take().unwrap();
-            CubicSumcheckParams::new_flags(
-                fingerprint_polys,
-                flags,
-                eq,
-                flag_map,
-                num_rounds,
-            )
+            CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, flag_map, num_rounds)
         } else {
             // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
             let layer_id = if self.flags_present {
@@ -182,14 +181,12 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
             let num_rounds = self.circuits[0].left_vec[layer_id].get_num_vars();
 
-            let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = 
-                self.circuits.iter_mut().map(|circuit| circuit.take_layer(layer_id)).unzip();
-            CubicSumcheckParams::new_prod(
-                lefts,
-                rights,
-                eq,
-                num_rounds,
-            )
+            let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = self
+                .circuits
+                .iter_mut()
+                .map(|circuit| circuit.take_layer(layer_id))
+                .unzip();
+            CubicSumcheckParams::new_prod(lefts, rights, eq, num_rounds)
         }
     }
 }

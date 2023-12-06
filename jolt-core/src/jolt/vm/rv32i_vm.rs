@@ -7,11 +7,11 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use super::Jolt;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
-    and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
-    jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
-    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+    and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction, bgeu::BGEUInstruction,
+    blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, jal::JALInstruction,
+    jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
+    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
+    xor::XORInstruction, JoltInstruction, Opcode,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,

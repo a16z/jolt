@@ -143,7 +143,7 @@ where
             .combined_commit(b"BatchedInstructionPolynomials.E_poly");
         let (flag_commitment_gens, instruction_flag_commitment) = batched_polys
             .batched_flag
-            .combined_commit(b"BatchedInstructionPolynomials.flag");
+            .combined_commit_with_hint(b"BatchedInstructionPolynomials.flag");
 
         let generators = InstructionCommitmentGenerators {
             dim_read_commitment_gens,
@@ -295,7 +295,7 @@ where
         ]
     }
 
-    #[tracing::instrument(skip_all, name="InstructionReadWriteOpenings.prove_openings")]
+    #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings.prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
@@ -418,7 +418,7 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name="InstructionFinalOpenings.prove_openings")]
+    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings.prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
@@ -603,26 +603,38 @@ where
             self.write_leaves(polynomials, gamma, tau);
         debug_assert_eq!(read_fingerprints.len(), write_fingerprints.len());
 
-        let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES).into_par_iter().flat_map(|i| {
-            let mut toggled_read_fingerprints = read_fingerprints[i].evals();
-            let mut toggled_write_fingerprints = write_fingerprints[i].evals();
-            let subtable_index = Self::memory_to_subtable_index(i);
-            for j in 0..self.num_lookups {
-                let flag = polynomials.subtable_flag_polys[subtable_index][j];
-                if flag == F::zero() {
-                    toggled_read_fingerprints[j] = F::one();
-                    toggled_write_fingerprints[j] = F::one();
+        let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)
+            .into_par_iter()
+            .flat_map(|i| {
+                let mut toggled_read_fingerprints = read_fingerprints[i].evals();
+                let mut toggled_write_fingerprints = write_fingerprints[i].evals();
+                let subtable_index = Self::memory_to_subtable_index(i);
+                for j in 0..self.num_lookups {
+                    let flag = polynomials.subtable_flag_polys[subtable_index][j];
+                    if flag == F::zero() {
+                        toggled_read_fingerprints[j] = F::one();
+                        toggled_write_fingerprints[j] = F::one();
+                    }
                 }
-            }
 
-            let read_circuit =
-                GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
-            let write_circuit =
-                GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
-            vec![read_circuit, write_circuit]
-        }).collect();
-        let read_hashes: Vec<F> = circuits.par_iter().step_by(2).map(|circuit| circuit.evaluate()).collect();
-        let write_hashes: Vec<F> = circuits.par_iter().skip(1).step_by(2).map(|circuit| circuit.evaluate()).collect();
+                let read_circuit =
+                    GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
+                let write_circuit =
+                    GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+                vec![read_circuit, write_circuit]
+            })
+            .collect();
+        let read_hashes: Vec<F> = circuits
+            .par_iter()
+            .step_by(2)
+            .map(|circuit| circuit.evaluate())
+            .collect();
+        let write_hashes: Vec<F> = circuits
+            .par_iter()
+            .skip(1)
+            .step_by(2)
+            .map(|circuit| circuit.evaluate())
+            .collect();
 
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
         let expanded_flag_map: Vec<usize> = (0..2 * Self::NUM_MEMORIES)

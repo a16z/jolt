@@ -17,11 +17,14 @@ use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
-use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
+use crate::poly::dense_mlpoly::bench::{
+    init_commit_bench, init_commit_bench_ones, init_commit_small, run_commit_bench,
+};
+use crate::poly::dense_mlpoly::CommitHint;
 use crate::utils::math::Math;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
-use ark_std::{test_rng};
+use ark_std::test_rng;
 use criterion::black_box;
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
@@ -31,7 +34,7 @@ pub enum BenchType {
     JoltDemo,
     Halo2Comparison,
     RV32,
-    Poly
+    Poly,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -150,7 +153,7 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
     RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
   ];
-  for _ in 0..16 {
+  for _ in 0..15 {
     ops.extend(ops.clone());
   }
   println!("Running {:?}", ops.len());
@@ -193,14 +196,62 @@ fn random_surge_test<const C: usize, const M: usize>(num_ops: usize) -> Box<dyn 
 }
 
 fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let log_sizes = [10, 16, 20];
+    let log_sizes = [20];
     let mut tasks = Vec::new();
+
+    // Normal benchmark
     for &log_size in &log_sizes {
         let (gens, poly) = init_commit_bench(log_size);
         let task = move || {
             black_box(run_commit_bench(gens, poly));
         };
-        tasks.push((tracing::info_span!("commit", log_size = log_size), Box::new(task) as Box<dyn FnOnce()>));
+        tasks.push((
+            tracing::info_span!("DensePoly::commit", log_size = log_size),
+            Box::new(task) as Box<dyn FnOnce()>,
+        ));
     }
+
+    // Commit only 0 / 1
+    for &log_size in &log_sizes {
+        let (gens, poly) = init_commit_bench_ones(log_size, 0.3);
+        let task = move || {
+            black_box(poly.commit_with_hint(&gens, CommitHint::Normal));
+        };
+        tasks.push((
+            tracing::info_span!("DensePoly::commit(0/1)", log_size = log_size),
+            Box::new(task) as Box<dyn FnOnce()>,
+        ));
+
+        let (gens, poly) = init_commit_bench_ones(log_size, 0.3);
+        let task = move || {
+            black_box(poly.commit_with_hint(&gens, CommitHint::Flags));
+        };
+        tasks.push((
+            tracing::info_span!("DensePoly::commit_with_hint(0/1)", log_size = log_size),
+            Box::new(task) as Box<dyn FnOnce()>,
+        ));
+    }
+
+    // Commit only small field elements (as if counts / indices)
+    for &log_size in &log_sizes {
+        let (gens, poly) = init_commit_small(log_size, 1 << 16);
+        let task = move || {
+            black_box(poly.commit_with_hint(&gens, CommitHint::Normal));
+        };
+        tasks.push((
+            tracing::info_span!("DensePoly::commit(small)", log_size = log_size),
+            Box::new(task) as Box<dyn FnOnce()>,
+        ));
+
+        let (gens, poly) = init_commit_small(log_size, 1 << 16);
+        let task = move || {
+            black_box(poly.commit_with_hint(&gens, CommitHint::Small));
+        };
+        tasks.push((
+            tracing::info_span!("DensePoly::commit_with_hint(small)", log_size = log_size),
+            Box::new(task) as Box<dyn FnOnce()>,
+        ));
+    }
+
     tasks
 }

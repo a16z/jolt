@@ -4,10 +4,7 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::lasso::{
-    memory_checking::MemoryCheckingProver,
-    surge::Surge,
-};
+use crate::lasso::{memory_checking::MemoryCheckingProver, surge::Surge};
 
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},

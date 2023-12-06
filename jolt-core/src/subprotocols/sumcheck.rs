@@ -98,22 +98,22 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
 
     #[inline]
     pub fn combine_prod(l: &F, r: &F, eq: &F) -> F {
-      if *l == F::one() && *r == F::one() {
-        *eq
-      } else {
-        *l * r * eq
-      }
+        if *l == F::one() && *r == F::one() {
+            *eq
+        } else {
+            *l * r * eq
+        }
     }
 
     #[inline]
     pub fn combine_flags(h: &F, flag: &F, eq: &F) -> F {
-      if *flag == F::zero() {
-        *eq
-      } else if *flag == F::one() {
-        *eq * *h
-      } else {
-        *eq * (*flag * h + (F::one() - flag))
-      }
+        if *flag == F::zero() {
+            *eq
+        } else if *flag == F::one() {
+            *eq * *h
+        } else {
+            *eq * (*flag * h + (F::one() - flag))
+        }
     }
 
     pub fn pairs_iter(
@@ -239,18 +239,20 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // );
             // let _enter = _span.enter();
             let len = params.poly_As[0].len() / 2;
-            let eq_evals: Vec<(F, F, F)> = (0..len).map(|i| {
-              let low = i;
-              let high = len + i;
+            let eq_evals: Vec<(F, F, F)> = (0..len)
+                .map(|i| {
+                    let low = i;
+                    let high = len + i;
 
-              let eq = &params.poly_eq;
+                    let eq = &params.poly_eq;
 
-              let eval_point_0 = eq[low];
-              let m_eq = eq[high] - eq[low];
-              let eval_point_2 = eq[high] + m_eq;
-              let eval_point_3 = eval_point_2 + m_eq;
-              (eval_point_0, eval_point_2, eval_point_3)
-            }).collect();
+                    let eval_point_0 = eq[low];
+                    let m_eq = eq[high] - eq[low];
+                    let eval_point_2 = eq[high] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                })
+                .collect();
             // drop(_enter);
             // drop(_span);
 
@@ -260,21 +262,26 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // );
             // let _enter = _span.enter();
             // Batch<MLEIndex<(eval_0, eval_2, eval_3)>>
-            let flag_evals: Vec<Vec<(F, F, F)>> = (0..params.poly_Bs.len()).into_par_iter().map(|batch_index| {
-              let mle_evals: Vec<(F,F,F)> = (0..len).map(|mle_index| {
-                let low = mle_index;
-                let high = len + mle_index;
+            let flag_evals: Vec<Vec<(F, F, F)>> = (0..params.poly_Bs.len())
+                .into_par_iter()
+                .map(|batch_index| {
+                    let mle_evals: Vec<(F, F, F)> = (0..len)
+                        .map(|mle_index| {
+                            let low = mle_index;
+                            let high = len + mle_index;
 
-                let poly = &params.poly_Bs[batch_index];
+                            let poly = &params.poly_Bs[batch_index];
 
-                let eval_point_0 = poly[low];
-                let m_eq = poly[high] - poly[low];
-                let eval_point_2 = poly[high] + m_eq;
-                let eval_point_3 = eval_point_2 + m_eq;
-                (eval_point_0, eval_point_2, eval_point_3)
-              }).collect();
-              mle_evals
-            }).collect();
+                            let eval_point_0 = poly[low];
+                            let m_eq = poly[high] - poly[low];
+                            let eval_point_2 = poly[high] + m_eq;
+                            let eval_point_3 = eval_point_2 + m_eq;
+                            (eval_point_0, eval_point_2, eval_point_3)
+                        })
+                        .collect();
+                    mle_evals
+                })
+                .collect();
             // drop(_enter);
             // drop(_span);
 
@@ -283,63 +290,78 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             //   "BatchedSumcheck.main_poly"
             // );
             // let _enter = _span.enter();
-            let evals: Vec<(F,F,F)> = (0..params.poly_As.len()).into_par_iter().map(|batch_index| {
-              let thing: (F,F,F) = (0..len).map(|mle_index| {
-                let low = mle_index;
-                let high = len + mle_index;
+            let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
+                .into_par_iter()
+                .map(|batch_index| {
+                    let thing: (F, F, F) = (0..len)
+                        .map(|mle_index| {
+                            let low = mle_index;
+                            let high = len + mle_index;
 
-                let poly_0 = params.poly_As[batch_index][low];
-                let poly_m = params.poly_As[batch_index][high] - params.poly_As[batch_index][low];
-                let poly_2 = params.poly_As[batch_index][high] + poly_m;
-                let poly_3 = poly_2 + poly_m;
+                            let poly_0 = params.poly_As[batch_index][low];
+                            let poly_m = params.poly_As[batch_index][high]
+                                - params.poly_As[batch_index][low];
+                            let poly_2 = params.poly_As[batch_index][high] + poly_m;
+                            let poly_3 = poly_2 + poly_m;
 
-                let eval_point_0 = params.combine(&poly_0, &flag_evals[params.a_to_b[batch_index]][mle_index].0, &eq_evals[mle_index].0);
-                let eval_point_2 = params.combine(&poly_2, &flag_evals[params.a_to_b[batch_index]][mle_index].1, &eq_evals[mle_index].1);
-                let eval_point_3 = params.combine(&poly_3, &flag_evals[params.a_to_b[batch_index]][mle_index].2, &eq_evals[mle_index].2);
+                            let eval_point_0 = params.combine(
+                                &poly_0,
+                                &flag_evals[params.a_to_b[batch_index]][mle_index].0,
+                                &eq_evals[mle_index].0,
+                            );
+                            let eval_point_2 = params.combine(
+                                &poly_2,
+                                &flag_evals[params.a_to_b[batch_index]][mle_index].1,
+                                &eq_evals[mle_index].1,
+                            );
+                            let eval_point_3 = params.combine(
+                                &poly_3,
+                                &flag_evals[params.a_to_b[batch_index]][mle_index].2,
+                                &eq_evals[mle_index].2,
+                            );
 
+                            // let flag_index = params.a_to_b[batch_index];
+                            // let flag_0 = &flag_evals[flag_index][mle_index].0;
+                            // let flag_2 = &flag_evals[flag_index][mle_index].1;
+                            // let flag_3 = &flag_evals[flag_index][mle_index].2;
+                            // let eval_point_0 = if *flag_0 == F::zero() {
+                            //   eq_evals[mle_index].0
+                            // } else {
+                            //   params.combine(&poly_0, &flag_evals[params.a_to_b[batch_index]][mle_index].0, &eq_evals[mle_index].0)
+                            // };
 
-                // let flag_index = params.a_to_b[batch_index];
-                // let flag_0 = &flag_evals[flag_index][mle_index].0;
-                // let flag_2 = &flag_evals[flag_index][mle_index].1;
-                // let flag_3 = &flag_evals[flag_index][mle_index].2;
-                // let eval_point_0 = if *flag_0 == F::zero() {
-                //   eq_evals[mle_index].0
-                // } else {
-                //   params.combine(&poly_0, &flag_evals[params.a_to_b[batch_index]][mle_index].0, &eq_evals[mle_index].0)
-                // };
+                            // let poly_m = params.poly_As[batch_index][high] - params.poly_As[batch_index][low];
+                            // let eval_point_2 = if *flag_2 == F::zero() {
+                            //   eq_evals[mle_index].1
+                            // } else {
+                            //   let poly_2 = params.poly_As[batch_index][high] + poly_m;
+                            //   params.combine(&poly_2, &flag_evals[params.a_to_b[batch_index]][mle_index].1, &eq_evals[mle_index].1)
+                            // };
 
-                // let poly_m = params.poly_As[batch_index][high] - params.poly_As[batch_index][low];
-                // let eval_point_2 = if *flag_2 == F::zero() {
-                //   eq_evals[mle_index].1
-                // } else {
-                //   let poly_2 = params.poly_As[batch_index][high] + poly_m;
-                //   params.combine(&poly_2, &flag_evals[params.a_to_b[batch_index]][mle_index].1, &eq_evals[mle_index].1)
-                // };
+                            // let eval_point_3 = if *flag_3 == F::zero() {
+                            //   eq_evals[mle_index].2
+                            // } else {
+                            //   let poly_2 = params.poly_As[batch_index][high] + poly_m; // TODO(sragss): excessive
+                            //   let poly_3 = poly_2 + poly_m;
+                            //   params.combine(&poly_3, &flag_evals[params.a_to_b[batch_index]][mle_index].2, &eq_evals[mle_index].2)
+                            // };
 
-                // let eval_point_3 = if *flag_3 == F::zero() {
-                //   eq_evals[mle_index].2
-                // } else {
-                //   let poly_2 = params.poly_As[batch_index][high] + poly_m; // TODO(sragss): excessive
-                //   let poly_3 = poly_2 + poly_m;
-                //   params.combine(&poly_3, &flag_evals[params.a_to_b[batch_index]][mle_index].2, &eq_evals[mle_index].2)
-                // };
+                            (eval_point_0, eval_point_2, eval_point_3)
+                        })
+                        .fold(
+                            (F::zero(), F::zero(), F::zero()),
+                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+                        );
 
-
-                (eval_point_0, eval_point_2, eval_point_3)
-
-              }).fold(
-                (F::zero(), F::zero(), F::zero()),
-                |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c));
-              
-              thing
-            }).collect();
+                    thing
+                })
+                .collect();
             // drop(_enter);
             // drop(_span);
 
             // let evals: Vec<(F, F, F)> = iterator
             //     .map(|(poly_A, poly_B, eq)| {
             //         let len = poly_A.len() / 2;
-                    
 
             //         #[cfg(feature = "multicore")]
             //         let iterator = (0..len).into_par_iter();
