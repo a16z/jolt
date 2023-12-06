@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::marker::PhantomData;
 
 use ark_ec::CurveGroup;
@@ -16,6 +17,7 @@ use crate::{
     utils::{errors::ProofVerifyError, random::RandomTape},
 };
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
+use common::ELFInstruction;
 
 pub struct ReadWriteMemoryProof<F, G>
 where
@@ -52,6 +54,8 @@ where
     _group: PhantomData<G>,
     /// Size of entire address space (i.e. RAM + registers for RISC-V)
     memory_size: usize,
+    /// MLE of initial memory values. RAM is initialized to contain the program bytecode.
+    v_init: DensePolynomial<F>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
     /// and vice versa, so the read addresses and write addresses are the same.
     a_read_write: DensePolynomial<F>,
@@ -70,7 +74,11 @@ where
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
-    pub fn new(memory_trace: Vec<MemoryOp>, transcript: &mut Transcript) -> (Self, Vec<u64>) {
+    pub fn new(
+        bytecode: Vec<ELFInstruction>,
+        memory_trace: Vec<MemoryOp>,
+        transcript: &mut Transcript,
+    ) -> (Self, Vec<u64>) {
         let m = memory_trace.len();
         assert!(m.is_power_of_two());
 
@@ -92,13 +100,29 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 MemoryOp::Write(a, _) => remap_address(*a),
             })
             .max()
-            .unwrap();
-        let memory_size = max_memory_address.next_power_of_two() as usize;
+            .unwrap_or(0);
+        let max_bytecode_address = bytecode
+            .iter()
+            .map(|instr| remap_address(instr.address + 3))
+            .max()
+            .unwrap_or(0);
+        let memory_size =
+            max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
+
+        let mut v_init: Vec<u64> = vec![0; memory_size];
+        for instr in bytecode {
+            let address = remap_address(instr.address);
+            let raw = instr.raw;
+            for i in 0..4 {
+                // Write one byte of raw to v_init
+                v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+            }
+        }
 
         let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
         let mut v_read: Vec<u64> = Vec::with_capacity(m);
         let mut v_write: Vec<u64> = Vec::with_capacity(m);
-        let mut v_final: Vec<u64> = vec![0; memory_size];
+        let mut v_final: Vec<u64> = v_init.clone(); // TODO(moodlezoup): avoid clone
         let mut t_read: Vec<u64> = Vec::with_capacity(m);
         let mut t_write: Vec<u64> = Vec::with_capacity(m);
         let mut t_final: Vec<u64> = vec![0; memory_size];
@@ -135,6 +159,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             Self {
                 _group: PhantomData,
                 memory_size,
+                v_init: DensePolynomial::from_u64(&v_init),
                 a_read_write: DensePolynomial::from_u64(&a_read_write),
                 v_read: DensePolynomial::from_u64(&v_read),
                 v_write: DensePolynomial::from_u64(&v_write),
@@ -153,7 +178,7 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
     /// a_read_write, v_read, v_write, t_read, t_write
     batched_read_write: DensePolynomial<F>,
     /// Contains:
-    /// v_final, t_final
+    /// v_init, v_final, t_final
     batched_init_final: DensePolynomial<F>,
 }
 
@@ -164,7 +189,7 @@ pub struct MemoryCommitment<G: CurveGroup> {
     pub read_write_commitments: CombinedTableCommitment<G>,
 
     /// Commitments for:
-    /// v_final, t_final
+    /// v_init, v_final, t_final
     pub init_final_commitments: CombinedTableCommitment<G>,
 }
 
@@ -189,7 +214,8 @@ where
             &self.t_read,
             &self.t_write,
         ]);
-        let batched_init_final = DensePolynomial::merge(&vec![&self.v_final, &self.t_final]);
+        let batched_init_final =
+            DensePolynomial::merge(&vec![&self.v_init, &self.v_final, &self.t_final]);
 
         Self::BatchedPolynomials {
             batched_read_write,
@@ -311,6 +337,8 @@ where
 {
     /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
+    /// Evaluation of the v_init polynomial at the opening point.
+    v_init: F,
     /// Evaluation of the v_final polynomial at the opening point.
     v_final: F,
     /// Evaluation of the t_final polynomial at the opening point.
@@ -324,10 +352,11 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = [F; 2];
+    type Openings = [F; 3];
 
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         [
+            polynomials.v_init.evaluate(&opening_point),
             polynomials.v_final.evaluate(&opening_point),
             polynomials.t_final.evaluate(&opening_point),
         ]
@@ -337,7 +366,7 @@ where
         polynomials: &BatchedMemoryPolynomials<F>,
         commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
-        openings: [F; 2],
+        openings: [F; 3],
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
@@ -352,8 +381,9 @@ where
 
         Self {
             a_init_final: None, // Computed by verifier
-            v_final: openings[0],
-            t_final: openings[1],
+            v_init: openings[0],
+            v_final: openings[1],
+            t_final: openings[2],
             init_final_opening_proof,
         }
     }
@@ -366,7 +396,7 @@ where
     ) -> Result<(), ProofVerifyError> {
         self.init_final_opening_proof.verify(
             opening_point,
-            &vec![self.v_final, self.t_final],
+            &vec![self.v_init, self.v_final, self.t_final],
             &commitment.generators.gens_init_final,
             &commitment.init_final_commitments,
             transcript,
@@ -428,7 +458,7 @@ where
         let init_fingerprints = (0..self.memory_size)
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
-                    &(F::from(i as u64), F::zero(), F::zero()),
+                    &(F::from(i as u64), polynomials.v_init[i], F::zero()),
                     gamma,
                     tau,
                 )
@@ -483,7 +513,11 @@ where
         )]
     }
     fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
-        vec![(openings.a_init_final.unwrap(), F::zero(), F::zero())]
+        vec![(
+            openings.a_init_final.unwrap(),
+            openings.v_init,
+            F::zero(),
+        )]
     }
     fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
         vec![(
@@ -541,7 +575,7 @@ mod tests {
         let mut random_tape = RandomTape::new(b"test_tape");
 
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, Vec<u64>) =
-            ReadWriteMemory::new(memory_trace, &mut transcript);
+            ReadWriteMemory::new(vec![], memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
