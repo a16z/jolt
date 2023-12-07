@@ -17,6 +17,7 @@ use crate::{
     },
     utils::math::Math,
 };
+use common::ELFInstruction;
 
 use self::bytecode::{
     BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeProof,
@@ -40,18 +41,17 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
     fn prove(
-        mut bytecode: Vec<ELFRow>,
+        bytecode: Vec<ELFInstruction>,
         mut bytecode_trace: Vec<ELFRow>,
         memory_trace: Vec<MemoryOp>,
-        memory_size: usize,
         instructions: Vec<Self::InstructionSet>,
     ) -> JoltProof<F, G> {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape = RandomTape::new(b"Jolt prover randomness");
         let bytecode_proof =
-            Self::prove_bytecode(bytecode, bytecode_trace, &mut transcript, &mut random_tape);
+            Self::prove_bytecode(&bytecode, bytecode_trace, &mut transcript, &mut random_tape);
         let memory_proof =
-            Self::prove_memory(memory_trace, memory_size, &mut transcript, &mut random_tape);
+            Self::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups =
             Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
         todo!("rics");
@@ -90,12 +90,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn prove_bytecode(
-        mut bytecode: Vec<ELFRow>,
+        bytecode: &Vec<ELFInstruction>,
         mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> BytecodeProof<F, G> {
-        let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode, trace);
+        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
         let batched_polys = polys.batch();
         let commitment = BytecodePolynomials::commit(&batched_polys);
 
@@ -124,8 +125,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn prove_memory(
+        bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
-        memory_size: usize,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> ReadWriteMemoryProof<F, G> {
@@ -135,7 +136,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         todo!("Load program bytecode into memory");
 
-        let (memory, read_timestamps) = ReadWriteMemory::new(memory_trace, memory_size, transcript);
+        let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 

@@ -701,7 +701,7 @@ impl JoltProvableTrace for RVTraceRow {
 
     let rs1_read = || MemoryOp::Read(self.rs1.unwrap(), self.rs1_val.unwrap());
     let rs2_read = || MemoryOp::Read(self.rs2.unwrap(), self.rs2_val.unwrap());
-    let rd_write = || MemoryOp::Write(self.rd.unwrap(), self.rd_pre_val.unwrap(), self.rd_post_val.unwrap());
+    let rd_write = || MemoryOp::Write(self.rd.unwrap(), self.rd_post_val.unwrap());
 
     let memory_bytes_before = |index: usize| self.memory_bytes_before.as_ref().unwrap()[index] as u64;
     let memory_bytes_after= |index: usize| self.memory_bytes_after.as_ref().unwrap()[index] as u64;
@@ -795,7 +795,7 @@ impl JoltProvableTrace for RVTraceRow {
           rs1_read(),
           rs2_read(),
           MemoryOp::no_op(),
-          MemoryOp::Write(rs1_offset(), memory_bytes_before(0), memory_bytes_after(0)),
+          MemoryOp::Write(rs1_offset(), memory_bytes_after(0)),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
@@ -804,8 +804,8 @@ impl JoltProvableTrace for RVTraceRow {
           rs1_read(),
           rs2_read(),
           MemoryOp::no_op(),
-          MemoryOp::Write(rs1_offset(), memory_bytes_before(0), memory_bytes_after(0)),
-          MemoryOp::Write(rs1_offset() + 1, memory_bytes_before(1), memory_bytes_after(1)),
+          MemoryOp::Write(rs1_offset(), memory_bytes_after(0)),
+          MemoryOp::Write(rs1_offset() + 1, memory_bytes_after(1)),
           MemoryOp::no_op(),
           MemoryOp::no_op(),
         ],
@@ -813,10 +813,10 @@ impl JoltProvableTrace for RVTraceRow {
           rs1_read(),
           rs2_read(),
           MemoryOp::no_op(),
-          MemoryOp::Write(rs1_offset(), memory_bytes_before(0), memory_bytes_after(0)),
-          MemoryOp::Write(rs1_offset() + 1, memory_bytes_before(1), memory_bytes_after(1)),
-          MemoryOp::Write(rs1_offset() + 2, memory_bytes_before(2), memory_bytes_after(2)),
-          MemoryOp::Write(rs1_offset() + 3, memory_bytes_before(3), memory_bytes_after(3)),
+          MemoryOp::Write(rs1_offset(), memory_bytes_after(0)),
+          MemoryOp::Write(rs1_offset() + 1, memory_bytes_after(1)),
+          MemoryOp::Write(rs1_offset() + 2, memory_bytes_after(2)),
+          MemoryOp::Write(rs1_offset() + 3, memory_bytes_after(3)),
         ],
         _ => unreachable!()
       }
@@ -1041,7 +1041,7 @@ mod tests {
         let expected_memory_ops = vec![
             MemoryOp::Read(10, 15),
             MemoryOp::Read(11, 20),
-            MemoryOp::Write(12, 0, 35),
+            MemoryOp::Write(12, 35),
             MemoryOp::no_op(),
             MemoryOp::no_op(),
             MemoryOp::no_op(),
@@ -1107,6 +1107,10 @@ mod tests {
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
+        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        let loaded_bytecode =
+            Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
+                .expect("deserialization failed");
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -1138,16 +1142,13 @@ mod tests {
                 &mut random_tape,
             );
         let mut verifier_transcript = Transcript::new(b"example");
-        assert!(
-            RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok()
-        );
+        assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
 
         // Prove memory
-        const MEMORY_SIZE: usize = 1 << 16;
 
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // something about Linux boot requiring it...
-        let mut memory_ops: Vec<MemoryOp> = vec![MemoryOp::Write(11, 0, 4128)];
+        let mut memory_ops: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
         memory_ops.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
 
         let next_power_of_two = memory_ops.len().next_power_of_two();
@@ -1155,7 +1156,7 @@ mod tests {
 
         let mut prover_transcript = Transcript::new(b"example");
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(memory_ops, MEMORY_SIZE, &mut prover_transcript);
+            ReadWriteMemory::new(loaded_bytecode, memory_ops, &mut prover_transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
