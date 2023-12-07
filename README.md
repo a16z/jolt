@@ -39,9 +39,19 @@ Note: requires nightly Rust
 -   `cargo run --release -p jolt-core -- --name <bench_name>`
 -   `cargo run --release -- -p jolt-core --name <bench_name> --chart`: Display performance gant chart
 -   `cargo run --release -p jolt-core --features ark-msm -- --name <bench_name>`: Run without MSM small field optimizations
--   `sudo cargo flamegraph`
 
-_Note on flamegraphing: Turn off the parallel feature in Cargo.toml (`multicore`) and / or `export RAYON_NUM_THREADS=1` to make flamegraph more interpretable._
+## Flamegraph
+
+Requires `inferno`:
+
+```
+cargo install inferno
+```
+
+Then run 
+```
+cargo run -p jolt-core --release -- --name rv32 --format flamegraph && cat tracing.folded | inferno-flamegraph > tracing-flamegraph.svg
+```
 
 ## Disclaimer
 
