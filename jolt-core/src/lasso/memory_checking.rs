@@ -16,6 +16,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use std::marker::PhantomData;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator, ParallelIterator};
 
 pub struct MultisetHashes<F: PrimeField> {
     /// Multiset hash of "init" tuple(s)
@@ -202,6 +203,7 @@ where
 
     /// Constructs a batched grand product circuit for the read and write multisets associated
     /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &Polynomials,
@@ -213,17 +215,13 @@ where
         debug_assert_eq!(read_leaves.len(), write_leaves.len());
         let num_memories = read_leaves.len();
 
-        let mut circuits = Vec::with_capacity(2 * num_memories);
-        let mut read_hashes = Vec::with_capacity(num_memories);
-        let mut write_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
-            let read_circuit = GrandProductCircuit::new(&read_leaves[i]);
-            let write_circuit = GrandProductCircuit::new(&write_leaves[i]);
-            read_hashes.push(read_circuit.evaluate());
-            write_hashes.push(write_circuit.evaluate());
-            circuits.push(read_circuit);
-            circuits.push(write_circuit);
-        }
+        let circuits: Vec<GrandProductCircuit<F>> = (0..num_memories).into_par_iter().flat_map(|memory_index| {
+            let read_circuit = GrandProductCircuit::new(&read_leaves[memory_index]);
+            let write_circuit = GrandProductCircuit::new(&write_leaves[memory_index]);
+            vec![read_circuit, write_circuit]
+        }).collect();
+        let read_hashes: Vec<F> = circuits.par_iter().step_by(2).map(|circuit| circuit.evaluate()).collect();
+        let write_hashes: Vec<F> = circuits.par_iter().skip(1).step_by(2).map(|circuit| circuit.evaluate()).collect();
 
         (
             BatchedGrandProductCircuit::new_batch(circuits),
@@ -234,6 +232,7 @@ where
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
     /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
     fn init_final_grand_product(
         &self,
         polynomials: &Polynomials,
@@ -245,17 +244,13 @@ where
         debug_assert_eq!(init_leaves.len(), final_leaves.len());
         let num_memories = init_leaves.len();
 
-        let mut circuits = Vec::with_capacity(2 * num_memories);
-        let mut init_hashes = Vec::with_capacity(num_memories);
-        let mut final_hashes = Vec::with_capacity(num_memories);
-        for i in 0..num_memories {
-            let init_circuit = GrandProductCircuit::new(&init_leaves[i]);
-            let final_circuit = GrandProductCircuit::new(&final_leaves[i]);
-            init_hashes.push(init_circuit.evaluate());
-            final_hashes.push(final_circuit.evaluate());
-            circuits.push(init_circuit);
-            circuits.push(final_circuit);
-        }
+        let circuits: Vec<GrandProductCircuit<F>> = (0..num_memories).into_par_iter().flat_map(|memory_index| {
+            let init_circuit = GrandProductCircuit::new(&init_leaves[memory_index]);
+            let final_circuit = GrandProductCircuit::new(&final_leaves[memory_index]);
+            vec![init_circuit, final_circuit]
+        }).collect();
+        let init_hashes: Vec<F> = circuits.par_iter().step_by(2).map(|circuit| circuit.evaluate()).collect();
+        let final_hashes: Vec<F> = circuits.par_iter().skip(1).step_by(2).map(|circuit| circuit.evaluate()).collect();
 
         (
             BatchedGrandProductCircuit::new_batch(circuits),
