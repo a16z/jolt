@@ -132,7 +132,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         let C = (0..L_size)
             .into_par_iter()
             .map(|i| {
-                Commitments::batch_commit_normalized(
+                Commitments::batch_commit(
                     self.Z[R_size * i..R_size * (i + 1)].as_ref(),
                     &gens,
                 )
@@ -217,7 +217,7 @@ impl<F: PrimeField> DensePolynomial<F> {
             .map(|i| {
                 let scalars = self.Z[R_size * i..R_size * (i + 1)].as_ref();
                 match hint {
-                    CommitHint::Normal => Commitments::batch_commit_normalized(scalars, &gens),
+                    CommitHint::Normal => Commitments::batch_commit(scalars, &gens),
                     CommitHint::Flags => Self::flags_msm(scalars, &gens),
                     CommitHint::Small => {
                         let bigints: Vec<_> = scalars.iter().map(|s| s.into_bigint()).collect();
@@ -303,8 +303,23 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let n = self.len() / 2;
+
         for i in 0..n {
-            self.Z[i] = self.Z[i] + *r * (self.Z[i + n] - self.Z[i]);
+            let m = self.Z[i + n] - self.Z[i];
+            self.Z[i] += *r * m;
+        }
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
+        let n = self.len() / 2;
+
+        for i in 0..n {
+            let m = self.Z[i + n] - self.Z[i];
+            if !m.is_zero() {
+                self.Z[i] += *r * m;
+            }
         }
         self.num_vars -= 1;
         self.len = n;
