@@ -202,6 +202,7 @@ where
 
     /// Constructs a batched grand product circuit for the read and write multisets associated
     /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &Polynomials,
@@ -234,6 +235,7 @@ where
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
     /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
     fn init_final_grand_product(
         &self,
         polynomials: &Polynomials,

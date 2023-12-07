@@ -486,6 +486,7 @@ where
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
+                    .into_par_iter()
                     .map(|i| {
                         (
                             polynomials.dim[dim_index][i],
@@ -507,6 +508,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
@@ -531,6 +533,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let leaf_fingerprints = (0..M)
@@ -555,6 +558,7 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let leaf_fingerprints = (0..M)
