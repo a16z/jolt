@@ -103,9 +103,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .unwrap_or(0);
         let max_bytecode_address = bytecode
             .iter()
-            .map(|instr| remap_address(instr.address + 3))
+            .map(|instr| remap_address(instr.address))
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            + 3; // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
         let memory_size =
             max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
 
@@ -513,11 +514,7 @@ where
         )]
     }
     fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
-        vec![(
-            openings.a_init_final.unwrap(),
-            openings.v_init,
-            F::zero(),
-        )]
+        vec![(openings.a_init_final.unwrap(), openings.v_init, F::zero())]
     }
     fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
         vec![(
