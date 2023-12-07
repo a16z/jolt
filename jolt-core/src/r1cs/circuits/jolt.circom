@@ -47,12 +47,12 @@ template if_else() {
     signal input in[3]; 
     signal output out; 
 
-    signal zero_for_a <== in[0];
-    signal a <== in[1];
-    signal b <== in[2];
+    signal zero_for_a <-- in[0];
+    signal a <-- in[1];
+    signal b <-- in[2];
 
-    signal _please_help_me_god <== (1-zero_for_a) * a;
-    out <== _please_help_me_god + (zero_for_a) * b;
+    signal _please_help_me_god <-- (1-zero_for_a) * a;
+    out <-- _please_help_me_god + (zero_for_a) * b;
 }
 
 template combine_chunks(N, L) {
@@ -68,7 +68,7 @@ template combine_chunks(N, L) {
         }
     }
     
-    out <== in[N-1];
+    out <== combine[N-1];
 }
 
 // One CPU step of jolt 
@@ -108,7 +108,7 @@ template JoltStep() {
     */
     signal flags_combined <== combine_chunks(N_FLAGS(), 1)(op_flags);
     op_flags_packed === flags_combined;
-    
+
     signal is_load_instr <== op_flags[2];
     signal is_store_instr <== op_flags[3];
     signal is_jump_instr <== op_flags[4];
@@ -121,18 +121,18 @@ template JoltStep() {
     signal is_assert_false_instr <== op_flags[11];
     signal is_assert_true_instr <== op_flags[12];
     signal sign_imm <== op_flags[13];
-    signal is_lui <== op_flags[14];
+    signal is_concat <== op_flags[14];
 
-    /*******  Register Reading Constraints: 
+    // /*******  Register Reading Constraints: 
 
-    Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
-    and the last is the write to rd.
+    // Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
+    // and the last is the write to rd.
 
-    1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
-    2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
+    // 1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
+    // 2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
 
-    // TODO: encode virtual address for memory and registers
-    */
+    // // TODO: encode virtual address for memory and registers
+    // */
     rs1 === memreg_a_rw[0];
     memreg_v_reads[0] === memreg_v_writes[0]; 
     signal rs1_val <== memreg_v_reads[0];
@@ -147,45 +147,49 @@ template JoltStep() {
     signal x <== if_else()([op_flags[0], rs1_val, input_state[1]]);
 
     signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
-    signal y <== if_else()([is_advice_instr, lookup_output, _y]);
+    signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
 
-    /******* LOAD-STORE CONSTRAINTS */
+    // /******* LOAD-STORE CONSTRAINTS */
 
-    /* Take the 8 bytes of memory read/written and combine into one 64-bit value.
-    */
+    // /* Take the 8 bytes of memory read/written and combine into one 64-bit value.
+    // */
     signal mem_v_bytes[8] <== subarray(2, 8, 11)(memreg_v_writes);
     signal load_or_store_value <== combine_chunks(8, 8)(mem_v_bytes); 
 
-    /* Verify all 8 addresses involved. The starting should be rs1_val + immediate
-    */
-    memreg_a_rw[2] === rs1_val + sign_imm * immediate; 
-    for (var i=1; i<8; i++) {
-        memreg_a_rw[2+i] === memreg_a_rw[2]+i; // the first two are rs1, rs2 so memory starts are index 2
-    }
+    // /* Verify all 8 addresses involved. The starting should be rs1_val + immediate
+    // */
+    // signal _load_store_addr <== rs1_val + sign_imm * immediate;
+    // signal load_store_addr <== is_load_instr * _load_store_addr;
+    // memreg_a_rw[2] === (is_load_instr+is_store_instr) *load_store_addr; 
 
-    /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
-    */
-    for (var i=0; i<8; i++) {
-        (memreg_v_reads[2+i] - memreg_v_writes[2+i]) * is_load_instr === 0;
-    }
-    // NOTE: we will ensure that the loaded value is stored into rd near the end
+    // for (var i=1; i<8; i++) {
+    //     // the first two are rs1, rs2 so memory starts are index 2
+    //     // memreg_a_rw[2+i] === memreg_a_rw[2]+i; 
+    //     // ^ the constraint should be that but we have a special case when memories are 0
+    //     // TODO: this isn't correct yet
+    //     is_load_instr * (memreg_a_rw[2+i] - memreg_a_rw[2]+i) === 0; 
+    // }
 
-    /*  For stores, ensure that the value stored is what is rs2.
-        As "stores" are memory writes, we do not check memreg_v_reads against memreg_v_writes, as in loads
-    */
-    load_or_store_value === rs2_val;
+    // /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
+    // */
+    // for (var i=0; i<8; i++) {
+    //     (memreg_v_reads[2+i] - memreg_v_writes[2+i]) * is_load_instr === 0;
+    // }
+    // // NOTE: we will ensure that the loaded value is stored into rd near the end
 
-    /******** Constraints for Lookup Query Chunking  */
+    // /*  For stores, ensure that the value stored is what is rs2.
+    //     As "stores" are memory writes, we do not check memreg_v_reads against memreg_v_writes, as in loads
+    // */
+    // // TODO: uncomment this after fixing weirdness above 
+    // // load_or_store_value === rs2_val;
+
+
+    // /******** Constraints for Lookup Query Chunking  */
 
     /* Create the lookup query 
         - First, obtain z.
         - Then verify that the chunks of x, y, z are correct. 
     */
-
-    // Figure out if it's a concat-style query
-    // which it is if it's neither ADD, SUB or MUL
-    signal _is_concat <== (1-is_add_instr) * (1-is_sub_instr);
-    signal is_concat <== _is_concat * (1-is_mul_instr);
 
     // Store the right query format into z
     signal z_concat <== x * (2**64) + y;
@@ -203,11 +207,11 @@ template JoltStep() {
 
     // verify chunks_x
     signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
-    assert((combined_x_chunks - x) * is_concat == 0);
+    (combined_x_chunks - x) * is_concat === 0;
 
     // verify chunks_y 
     signal combined_y_chunks <== combine_chunks(C(), L_CHUNK())(chunks_y);
-    assert((combined_y_chunks-y) * is_concat == 0);
+    (combined_y_chunks-y) * is_concat === 0;
 
     /* Constraints to check correctness of chunks_query 
     If NOT a concat query: chunks_query === chunks_z 
@@ -219,11 +223,11 @@ template JoltStep() {
     // the concat checks: 
     // the most significant chunk has a shorter length!
     for (var i=0; i<C(); i++) {
-      assert(chunks_query[i] - (chunks_x[i] + chunks_y[i] * 2**L_CHUNK()) * is_concat == 0);
+      chunks_query[i] - (chunks_x[i] + chunks_y[i] * 2**L_CHUNK()) * is_concat === 0;
     } 
     // handles the "most significant" chunk here
     var idx_ms_chunk = C()-1;
-    assert(chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK())) * is_concat == 0);
+    (chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK()))) * is_concat === 0;
 
     // For assert instructions 
     is_assert_false_instr * (1-lookup_output) === 0;
@@ -236,15 +240,16 @@ template JoltStep() {
 
     signal rd_val <== memreg_v_writes[10]; 
     is_load_instr * (rd_val - load_or_store_value) === 0;
-    is_lui * (rd_val - immediate) === 0;
+    // TODO: add another flag for lui (again)
+    // is_lui * (rd_val - immediate) === 0;
     if_update_rd_with_lookup_output * (rd_val - lookup_output) === 0;
     is_jump_instr * (rd_val - (lookup_output-4)) === 0;
 
-    /* Store into output state
-    */
+    // /* Store into output state
+    // */
     output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1;
 
-    // set next PC 
+    // // set next PC 
     signal next_pc_j <== if_else()([is_jump_instr, lookup_output-4, input_state[PC_IDX()] + 4]);
     signal next_pc_j_b <== if_else()([is_branch_instr * lookup_output, input_state[PC_IDX()] + sign_imm * immediate, next_pc_j]);
     output_state[PC_IDX()] <== next_pc_j_b;
@@ -388,7 +393,7 @@ template JoltMain(N) {
         jolt_steps[i].op_flags <== subarray(i*N_FLAGS(), N_FLAGS(), N*N_FLAGS())(op_flags);
     }
 
-    out <== jolt_steps[N-1].output_state;
+    // out <== jolt_steps[N-1].output_state;
 }
 
 component main {public [

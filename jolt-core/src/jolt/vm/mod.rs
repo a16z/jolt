@@ -136,8 +136,35 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 .prove(transcript);
     }
 
-    fn prove_r1cs() {
-        unimplemented!("todo")
+    fn prove_r1cs(
+        ops: Vec<Self::InstructionSet>, // for instruction lookups 
+    ) {
+        // Program vectors 
+
+        // Memory vectors 
+
+        // Lookup vectors 
+        // TODO: get chunks_x, chunks_y from the lookup ops  
+        let chunks_query = ops.iter().map(|op| op.to_indices::<F>(C, M)).collect::<Vec<F>>();
+        let lookup_outputs = ops.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+
+        // op_flags 
+
+
+        let inputs = vec![
+            prog_a_rw,
+            prog_v_rw,
+            prog_t_reads,
+            memreg_a_rw,
+            memreg_v_reads, 
+            memreg_v_writes,
+            memreg_t_reads, 
+            chunks_x, 
+            chunks_y,
+            chunks_query,
+            lookup_outputs,
+            op_flags,
+        ];
     }
 }
 
