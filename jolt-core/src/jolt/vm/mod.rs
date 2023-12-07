@@ -4,108 +4,131 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::lasso::{
-    memory_checking::MemoryCheckingProver,
-    surge::Surge,
-};
-
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
 };
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
+use crate::{
+    lasso::{
+        memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+        surge::{Surge, SurgeProof},
+    },
+    utils::math::Math,
+};
 
+use self::bytecode::{
+    BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeProof,
+    BytecodeReadWriteOpenings, ELFRow,
+};
 use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
-use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory};
+use self::read_write_memory::{
+    MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
+    ReadWriteMemoryProof,
+};
+
+struct JoltProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+    instruction_lookups: InstructionLookupsProof<F, G>,
+    read_write_memory: ReadWriteMemoryProof<F, G>,
+    bytecode: BytecodeProof<F, G>,
+    // TODO: r1cs
+}
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
-    fn prove() {
-        // preprocess?
-        // emulate
-        // prove_program_code
-        // prove_memory
-        // prove_lookups
-        // prove_r1cs
-        unimplemented!("todo");
+    fn prove(
+        mut bytecode: Vec<ELFRow>,
+        mut bytecode_trace: Vec<ELFRow>,
+        memory_trace: Vec<MemoryOp>,
+        memory_size: usize,
+        instructions: Vec<Self::InstructionSet>,
+    ) -> JoltProof<F, G> {
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        let mut random_tape = RandomTape::new(b"Jolt prover randomness");
+        let bytecode_proof =
+            Self::prove_bytecode(bytecode, bytecode_trace, &mut transcript, &mut random_tape);
+        let memory_proof =
+            Self::prove_memory(memory_trace, memory_size, &mut transcript, &mut random_tape);
+        let instruction_lookups =
+            Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+        todo!("rics");
+        JoltProof {
+            instruction_lookups,
+            read_write_memory: memory_proof,
+            bytecode: bytecode_proof,
+        }
+    }
+
+    fn verify(proof: JoltProof<F, G>) -> Result<(), ProofVerifyError> {
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        Self::verify_bytecode(proof.bytecode, &mut transcript)?;
+        Self::verify_memory(proof.read_write_memory, &mut transcript)?;
+        Self::verify_instruction_lookups(proof.instruction_lookups, &mut transcript)?;
+        todo!("r1cs");
     }
 
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
-        r: Vec<F>,
         transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
     ) -> InstructionLookupsProof<F, G> {
         let instruction_lookups =
             InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
-        instruction_lookups.prove_lookups(r, transcript)
+        instruction_lookups.prove_lookups(transcript, random_tape)
     }
 
     fn verify_instruction_lookups(
         proof: InstructionLookupsProof<F, G>,
-        r: Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
-            proof, &r, transcript,
+            proof, transcript,
         )
     }
 
-    fn prove_program_code(
-        program_code: &[u64],
-        access_sequence: &[usize],
-        code_size: usize,
-        contiguous_reads_per_access: usize,
-        r_mem_check: &(F, F),
+    fn prove_bytecode(
+        mut bytecode: Vec<ELFRow>,
+        mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
-    ) {
-        // let (gamma, tau) = r_mem_check;
-        // let hash_func = |a: &F, v: &F, t: &F| -> F { *t * gamma.square() + *v * *gamma + *a - tau };
+        random_tape: &mut RandomTape<G>,
+    ) -> BytecodeProof<F, G> {
+        let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode, trace);
+        let batched_polys = polys.batch();
+        let commitment = BytecodePolynomials::commit(&batched_polys);
 
-        // let m: usize = (access_sequence.len() * contiguous_reads_per_access).next_power_of_two();
-        // // TODO(moodlezoup): resize access_sequence?
-
-        // let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
-        // let mut final_cts: Vec<usize> = vec![0; code_size];
-        // let mut read_cts: Vec<usize> = Vec::with_capacity(m);
-        // let mut read_values: Vec<u64> = Vec::with_capacity(m);
-
-        // for (j, code_address) in access_sequence.iter().enumerate() {
-        //   debug_assert!(code_address + contiguous_reads_per_access <= code_size);
-        //   debug_assert!(code_address % contiguous_reads_per_access == 0);
-
-        //   for offset in 0..contiguous_reads_per_access {
-        //     let addr = code_address + offset;
-        //     let counter = final_cts[addr];
-        //     read_addrs.push(addr);
-        //     read_values.push(program_code[addr]);
-        //     read_cts.push(counter);
-        //     final_cts[addr] = counter + 1;
-        //   }
-        // }
-
-        // let E_poly: DensePolynomial<F> = DensePolynomial::from_u64(&read_values); // v_ops
-        // let dim: DensePolynomial<F> = DensePolynomial::from_usize(access_sequence); // a_ops
-        // let read_cts: DensePolynomial<F> = DensePolynomial::from_usize(&read_cts); // t_read
-        // let final_cts: DensePolynomial<F> = DensePolynomial::from_usize(&final_cts); // t_final
-        // let init_values: DensePolynomial<F> = DensePolynomial::from_u64(program_code); // v_mem
-
-        // let polys = PCPolys::new(dim, E_poly, init_values, read_cts, final_cts, 0);
-        // let (gens, commitments) = polys.commit::<G>();
-
-        todo!("decide how to represent nested proofs, gens, commitments");
-        // MemoryCheckingProof::<G, PCFingerprintProof<G>>::prove(
-        //   &polys,
-        //   r_fingerprints,
-        //   &gens,
-        //   &mut transcript,
-        //   &mut random_tape,
-        // )
+        let memory_checking_proof = polys.prove_memory_checking(
+            &polys,
+            &batched_polys,
+            &commitment,
+            transcript,
+            random_tape,
+        );
+        BytecodeProof {
+            memory_checking_proof,
+            commitment,
+        }
     }
 
-    fn prove_memory(memory_trace: Vec<MemoryOp>, memory_size: usize, transcript: &mut Transcript) {
+    fn verify_bytecode(
+        proof: BytecodeProof<F, G>,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerifyError> {
+        BytecodePolynomials::verify_memory_checking(
+            proof.memory_checking_proof,
+            &proof.commitment,
+            transcript,
+        )
+    }
+
+    fn prove_memory(
+        memory_trace: Vec<MemoryOp>,
+        memory_size: usize,
+        transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
+    ) -> ReadWriteMemoryProof<F, G> {
         const MAX_TRACE_SIZE: usize = 1 << 22;
         // TODO: Support longer traces
         assert!(memory_trace.len() <= MAX_TRACE_SIZE);
@@ -114,15 +137,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let (memory, read_timestamps) = ReadWriteMemory::new(memory_trace, memory_size, transcript);
         let batched_polys = memory.batch();
-        let commitments: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
+        let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 
-        let mut random_tape = RandomTape::new(b"proof");
-        memory.prove_memory_checking(
+        let memory_checking_proof = memory.prove_memory_checking(
             &memory,
             &batched_polys,
-            &commitments,
+            &commitment,
             transcript,
-            &mut random_tape,
+            random_tape,
         );
 
         let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
@@ -134,6 +156,28 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let timestamp_validity_proof =
             <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
                 .prove(transcript);
+
+        ReadWriteMemoryProof {
+            memory_checking_proof,
+            commitment,
+            timestamp_validity_proof,
+        }
+    }
+
+    fn verify_memory(
+        proof: ReadWriteMemoryProof<F, G>,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerifyError> {
+        const MAX_TRACE_SIZE: usize = 1 << 22;
+        ReadWriteMemory::verify_memory_checking(
+            proof.memory_checking_proof,
+            &proof.commitment,
+            transcript,
+        )?;
+        <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::verify(
+            proof.timestamp_validity_proof,
+            transcript,
+        )
     }
 
     fn prove_r1cs() {
@@ -141,7 +185,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 }
 
+pub mod bytecode;
 pub mod instruction_lookups;
-pub mod pc;
 pub mod read_write_memory;
 pub mod rv32i_vm;

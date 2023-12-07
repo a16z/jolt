@@ -5,7 +5,8 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 
 use crate::{
-    lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier},
+    lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
+    lasso::surge::SurgeProof,
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
         identity_poly::IdentityPolynomial,
@@ -15,6 +16,21 @@ use crate::{
     utils::{errors::ProofVerifyError, random::RandomTape},
 };
 use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
+
+pub struct ReadWriteMemoryProof<F, G>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
+    pub memory_checking_proof: MemoryCheckingProof<
+        G,
+        ReadWriteMemory<F, G>,
+        MemoryReadWriteOpenings<F, G>,
+        MemoryInitFinalOpenings<F, G>,
+    >,
+    pub commitment: MemoryCommitment<G>,
+    pub timestamp_validity_proof: SurgeProof<F, G>,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum MemoryOp {

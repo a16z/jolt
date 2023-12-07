@@ -778,10 +778,11 @@ where
 
     pub fn prove_lookups(
         &self,
-        r: Vec<F>,
         transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
     ) -> InstructionLookupsProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
         let polynomials = self.polynomialize();
         let batched_polys = polynomials.batch();
         let commitment = InstructionPolynomials::commit(&batched_polys);
@@ -790,7 +791,13 @@ where
             .E_commitment
             .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
-        let eq = EqPolynomial::new(r.to_vec());
+        let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
+            transcript,
+            b"Jolt instruction lookups",
+            self.ops.len().log_2(),
+        );
+
+        let eq = EqPolynomial::new(r_eq.to_vec());
         let sumcheck_claim = Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
@@ -799,7 +806,7 @@ where
             &sumcheck_claim,
         );
 
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r).evals());
+        let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r_eq).evals());
         let num_rounds = self.ops.len().log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
@@ -814,8 +821,6 @@ where
                 transcript,
             );
 
-        let mut random_tape = RandomTape::new(b"proof");
-
         // Create a single opening proof for the flag_evals and memory_evals
         let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
@@ -823,7 +828,7 @@ where
             &r_primary_sumcheck,
             (E_evals, flag_evals),
             transcript,
-            &mut random_tape,
+            random_tape,
         );
 
         let primary_sumcheck = PrimarySumcheck {
@@ -838,7 +843,7 @@ where
             &batched_polys,
             &commitment,
             transcript,
-            &mut random_tape,
+            random_tape,
         );
 
         InstructionLookupsProof {
@@ -850,7 +855,6 @@ where
 
     pub fn verify(
         proof: InstructionLookupsProof<F, G>,
-        r_eq: &[G::ScalarField],
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
@@ -859,6 +863,12 @@ where
             .commitment
             .E_commitment
             .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+
+        let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
+            transcript,
+            b"Jolt instruction lookups",
+            proof.primary_sumcheck.num_rounds,
+        );
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,

@@ -18,9 +18,9 @@ use crate::jolt::instruction::sltu::SLTUInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
-use crate::jolt::instruction::{add::ADDInstruction, sub::SUBInstruction};
 use crate::jolt::instruction::JoltInstruction;
-use crate::jolt::vm::{pc::ELFRow, rv32i_vm::RV32I};
+use crate::jolt::instruction::{add::ADDInstruction, sub::SUBInstruction};
+use crate::jolt::vm::{bytecode::ELFRow, rv32i_vm::RV32I};
 use common::{constants::REGISTER_COUNT, RV32InstructionFormat, RV32IM};
 
 use super::JoltProvableTrace;
@@ -843,7 +843,7 @@ impl JoltProvableTrace for RVTraceRow {
     }
   }
 
-    fn to_pc_trace(&self) -> ELFRow {
+    fn to_bytecode_trace(&self) -> ELFRow {
         ELFRow::new(
             self.pc.try_into().unwrap(),
             self.opcode as u64,
@@ -1016,10 +1016,10 @@ mod tests {
     use std::convert;
 
     #[test]
-    fn to_pc_trace() {
+    fn to_bytecode_trace() {
         // ADD
         let add_row = RVTraceRow::RType(2, RV32IM::ADD, 12, 10, 11, 0, 35, 15, 20);
-        let add_pc = add_row.to_pc_trace();
+        let add_pc = add_row.to_bytecode_trace();
         let expected_pc = ELFRow::new(2, RV32IM::ADD as u64, 12, 10, 11, 0u64);
         assert_eq!(add_pc, expected_pc);
 
@@ -1027,7 +1027,7 @@ mod tests {
         let imm = 20;
         let rd_update = 20 << 12;
         let lui_row = RVTraceRow::UType(0, RV32IM::LUI, 10, 0, rd_update, imm);
-        let lui_pc = lui_row.to_pc_trace();
+        let lui_pc = lui_row.to_bytecode_trace();
         let expected_pc = ELFRow::new(0, RV32IM::LUI as u64, 10, 0, 0, 20u64);
         assert_eq!(lui_pc, expected_pc);
     }
@@ -1070,17 +1070,30 @@ mod tests {
             .into_iter()
             .map(|common| RVTraceRow::from_common(common))
             .collect();
+        let _: Vec<ELFRow> = converted_trace
+            .iter()
+            .map(|row| row.to_bytecode_trace())
+            .collect();
 
         let mut num_errors = 0;
         for row in &converted_trace {
             if let Err(e) = row.validate() {
-                // if row.opcode != RV32IM::SLLI {
                 println!("Validation error: {} \n{:#?}\n\n", e, row);
-                // }
                 num_errors += 1;
             }
         }
         println!("Total errors: {num_errors}");
+    }
+
+    #[test]
+    fn load_bytecode() {
+        use common::path::JoltPaths;
+        use common::serializable::Serializable;
+
+        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        let instructions = Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
+            .expect("deserialization failed");
+        let _: Vec<ELFRow> = instructions.iter().map(|x| ELFRow::from(x)).collect();
     }
 
     #[test]
@@ -1115,13 +1128,18 @@ mod tests {
             .into_iter()
             .flat_map(|row| row.to_jolt_instructions())
             .collect();
-        let r: Vec<Fr> = gen_random_point::<Fr>(lookup_ops.len().log_2());
         let mut prover_transcript = Transcript::new(b"example");
+        let mut random_tape = RandomTape::new(b"test_tape");
+
         let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_instruction_lookups(lookup_ops, r.clone(), &mut prover_transcript);
+            RV32IJoltVM::prove_instruction_lookups(
+                lookup_ops,
+                &mut prover_transcript,
+                &mut random_tape,
+            );
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(
-            RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok()
+            RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok()
         );
 
         // Prove memory
@@ -1141,7 +1159,6 @@ mod tests {
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
-        let mut random_tape = RandomTape::new(b"test_tape");
         let proof = rw_memory.prove_memory_checking(
             &rw_memory,
             &batched_polys,
