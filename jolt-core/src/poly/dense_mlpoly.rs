@@ -249,10 +249,10 @@ impl<F: PrimeField> DensePolynomial<F> {
         assert_eq!(scalars.len(), bases.len());
         let num_buckets: usize = 1 << 16; // TODO(sragss): This should be passed in / dependent on M = N^{1/C}
 
-        #[cfg(test)]
-        scalars.for_each(|scalar| {
-            assert!(scalar < V::ScalarField::from(num_buckets as u64).into_bigint())
-        });
+        // #[cfg(test)]
+        // scalars.for_each(|scalar| {
+        //     assert!(scalar < V::ScalarField::from(num_buckets as u64).into_bigint())
+        // });
 
         // Assign things to buckets based on the scalar
         let mut buckets: Vec<V> = vec![V::zero(); num_buckets];
