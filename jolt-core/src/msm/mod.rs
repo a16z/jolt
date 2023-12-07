@@ -33,7 +33,6 @@ pub trait VariableBaseMSM: ScalarMul {
     /// This method checks that `bases` and `scalars` have the same length.
     /// If they are unequal, it returns an error containing
     /// the shortest length over which the MSM can be performed.
-    #[tracing::instrument(skip_all, name = "VariableBaseMSM.msm")]
     fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
         (bases.len() == scalars.len())
             .then(|| Self::msm_unchecked(bases, scalars))
