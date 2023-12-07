@@ -1070,17 +1070,30 @@ mod tests {
             .into_iter()
             .map(|common| RVTraceRow::from_common(common))
             .collect();
+        let _: Vec<ELFRow> = converted_trace
+            .iter()
+            .map(|row| row.to_pc_trace())
+            .collect();
 
         let mut num_errors = 0;
         for row in &converted_trace {
             if let Err(e) = row.validate() {
-                // if row.opcode != RV32IM::SLLI {
                 println!("Validation error: {} \n{:#?}\n\n", e, row);
-                // }
                 num_errors += 1;
             }
         }
         println!("Total errors: {num_errors}");
+    }
+
+    #[test]
+    fn load_bytecode() {
+        use common::path::JoltPaths;
+        use common::serializable::Serializable;
+
+        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        let instructions = Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
+            .expect("deserialization failed");
+        let _: Vec<ELFRow> = instructions.iter().map(|x| ELFRow::from(x)).collect();
     }
 
     #[test]
@@ -1115,13 +1128,18 @@ mod tests {
             .into_iter()
             .flat_map(|row| row.to_jolt_instructions())
             .collect();
-        let r: Vec<Fr> = gen_random_point::<Fr>(lookup_ops.len().log_2());
         let mut prover_transcript = Transcript::new(b"example");
+        let mut random_tape = RandomTape::new(b"test_tape");
+
         let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_instruction_lookups(lookup_ops, r.clone(), &mut prover_transcript);
+            RV32IJoltVM::prove_instruction_lookups(
+                lookup_ops,
+                &mut prover_transcript,
+                &mut random_tape,
+            );
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(
-            RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok()
+            RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok()
         );
 
         // Prove memory
@@ -1141,7 +1159,6 @@ mod tests {
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
-        let mut random_tape = RandomTape::new(b"test_tape");
         let proof = rw_memory.prove_memory_checking(
             &rw_memory,
             &batched_polys,

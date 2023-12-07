@@ -199,14 +199,13 @@ mod tests {
             RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
         ];
 
-        let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
         let mut prover_transcript = Transcript::new(b"example");
+        let mut random_tape = RandomTape::new(b"test_tape");
+
         let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_instruction_lookups(ops, r.clone(), &mut prover_transcript);
+            RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
         let mut verifier_transcript = Transcript::new(b"example");
-        assert!(
-            RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok()
-        );
+        assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
     }
 
     #[test]

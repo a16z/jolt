@@ -22,6 +22,7 @@ use crate::poly::dense_mlpoly::bench::{
 };
 use crate::poly::dense_mlpoly::CommitHint;
 use crate::utils::math::Math;
+use crate::utils::random::RandomTape;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::test_rng;
@@ -159,12 +160,12 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
   println!("Running {:?}", ops.len());
 
   let work = Box::new(|| {
-    let r: Vec<Fr> = gen_random_point::<Fr>(ops.len().log_2());
     let mut prover_transcript = Transcript::new(b"example");
+    let mut random_tape = RandomTape::new(b"test_tape");
     let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-      RV32IJoltVM::prove_instruction_lookups(ops, r.clone(), &mut prover_transcript);
+      RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
     let mut verifier_transcript = Transcript::new(b"example");
-    assert!(RV32IJoltVM::verify_instruction_lookups(proof, r, &mut verifier_transcript).is_ok());
+    assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
   });
   vec![(tracing::info_span!("RV32IM"), work)]
 }
