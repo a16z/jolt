@@ -494,6 +494,7 @@ where
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
+                    .into_par_iter()
                     .map(|i| {
                         (
                             polynomials.dim[dim_index][i],

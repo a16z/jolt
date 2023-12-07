@@ -1,9 +1,10 @@
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
+use std::marker::Sync;
 
 #[enum_dispatch]
-pub trait LassoSubtable<F: PrimeField>: 'static + std::marker::Sync {
+pub trait LassoSubtable<F: PrimeField>: 'static + Sync {
     /// Returns the TypeId of this subtable.
     /// The `Jolt` trait has associated enum types `InstructionSet` and `Subtables`.
     /// This function is used to resolve the many-to-many mapping between `InstructionSet` variants
