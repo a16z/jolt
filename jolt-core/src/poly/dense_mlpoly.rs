@@ -16,6 +16,7 @@ use ark_std::Zero;
 use core::ops::Index;
 use merlin::Transcript;
 use std::ops::AddAssign;
+use rayon::prelude::*;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -23,8 +24,6 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-#[cfg(feature = "multicore")]
-use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DensePolynomial<F> {
@@ -108,7 +107,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         )
     }
 
-    #[cfg(feature = "multicore")]
     fn commit_inner<G: CurveGroup<ScalarField = F>>(
         &self,
         blinds: &[F],
@@ -117,34 +115,15 @@ impl<F: PrimeField> DensePolynomial<F> {
         let L_size = blinds.len();
         let R_size = self.Z.len() / L_size;
         assert_eq!(L_size * R_size, self.Z.len());
+
+        let gens = CurveGroup::normalize_batch(&gens.G);
+
         let C = (0..L_size)
             .into_par_iter()
             .map(|i| {
                 Commitments::batch_commit(
                     self.Z[R_size * i..R_size * (i + 1)].as_ref(),
-                    &blinds[i],
-                    gens,
-                )
-            })
-            .collect();
-        PolyCommitment { C }
-    }
-
-    #[cfg(not(feature = "multicore"))]
-    fn commit_inner<G: CurveGroup<ScalarField = F>>(
-        &self,
-        blinds: &[F],
-        gens: &MultiCommitGens<G>,
-    ) -> PolyCommitment<G> {
-        let L_size = blinds.len();
-        let R_size = self.Z.len() / L_size;
-        assert_eq!(L_size * R_size, self.Z.len());
-        let C = (0..L_size)
-            .map(|i| {
-                Commitments::batch_commit(
-                    self.Z[R_size * i..R_size * (i + 1)].as_ref(),
-                    &blinds[i],
-                    gens,
+                    &gens
                 )
             })
             .collect();

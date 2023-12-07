@@ -54,7 +54,7 @@ impl<G: CurveGroup> DotProductProof<G> {
         let r_delta = random_tape.random_scalar(b"r_delta");
         let r_beta = random_tape.random_scalar(b"r_beta");
 
-        let Cx = Commitments::batch_commit(x_vec, blind_x, gens_n);
+        let Cx = Commitments::batch_commit_blinded(x_vec, blind_x, gens_n);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
 
         let Cy = y.commit(blind_y, gens_1);
@@ -62,7 +62,7 @@ impl<G: CurveGroup> DotProductProof<G> {
 
         <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
 
-        let delta = Commitments::batch_commit(&d_vec, &r_delta, gens_n);
+        let delta = Commitments::batch_commit_blinded(&d_vec, &r_delta, gens_n);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
 
         let dotproduct_a_d = DotProductProof::<G>::compute_dotproduct(a_vec, &d_vec);
@@ -123,7 +123,7 @@ impl<G: CurveGroup> DotProductProof<G> {
         let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
         let mut result = *Cx * c + self.delta
-            == Commitments::batch_commit(self.z.as_ref(), &self.z_delta, gens_n);
+            == Commitments::batch_commit_blinded(self.z.as_ref(), &self.z_delta, gens_n);
 
         let dotproduct_z_a = DotProductProof::<G>::compute_dotproduct(&self.z, a);
         result &= *Cy * c + self.beta == dotproduct_z_a.commit(&self.z_beta, gens_1);
@@ -195,7 +195,7 @@ impl<G: CurveGroup> DotProductProofLog<G> {
                 .collect::<Vec<(G::ScalarField, G::ScalarField)>>()
         };
 
-        let Cx = Commitments::batch_commit(x_vec, blind_x, &gens.gens_n);
+        let Cx = Commitments::batch_commit_blinded(x_vec, blind_x, &gens.gens_n);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
 
         let Cy = y.commit(blind_y, &gens.gens_1);

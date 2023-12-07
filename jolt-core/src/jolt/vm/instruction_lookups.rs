@@ -129,6 +129,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionPolynomials.commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
             .batched_dim_read
