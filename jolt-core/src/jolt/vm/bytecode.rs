@@ -180,6 +180,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         assert!(is_power_of_two(trace.len()));
 
         let num_ops = trace.len().next_power_of_two();
+        // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
         let code_size = (max_bytecode_address + 1).next_power_of_two();
 
         let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
