@@ -137,14 +137,20 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn prove_r1cs(
+        read_write_memory: ReadWriteMemory<F, G>, // for memory checking
         ops: Vec<Self::InstructionSet>, // for instruction lookups 
     ) {
         // Program vectors 
 
         // Memory vectors 
+        let memreg_a_rw = read_write_memory.a_read_write;
+        let memreg_v_reads = read_write_memory.v_read;
+        let memreg_v_writes= read_write_memory.v_write;
+        let memreg_t_reads= read_write_memory.t_read;
 
         // Lookup vectors 
         // TODO: get chunks_x, chunks_y from the lookup ops  
+        // let chunks_x = ops.iter().map(|op| op.to_indices::<F>(C, M)).collect::<Vec<F>>();
         let chunks_query = ops.iter().map(|op| op.to_indices::<F>(C, M)).collect::<Vec<F>>();
         let lookup_outputs = ops.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
