@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
@@ -47,6 +48,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

@@ -1,6 +1,7 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use enum_dispatch::enum_dispatch;
+use rand::prelude::StdRng;
 use std::marker::Sync;
 
 use crate::jolt::subtable::LassoSubtable;
@@ -48,6 +49,8 @@ pub trait JoltInstruction: Sync {
 
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
+
+    fn random(&self, rng: &mut StdRng) -> Self;
 }
 
 pub trait Opcode {

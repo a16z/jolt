@@ -4,8 +4,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use merlin::Transcript;
 use rayon::iter::IntoParallelIterator;
-use std::{any::TypeId, collections::HashMap};
 use std::marker::PhantomData;
+use std::{any::TypeId, collections::HashMap};
 use strum::{EnumCount, IntoEnumIterator};
 
 #[cfg(feature = "multicore")]
@@ -945,53 +945,66 @@ where
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&self.ops);
 
-        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter().map(|op| Self::instruction_to_memory_indices(&op)).collect();
-        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0..Self::NUM_MEMORIES).into_par_iter().map(|memory_index| {
-            let dim_index = Self::memory_to_dimension_index(memory_index);
-            let subtable_index = Self::memory_to_subtable_index(memory_index);
-            let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
+        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
+            .map(|op| Self::instruction_to_memory_indices(&op))
+            .collect();
+        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
+            ..Self::NUM_MEMORIES)
+            .into_par_iter()
+            .map(|memory_index| {
+                let dim_index = Self::memory_to_dimension_index(memory_index);
+                let subtable_index = Self::memory_to_subtable_index(memory_index);
+                let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
 
-            let mut final_cts_i = vec![0usize; M];
-            let mut read_cts_i = vec![0usize; m];
-            let mut subtable_lookups = vec![F::zero(); m];
+                let mut final_cts_i = vec![0usize; M];
+                let mut read_cts_i = vec![0usize; m];
+                let mut subtable_lookups = vec![F::zero(); m];
 
-            for (j, op) in self.ops.iter().enumerate() {
-                let memories_used: &Vec<usize> = &instruction_to_memory_indices_map[op.to_opcode() as usize];
-                if memories_used.contains(&memory_index) {
-                    let memory_address = access_sequence[j];
-                    debug_assert!(memory_address < M);
+                for (j, op) in self.ops.iter().enumerate() {
+                    let memories_used: &Vec<usize> =
+                        &instruction_to_memory_indices_map[op.to_opcode() as usize];
+                    if memories_used.contains(&memory_index) {
+                        let memory_address = access_sequence[j];
+                        debug_assert!(memory_address < M);
 
-                    let counter = final_cts_i[memory_address];
-                    read_cts_i[j] = counter;
-                    final_cts_i[memory_address] = counter + 1;
-                    subtable_lookups[j] =
-                        self.materialized_subtables[subtable_index][memory_address];
+                        let counter = final_cts_i[memory_address];
+                        read_cts_i[j] = counter;
+                        final_cts_i[memory_address] = counter + 1;
+                        subtable_lookups[j] =
+                            self.materialized_subtables[subtable_index][memory_address];
+                    }
                 }
-            }
 
-            (
-                DensePolynomial::from_usize(&read_cts_i),
-                DensePolynomial::from_usize(&final_cts_i),
-                DensePolynomial::new(subtable_lookups)
-            )
-        }).collect();
+                (
+                    DensePolynomial::from_usize(&read_cts_i),
+                    DensePolynomial::from_usize(&final_cts_i),
+                    DensePolynomial::new(subtable_lookups),
+                )
+            })
+            .collect();
 
         // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
-        let (read_cts, final_cts, E_polys): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) =
-            polys.into_iter().fold(
-                (Vec::new(), Vec::new(), Vec::new()),
-                |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
-                    read_acc.push(read);
-                    final_acc.push(f);
-                    E_acc.push(E);
-                    (read_acc, final_acc, E_acc)
-                }
-            );
+        let (read_cts, final_cts, E_polys): (
+            Vec<DensePolynomial<F>>,
+            Vec<DensePolynomial<F>>,
+            Vec<DensePolynomial<F>>,
+        ) = polys.into_iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
+                read_acc.push(read);
+                final_acc.push(f);
+                E_acc.push(E);
+                (read_acc, final_acc, E_acc)
+            },
+        );
 
-        let dim: Vec<DensePolynomial<F>> = (0..C).into_par_iter().map(|i| {
-            let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
-            DensePolynomial::from_usize(access_sequence)
-        }).collect();
+        let dim: Vec<DensePolynomial<F>> = (0..C)
+            .into_par_iter()
+            .map(|i| {
+                let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
+                DensePolynomial::from_usize(access_sequence)
+            })
+            .collect();
 
         let mut instruction_flag_bitvectors: Vec<Vec<usize>> =
             vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
@@ -1226,18 +1239,24 @@ where
 
         let eq_evals = eq.evals();
 
-        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter().map(|op| Self::instruction_to_memory_indices(&op)).collect();
+        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
+            .map(|op| Self::instruction_to_memory_indices(&op))
+            .collect();
 
-        let claim = ops.par_iter().enumerate().map(|(k, op)| {
-            let memory_indices = &instruction_to_memory_indices_map[op.to_opcode() as usize];
-            let filtered_operands: Vec<F> = memory_indices
-                .iter()
-                .map(|memory_index| E_polys[*memory_index][k])
-                .collect();
+        let claim = ops
+            .par_iter()
+            .enumerate()
+            .map(|(k, op)| {
+                let memory_indices = &instruction_to_memory_indices_map[op.to_opcode() as usize];
+                let filtered_operands: Vec<F> = memory_indices
+                    .iter()
+                    .map(|memory_index| E_polys[*memory_index][k])
+                    .collect();
 
-            let collation_eval = op.combine_lookups(&filtered_operands, C, M);
-            eq_evals[k] * collation_eval
-        }).reduce(|| F::zero(), |a, b| a + b);
+                let collation_eval = op.combine_lookups(&filtered_operands, C, M);
+                eq_evals[k] * collation_eval
+            })
+            .reduce(|| F::zero(), |a, b| a + b);
 
         claim
     }
@@ -1291,20 +1310,21 @@ where
         instruction_flag_polys: &Vec<DensePolynomial<F>>,
     ) -> Vec<DensePolynomial<F>> {
         let m = instruction_flag_polys[0].len();
-        let subtable_flag_polys = (0..Self::NUM_SUBTABLES).into_par_iter().map(|subtable_index| {
-            let mut subtable_poly = DensePolynomial::new(vec![F::zero(); m]);
-            for (i, instruction) in InstructionSet::iter().enumerate() {
-                if instruction
-                    .subtables::<F>(C)
-                    .iter()
-                    .any(|subtable| Subtables::from(subtable.subtable_id()).into() == subtable_index)
-                {
-                    // TODO(JOLT-81): Do not DensePolynomial<F>::add_assign to compute this value.
-                    subtable_poly += &instruction_flag_polys[i];
+        let subtable_flag_polys = (0..Self::NUM_SUBTABLES)
+            .into_par_iter()
+            .map(|subtable_index| {
+                let mut subtable_poly = DensePolynomial::new(vec![F::zero(); m]);
+                for (i, instruction) in InstructionSet::iter().enumerate() {
+                    if instruction.subtables::<F>(C).iter().any(|subtable| {
+                        Subtables::from(subtable.subtable_id()).into() == subtable_index
+                    }) {
+                        // TODO(JOLT-81): Do not DensePolynomial<F>::add_assign to compute this value.
+                        subtable_poly += &instruction_flag_polys[i];
+                    }
                 }
-            }
-            subtable_poly
-        }).collect();
+                subtable_poly
+            })
+            .collect();
         subtable_flag_polys
     }
 

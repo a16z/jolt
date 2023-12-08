@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
@@ -53,6 +54,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

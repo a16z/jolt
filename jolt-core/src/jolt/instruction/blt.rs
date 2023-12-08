@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::{
@@ -54,6 +55,11 @@ impl JoltInstruction for BLTInstruction {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 
