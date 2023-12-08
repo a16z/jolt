@@ -4,7 +4,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use merlin::Transcript;
 use rayon::iter::IntoParallelIterator;
-use std::any::TypeId;
+use std::{any::TypeId, collections::HashMap};
 use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
 
@@ -120,6 +120,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials.batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
+        // TODO(JOLT-82): These merges are wasteful clones.
         let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
 
         Self::BatchedPolynomials {
@@ -1211,29 +1212,31 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionLookups.compute_sumcheck_claim")]
     fn compute_sumcheck_claim(
         ops: &Vec<InstructionSet>,
         E_polys: &Vec<DensePolynomial<F>>,
         eq: &EqPolynomial<F>,
     ) -> F {
         let m = ops.len().next_power_of_two();
+
+        #[cfg(test)]
         E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
 
         let eq_evals = eq.evals();
 
-        let mut claim = F::zero();
-        for (k, op) in ops.iter().enumerate() {
-            let memory_indices = Self::instruction_to_memory_indices(&op);
-            let mut filtered_operands: Vec<F> = Vec::with_capacity(memory_indices.len());
+        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter().map(|op| Self::instruction_to_memory_indices(&op)).collect();
 
-            for memory_index in memory_indices {
-                filtered_operands.push(E_polys[memory_index][k]);
-            }
+        let claim = ops.par_iter().enumerate().map(|(k, op)| {
+            let memory_indices = &instruction_to_memory_indices_map[op.to_opcode() as usize];
+            let filtered_operands: Vec<F> = memory_indices
+                .iter()
+                .map(|memory_index| E_polys[*memory_index][k])
+                .collect();
 
             let collation_eval = op.combine_lookups(&filtered_operands, C, M);
-            let combined_eval = eq_evals[k] * collation_eval;
-            claim += combined_eval;
-        }
+            eq_evals[k] * collation_eval
+        }).reduce(|| F::zero(), |a, b| a + b);
 
         claim
     }

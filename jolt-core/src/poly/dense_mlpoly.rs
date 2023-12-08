@@ -369,13 +369,14 @@ impl<F: PrimeField> DensePolynomial<F> {
     where
         T: AsRef<DensePolynomial<F>>,
     {
-        let mut Z: Vec<F> = Vec::new();
+        let total_len: usize = polys.iter().map(|poly| poly.as_ref().vec().len()).sum();
+        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
         for poly in polys.iter() {
-            Z.extend(poly.as_ref().vec().iter());
+            Z.extend_from_slice(poly.as_ref().vec());
         }
 
         // pad the polynomial with zero polynomial at the end
-        Z.resize(Z.len().next_power_of_two(), F::zero());
+        Z.resize(Z.capacity(), F::zero());
 
         DensePolynomial::new(Z)
     }
