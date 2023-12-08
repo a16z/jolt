@@ -186,7 +186,11 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
                 .iter_mut()
                 .map(|circuit| circuit.take_layer(layer_id))
                 .unzip();
-            CubicSumcheckParams::new_prod(lefts, rights, eq, num_rounds)
+            if self.flags_present {
+                CubicSumcheckParams::new_prod_ones(lefts, rights, eq, num_rounds)
+            } else {
+                CubicSumcheckParams::new_prod(lefts, rights, eq, num_rounds)
+            }
         }
     }
 }
@@ -229,7 +233,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
             let (proof, rand_prod, claims_prod) =
-                SumcheckInstanceProof::prove_cubic_batched_special::<G>(
+                SumcheckInstanceProof::prove_cubic_batched::<G>(
                     &claim, params, &coeff_vec, transcript,
                 );
 
@@ -248,7 +252,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 );
             }
 
-            if sumcheck_type == CubicSumcheckType::Prod {
+            if sumcheck_type == CubicSumcheckType::Prod || sumcheck_type == CubicSumcheckType::ProdOnes {
                 // Prod layers must generate an additional random coefficient. The sumcheck randomness indexes into the current layer,
                 // but the resulting randomness and claims are about the next layer. The next layer is indexed by an additional variable
                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
