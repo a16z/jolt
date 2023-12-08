@@ -14,6 +14,7 @@ use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
+use crate::jolt::vm::read_write_memory::bench::{generate_memory_trace, prove_read_write_memory};
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
@@ -36,6 +37,7 @@ pub enum BenchType {
     Halo2Comparison,
     RV32,
     Poly,
+    ReadWriteMemory,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -45,6 +47,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
         BenchType::RV32 => rv32i_lookup_benchmarks(),
         BenchType::Poly => dense_ml_poly(),
+        BenchType::ReadWriteMemory => read_write_memory_benchmarks(),
         _ => panic!("BenchType does not have a mapping"),
     }
 }
@@ -194,6 +197,21 @@ fn random_surge_test<const C: usize, const M: usize>(num_ops: usize) -> Box<dyn 
     };
 
     Box::new(func)
+}
+
+fn read_write_memory_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    const MEMORY_SIZE: usize = 1 << 20;
+    const NUM_OPS: usize = 1 << 20;
+    let memory_trace = generate_memory_trace(MEMORY_SIZE, NUM_OPS);
+
+    let task = move || {
+        black_box(prove_read_write_memory(memory_trace, MEMORY_SIZE));
+    };
+
+    vec![(
+        tracing::info_span!("ReadWriteMemory::prove_memory_checking"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    )]
 }
 
 fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {

@@ -10,6 +10,7 @@ use crate::{
     lasso::surge::SurgeProof,
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
@@ -74,6 +75,7 @@ where
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
@@ -207,6 +209,7 @@ where
     type BatchedPolynomials = BatchedMemoryPolynomials<F>;
     type Commitment = MemoryCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let batched_read_write = DensePolynomial::merge(&vec![
             &self.a_read_write,
@@ -224,6 +227,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (gens_read_write, read_write_commitments) = batched_polys
             .batched_read_write
@@ -270,16 +274,19 @@ where
 {
     type Openings = [F; 5];
 
+    #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         [
-            polynomials.a_read_write.evaluate(&opening_point),
-            polynomials.v_read.evaluate(&opening_point),
-            polynomials.v_write.evaluate(&opening_point),
-            polynomials.t_read.evaluate(&opening_point),
-            polynomials.t_write.evaluate(&opening_point),
+            polynomials.a_read_write.evaluate_at_chi(&chis),
+            polynomials.v_read.evaluate_at_chi(&chis),
+            polynomials.v_write.evaluate_at_chi(&chis),
+            polynomials.t_read.evaluate_at_chi(&chis),
+            polynomials.t_write.evaluate_at_chi(&chis),
         ]
     }
 
+    #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
         commitment: &MemoryCommitment<G>,
@@ -355,14 +362,17 @@ where
 {
     type Openings = [F; 3];
 
+    #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         [
-            polynomials.v_init.evaluate(&opening_point),
-            polynomials.v_final.evaluate(&opening_point),
-            polynomials.t_final.evaluate(&opening_point),
+            polynomials.v_init.evaluate_at_chi(&chis),
+            polynomials.v_final.evaluate_at_chi(&chis),
+            polynomials.t_final.evaluate_at_chi(&chis),
         ]
     }
 
+    #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
         commitment: &MemoryCommitment<G>,
@@ -587,5 +597,61 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
         ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut transcript)
             .expect("proof should verify");
+    }
+}
+
+pub mod bench {
+    use super::*;
+    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_std::{log2, test_rng, One, Zero};
+    use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
+    use rand_chacha::rand_core::RngCore;
+
+    pub fn generate_memory_trace(memory_size: usize, num_ops: usize) -> Vec<MemoryOp> {
+        let mut rng = test_rng();
+        let mut memory = vec![0u64; memory_size];
+        let mut memory_trace = Vec::with_capacity(num_ops);
+
+        for _ in 0..num_ops {
+            let mut address = if rng.next_u32() % 3 == 0 {
+                rng.next_u64() % (memory_size as u64 - REGISTER_COUNT)
+            } else {
+                rng.next_u64() % REGISTER_COUNT
+            };
+            if rng.next_u32() % 2 == 0 {
+                let value = memory[address as usize];
+                if address >= REGISTER_COUNT {
+                    address = address + RAM_START_ADDRESS;
+                }
+                memory_trace.push(MemoryOp::Read(address, value));
+            } else {
+                let old_value = memory[address as usize];
+                let new_value = rng.next_u64();
+                memory[address as usize] = new_value;
+                if address >= REGISTER_COUNT {
+                    address = address + RAM_START_ADDRESS;
+                }
+                memory_trace.push(MemoryOp::Write(address, new_value));
+            }
+        }
+        memory_trace
+    }
+
+    pub fn prove_read_write_memory(memory_trace: Vec<MemoryOp>, memory_size: usize) {
+        let mut transcript = Transcript::new(b"test_transcript");
+        let mut random_tape = RandomTape::new(b"test_tape");
+
+        let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, Vec<u64>) =
+            ReadWriteMemory::new(vec![], memory_trace, &mut transcript);
+        let batched_polys = rw_memory.batch();
+        let commitments = ReadWriteMemory::commit(&batched_polys);
+
+        let proof = rw_memory.prove_memory_checking(
+            &rw_memory,
+            &batched_polys,
+            &commitments,
+            &mut transcript,
+            &mut random_tape,
+        );
     }
 }
