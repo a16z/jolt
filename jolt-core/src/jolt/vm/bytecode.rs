@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use std::{collections::HashMap, marker::PhantomData};
 
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
 use common::ELFInstruction;
 
 use crate::{
@@ -15,8 +16,6 @@ use crate::{
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
 };
-
-const ADDRESS_INCREMENT: usize = 1;
 
 pub struct BytecodeProof<F, G>
 where
@@ -174,15 +173,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     pub fn new(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
         Self::validate_bytecode(&bytecode, &trace);
         Self::preprocess(&mut bytecode, &mut trace);
+        let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
 
         // Preprocessing should deal with padding.
         assert!(is_power_of_two(bytecode.len()));
         assert!(is_power_of_two(trace.len()));
 
         let num_ops = trace.len().next_power_of_two();
-        let code_size = bytecode.len().next_power_of_two();
-
-        println!("BytecodePolynomials::new num_ops {num_ops} code_size {code_size}");
+        let code_size = (max_bytecode_address + 1).next_power_of_two();
 
         let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
         let mut read_cts: Vec<usize> = vec![0; num_ops];
@@ -216,15 +214,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
     fn validate_bytecode(bytecode: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
         let mut pc = bytecode[0].address;
-        assert!(pc < 10_000);
-
         let mut bytecode_map: HashMap<usize, &ELFRow> = HashMap::new();
 
-        for bytecode_row in bytecode.iter().skip(1) {
+        for bytecode_row in bytecode.iter() {
+            assert_eq!(bytecode_row.address, pc);
             bytecode_map.insert(bytecode_row.address, bytecode_row);
-            assert_eq!(bytecode_row.address, pc + ADDRESS_INCREMENT);
-
-            pc = bytecode_row.address;
+            pc += BYTES_PER_INSTRUCTION;
         }
 
         for trace_row in trace {
@@ -238,8 +233,21 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 
     fn preprocess(bytecode: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
+        for instruction in bytecode.iter_mut() {
+            assert!(instruction.address >= RAM_START_ADDRESS as usize);
+            assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
+            instruction.address -= RAM_START_ADDRESS as usize;
+            instruction.address /= BYTES_PER_INSTRUCTION;
+        }
+        for instruction in trace.iter_mut() {
+            assert!(instruction.address >= RAM_START_ADDRESS as usize);
+            assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
+            instruction.address -= RAM_START_ADDRESS as usize;
+            instruction.address /= BYTES_PER_INSTRUCTION;
+        }
+
         // Bytecode: Add single no_op instruction at adddress | ELF + 1 |
-        let no_op_address = bytecode.last().unwrap().address + ADDRESS_INCREMENT;
+        let no_op_address = bytecode.last().unwrap().address + 1;
         bytecode.push(ELFRow::no_op(no_op_address));
 
         // Bytecode: Pad to nearest power of 2
@@ -693,13 +701,17 @@ mod tests {
     use ark_curve25519::{EdwardsProjective, Fr};
     use std::collections::HashSet;
 
+    fn to_ram_address(i: usize) -> usize {
+        i * BYTES_PER_INSTRUCTION + RAM_START_ADDRESS as usize
+    }
+
     #[test]
     fn five_tuple_poly() {
         let program = vec![
-            ELFRow::new(0, 2u64, 3u64, 4u64, 5u64, 6u64),
-            ELFRow::new(1, 7u64, 8u64, 9u64, 10u64, 11u64),
-            ELFRow::new(2, 12u64, 13u64, 14u64, 15u64, 16u64),
-            ELFRow::new(3, 17u64, 18u64, 19u64, 20u64, 21u64),
+            ELFRow::new(to_ram_address(0), 2u64, 3u64, 4u64, 5u64, 6u64),
+            ELFRow::new(to_ram_address(1), 7u64, 8u64, 9u64, 10u64, 11u64),
+            ELFRow::new(to_ram_address(2), 12u64, 13u64, 14u64, 15u64, 16u64),
+            ELFRow::new(to_ram_address(3), 17u64, 18u64, 19u64, 20u64, 21u64),
         ];
         let tuple: FiveTuplePoly<Fr> = FiveTuplePoly::from_elf(&program);
         let expected_opcode: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![2, 7, 12, 17]);
@@ -721,16 +733,16 @@ mod tests {
     }
 
     #[test]
-    fn pc_poly_leaf_construction() {
+    fn bytecode_poly_leaf_construction() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
@@ -755,14 +767,14 @@ mod tests {
     #[test]
     fn e2e_memchecking() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
@@ -788,16 +800,16 @@ mod tests {
     #[test]
     fn e2e_mem_checking_non_pow_2() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
@@ -823,18 +835,18 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn pc_validation_fake_trace() {
+    fn bytecode_validation_fake_trace() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(5, 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
         let _polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
@@ -842,16 +854,16 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn pc_validation_bad_prog_increment() {
+    fn bytecode_validation_bad_prog_increment() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(4, 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(4), 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let _polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);

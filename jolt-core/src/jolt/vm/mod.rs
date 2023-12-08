@@ -134,8 +134,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // TODO: Support longer traces
         assert!(memory_trace.len() <= MAX_TRACE_SIZE);
 
-        todo!("Load program bytecode into memory");
-
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
