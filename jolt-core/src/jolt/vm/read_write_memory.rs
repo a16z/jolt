@@ -127,6 +127,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             t_read,
         )
     }
+
+    pub fn get_polys(&self) -> [&DensePolynomial<F>; 7] {
+        [
+            &self.a_read_write,
+            &self.v_read,
+            &self.v_write,
+            &self.v_final,
+            &self.t_read,
+            &self.t_write,
+            &self.t_final,
+        ]
+    }
 }
 
 pub struct BatchedMemoryPolynomials<F: PrimeField> {

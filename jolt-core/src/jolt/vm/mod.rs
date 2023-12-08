@@ -161,10 +161,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // }
 
         // Memory vectors 
-        let memreg_a_rw = read_write_memory.a_read_write;
-        let memreg_v_reads = read_write_memory.v_read;
-        let memreg_v_writes= read_write_memory.v_write;
-        let memreg_t_reads= read_write_memory.t_read;
+        let memreg_polys = read_write_memory.get_polys();
+        let memreg_a_rw = memreg_polys[0];
+        let memreg_v_reads = memreg_polys[1];
+        let memreg_v_writes = memreg_polys[2];
+        let memreg_t_reads = memreg_polys[4];
 
         // Lookup vectors 
         // TODO: get chunks_x, chunks_y from the lookup ops  
@@ -177,6 +178,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let lookup_outputs = ops.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
         // op_flags 
+
+
+        // asserts on their lengths
+
 
 
         // let inputs = vec![
