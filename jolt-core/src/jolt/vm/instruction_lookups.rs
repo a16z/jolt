@@ -837,6 +837,7 @@ where
         let num_rounds = self.ops.len().log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
+        // TODO: Clones here are wasteful.
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
             Self::prove_primary_sumcheck(
                 &F::zero(),

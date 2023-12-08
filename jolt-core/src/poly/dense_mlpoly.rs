@@ -282,20 +282,16 @@ impl<F: PrimeField> DensePolynomial<F> {
         let L_size = left_num_vars.pow2();
         let R_size = right_num_vars.pow2();
 
-        #[cfg(feature = "multicore")]
+        let min_inner_iter_size = 1 << 10;
         let bound_vals = (0..R_size)
             .into_par_iter()
             .map(|i| {
                 (0..L_size)
-                    .into_iter()
+                    .into_par_iter()
+                    .with_min_len(min_inner_iter_size)
                     .map(|j| L[j] * self.Z[j * R_size + i])
                     .sum()
             })
-            .collect();
-
-        #[cfg(not(feature = "multicore"))]
-        let bound_vals = (0..R_size)
-            .map(|i| (0..L_size).map(|j| L[j] * self.Z[j * R_size + i]).sum())
             .collect();
 
         bound_vals
