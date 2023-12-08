@@ -4,6 +4,7 @@ use enum_dispatch::enum_dispatch;
 
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::index_to_field_bitvector;
+use crate::utils::instruction_utils::chunk_operand;
 
 #[enum_dispatch]
 pub trait JoltInstruction {
@@ -48,7 +49,16 @@ pub trait JoltInstruction {
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
     /// Returns the chunks of the operands involved in this instruction. 
-    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>);
+    fn operands(&self) -> [u64; 2];
+
+    fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
+        self.operands()
+            .iter()
+            .map(|&operand| chunk_operand(operand, C, log_M))
+            .collect::<Vec<Vec<u64>>>()
+            .try_into()
+            .unwrap()
+    }
 }
 
 pub trait Opcode {

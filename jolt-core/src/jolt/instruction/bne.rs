@@ -10,6 +10,10 @@ use crate::{
 pub struct BNEInstruction(pub u64, pub u64);
 
 impl JoltInstruction for BNEInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], _: usize, _: usize) -> F {
         F::one() - vals.iter().product::<F>()
     }

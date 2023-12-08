@@ -13,6 +13,10 @@ use crate::{
 pub struct BGEInstruction(pub u64, pub u64);
 
 impl JoltInstruction for BGEInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // 1 - LTS(x, y) =
         F::one() - SLTInstruction(self.0, self.1).combine_lookups(vals, C, M)
