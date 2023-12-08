@@ -941,14 +941,10 @@ where
     fn polynomialize(&self) -> InstructionPolynomials<F, G> {
         let m: usize = self.ops.len().next_power_of_two();
 
-        let mut dim: Vec<DensePolynomial<_>> = Vec::with_capacity(C);
-        let mut read_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
-        let mut final_cts: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
-        let mut E_polys: Vec<DensePolynomial<_>> = Vec::with_capacity(Self::NUM_MEMORIES);
-
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&self.ops);
 
-        for memory_index in 0..Self::NUM_MEMORIES {
+        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter().map(|op| Self::instruction_to_memory_indices(&op)).collect();
+        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0..Self::NUM_MEMORIES).into_par_iter().map(|memory_index| {
             let dim_index = Self::memory_to_dimension_index(memory_index);
             let subtable_index = Self::memory_to_subtable_index(memory_index);
             let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
@@ -958,7 +954,7 @@ where
             let mut subtable_lookups = vec![F::zero(); m];
 
             for (j, op) in self.ops.iter().enumerate() {
-                let memories_used = Self::instruction_to_memory_indices(&op);
+                let memories_used: &Vec<usize> = &instruction_to_memory_indices_map[op.to_opcode() as usize];
                 if memories_used.contains(&memory_index) {
                     let memory_address = access_sequence[j];
                     debug_assert!(memory_address < M);
@@ -971,15 +967,29 @@ where
                 }
             }
 
-            E_polys.push(DensePolynomial::new(subtable_lookups));
-            read_cts.push(DensePolynomial::from_usize(&read_cts_i));
-            final_cts.push(DensePolynomial::from_usize(&final_cts_i));
-        }
+            (
+                DensePolynomial::from_usize(&read_cts_i),
+                DensePolynomial::from_usize(&final_cts_i),
+                DensePolynomial::new(subtable_lookups)
+            )
+        }).collect();
 
-        for i in 0..C {
+        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
+        let (read_cts, final_cts, E_polys): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) =
+            polys.into_iter().fold(
+                (Vec::new(), Vec::new(), Vec::new()),
+                |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
+                    read_acc.push(read);
+                    final_acc.push(f);
+                    E_acc.push(E);
+                    (read_acc, final_acc, E_acc)
+                }
+            );
+
+        let dim: Vec<DensePolynomial<F>> = (0..C).into_par_iter().map(|i| {
             let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
-            dim.push(DensePolynomial::from_usize(access_sequence));
-        }
+            DensePolynomial::from_usize(access_sequence)
+        }).collect();
 
         let mut instruction_flag_bitvectors: Vec<Vec<usize>> =
             vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
@@ -987,6 +997,7 @@ where
             let opcode_index = op.to_opcode() as usize;
             instruction_flag_bitvectors[opcode_index][j] = 1;
         }
+
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
             .iter()
             .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
@@ -1047,12 +1058,7 @@ where
             let mle_len = eq_poly.len();
             let mle_half = mle_len / 2;
 
-            #[cfg(feature = "multicore")]
             let evaluate_mles_iterator = (0..mle_half).into_par_iter();
-
-            // TODO(sragss): Broken due to variable signature reduce on parallel.
-            #[cfg(not(feature = "multicore"))]
-            let evaluate_mles_iterator = 0..mle_half;
 
             // Loop over half MLE size (size of MLE next round)
             //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
@@ -1281,19 +1287,20 @@ where
         instruction_flag_polys: &Vec<DensePolynomial<F>>,
     ) -> Vec<DensePolynomial<F>> {
         let m = instruction_flag_polys[0].len();
-        let mut subtable_flag_polys =
-            vec![DensePolynomial::new(vec![F::zero(); m]); Self::NUM_SUBTABLES];
-        for (i, instruction) in InstructionSet::iter().enumerate() {
-            let instruction_subtables: Vec<Subtables> = instruction
-                .subtables::<F>(C)
-                .iter()
-                .map(|subtable| Subtables::from(subtable.subtable_id()))
-                .collect();
-            for subtable in instruction_subtables {
-                let subtable_index: usize = subtable.into();
-                subtable_flag_polys[subtable_index] += &instruction_flag_polys[i];
+        let subtable_flag_polys = (0..Self::NUM_SUBTABLES).into_par_iter().map(|subtable_index| {
+            let mut subtable_poly = DensePolynomial::new(vec![F::zero(); m]);
+            for (i, instruction) in InstructionSet::iter().enumerate() {
+                if instruction
+                    .subtables::<F>(C)
+                    .iter()
+                    .any(|subtable| Subtables::from(subtable.subtable_id()).into() == subtable_index)
+                {
+                    // TODO(JOLT-81): Do not DensePolynomial<F>::add_assign to compute this value.
+                    subtable_poly += &instruction_flag_polys[i];
+                }
             }
-        }
+            subtable_poly
+        }).collect();
         subtable_flag_polys
     }
 
