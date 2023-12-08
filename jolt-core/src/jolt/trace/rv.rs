@@ -31,7 +31,7 @@ const C: usize = 4;
 const M: usize = 1 << 16;
 
 #[derive(Debug, Clone, PartialEq)]
-struct RVTraceRow {
+pub struct RVTraceRow {
     pc: u64,
     opcode: RV32IM,
 
@@ -83,7 +83,7 @@ impl RVTraceRow {
     }
 
     // TODO(sragss): Hack. Move to common format and rm this conversion.
-    fn from_common(common: common::RVTraceRow) -> Self {
+    pub fn from_common(common: common::RVTraceRow) -> Self {
         let mut memory_bytes_before = None;
         let mut memory_bytes_after = None;
         let trunc = |value: u64, position: usize| (value >> (position * 8)) as u8;
@@ -1094,87 +1094,6 @@ mod tests {
         let instructions = Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
         let _: Vec<ELFRow> = instructions.iter().map(|x| ELFRow::from(x)).collect();
-    }
-
-    #[test]
-    fn fib_e2e() {
-        use crate::jolt::vm::rv32i_vm::RV32I;
-        use crate::lasso::memory_checking::MemoryCheckingProver;
-        use common::path::JoltPaths;
-        use common::serializable::Serializable;
-
-        let trace_location = JoltPaths::trace_path("fibonacci");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let loaded_bytecode =
-            Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
-                .expect("deserialization failed");
-
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
-
-        let mut num_errors = 0;
-        for row in &converted_trace {
-            if let Err(e) = row.validate() {
-                println!("Validation error: {} \n{:#?}\n\n", e, row);
-                num_errors += 1;
-            }
-        }
-        println!("Total errors: {num_errors}");
-
-        // Prove lookups
-        let lookup_ops: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
-        let mut prover_transcript = Transcript::new(b"example");
-        let mut random_tape = RandomTape::new(b"test_tape");
-
-        let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_instruction_lookups(
-                lookup_ops,
-                &mut prover_transcript,
-                &mut random_tape,
-            );
-        let mut verifier_transcript = Transcript::new(b"example");
-        assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
-
-        // Prove memory
-
-        // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // something about Linux boot requiring it...
-        let mut memory_ops: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        memory_ops.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
-
-        let next_power_of_two = memory_ops.len().next_power_of_two();
-        memory_ops.resize(next_power_of_two, MemoryOp::no_op());
-
-        let mut prover_transcript = Transcript::new(b"example");
-        let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(loaded_bytecode, memory_ops, &mut prover_transcript);
-        let batched_polys = rw_memory.batch();
-        let commitments = ReadWriteMemory::commit(&batched_polys);
-
-        let proof = rw_memory.prove_memory_checking(
-            &rw_memory,
-            &batched_polys,
-            &commitments,
-            &mut prover_transcript,
-            &mut random_tape,
-        );
-
-        let mut verifier_transcript = Transcript::new(b"example");
-        ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut verifier_transcript)
-            .expect("proof should verify");
-
-        // Prove bytecode
-
-        // Prove R1CS
     }
 }
 
