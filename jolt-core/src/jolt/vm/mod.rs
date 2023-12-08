@@ -224,6 +224,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         //     lookup_outputs,
         //     op_flags,
         // ];
+        // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
+        // let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+        // assert!(result_verify.is_ok());
     }
 }
 
