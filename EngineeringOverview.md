@@ -73,7 +73,7 @@ Each of these is stored as a (dense) mutlilinear polynomial in its Lagrange basi
 
 Finally, we merge all $log(s)$-variate polynomials ($`\text{dim}_i, E_i, \text{read\_counts}_i`$) into a single dense multilinear polynomial, and merge all the $log(m)$-variate polynomials ($`\text{final\_counts}_i`$) into a single polynomial for commitment / opening efficiency.
 
-Now we can commit these 2 merged multilinear polynomials via any (dense) multilinear polynomial commitment scheme. This code is handled by `SparsePolynomialCommitment` -> `SparsePolyCommitmentGens` -> `PolyEvalProof` -> `DotProductProofLog` -> .... Initially we use Hyrax from [Spartan](https://github.com/microsoft/Spartan) as the dense PCS, but this could be swapped down the road for different performance characteristics.
+Now we can commit these 2 merged multilinear polynomials via any (dense) multilinear polynomial commitment scheme. This code is handled by `SparsePolynomialCommitment` -> `SparsePolyCommitmentGens` -> `PolyEvalProof` -> `DotProductProof` -> .... Initially we use Hyrax from [Spartan](https://github.com/microsoft/Spartan) as the dense PCS, but this could be swapped down the road for different performance characteristics.
 
 After inital commitment, `SparsePolynomialEvaluationProof::<_, _, _, SubtableStrategy>::prove(dense, ...)` is called. `SubtableStrategy` describes which table collation function `g` will be used and which set of subtables `T_i` to materialize.
 

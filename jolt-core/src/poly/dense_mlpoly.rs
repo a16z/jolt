@@ -4,7 +4,7 @@ use crate::utils::{self, compute_dotproduct};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
-use crate::subprotocols::dot_product::{DotProductProofGens, DotProductProofLog};
+use crate::subprotocols::dot_product::{DotProductProof, DotProductProofGens};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
@@ -448,7 +448,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyEvalProof<G: CurveGroup> {
-    proof: DotProductProofLog<G>,
+    proof: DotProductProof<G>,
 }
 
 impl<G: CurveGroup> PolyEvalProof<G> {
@@ -502,8 +502,9 @@ impl<G: CurveGroup> PolyEvalProof<G> {
         let LZ_blind: G::ScalarField = (0..L.len()).map(|i| blinds.blinds[i] * L[i]).sum();
 
         // a dot product proof of size R_size
-        let (proof, _C_LR, C_Zr_prime) = DotProductProofLog::prove(
-            &gens.gens,
+        let (proof, _C_LR, C_Zr_prime) = DotProductProof::prove(
+            &gens.gens.gens_1,
+            &gens.gens.gens_n,
             transcript,
             random_tape,
             &LZ,
@@ -538,8 +539,14 @@ impl<G: CurveGroup> PolyEvalProof<G> {
 
         let C_LZ = VariableBaseMSM::msm(C_affine.as_ref(), L.as_ref()).unwrap();
 
-        self.proof
-            .verify(R.len(), &gens.gens, transcript, &R, &C_LZ, C_Zr)
+        self.proof.verify(
+            &gens.gens.gens_1,
+            &gens.gens.gens_n,
+            transcript,
+            &R,
+            &C_LZ,
+            C_Zr,
+        )
     }
 
     pub fn verify_plain(
