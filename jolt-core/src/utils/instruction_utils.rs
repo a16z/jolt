@@ -27,6 +27,16 @@ pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: us
 ///
 /// Given the operation x_0, x_1, x_2, x_3 || y_0, y_1, y_2, y_3 with C=2, log_M =4
 /// chunks to `vec![x_0||x_1||y_0||y_1,   x_2||x_3||y_2||y_3]`.
+pub fn chunk_operand(x: u64, num_chunks: usize, bits_per_chunk: usize) -> Vec<u64> {
+  let bit_mask = (1 << bits_per_chunk) - 1;
+  (0..num_chunks)
+    .map(|i| {
+      let shift = ((num_chunks - i - 1) * bits_per_chunk) as u32;
+      x.checked_shr(shift).unwrap_or(0) & bit_mask
+    })
+    .collect()
+}
+
 pub fn chunk_and_concatenate_operands(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
     let operand_bits: usize = log_M / 2;
 

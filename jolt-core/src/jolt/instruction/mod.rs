@@ -47,6 +47,8 @@ pub trait JoltInstruction {
 
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
+    /// Returns the chunks of the operands involved in this instruction. 
+    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>);
 }
 
 pub trait Opcode {
