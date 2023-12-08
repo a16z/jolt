@@ -37,6 +37,7 @@ impl<G: CurveGroup> BulletReductionProof<G> {
     ///
     /// The lengths of the vectors must all be the same, and must all be
     /// either 0 or a power of 2.
+    #[tracing::instrument(skip_all, name = "BulletReductionProof::prove")]
     pub fn prove(
         transcript: &mut Transcript,
         Q: &G,

@@ -27,7 +27,6 @@ impl<G: CurveGroup> DotProductProof<G> {
         (0..a.len()).map(|i| a[i] * b[i]).sum()
     }
 
-    #[allow(dead_code)]
     pub fn prove(
         gens_1: &MultiCommitGens<G>,
         gens_n: &MultiCommitGens<G>,
