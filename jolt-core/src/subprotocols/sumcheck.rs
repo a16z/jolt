@@ -762,46 +762,47 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                             let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
 
-                            // let eval_point_0 = if flag_eval.0.is_zero() {
-                            //     eq_eval.0
-                            // } else if flag_eval.0.is_one() {
-                            //     eq_eval.0 * poly_eval[low]
-                            // } else {
-                            //     eq_eval.0 * (flag_eval.0 * poly_eval[low] + (F::one() - flag_eval.0))
-                            // };
+                            let eval_point_0 = if flag_eval.0.is_zero() {
+                                eq_eval.0
+                            } else if flag_eval.0.is_one() {
+                                eq_eval.0 * poly_eval[low]
+                            } else {
+                                eq_eval.0 * (flag_eval.0 * poly_eval[low] + (F::one() - flag_eval.0))
+                            };
 
-                            // let (eval_point_2, opt_poly_2_res): (F, Option<(F, F)>) = if flag_eval.1.is_zero() {
-                            //     (eq_eval.1, None)
-                            // } else if flag_eval.1.is_one() {
-                            //     let poly_m = poly_eval[high] - poly_eval[low];
-                            //     let poly_2 = poly_eval[high] + poly_m;
-                            //     (eq_eval.1 * poly_2, Some((poly_2, poly_m)))
-                            // } else {
-                            //     let poly_m = poly_eval[high] - poly_eval[low];
-                            //     let poly_2 = poly_eval[high] + poly_m;
-                            //     (eq_eval.1 * (flag_eval.1 * poly_2 + (F::one() - flag_eval.1)), Some((poly_2, poly_m)))
-                            // };
+                            let (eval_point_2, opt_poly_2_res): (F, Option<(F, F)>) = if flag_eval.1.is_zero() {
+                                (eq_eval.1, None)
+                            } else if flag_eval.1.is_one() {
+                                let poly_m = poly_eval[high] - poly_eval[low];
+                                let poly_2 = poly_eval[high] + poly_m;
+                                (eq_eval.1 * poly_2, Some((poly_2, poly_m)))
+                            } else {
+                                let poly_m = poly_eval[high] - poly_eval[low];
+                                let poly_2 = poly_eval[high] + poly_m;
+                                (eq_eval.1 * (flag_eval.1 * poly_2 + (F::one() - flag_eval.1)), Some((poly_2, poly_m)))
+                            };
 
-                            // let eval_point_3 = if let Some((poly_2, poly_m)) = opt_poly_2_res {
-                            //     if flag_eval.2.is_zero() {
-                            //         eq_eval.2 // TODO(sragss): Path may never happen
-                            //     } else if flag_eval.2.is_one() {
-                            //         let poly_3 = poly_2 + poly_m;
-                            //         eq_eval.2 * poly_3
-                            //     } else {
-                            //         let poly_3 = poly_2 + poly_m;
-                            //         (eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2)))
-                            //     }
-                            // } else {
-                            //     eq_eval.2
-                            // };
+                            let eval_point_3 = if let Some((poly_2, poly_m)) = opt_poly_2_res {
+                                if flag_eval.2.is_zero() {
+                                    eq_eval.2 // TODO(sragss): Path may never happen
+                                } else if flag_eval.2.is_one() {
+                                    let poly_3 = poly_2 + poly_m;
+                                    eq_eval.2 * poly_3
+                                } else {
+                                    let poly_3 = poly_2 + poly_m;
+                                    (eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2)))
+                                }
+                            } else {
+                                eq_eval.2
+                            };
 
-                            let poly_m = poly_eval[high] - poly_eval[low];
-                            let poly_2 = poly_eval[high] + poly_m;
-                            let poly_3 = poly_2 + poly_m;
+                            // Above is just a more complicated form of the following, optimizing for 0 / 1 flags.
+                            // let poly_m = poly_eval[high] - poly_eval[low];
+                            // let poly_2 = poly_eval[high] + poly_m;
+                            // let poly_3 = poly_2 + poly_m;
 
-                            let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
-                            let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
+                            // let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
+                            // let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
 
                             (eval_point_0, eval_point_2, eval_point_3)
                         })
