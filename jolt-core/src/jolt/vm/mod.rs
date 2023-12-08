@@ -137,52 +137,78 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn prove_r1cs(
+        num_steps: usize,
+        program_code: &[u64],
+        access_sequence: &[usize],
+        code_size: usize,
+        contiguous_reads_per_access: usize,
         read_write_memory: ReadWriteMemory<F, G>, // for memory checking
         ops: Vec<Self::InstructionSet>, // for instruction lookups 
     ) {
-        // // Program vectors 
-        // let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
-        // let mut final_cts: Vec<usize> = vec![0; code_size];
-        // let mut read_cts: Vec<usize> = Vec::with_capacity(m);
-        // let mut read_values: Vec<u64> = Vec::with_capacity(m);
+        // Program vectors 
+        let m: usize = (access_sequence.len() * contiguous_reads_per_access);
+        let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
+        let mut final_cts: Vec<usize> = vec![0; code_size];
+        let mut read_cts: Vec<usize> = Vec::with_capacity(m);
+        let mut read_values: Vec<u64> = Vec::with_capacity(m);
 
-        // for (j, code_address) in access_sequence.iter().enumerate() {
-        //   debug_assert!(code_address + contiguous_reads_per_access <= code_size);
-        //   debug_assert!(code_address % contiguous_reads_per_access == 0);
+        for (j, code_address) in access_sequence.iter().enumerate() {
+          debug_assert!(code_address + contiguous_reads_per_access <= code_size);
+          debug_assert!(code_address % contiguous_reads_per_access == 0);
 
-        //   for offset in 0..contiguous_reads_per_access {
-        //     let addr = code_address + offset;
-        //     let counter = final_cts[addr];
-        //     read_addrs.push(addr);
-        //     read_values.push(program_code[addr]);
-        //     read_cts.push(counter);
-        //     final_cts[addr] = counter + 1;
-        //   }
-        // }
+          for offset in 0..contiguous_reads_per_access {
+            let addr = code_address + offset;
+            let counter = final_cts[addr];
+            read_addrs.push(addr);
+            read_values.push(program_code[addr]);
+            read_cts.push(counter);
+            final_cts[addr] = counter + 1;
+          }
+        }
+
+        let prog_a_rw = read_addrs;
+        let prog_v_rw = read_values;
+        let prog_t_reads = read_cts;
 
         // Memory vectors 
         let memreg_polys = read_write_memory.get_polys();
-        let memreg_a_rw = memreg_polys[0];
-        let memreg_v_reads = memreg_polys[1];
-        let memreg_v_writes = memreg_polys[2];
-        let memreg_t_reads = memreg_polys[4];
+
+        assert!(memreg_polys.len() == 5);
+        let memreg_a_rw = memreg_polys[0].evals();
+        let memreg_v_reads = memreg_polys[1].evals();
+        let memreg_v_writes = memreg_polys[2].evals();
+        let memreg_t_reads = memreg_polys[4].evals();
 
         // Lookup vectors 
-        // TODO: get chunks_x, chunks_y from the lookup ops  
-        // let chunks_x = ops.iter().map(|op| op.to_indices::<F>(C, M)).collect::<Vec<F>>();
+        let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
+            ops
+            .iter()
+            .flat_map(|op| {
+                let chunks_xy = op.operand_chunks(C, M);
+                let chunks_x = chunks_xy[0].clone();
+                let chunks_y = chunks_xy[1].clone();
+                chunks_x.into_iter().zip(chunks_y.into_iter())
+            })
+            .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
+            .unzip();
+
         let chunks_query = ops.iter()
             .flat_map(|op| op.to_indices(C, M))
             .map(|x| x as u64)
             .map(F::from)
             .collect::<Vec<F>>();
+
         let lookup_outputs = ops.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+
 
         // op_flags 
 
-
-        // asserts on their lengths
-
-
+        // Length checks 
+        assert_eq!(access_sequence.len(), num_steps); // for PC 
+        assert_eq!(chunks_x.len(), num_steps * C);
+        assert_eq!(chunks_y.len(), num_steps * C);
+        assert_eq!(chunks_query.len(), num_steps * C);
+        assert_eq!(lookup_outputs.len(), num_steps);
 
         // let inputs = vec![
         //     prog_a_rw,
