@@ -140,7 +140,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         read_write_memory: ReadWriteMemory<F, G>, // for memory checking
         ops: Vec<Self::InstructionSet>, // for instruction lookups 
     ) {
-        // Program vectors 
+        // // Program vectors 
+        // let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
+        // let mut final_cts: Vec<usize> = vec![0; code_size];
+        // let mut read_cts: Vec<usize> = Vec::with_capacity(m);
+        // let mut read_values: Vec<u64> = Vec::with_capacity(m);
+
+        // for (j, code_address) in access_sequence.iter().enumerate() {
+        //   debug_assert!(code_address + contiguous_reads_per_access <= code_size);
+        //   debug_assert!(code_address % contiguous_reads_per_access == 0);
+
+        //   for offset in 0..contiguous_reads_per_access {
+        //     let addr = code_address + offset;
+        //     let counter = final_cts[addr];
+        //     read_addrs.push(addr);
+        //     read_values.push(program_code[addr]);
+        //     read_cts.push(counter);
+        //     final_cts[addr] = counter + 1;
+        //   }
+        // }
 
         // Memory vectors 
         let memreg_a_rw = read_write_memory.a_read_write;
@@ -151,26 +169,30 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // Lookup vectors 
         // TODO: get chunks_x, chunks_y from the lookup ops  
         // let chunks_x = ops.iter().map(|op| op.to_indices::<F>(C, M)).collect::<Vec<F>>();
-        let chunks_query = ops.iter().map(|op| op.to_indices::<F>(C, M)).collect::<Vec<F>>();
+        let chunks_query = ops.iter()
+            .flat_map(|op| op.to_indices(C, M))
+            .map(|x| x as u64)
+            .map(F::from)
+            .collect::<Vec<F>>();
         let lookup_outputs = ops.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
         // op_flags 
 
 
-        let inputs = vec![
-            prog_a_rw,
-            prog_v_rw,
-            prog_t_reads,
-            memreg_a_rw,
-            memreg_v_reads, 
-            memreg_v_writes,
-            memreg_t_reads, 
-            chunks_x, 
-            chunks_y,
-            chunks_query,
-            lookup_outputs,
-            op_flags,
-        ];
+        // let inputs = vec![
+        //     prog_a_rw,
+        //     prog_v_rw,
+        //     prog_t_reads,
+        //     memreg_a_rw,
+        //     memreg_v_reads, 
+        //     memreg_v_writes,
+        //     memreg_t_reads, 
+        //     chunks_x, 
+        //     chunks_y,
+        //     chunks_query,
+        //     lookup_outputs,
+        //     op_flags,
+        // ];
     }
 }
 

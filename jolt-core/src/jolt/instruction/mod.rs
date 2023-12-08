@@ -50,7 +50,6 @@ pub trait JoltInstruction {
     }
     /// Returns the chunks of the operands involved in this instruction. 
     fn operands(&self) -> [u64; 2];
-
     fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
         self.operands()
             .iter()
