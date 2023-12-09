@@ -128,15 +128,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         )
     }
 
-    pub fn get_polys(&self) -> [&DensePolynomial<F>; 7] {
+    pub fn get_r1cs_polys(&self) -> [&DensePolynomial<F>; 4] {
         [
             &self.a_read_write,
             &self.v_read,
             &self.v_write,
-            &self.v_final,
             &self.t_read,
-            &self.t_write,
-            &self.t_final,
         ]
     }
 }
