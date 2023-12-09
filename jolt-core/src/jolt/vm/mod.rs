@@ -75,6 +75,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         todo!("r1cs");
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
         transcript: &mut Transcript,
@@ -94,6 +95,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_bytecode")]
     fn prove_bytecode(
         mut bytecode_rows: Vec<ELFRow>,
         mut trace: Vec<ELFRow>,
@@ -128,6 +130,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,

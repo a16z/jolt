@@ -118,7 +118,7 @@ where
     type BatchedPolynomials = BatchedInstructionPolynomials<F>;
     type Commitment = InstructionCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "InstructionPolynomials.batch")]
+    #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         // TODO(JOLT-82): These merges are wasteful clones.
         let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
@@ -131,7 +131,7 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionPolynomials.commit")]
+    #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
             .batched_dim_read
@@ -191,7 +191,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
-    #[tracing::instrument(skip_all, name = "Sumcheck.prove_primary_openings")]
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
@@ -280,6 +280,7 @@ where
 {
     type Openings = [Vec<F>; 4];
 
+    #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
@@ -296,7 +297,7 @@ where
         ]
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings.prove_openings")]
+    #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
@@ -411,6 +412,7 @@ where
 {
     type Openings = Vec<F>;
 
+    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         polynomials
             .final_cts
@@ -419,7 +421,7 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings.prove_openings")]
+    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
@@ -483,7 +485,7 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups.read_leaves")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -511,7 +513,7 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups.write_leaves")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -538,7 +540,7 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups.init_leaves")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::init_leaves")]
     fn init_leaves(
         &self,
         _polynomials: &InstructionPolynomials<F, G>,
@@ -565,7 +567,7 @@ where
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups.final_leaves")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -593,7 +595,7 @@ where
     }
 
     /// Overrides default implementation to handle flags
-    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
@@ -788,6 +790,7 @@ where
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
     const NUM_MEMORIES: usize = C * Subtables::COUNT;
 
+    #[tracing::instrument(skip_all, name = "InstructionLookups::new")]
     pub fn new(ops: Vec<InstructionSet>) -> Self {
         let materialized_subtables = Self::materialize_subtables();
         let num_lookups = ops.len().next_power_of_two();
@@ -803,6 +806,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
         &self,
         transcript: &mut Transcript,
@@ -939,7 +943,7 @@ where
     }
 
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
-    #[tracing::instrument(skip_all, name = "InstructionLookups.polynomialize")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
     fn polynomialize(&self) -> InstructionPolynomials<F, G> {
         let m: usize = self.ops.len().next_power_of_two();
 
@@ -1046,7 +1050,7 @@ where
     /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
     /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
     /// - `transcript`: Fiat-shamir transcript.
-    #[tracing::instrument(skip_all, name = "Sumcheck.primary_sumcheck")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
         _claim: &F,
         num_rounds: usize,
@@ -1226,7 +1230,7 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups.compute_sumcheck_claim")]
+    #[tracing::instrument(skip_all, name = "InstructionLookups::compute_sumcheck_claim")]
     fn compute_sumcheck_claim(
         ops: &Vec<InstructionSet>,
         E_polys: &Vec<DensePolynomial<F>>,

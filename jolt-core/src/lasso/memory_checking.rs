@@ -90,7 +90,7 @@ where
     /// The data associated with each memory slot. A triple (a, v, t) by default.
     type MemoryTuple = (F, F, F);
 
-    #[tracing::instrument(skip_all, name = "MemoryCheckingProver.prove")]
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
     fn prove_memory_checking(
         &self,
@@ -139,6 +139,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_grand_products")]
     /// Proves the grand products for the memory checking multisets (init, read, write, final).
     fn prove_grand_products(
         &self,
@@ -203,7 +204,7 @@ where
 
     /// Constructs a batched grand product circuit for the read and write multisets associated
     /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
-    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.read_write_grand_product")]
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &Polynomials,
@@ -232,7 +233,7 @@ where
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
     /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
-    #[tracing::instrument(skip_all, name = "MemoryCheckingProof.init_final_grand_product")]
+    #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
         &self,
         polynomials: &Polynomials,

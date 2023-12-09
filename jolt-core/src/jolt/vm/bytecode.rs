@@ -126,6 +126,7 @@ pub struct FiveTuplePoly<F: PrimeField> {
 }
 
 impl<F: PrimeField> FiveTuplePoly<F> {
+    #[tracing::instrument(skip_all, name = "FiveTuplePoly::from_elf")]
     fn from_elf(elf: &Vec<ELFRow>) -> Self {
         let len = elf.len().next_power_of_two();
         let mut opcodes = Vec::with_capacity(len);
@@ -164,6 +165,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "FiveTuplePoly::evaluate")]
     fn evaluate(&self, r: &[F]) -> Vec<F> {
         vec![
             self.opcode.evaluate(r),
@@ -195,6 +197,7 @@ pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn new(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
         Self::validate_bytecode(&bytecode, &trace);
         Self::preprocess(&mut bytecode, &mut trace);
@@ -237,6 +240,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
     fn validate_bytecode(bytecode: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
         let mut pc = bytecode[0].address;
         let mut bytecode_map: HashMap<usize, &ELFRow> = HashMap::new();
@@ -257,6 +261,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::preprocess")]
     fn preprocess(bytecode: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
         for instruction in bytecode.iter_mut() {
             assert!(instruction.address >= RAM_START_ADDRESS as usize);
@@ -322,6 +327,7 @@ where
     type BatchedPolynomials = BatchedBytecodePolynomials<F>;
     type Commitment = BytecodeCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let combined_read_write = DensePolynomial::merge(&vec![
             &self.a_read_write,
@@ -347,6 +353,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (gens_read_write, read_write_commitments) = batched_polys
             .combined_read_write
@@ -389,6 +396,7 @@ where
         result - tau
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -415,6 +423,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -441,6 +450,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::init_leaves")]
     fn init_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -467,6 +477,7 @@ where
             .collect();
         vec![DensePolynomial::new(init_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -578,6 +589,7 @@ where
 {
     type Openings = (F, Vec<F>, F);
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.a_read_write.evaluate(&opening_point),
@@ -586,6 +598,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
@@ -664,6 +677,7 @@ where
 {
     type Openings = (Vec<F>, F);
 
+    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.v_init_final.evaluate(&opening_point),
@@ -671,6 +685,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,

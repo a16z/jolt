@@ -136,16 +136,17 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 fn prove_e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-    const MEMORY_SIZE: usize = 1 << 22;
-    const BYTECODE_SIZE: usize = 1 << 16;
-    const NUM_CYCLES: usize = 1 << 16;
+    const MEMORY_SIZE: usize = 1 << 22; // 4,194,304 = 4 MB
+    const BYTECODE_SIZE: usize = 1 << 16; // 65,536 = 64 kB
+    const NUM_CYCLES: usize = 1 << 16; // 65,536
 
     let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
 
     let bytecode: Vec<ELFInstruction> = (0..BYTECODE_SIZE)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
-    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_CYCLES, &mut rng);
+    // 7 memory ops per instruction, rounded up to still be a power of 2
+    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, 8 * NUM_CYCLES, &mut rng);
     let mut bytecode_rows: Vec<ELFRow> = (0..BYTECODE_SIZE)
         .map(|i| ELFRow::random(i, &mut rng))
         .collect();

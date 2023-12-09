@@ -136,6 +136,7 @@ where
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
@@ -269,6 +270,7 @@ where
     type BatchedPolynomials = BatchedMemoryPolynomials<F>;
     type Commitment = MemoryCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let batched_read_write = DensePolynomial::merge(&vec![
             &self.a_read_write,
@@ -286,6 +288,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (gens_read_write, read_write_commitments) = batched_polys
             .batched_read_write
@@ -332,6 +335,7 @@ where
 {
     type Openings = [F; 5];
 
+    #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         [
             polynomials.a_read_write.evaluate(&opening_point),
@@ -342,6 +346,7 @@ where
         ]
     }
 
+    #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
         commitment: &MemoryCommitment<G>,
@@ -417,6 +422,7 @@ where
 {
     type Openings = [F; 3];
 
+    #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         [
             polynomials.v_init.evaluate(&opening_point),
@@ -425,6 +431,7 @@ where
         ]
     }
 
+    #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
         commitment: &MemoryCommitment<G>,
@@ -483,6 +490,7 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::read_leaves")]
     fn read_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let num_ops = polynomials.a_read_write.len();
         let read_fingerprints = (0..num_ops)
@@ -500,6 +508,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::write_leaves")]
     fn write_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let num_ops = polynomials.a_read_write.len();
         let write_fingerprints = (0..num_ops)
@@ -517,6 +526,7 @@ where
             .collect();
         vec![DensePolynomial::new(write_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::init_leaves")]
     fn init_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let init_fingerprints = (0..self.memory_size)
             .map(|i| {
@@ -529,6 +539,7 @@ where
             .collect();
         vec![DensePolynomial::new(init_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::final_leaves")]
     fn final_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let final_fingerprints = (0..self.memory_size)
             .map(|i| {
