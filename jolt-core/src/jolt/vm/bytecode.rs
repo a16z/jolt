@@ -72,7 +72,7 @@ impl ELFRow {
         }
     }
 
-    fn random(index: usize, rng: &mut StdRng) -> Self {
+    pub fn random(index: usize, rng: &mut StdRng) -> Self {
         Self {
             address: to_ram_address(index),
             opcode: rng.next_u64() % 64, // Roughly how many opcodes there are
@@ -85,7 +85,7 @@ impl ELFRow {
 }
 
 pub fn random_bytecode_trace(
-    bytecode: Vec<ELFRow>,
+    bytecode: &Vec<ELFRow>,
     num_ops: usize,
     rng: &mut StdRng,
 ) -> Vec<ELFRow> {

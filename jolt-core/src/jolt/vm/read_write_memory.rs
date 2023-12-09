@@ -21,7 +21,7 @@ use crate::{
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::{to_ram_address, ELFInstruction};
 
-trait RandomInstruction {
+pub trait RandomInstruction {
     fn random(index: usize, rng: &mut StdRng) -> Self;
 }
 

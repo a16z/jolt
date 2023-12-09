@@ -1,5 +1,7 @@
 use crate::jolt::instruction::JoltInstruction;
+use crate::jolt::vm::bytecode::{random_bytecode_trace, ELFRow};
 use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
+use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction};
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
@@ -12,6 +14,7 @@ use crate::utils::random::RandomTape;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::test_rng;
+use common::ELFInstruction;
 use criterion::black_box;
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
@@ -23,6 +26,7 @@ pub enum BenchType {
     Halo2Comparison,
     RV32,
     Poly,
+    EverythingExceptR1CS,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -32,6 +36,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
         BenchType::RV32 => rv32i_lookup_benchmarks(),
         BenchType::Poly => dense_ml_poly(),
+        BenchType::EverythingExceptR1CS => prove_e2e_except_r1cs(),
         _ => panic!("BenchType does not have a mapping"),
     }
 }
@@ -125,12 +130,42 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
     });
-    vec![(tracing::info_span!("RV32IM"), work)]
+    vec![(tracing::info_span!("RV32I"), work)]
 }
 
-fn e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    
-    vec![]
+fn prove_e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+
+    const MEMORY_SIZE: usize = 1 << 22;
+    const BYTECODE_SIZE: usize = 1 << 16;
+    const NUM_CYCLES: usize = 1 << 16;
+
+    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
+
+    let bytecode: Vec<ELFInstruction> = (0..BYTECODE_SIZE)
+        .map(|i| ELFInstruction::random(i, &mut rng))
+        .collect();
+    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_CYCLES, &mut rng);
+    let mut bytecode_rows: Vec<ELFRow> = (0..BYTECODE_SIZE)
+        .map(|i| ELFRow::random(i, &mut rng))
+        .collect();
+    let bytecode_trace = random_bytecode_trace(&bytecode_rows, NUM_CYCLES, &mut rng);
+
+    let work = Box::new(|| {
+        let mut transcript = Transcript::new(b"example");
+        let mut random_tape = RandomTape::new(b"test_tape");
+        let _ = RV32IJoltVM::prove_bytecode(
+            bytecode_rows,
+            bytecode_trace,
+            &mut transcript,
+            &mut random_tape,
+        );
+        let _ =
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+        let _: InstructionLookupsProof<Fr, EdwardsProjective> =
+            RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
+    });
+    vec![(tracing::info_span!("E2E (except R1CS)"), work)]
 }
 
 fn random_surge_test<const C: usize, const M: usize>(num_ops: usize) -> Box<dyn FnOnce()> {
