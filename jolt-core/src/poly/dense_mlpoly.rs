@@ -289,7 +289,19 @@ impl<F: PrimeField> DensePolynomial<F> {
                 (0..L_size)
                     .into_par_iter()
                     .with_min_len(min_inner_iter_size)
-                    .map(|j| L[j] * self.Z[j * R_size + i])
+                    .map(|j| {
+                        // TODO(sragss): Gate this logic for small dense_mlpoly
+                        if L[j].is_zero() || self.Z[j * R_size + i].is_zero() {
+                            F::zero()
+                        } else if L[j].is_one() {
+                            self.Z[j * R_size + i]
+                        } else if self.Z[j * R_size + i].is_one() {
+                            L[j]
+                        } else {
+                            L[j] * self.Z[j * R_size + i]
+                        }
+                        // L[j] * self.Z[j * R_size + i]
+                    })
                     .sum()
             })
             .collect();
