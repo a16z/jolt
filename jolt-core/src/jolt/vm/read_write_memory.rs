@@ -4,6 +4,8 @@ use std::marker::PhantomData;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rand::rngs::StdRng;
+use rand_core::RngCore;
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -16,8 +18,68 @@ use crate::{
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, random::RandomTape},
 };
-use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
-use common::ELFInstruction;
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::{to_ram_address, ELFInstruction};
+
+trait RandomInstruction {
+    fn random(index: usize, rng: &mut StdRng) -> Self;
+}
+
+impl RandomInstruction for ELFInstruction {
+    fn random(index: usize, rng: &mut StdRng) -> Self {
+        Self {
+            address: to_ram_address(index) as u64,
+            raw: rng.next_u32(),
+            // Only `address` and `raw` are used in ReadWriteMemory; the rest don't matter
+            opcode: common::RV32IM::ADD,
+            rs1: None,
+            rs2: None,
+            rd: None,
+            imm: None,
+        }
+    }
+}
+
+pub fn random_memory_trace(
+    bytecode: &Vec<ELFInstruction>,
+    max_memory_address: usize,
+    num_ops: usize,
+    rng: &mut StdRng,
+) -> Vec<MemoryOp> {
+    let mut memory: Vec<u64> = vec![0; max_memory_address];
+    for instr in bytecode {
+        let address = instr.address - RAM_START_ADDRESS + REGISTER_COUNT;
+        let raw = instr.raw;
+        for i in 0..(BYTES_PER_INSTRUCTION as u64) {
+            // Write one byte of raw to memory
+            memory[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+        }
+    }
+
+    let mut memory_trace = Vec::with_capacity(num_ops);
+    for _ in 0..num_ops {
+        let mut address = if rng.next_u32() % 3 == 0 {
+            rng.next_u64() % max_memory_address as u64
+        } else {
+            rng.next_u64() % REGISTER_COUNT
+        };
+        if rng.next_u32() % 2 == 0 {
+            let value = memory[address as usize];
+            if address >= REGISTER_COUNT {
+                address = address + RAM_START_ADDRESS;
+            }
+            memory_trace.push(MemoryOp::Read(address, value));
+        } else {
+            let new_value = rng.next_u64();
+            memory[address as usize] = new_value;
+            if address >= REGISTER_COUNT {
+                address = address + RAM_START_ADDRESS;
+            }
+            memory_trace.push(MemoryOp::Write(address, new_value));
+        }
+    }
+    memory_trace
+}
 
 pub struct ReadWriteMemoryProof<F, G>
 where
@@ -106,7 +168,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .map(|instr| remap_address(instr.address))
             .max()
             .unwrap_or(0)
-            + 3; // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
         let memory_size =
             max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
 
@@ -114,7 +176,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         for instr in bytecode {
             let address = remap_address(instr.address);
             let raw = instr.raw;
-            for i in 0..4 {
+            for i in 0..(BYTES_PER_INSTRUCTION as u64) {
                 // Write one byte of raw to v_init
                 v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
             }
@@ -531,48 +593,25 @@ mod tests {
     use ark_curve25519::{EdwardsProjective, Fr};
     use ark_std::{log2, test_rng, One, Zero};
     use rand_chacha::rand_core::RngCore;
-
-    fn generate_memory_trace(memory_size: usize, num_ops: usize) -> Vec<MemoryOp> {
-        let mut rng = test_rng();
-        let mut memory = vec![0u64; memory_size];
-        let mut memory_trace = Vec::with_capacity(num_ops);
-
-        for _ in 0..num_ops {
-            let mut address = if rng.next_u32() % 3 == 0 {
-                rng.next_u64() % memory_size as u64
-            } else {
-                rng.next_u64() % REGISTER_COUNT
-            };
-            if rng.next_u32() % 2 == 0 {
-                let value = memory[address as usize];
-                if address >= REGISTER_COUNT {
-                    address = address + RAM_START_ADDRESS;
-                }
-                memory_trace.push(MemoryOp::Read(address, value));
-            } else {
-                let old_value = memory[address as usize];
-                let new_value = rng.next_u64();
-                memory[address as usize] = new_value;
-                if address >= REGISTER_COUNT {
-                    address = address + RAM_START_ADDRESS;
-                }
-                memory_trace.push(MemoryOp::Write(address, new_value));
-            }
-        }
-        memory_trace
-    }
+    use rand_core::SeedableRng;
 
     #[test]
     fn e2e_memchecking() {
         const MEMORY_SIZE: usize = 1 << 16;
         const NUM_OPS: usize = 1 << 8;
-        let memory_trace = generate_memory_trace(MEMORY_SIZE, NUM_OPS);
+        const BYTECODE_SIZE: usize = 1 << 8;
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+        let bytecode = (0..BYTECODE_SIZE)
+            .map(|i| ELFInstruction::random(i, &mut rng))
+            .collect();
+        let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
 
         let mut transcript = Transcript::new(b"test_transcript");
         let mut random_tape = RandomTape::new(b"test_tape");
 
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, Vec<u64>) =
-            ReadWriteMemory::new(vec![], memory_trace, &mut transcript);
+            ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 

@@ -1,10 +1,12 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rand::rngs::StdRng;
+use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use common::ELFInstruction;
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::{to_ram_address, ELFInstruction};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -69,6 +71,29 @@ impl ELFRow {
             imm: 0,
         }
     }
+
+    fn random(index: usize, rng: &mut StdRng) -> Self {
+        Self {
+            address: to_ram_address(index),
+            opcode: rng.next_u64() % 64, // Roughly how many opcodes there are
+            rd: rng.next_u64() % REGISTER_COUNT,
+            rs1: rng.next_u64() % REGISTER_COUNT,
+            rs2: rng.next_u64() % REGISTER_COUNT,
+            imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
+        }
+    }
+}
+
+pub fn random_bytecode_trace(
+    bytecode: Vec<ELFRow>,
+    num_ops: usize,
+    rng: &mut StdRng,
+) -> Vec<ELFRow> {
+    let mut trace: Vec<ELFRow> = Vec::with_capacity(num_ops);
+    for _ in 0..num_ops {
+        trace.push(bytecode[rng.next_u64() as usize % bytecode.len()].clone());
+    }
+    trace
 }
 
 // TODO(JOLT-74): Consolidate ELFInstruction and ELFRow
@@ -700,10 +725,6 @@ mod tests {
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
     use std::collections::HashSet;
-
-    fn to_ram_address(i: usize) -> usize {
-        i * BYTES_PER_INSTRUCTION + RAM_START_ADDRESS as usize
-    }
 
     #[test]
     fn five_tuple_poly() {
