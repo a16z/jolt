@@ -30,13 +30,13 @@ pub enum BenchType {
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
-pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+pub fn benchmarks(bench_type: BenchType, num_cycles: Option<usize>) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
         BenchType::JoltDemo => jolt_demo_benchmarks(),
         BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
-        BenchType::RV32 => rv32i_lookup_benchmarks(),
+        BenchType::RV32 => rv32i_lookup_benchmarks(num_cycles),
         BenchType::Poly => dense_ml_poly(),
-        BenchType::EverythingExceptR1CS => prove_e2e_except_r1cs(),
+        BenchType::EverythingExceptR1CS => prove_e2e_except_r1cs(num_cycles),
         _ => panic!("BenchType does not have a mapping"),
     }
 }
@@ -115,11 +115,11 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     ]
 }
 
-fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+fn rv32i_lookup_benchmarks(num_cycles: Option<usize>) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-    const NUM_CYCLES: usize = 64_000;
-    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
+    let num_cycles = num_cycles.unwrap_or(64_000);
+    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); num_cycles];
     println!("Running {:?}", ops.len());
 
     let work = Box::new(|| {
@@ -133,24 +133,24 @@ fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     vec![(tracing::info_span!("RV32I"), work)]
 }
 
-fn prove_e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+fn prove_e2e_except_r1cs(num_cycles: Option<usize>) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
     const MEMORY_SIZE: usize = 1 << 22; // 4,194,304 = 4 MB
     const BYTECODE_SIZE: usize = 1 << 16; // 65,536 = 64 kB
-    const NUM_CYCLES: usize = 1 << 16; // 65,536
+    let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
-    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
+    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); num_cycles];
 
     let bytecode: Vec<ELFInstruction> = (0..BYTECODE_SIZE)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
     // 7 memory ops per instruction, rounded up to still be a power of 2
-    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, 8 * NUM_CYCLES, &mut rng);
+    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, 8 * num_cycles, &mut rng);
     let mut bytecode_rows: Vec<ELFRow> = (0..BYTECODE_SIZE)
         .map(|i| ELFRow::random(i, &mut rng))
         .collect();
-    let bytecode_trace = random_bytecode_trace(&bytecode_rows, NUM_CYCLES, &mut rng);
+    let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");

@@ -14,6 +14,10 @@ struct Cli {
     /// Type of benchmark to run
     #[clap(long, value_enum)]
     name: BenchType,
+
+    /// Number of cycles to run the benchmark for
+    #[clap(long)]
+    num_cycles: Option<usize>,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -46,7 +50,7 @@ fn main() {
                 .finish();
             tracing::subscriber::set_global_default(collector)
                 .expect("setting tracing default failed");
-            for (span, bench) in benchmarks(args.name).into_iter() {
+            for (span, bench) in benchmarks(args.name, args.num_cycles).into_iter() {
                 span.to_owned().in_scope(|| {
                     bench();
                     tracing::info!("Bench Complete");
@@ -55,13 +59,13 @@ fn main() {
         }
         Format::Texray => {
             tracing_texray::init();
-            for (span, bench) in benchmarks(args.name).into_iter() {
+            for (span, bench) in benchmarks(args.name, args.num_cycles).into_iter() {
                 tracing_texray::examine(span.to_owned()).in_scope(bench);
             }
         }
         Format::Flamegraph => {
             let _guard = setup_global_subscriber();
-            for (span, bench) in benchmarks(args.name).into_iter() {
+            for (span, bench) in benchmarks(args.name, args.num_cycles).into_iter() {
                 span.to_owned().in_scope(|| {
                     bench();
                     tracing::info!("Bench Complete");
