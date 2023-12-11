@@ -197,6 +197,7 @@ mod tests {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
+        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -225,13 +226,14 @@ mod tests {
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
         let bytecode_proof: BytecodeProof<Fr, EdwardsProjective> = RV32IJoltVM::prove_bytecode(
-            &bytecode,
+            bytecode_rows,
             bytecode_trace,
             &mut transcript,
             &mut random_tape,
         );
+        const MEMORY_TRACE_SIZE: usize = 1 << 12;
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory::<MEMORY_TRACE_SIZE>(bytecode, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups: InstructionLookupsProof<_, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 

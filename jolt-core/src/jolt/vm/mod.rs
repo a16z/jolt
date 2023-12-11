@@ -40,7 +40,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
-    fn prove(
+    fn prove<const MEMORY_TRACE_SIZE: usize>(
         bytecode: Vec<ELFInstruction>,
         mut bytecode_trace: Vec<ELFRow>,
         memory_trace: Vec<MemoryOp>,
@@ -56,7 +56,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut random_tape,
         );
         let memory_proof =
-            Self::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            Self::prove_memory::<MEMORY_TRACE_SIZE>(bytecode, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups =
             Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
         todo!("rics");
@@ -131,15 +131,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
-    fn prove_memory(
+    fn prove_memory<const MEMORY_TRACE_SIZE: usize>(
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> ReadWriteMemoryProof<F, G> {
-        const MAX_TRACE_SIZE: usize = 1 << 22;
         // TODO: Support longer traces
-        assert!(memory_trace.len() <= MAX_TRACE_SIZE);
+        assert!(memory_trace.len() <= MEMORY_TRACE_SIZE);
 
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
@@ -160,7 +159,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .collect();
 
         let timestamp_validity_proof =
-            <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
+            <Surge<F, G, SLTUInstruction, 2, MEMORY_TRACE_SIZE>>::new(timestamp_validity_lookups)
                 .prove(transcript);
 
         ReadWriteMemoryProof {

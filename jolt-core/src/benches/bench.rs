@@ -139,14 +139,15 @@ fn prove_e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     const MEMORY_SIZE: usize = 1 << 22; // 4,194,304 = 4 MB
     const BYTECODE_SIZE: usize = 1 << 16; // 65,536 = 64 kB
     const NUM_CYCLES: usize = 1 << 16; // 65,536
-
+    // 7 memory ops per instruction, rounded up to still be a power of 2
+    const MEMORY_TRACE_SIZE: usize = 8 * NUM_CYCLES; // 524,288
+ 
     let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
 
     let bytecode: Vec<ELFInstruction> = (0..BYTECODE_SIZE)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
-    // 7 memory ops per instruction, rounded up to still be a power of 2
-    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, 8 * NUM_CYCLES, &mut rng);
+    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, MEMORY_TRACE_SIZE, &mut rng);
     let mut bytecode_rows: Vec<ELFRow> = (0..BYTECODE_SIZE)
         .map(|i| ELFRow::random(i, &mut rng))
         .collect();
@@ -162,7 +163,7 @@ fn prove_e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             &mut random_tape,
         );
         let _ =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory::<MEMORY_TRACE_SIZE>(bytecode, memory_trace, &mut transcript, &mut random_tape);
         let _: InstructionLookupsProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
     });
