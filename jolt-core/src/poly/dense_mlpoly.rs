@@ -373,14 +373,15 @@ impl<F: PrimeField> DensePolynomial<F> {
         assert_eq!(self.Z.len(), self.len);
     }
 
+    #[tracing::instrument(skip_all, name = "DensePoly.merge")]
     pub fn merge<T>(polys: &Vec<T>) -> DensePolynomial<F>
     where
         T: AsRef<DensePolynomial<F>>,
     {
         let total_len: usize = polys.iter().map(|poly| poly.as_ref().vec().len()).sum();
         let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
-        for poly in polys.iter() {
-            Z.extend_from_slice(poly.as_ref().vec());
+        for i in 0..polys.len() {
+            Z.extend_from_slice(polys[i].as_ref().vec());
         }
 
         // pad the polynomial with zero polynomial at the end
