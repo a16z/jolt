@@ -77,6 +77,7 @@ fn main() {
         Format::Chrome => {
             let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
             tracing_subscriber::registry().with(chrome_layer).init();
+            println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in chrome://tracing.");
             for (span, bench) in benchmarks(args.name, args.num_cycles).into_iter() {
                 span.to_owned().in_scope(|| {
                     bench();
