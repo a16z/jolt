@@ -1,19 +1,7 @@
-use crate::jolt::instruction::add::ADDInstruction;
-use crate::jolt::instruction::and::ANDInstruction;
-use crate::jolt::instruction::beq::BEQInstruction;
-use crate::jolt::instruction::bge::BGEInstruction;
-use crate::jolt::instruction::bgeu::BGEUInstruction;
-use crate::jolt::instruction::blt::BLTInstruction;
-use crate::jolt::instruction::bltu::BLTUInstruction;
-use crate::jolt::instruction::bne::BNEInstruction;
-use crate::jolt::instruction::jal::JALInstruction;
-use crate::jolt::instruction::jalr::JALRInstruction;
-use crate::jolt::instruction::or::ORInstruction;
-use crate::jolt::instruction::sll::SLLInstruction;
-use crate::jolt::instruction::sra::SRAInstruction;
-use crate::jolt::instruction::srl::SRLInstruction;
-use crate::jolt::instruction::sub::SUBInstruction;
+use crate::jolt::instruction::JoltInstruction;
+use crate::jolt::vm::bytecode::{random_bytecode_trace, ELFRow};
 use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
+use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction};
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
@@ -26,9 +14,11 @@ use crate::utils::random::RandomTape;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::test_rng;
+use common::ELFInstruction;
 use criterion::black_box;
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
+use rand_core::SeedableRng;
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -36,6 +26,7 @@ pub enum BenchType {
     Halo2Comparison,
     RV32,
     Poly,
+    EverythingExceptR1CS,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -45,6 +36,7 @@ pub fn benchmarks(bench_type: BenchType) -> Vec<(tracing::Span, Box<dyn FnOnce()
         BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
         BenchType::RV32 => rv32i_lookup_benchmarks(),
         BenchType::Poly => dense_ml_poly(),
+        BenchType::EverythingExceptR1CS => prove_e2e_except_r1cs(),
         _ => panic!("BenchType does not have a mapping"),
     }
 }
@@ -123,62 +115,63 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     ]
 }
 
-#[rustfmt::skip]
 fn rv32i_lookup_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-  let mut rng = test_rng();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-  let mut ops: Vec<RV32I> = vec![
-    RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::BGEU(BGEUInstruction(
-      rng.next_u32() as u64,
-      rng.next_u32() as u64,
-    )),
-    RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::BLTU(BLTUInstruction(
-      rng.next_u32() as u64,
-      rng.next_u32() as u64,
-    )),
-    RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::JALR(JALRInstruction(
-      rng.next_u32() as u64,
-      rng.next_u32() as u64,
-    )),
-    RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-    RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-  ];
-  for _ in 0..15 {
-    ops.extend(ops.clone());
-  }
-  println!("Running {:?}", ops.len());
+    const NUM_CYCLES: usize = 64_000;
+    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
+    println!("Running {:?}", ops.len());
 
-  let work = Box::new(|| {
-    let mut prover_transcript = Transcript::new(b"example");
-    let mut random_tape = RandomTape::new(b"test_tape");
-    let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-      RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
-    let mut verifier_transcript = Transcript::new(b"example");
-    assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
-  });
-  vec![(tracing::info_span!("RV32IM"), work)]
+    let work = Box::new(|| {
+        let mut prover_transcript = Transcript::new(b"example");
+        let mut random_tape = RandomTape::new(b"test_tape");
+        let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
+            RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
+        let mut verifier_transcript = Transcript::new(b"example");
+        assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
+    });
+    vec![(tracing::info_span!("RV32I"), work)]
+}
+
+fn prove_e2e_except_r1cs() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+
+    const MEMORY_SIZE: usize = 1 << 22; // 4,194,304 = 4 MB
+    const BYTECODE_SIZE: usize = 1 << 16; // 65,536 = 64 kB
+    const NUM_CYCLES: usize = 1 << 16; // 65,536
+
+    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
+
+    let bytecode: Vec<ELFInstruction> = (0..BYTECODE_SIZE)
+        .map(|i| ELFInstruction::random(i, &mut rng))
+        .collect();
+    // 7 memory ops per instruction, rounded up to still be a power of 2
+    let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, 8 * NUM_CYCLES, &mut rng);
+    let mut bytecode_rows: Vec<ELFRow> = (0..BYTECODE_SIZE)
+        .map(|i| ELFRow::random(i, &mut rng))
+        .collect();
+    let bytecode_trace = random_bytecode_trace(&bytecode_rows, NUM_CYCLES, &mut rng);
+
+    let work = Box::new(|| {
+        let mut transcript = Transcript::new(b"example");
+        let mut random_tape = RandomTape::new(b"test_tape");
+        let _ = RV32IJoltVM::prove_bytecode(
+            bytecode_rows,
+            bytecode_trace,
+            &mut transcript,
+            &mut random_tape,
+        );
+        let _ =
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+        let _: InstructionLookupsProof<Fr, EdwardsProjective> =
+            RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
+    });
+    vec![(tracing::info_span!("E2E (except R1CS)"), work)]
 }
 
 fn random_surge_test<const C: usize, const M: usize>(num_ops: usize) -> Box<dyn FnOnce()> {
-    let mut rng = test_rng();
-
-    let mut ops: Vec<XORInstruction> = Vec::with_capacity(num_ops);
-    for _ in 0..num_ops {
-        let a = rng.next_u32();
-        let b = rng.next_u32();
-        ops.push(XORInstruction(a as u64, b as u64));
-    }
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+    let ops: Vec<XORInstruction> = vec![XORInstruction::default().random(&mut rng); num_ops];
 
     let func = move || {
         let mut prover_transcript = Transcript::new(b"test_transcript");

@@ -1,10 +1,12 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rand::rngs::StdRng;
+use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS};
-use common::ELFInstruction;
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::{to_ram_address, ELFInstruction};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -69,6 +71,29 @@ impl ELFRow {
             imm: 0,
         }
     }
+
+    pub fn random(index: usize, rng: &mut StdRng) -> Self {
+        Self {
+            address: to_ram_address(index),
+            opcode: rng.next_u64() % 64, // Roughly how many opcodes there are
+            rd: rng.next_u64() % REGISTER_COUNT,
+            rs1: rng.next_u64() % REGISTER_COUNT,
+            rs2: rng.next_u64() % REGISTER_COUNT,
+            imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
+        }
+    }
+}
+
+pub fn random_bytecode_trace(
+    bytecode: &Vec<ELFRow>,
+    num_ops: usize,
+    rng: &mut StdRng,
+) -> Vec<ELFRow> {
+    let mut trace: Vec<ELFRow> = Vec::with_capacity(num_ops);
+    for _ in 0..num_ops {
+        trace.push(bytecode[rng.next_u64() as usize % bytecode.len()].clone());
+    }
+    trace
 }
 
 // TODO(JOLT-74): Consolidate ELFInstruction and ELFRow
@@ -101,6 +126,7 @@ pub struct FiveTuplePoly<F: PrimeField> {
 }
 
 impl<F: PrimeField> FiveTuplePoly<F> {
+    #[tracing::instrument(skip_all, name = "FiveTuplePoly::from_elf")]
     fn from_elf(elf: &Vec<ELFRow>) -> Self {
         let len = elf.len().next_power_of_two();
         let mut opcodes = Vec::with_capacity(len);
@@ -139,6 +165,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "FiveTuplePoly::evaluate")]
     fn evaluate(&self, r: &[F]) -> Vec<F> {
         vec![
             self.opcode.evaluate(r),
@@ -170,6 +197,7 @@ pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn new(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
         Self::validate_bytecode(&bytecode, &trace);
         Self::preprocess(&mut bytecode, &mut trace);
@@ -213,6 +241,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
     fn validate_bytecode(bytecode: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
         let mut pc = bytecode[0].address;
         let mut bytecode_map: HashMap<usize, &ELFRow> = HashMap::new();
@@ -233,6 +262,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::preprocess")]
     fn preprocess(bytecode: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
         for instruction in bytecode.iter_mut() {
             assert!(instruction.address >= RAM_START_ADDRESS as usize);
@@ -298,6 +328,7 @@ where
     type BatchedPolynomials = BatchedBytecodePolynomials<F>;
     type Commitment = BytecodeCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let combined_read_write = DensePolynomial::merge(&vec![
             &self.a_read_write,
@@ -323,6 +354,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (gens_read_write, read_write_commitments) = batched_polys
             .combined_read_write
@@ -365,6 +397,7 @@ where
         result - tau
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -391,6 +424,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -417,6 +451,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::init_leaves")]
     fn init_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -443,6 +478,7 @@ where
             .collect();
         vec![DensePolynomial::new(init_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -554,6 +590,7 @@ where
 {
     type Openings = (F, Vec<F>, F);
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.a_read_write.evaluate(&opening_point),
@@ -562,6 +599,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
@@ -640,6 +678,7 @@ where
 {
     type Openings = (Vec<F>, F);
 
+    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.v_init_final.evaluate(&opening_point),
@@ -647,6 +686,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
@@ -701,10 +741,6 @@ mod tests {
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
     use std::collections::HashSet;
-
-    fn to_ram_address(i: usize) -> usize {
-        i * BYTES_PER_INSTRUCTION + RAM_START_ADDRESS as usize
-    }
 
     #[test]
     fn five_tuple_poly() {

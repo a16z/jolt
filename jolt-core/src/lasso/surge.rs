@@ -60,6 +60,7 @@ where
     type BatchedPolynomials = BatchedSurgePolynomials<F>;
     type Commitment = SurgeCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
 
@@ -70,6 +71,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
             .batched_dim_read
@@ -111,6 +113,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
 {
     type Openings = Vec<F>;
 
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         polynomials
             .E_polys
@@ -119,6 +122,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
@@ -178,6 +182,7 @@ where
 {
     type Openings = [Vec<F>; 3];
 
+    #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate(&opening_point) };
         [
@@ -187,6 +192,7 @@ where
         ]
     }
 
+    #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
@@ -279,6 +285,7 @@ where
 {
     type Openings = Vec<F>;
 
+    #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         polynomials
             .final_cts
@@ -287,6 +294,7 @@ where
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
@@ -343,6 +351,7 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
@@ -366,6 +375,7 @@ where
             })
             .collect()
     }
+    #[tracing::instrument(skip_all, name = "Surge::write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
@@ -389,6 +399,7 @@ where
             })
             .collect()
     }
+    #[tracing::instrument(skip_all, name = "Surge::init_leaves")]
     fn init_leaves(
         &self,
         _polynomials: &SurgePolys<F, G>,
@@ -412,6 +423,7 @@ where
             })
             .collect()
     }
+    #[tracing::instrument(skip_all, name = "Surge::final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
@@ -566,6 +578,7 @@ where
         C * Instruction::default().subtables::<F>(C).len()
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::new")]
     pub fn new(ops: Vec<Instruction>) -> Self {
         let num_lookups = ops.len().next_power_of_two();
         let instruction = Instruction::default();
@@ -600,6 +613,7 @@ where
         b"Surge"
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
@@ -727,6 +741,7 @@ where
         Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
     fn construct_polys(&self) -> SurgePolys<F, G> {
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; self.num_lookups]; C];
 
@@ -806,6 +821,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
     fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, G>, eq: &DensePolynomial<F>) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();

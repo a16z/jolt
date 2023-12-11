@@ -1,7 +1,9 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
+use rand::{prelude::StdRng, RngCore};
 use std::any::TypeId;
+use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
@@ -31,6 +33,18 @@ macro_rules! instruction_set {
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl Opcode for $enum_name {}
+        impl $enum_name {
+            pub fn random_instruction(rng: &mut StdRng) -> Self {
+                let index = rng.next_u64() as usize % $enum_name::COUNT;
+                let instruction = $enum_name::iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i == index)
+                    .map(|(_, x)| x)
+                    .next()
+                    .unwrap();
+                instruction.random(rng)
+            }
+        }
     };
 }
 
@@ -139,6 +153,7 @@ mod tests {
     use enum_dispatch::enum_dispatch;
     use merlin::Transcript;
     use rand_chacha::rand_core::RngCore;
+    use rand_core::SeedableRng;
     use std::collections::HashSet;
 
     use crate::jolt::instruction::{
@@ -182,6 +197,7 @@ mod tests {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
+        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -210,7 +226,7 @@ mod tests {
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
         let bytecode_proof: BytecodeProof<Fr, EdwardsProjective> = RV32IJoltVM::prove_bytecode(
-            &bytecode,
+            bytecode_rows,
             bytecode_trace,
             &mut transcript,
             &mut random_tape,
@@ -238,35 +254,9 @@ mod tests {
 
     #[test]
     fn instruction_lookups() {
-        let mut rng = test_rng();
-
-        let ops: Vec<RV32I> = vec![
-            RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::BGEU(BGEUInstruction(
-                rng.next_u32() as u64,
-                rng.next_u32() as u64,
-            )),
-            RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::BLTU(BLTUInstruction(
-                rng.next_u32() as u64,
-                rng.next_u32() as u64,
-            )),
-            RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::JALR(JALRInstruction(
-                rng.next_u32() as u64,
-                rng.next_u32() as u64,
-            )),
-            RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-            RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
-        ];
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+        const NUM_CYCLES: usize = 100;
+        let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
 
         let mut prover_transcript = Transcript::new(b"example");
         let mut random_tape = RandomTape::new(b"test_tape");

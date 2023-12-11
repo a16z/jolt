@@ -48,8 +48,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     ) -> JoltProof<F, G> {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape = RandomTape::new(b"Jolt prover randomness");
-        let bytecode_proof =
-            Self::prove_bytecode(&bytecode, bytecode_trace, &mut transcript, &mut random_tape);
+        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        let bytecode_proof = Self::prove_bytecode(
+            bytecode_rows,
+            bytecode_trace,
+            &mut transcript,
+            &mut random_tape,
+        );
         let memory_proof =
             Self::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups =
@@ -70,6 +75,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         todo!("r1cs");
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
         transcript: &mut Transcript,
@@ -89,13 +95,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_bytecode")]
     fn prove_bytecode(
-        bytecode: &Vec<ELFInstruction>,
+        mut bytecode_rows: Vec<ELFRow>,
         mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> BytecodeProof<F, G> {
-        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
         let batched_polys = polys.batch();
         let commitment = BytecodePolynomials::commit(&batched_polys);
@@ -124,6 +130,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,

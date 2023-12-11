@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use rand::prelude::StdRng;
 
 use super::{slt::SLTInstruction, JoltInstruction};
 use crate::{
@@ -35,6 +36,11 @@ impl JoltInstruction for BGEInstruction {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

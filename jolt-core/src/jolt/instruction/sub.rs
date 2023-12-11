@@ -1,6 +1,6 @@
-// use core::slice::SlicePattern;
 use ark_ff::PrimeField;
 use ark_std::log2;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
@@ -56,6 +56,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
             C,
             log_M,
         )
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 
