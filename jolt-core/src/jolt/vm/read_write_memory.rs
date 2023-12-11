@@ -12,6 +12,7 @@ use crate::{
     lasso::surge::SurgeProof,
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
@@ -337,12 +338,13 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         [
-            polynomials.a_read_write.evaluate(&opening_point),
-            polynomials.v_read.evaluate(&opening_point),
-            polynomials.v_write.evaluate(&opening_point),
-            polynomials.t_read.evaluate(&opening_point),
-            polynomials.t_write.evaluate(&opening_point),
+            polynomials.a_read_write.evaluate_at_chi(&chis),
+            polynomials.v_read.evaluate_at_chi(&chis),
+            polynomials.v_write.evaluate_at_chi(&chis),
+            polynomials.t_read.evaluate_at_chi(&chis),
+            polynomials.t_write.evaluate_at_chi(&chis),
         ]
     }
 
@@ -424,10 +426,11 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         [
-            polynomials.v_init.evaluate(&opening_point),
-            polynomials.v_final.evaluate(&opening_point),
-            polynomials.t_final.evaluate(&opening_point),
+            polynomials.v_init.evaluate_at_chi(&chis),
+            polynomials.v_final.evaluate_at_chi(&chis),
+            polynomials.t_final.evaluate_at_chi(&chis),
         ]
     }
 
