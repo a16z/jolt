@@ -6,6 +6,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -497,6 +498,7 @@ where
     fn read_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let num_ops = polynomials.a_read_write.len();
         let read_fingerprints = (0..num_ops)
+            .into_par_iter()
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
                     &(
@@ -515,6 +517,7 @@ where
     fn write_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let num_ops = polynomials.a_read_write.len();
         let write_fingerprints = (0..num_ops)
+            .into_par_iter()
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
                     &(
@@ -532,6 +535,7 @@ where
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::init_leaves")]
     fn init_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let init_fingerprints = (0..self.memory_size)
+            .into_par_iter()
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
                     &(F::from(i as u64), polynomials.v_init[i], F::zero()),
@@ -545,6 +549,7 @@ where
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::final_leaves")]
     fn final_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let final_fingerprints = (0..self.memory_size)
+            .into_par_iter()
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
                     &(
