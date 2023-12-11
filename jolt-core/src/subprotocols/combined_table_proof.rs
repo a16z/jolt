@@ -72,10 +72,8 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
 
         let (proof_table_eval, _comm_table_eval) = PolyEvalProof::prove(
             joint_poly,
-            None,
             &r_joint,
             &eval_joint,
-            None,
             gens,
             transcript,
             random_tape,

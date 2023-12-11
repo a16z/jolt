@@ -456,10 +456,8 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     #[tracing::instrument(skip_all, name = "DensePolyEval.prove")]
     pub fn prove(
         poly: &DensePolynomial<G::ScalarField>,
-        blinds_opt: Option<&PolyCommitmentBlinds<G::ScalarField>>,
         r: &[G::ScalarField], // point at which the polynomial is evaluated
         Zr: &G::ScalarField,  // evaluation of \widetilde{Z}(r)
-        blind_Zr_opt: Option<&G::ScalarField>, // specifies a blind for Zr
         gens: &PolyCommitmentGens<G>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
@@ -477,16 +475,6 @@ impl<G: CurveGroup> PolyEvalProof<G> {
         let L_size = left_num_vars.pow2();
         let R_size = right_num_vars.pow2();
 
-        let default_blinds = PolyCommitmentBlinds {
-            blinds: vec![G::ScalarField::zero(); L_size],
-        };
-        let blinds = blinds_opt.map_or(&default_blinds, |p| p);
-
-        assert_eq!(blinds.blinds.len(), L_size);
-
-        let zero = G::ScalarField::zero();
-        let blind_Zr = blind_Zr_opt.map_or(&zero, |p| p);
-
         // compute the L and R vectors
         let eq = EqPolynomial::new(r.to_vec());
         let (L, R) = eq.compute_factored_evals();
@@ -496,7 +484,6 @@ impl<G: CurveGroup> PolyEvalProof<G> {
         // compute the vector underneath L*Z and the L*blinds
         // compute vector-matrix product between L and Z viewed as a matrix
         let LZ = poly.bound(&L);
-        let LZ_blind: G::ScalarField = (0..L.len()).map(|i| blinds.blinds[i] * L[i]).sum();
 
         // a dot product proof of size R_size
         let (proof, _C_LR, C_Zr_prime) = DotProductProof::prove(
@@ -505,10 +492,8 @@ impl<G: CurveGroup> PolyEvalProof<G> {
             transcript,
             random_tape,
             &LZ,
-            &LZ_blind,
             &R,
             Zr,
-            blind_Zr,
         );
 
         (PolyEvalProof { proof }, C_Zr_prime)
@@ -555,7 +540,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
         comm: &PolyCommitment<G>,
     ) -> Result<(), ProofVerifyError> {
         // compute a commitment to Zr with a blind of zero
-        let C_Zr = Zr.commit(&G::ScalarField::zero(), &gens.gens.gens_1);
+        let C_Zr = Zr.commit_blinded(&G::ScalarField::zero(), &gens.gens.gens_1);
 
         self.verify(gens, transcript, r, &C_Zr, comm)
     }
@@ -874,10 +859,8 @@ mod tests {
         let mut prover_transcript = Transcript::new(b"example");
         let (proof, C_Zr) = PolyEvalProof::prove(
             &poly,
-            Some(&blinds),
             &r,
             &eval,
-            None,
             &gens,
             &mut prover_transcript,
             &mut random_tape,

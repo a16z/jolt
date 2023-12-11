@@ -12,8 +12,6 @@ pub struct DotProductProof<G: CurveGroup> {
     delta: G,
     beta: G,
     z: Vec<G::ScalarField>,
-    z_delta: G::ScalarField,
-    z_beta: G::ScalarField,
 }
 
 impl<G: CurveGroup> DotProductProof<G> {
@@ -32,10 +30,8 @@ impl<G: CurveGroup> DotProductProof<G> {
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
         x_vec: &[G::ScalarField],
-        blind_x: &G::ScalarField,
         a_vec: &[G::ScalarField],
         y: &G::ScalarField,
-        blind_y: &G::ScalarField,
     ) -> (Self, G, G) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(
             transcript,
@@ -49,23 +45,22 @@ impl<G: CurveGroup> DotProductProof<G> {
 
         // produce randomness for the proofs
         let d_vec = random_tape.random_vector(b"d_vec", n);
-        let r_delta = random_tape.random_scalar(b"r_delta");
-        let r_beta = random_tape.random_scalar(b"r_beta");
 
-        let Cx = Commitments::batch_commit_blinded(x_vec, blind_x, gens_n);
+        let normalized_gens = CurveGroup::normalize_batch(&gens_n.G);
+        let Cx = Commitments::batch_commit(x_vec, &normalized_gens);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cx", &Cx);
 
-        let Cy = y.commit(blind_y, gens_1);
+        let Cy = y.commit(gens_1);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"Cy", &Cy);
 
         <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"a", a_vec);
 
-        let delta = Commitments::batch_commit_blinded(&d_vec, &r_delta, gens_n);
+        let delta = Commitments::batch_commit(&d_vec, &normalized_gens);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"delta", &delta);
 
         let dotproduct_a_d = DotProductProof::<G>::compute_dotproduct(a_vec, &d_vec);
 
-        let beta = dotproduct_a_d.commit(&r_beta, gens_1);
+        let beta = dotproduct_a_d.commit(gens_1);
         <Transcript as ProofTranscript<G>>::append_point(transcript, b"beta", &beta);
 
         let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
@@ -74,20 +69,7 @@ impl<G: CurveGroup> DotProductProof<G> {
             .map(|i| c * x_vec[i] + d_vec[i])
             .collect::<Vec<G::ScalarField>>();
 
-        let z_delta = c * blind_x + r_delta;
-        let z_beta = c * blind_y + r_beta;
-
-        (
-            DotProductProof {
-                delta,
-                beta,
-                z,
-                z_delta,
-                z_beta,
-            },
-            Cx,
-            Cy,
-        )
+        (DotProductProof { delta, beta, z }, Cx, Cy)
     }
 
     pub fn verify(
@@ -120,11 +102,12 @@ impl<G: CurveGroup> DotProductProof<G> {
 
         let c = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
 
-        let mut result = *Cx * c + self.delta
-            == Commitments::batch_commit_blinded(self.z.as_ref(), &self.z_delta, gens_n);
+        let normalized_gens = CurveGroup::normalize_batch(&gens_n.G);
+        let mut result =
+            *Cx * c + self.delta == Commitments::batch_commit(self.z.as_ref(), &normalized_gens);
 
         let dotproduct_z_a = DotProductProof::<G>::compute_dotproduct(&self.z, a);
-        result &= *Cy * c + self.beta == dotproduct_z_a.commit(&self.z_beta, gens_1);
+        result &= *Cy * c + self.beta == dotproduct_z_a.commit(gens_1);
 
         if result {
             Ok(())
@@ -174,8 +157,6 @@ mod tests {
             a.push(G::ScalarField::rand(&mut prng));
         }
         let y = DotProductProof::<G>::compute_dotproduct(&x, &a);
-        let r_x = G::ScalarField::rand(&mut prng);
-        let r_y = G::ScalarField::rand(&mut prng);
 
         let mut random_tape = RandomTape::new(b"proof");
         let mut prover_transcript = Transcript::new(b"example");
@@ -185,10 +166,8 @@ mod tests {
             &mut prover_transcript,
             &mut random_tape,
             &x,
-            &r_x,
             &a,
             &y,
-            &r_y,
         );
 
         let mut verifier_transcript = Transcript::new(b"example");
