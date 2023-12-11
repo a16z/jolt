@@ -61,6 +61,7 @@ enum_dispatch = "0.3.12"
 
 common = { path = "../common" }
 eyre = "0.6.9"
+tracing-chrome = "0.7.1"
 
 [lib]
 name = "liblasso"

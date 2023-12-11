@@ -17,3 +17,6 @@ Cargo.lock
 
 # tracing-flame output
 **.folded
+
+# tracing-chrome output
+trace-**.json

@@ -3,6 +3,7 @@ use liblasso::benches::bench::{benchmarks, BenchType};
 use std::{fs::File, io::BufWriter};
 use tracing_flame::FlameLayer;
 use tracing_subscriber::{self, fmt, fmt::format::FmtSpan, prelude::*, registry::Registry};
+use tracing_chrome::ChromeLayerBuilder;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
@@ -25,6 +26,7 @@ enum Format {
     Default,
     Texray,
     Flamegraph,
+    Chrome
 }
 
 fn setup_global_subscriber() -> impl Drop {
@@ -71,6 +73,17 @@ fn main() {
                     tracing::info!("Bench Complete");
                 });
             }
+        }
+        Format::Chrome => {
+            let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+            tracing_subscriber::registry().with(chrome_layer).init();
+            for (span, bench) in benchmarks(args.name, args.num_cycles).into_iter() {
+                span.to_owned().in_scope(|| {
+                    bench();
+                    tracing::info!("Bench Complete");
+                });
+            }
+            drop(_guard);
         }
     }
 }
