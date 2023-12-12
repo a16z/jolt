@@ -31,7 +31,7 @@ const C: usize = 4;
 const M: usize = 1 << 16;
 
 #[derive(Debug, Clone, PartialEq)]
-struct RVTraceRow {
+pub struct RVTraceRow {
     pc: u64,
     opcode: RV32IM,
 

@@ -120,6 +120,16 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             self.imm.evaluate(r),
         ]
     }
+
+    fn get_r1cs_v_read_poly(&self) -> Vec<F> {
+        [
+            self.opcode.evals(),
+            self.rd.evals(),
+            self.rs1.evals(),
+            self.rs2.evals(),
+            self.imm.evals(),
+        ].concat()
+    }
 }
 
 pub struct PCPolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -223,6 +233,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> PCPolys<F, G> {
             // All padded elements of the trace point at the no_op row of the ELF
             trace.push(ELFRow::no_op(no_op_address));
         }
+    }
+
+    pub fn get_r1cs_trace_vectors(&self) -> [Vec<F>; 3] {
+        [
+            self.a_read_write.evals(),
+            self.v_read_write.get_r1cs_v_read_poly(),
+            self.t_read.evals(),
+        ]
     }
 }
 

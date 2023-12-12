@@ -1,9 +1,12 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+// use common::RVTraceRow;
 use merlin::Transcript;
 use std::any::TypeId;
+use std::thread::JoinHandle;
 use strum::{EnumCount, IntoEnumIterator};
 
+use pc::PCPolys;
 use crate::lasso::{
     memory_checking::MemoryCheckingProver,
     surge::Surge,
@@ -23,15 +26,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
-    fn prove() {
-        // preprocess?
-        // emulate
-        // prove_program_code
-        // prove_memory
-        // prove_lookups
-        // prove_r1cs
-        unimplemented!("todo");
-    }
+    fn prove(&self);
 
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
@@ -137,47 +132,23 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn prove_r1cs(
-        num_steps: usize,
-        program_code: &[u64],
-        access_sequence: &[usize],
-        code_size: usize,
-        contiguous_reads_per_access: usize,
+        num_steps: usize, 
+        pc_polys: PCPolys<F, G>, 
         read_write_memory: ReadWriteMemory<F, G>, // for memory checking
         ops: Vec<Self::InstructionSet>, // for instruction lookups 
+        op_flags: Vec<F>, 
     ) {
         // Program vectors 
-        let m: usize = (access_sequence.len() * contiguous_reads_per_access);
-        let mut read_addrs: Vec<usize> = Vec::with_capacity(m);
-        let mut final_cts: Vec<usize> = vec![0; code_size];
-        let mut read_cts: Vec<usize> = Vec::with_capacity(m);
-        let mut read_values: Vec<u64> = Vec::with_capacity(m);
-
-        for (j, code_address) in access_sequence.iter().enumerate() {
-          debug_assert!(code_address + contiguous_reads_per_access <= code_size);
-          debug_assert!(code_address % contiguous_reads_per_access == 0);
-
-          for offset in 0..contiguous_reads_per_access {
-            let addr = code_address + offset;
-            let counter = final_cts[addr];
-            read_addrs.push(addr);
-            read_values.push(program_code[addr]);
-            read_cts.push(counter);
-            final_cts[addr] = counter + 1;
-          }
-        }
-
-        let prog_a_rw = read_addrs;
-        let prog_v_rw = read_values;
-        let prog_t_reads = read_cts;
+        let [prog_a_rw, prog_v_read, prog_t_reads] = pc_polys.get_r1cs_trace_vectors();
 
         // Memory vectors 
-        let memreg_polys = read_write_memory.get_polys();
+        let memreg_polys = read_write_memory.get_r1cs_polys();
 
         assert!(memreg_polys.len() == 5);
         let memreg_a_rw = memreg_polys[0].evals();
         let memreg_v_reads = memreg_polys[1].evals();
         let memreg_v_writes = memreg_polys[2].evals();
-        let memreg_t_reads = memreg_polys[4].evals();
+        let memreg_t_reads = memreg_polys[3].evals();
 
         // Lookup vectors 
         let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
@@ -200,15 +171,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let lookup_outputs = ops.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
-
-        // op_flags 
-
         // Length checks 
-        assert_eq!(access_sequence.len(), num_steps); // for PC 
         assert_eq!(chunks_x.len(), num_steps * C);
         assert_eq!(chunks_y.len(), num_steps * C);
         assert_eq!(chunks_query.len(), num_steps * C);
         assert_eq!(lookup_outputs.len(), num_steps);
+        // TODO: add for pc and for flags 
 
         // let inputs = vec![
         //     prog_a_rw,

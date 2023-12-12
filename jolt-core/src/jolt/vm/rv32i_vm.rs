@@ -1,10 +1,18 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+// use common::RVTraceRow;
 use enum_dispatch::enum_dispatch;
+use pasta_curves::group::Curve;
+use pasta_curves::pallas::Scalar;
 use std::any::TypeId;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use merlin::Transcript;
 
 use super::Jolt;
+use super::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory};
+use super::pc::{ELFRow, FiveTuplePoly, PCPolys};
+use crate::jolt::trace::JoltProvableTrace;
+use crate::jolt::trace::rv::RVTraceRow;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
     and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
@@ -114,18 +122,83 @@ subtable_enum!(
 
 // ==================== JOLT ====================
 
-pub enum RV32IJoltVM {}
+pub struct RV32IJoltVM<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+    memory_size: usize, 
+    program: Vec<ELFRow>, 
+    trace: Vec<RVTraceRow>,
+    _p1: std::marker::PhantomData<F>,
+    _p2: std::marker::PhantomData<G>,
+}
 
 const C: usize = 4;
 const M: usize = 1 << 16;
 
-impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
+impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
+
+    fn prove(&self) {
+        let mut transcript = Transcript::new(b"jolt");
+
+        // Prepare Lookups 
+        let instruction_ops =   
+            self
+            .trace
+            .iter()
+            .flat_map(|row| row.to_jolt_instructions())
+            .collect::<Vec<_>>();
+
+        let r: Vec<F> = (0..instruction_ops.len()).map(|_| F::one()).collect();
+
+        // Prepare program code
+        let elf_rows = 
+            self
+            .trace
+            .iter()
+            .map(|row| row.to_pc_trace())
+            .collect::<Vec<_>>();
+
+        let pc_polys = PCPolys::<F, G>::new_program(
+            self.program.clone(), 
+            elf_rows
+        );
+
+        let circuit_flags = 
+            self
+            .trace
+            .iter()
+            .flat_map(|row| row.to_circuit_flags::<F>())
+            .collect::<Vec<_>>();
+
+        // Prove RAM and Registers  
+        let memory_trace = 
+            self
+            .trace
+            .iter()
+            .flat_map(|row| row.to_ram_ops())
+            .collect::<Vec<_>>();
+
+        let (rw_memory, _) = ReadWriteMemory::<F, G>::new(
+            memory_trace.clone(),
+            self.memory_size, 
+            &mut transcript,
+        );
+
+        Self::prove_instruction_lookups(instruction_ops.clone(), r, &mut transcript);
+        // TODO: call pc prover 
+        Self::prove_memory(memory_trace, self.memory_size, &mut transcript);
+        Self::prove_r1cs(
+            self.trace.len(),
+            pc_polys,
+            rw_memory,
+            instruction_ops,
+            circuit_flags,
+        );
+    }
 }
 
 // ==================== TEST ====================
