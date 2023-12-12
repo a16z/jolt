@@ -11,6 +11,7 @@ use strum::{EnumCount, IntoEnumIterator};
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
+use crate::utils::split_poly_flagged;
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -612,26 +613,24 @@ where
         let read_fingerprints: Vec<DensePolynomial<F>> = self.read_leaves(polynomials, gamma, tau);
         let write_fingerprints: Vec<DensePolynomial<F>> =
             self.write_leaves(polynomials, gamma, tau);
-        debug_assert_eq!(read_fingerprints.len(), write_fingerprints.len());
+        assert_eq!(read_fingerprints.len(), write_fingerprints.len());
+        assert_eq!(read_fingerprints.len(), Self::NUM_MEMORIES);
 
         let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .flat_map(|i| {
-                let mut toggled_read_fingerprints = read_fingerprints[i].evals();
-                let mut toggled_write_fingerprints = write_fingerprints[i].evals();
+                let half = read_fingerprints[i].len() / 2;
+
+                // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i);
-                for j in 0..self.num_lookups {
-                    let flag = polynomials.subtable_flag_polys[subtable_index][j];
-                    if flag == F::zero() {
-                        toggled_read_fingerprints[j] = F::one();
-                        toggled_write_fingerprints[j] = F::one();
-                    }
-                }
+                let flag = &polynomials.subtable_flag_polys[subtable_index];
+                let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) = split_poly_flagged(&read_fingerprints[i], &flag);
+                let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) = split_poly_flagged(&write_fingerprints[i], &flag);
 
                 let read_circuit =
-                    GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
+                    GrandProductCircuit::new_split(DensePolynomial::new(toggled_read_fingerprints_l), DensePolynomial::new(toggled_read_fingerprints_r));
                 let write_circuit =
-                    GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+                    GrandProductCircuit::new_split(DensePolynomial::new(toggled_write_fingerprints_l), DensePolynomial::new(toggled_write_fingerprints_r));
                 vec![read_circuit, write_circuit]
             })
             .collect();

@@ -72,7 +72,8 @@ impl<F: PrimeField> DensePolynomial<F> {
     pub fn new(Z: Vec<F>) -> Self {
         assert!(
             utils::is_power_of_two(Z.len()),
-            "Dense multi-linear polynomials must be made from a power of 2"
+            "Dense multi-linear polynomials must be made from a power of 2 (not {})",
+            Z.len()
         );
 
         DensePolynomial {
@@ -365,6 +366,10 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn evals(&self) -> Vec<F> {
         self.Z.clone()
+    }
+
+    pub fn evals_ref(&self) -> &[F] {
+        self.Z.as_ref()
     }
 
     pub fn extend(&mut self, other: &DensePolynomial<F>) {

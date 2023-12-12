@@ -3,6 +3,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
+use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -20,12 +21,19 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         inp_left: &DensePolynomial<F>,
         inp_right: &DensePolynomial<F>,
     ) -> (DensePolynomial<F>, DensePolynomial<F>) {
+        // TODO(sragss): Write a cache checker for how many cache hits I'd have for a cacher.
         let len = inp_left.len() + inp_right.len();
         let outp_left = (0..len / 4)
-            .map(|i| inp_left[i] * inp_right[i])
+            .map(|i| 
+                // inp_left[i] * inp_right[i]
+                mul_0_1_optimized(&inp_left[i], &inp_right[i])
+            )
             .collect::<Vec<F>>();
         let outp_right = (len / 4..len / 2)
-            .map(|i| inp_left[i] * inp_right[i])
+            .map(|i| 
+                // inp_left[i] * inp_right[i]
+                mul_0_1_optimized(&inp_left[i], &inp_right[i])
+            )
             .collect::<Vec<F>>();
 
         (
@@ -43,6 +51,29 @@ impl<F: PrimeField> GrandProductCircuit<F> {
 
         left_vec.push(outp_left);
         right_vec.push(outp_right);
+
+        for i in 0..num_layers - 1 {
+            let (outp_left, outp_right) =
+                GrandProductCircuit::compute_layer(&left_vec[i], &right_vec[i]);
+            left_vec.push(outp_left);
+            right_vec.push(outp_right);
+        }
+
+        GrandProductCircuit {
+            left_vec,
+            right_vec,
+        }
+    }
+
+    pub fn new_split(left_leaves: DensePolynomial<F>, right_leaves: DensePolynomial<F>) -> Self {
+        let mut left_vec: Vec<DensePolynomial<F>> = Vec::new();
+        let mut right_vec: Vec<DensePolynomial<F>> = Vec::new();
+
+        let num_layers = left_leaves.len().log_2() + 1; 
+        // let (outp_left, outp_right) = leaves.split(leaves.len() / 2);
+
+        left_vec.push(left_leaves);
+        right_vec.push(right_leaves);
 
         for i in 0..num_layers - 1 {
             let (outp_left, outp_right) =

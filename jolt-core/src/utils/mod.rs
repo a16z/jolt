@@ -6,6 +6,8 @@ use ark_std::test_rng;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
+use crate::poly::dense_mlpoly::DensePolynomial;
+
 #[cfg(test)]
 pub mod test;
 
@@ -76,18 +78,23 @@ pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
 
     let dot_product = (0..a.len()).into_par_iter().map(|i| {
-        if a[i].is_zero() || b[i].is_zero() {
-            F::zero()
-        } else if a[i].is_one() {
-            b[i]
-        } else if b[i].is_one() {
-            a[i]
-        } else {
-            a[i] * b[i]
-        }
+        mul_0_1_optimized(&a[i], &b[i])
     }).sum();
 
     dot_product
+}
+
+#[inline(always)]
+pub fn mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
+    if a.is_zero() || b.is_zero() {
+        F::zero()
+    } else if a.is_one() {
+        *b
+    } else if b.is_one() {
+        *a
+    } else {
+        *a * b
+    }
 }
 
 /// Checks if `num` is a power of 2.
@@ -113,6 +120,33 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
         r_i.push(F::rand(&mut rng));
     }
     r_i
+}
+
+#[inline]
+#[tracing::instrument(skip_all, name = "split_poly_flagged")]
+pub fn split_poly_flagged<F: PrimeField>(poly: &DensePolynomial<F>, flags: &DensePolynomial<F>) -> (Vec<F>, Vec<F>)  {
+    let poly_evals: &[F] = poly.evals_ref();
+    let len = poly_evals.len();
+    let half = len / 2;
+    let mut left: Vec<F> = Vec::with_capacity(half);
+    let mut right: Vec<F> = Vec::with_capacity(half);
+
+    for i in 0..len {
+        if flags[i].is_zero() {
+            if i < half {
+                left.push(F::one());
+            } else {
+                right.push(F::one());
+            }
+        } else {
+            if i < half {
+                left.push(poly_evals[i]);
+            } else {
+                right.push(poly_evals[i]);
+            }
+        }
+    }
+    (left, right)
 }
 
 #[cfg(test)]
