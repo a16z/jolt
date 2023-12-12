@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::{self, compute_dotproduct};
+use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
@@ -353,6 +353,10 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn evaluate_at_chi(&self, chis: &Vec<F>) -> F {
         compute_dotproduct(&self.Z, &chis)
+    }
+
+    pub fn evaluate_at_chi_low_optimized(&self, chis: &Vec<F>) -> F {
+        compute_dotproduct_low_optimized(&self.Z, &chis)
     }
 
     fn vec(&self) -> &Vec<F> {

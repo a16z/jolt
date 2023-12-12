@@ -284,16 +284,21 @@ where
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
+
+        let dim_openings = polynomials.dim.par_iter().map(|poly| poly.evaluate_at_chi_low_optimized(&chis)).collect();
+        let read_openings = polynomials.read_cts.par_iter().map(|poly| poly.evaluate_at_chi_low_optimized(&chis)).collect();
+        let E_poly_openings = polynomials.E_polys.par_iter().map(|poly| poly.evaluate_at_chi_low_optimized(&chis)).collect();
+        let flag_openings = polynomials
+            .instruction_flag_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+
         [
-            polynomials.dim.iter().map(evaluate).collect(),
-            polynomials.read_cts.iter().map(evaluate).collect(),
-            polynomials.E_polys.iter().map(evaluate).collect(),
-            polynomials
-                .instruction_flag_polys
-                .iter()
-                .map(evaluate)
-                .collect(),
+            dim_openings,
+            read_openings,
+            E_poly_openings,
+            flag_openings,
         ]
     }
 
@@ -414,10 +419,12 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        // All of these evaluations share the lagrange basis polynomials.
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .final_cts
-            .iter()
-            .map(|final_cts_i| final_cts_i.evaluate(opening_point))
+            .par_iter()
+            .map(|final_cts_i| final_cts_i.evaluate_at_chi_low_optimized(&chis))
             .collect()
     }
 

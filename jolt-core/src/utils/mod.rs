@@ -62,13 +62,30 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
     result
 }
 
+
 pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
 
-    #[cfg(feature = "multicore")]
     let dot_product = (0..a.len()).into_par_iter().map(|i| a[i] * b[i]).sum();
-    #[cfg(not(feature = "multicore"))]
-    let dot_product = (0..a.len()).map(|i| a[i] * b[i]).sum();
+
+    dot_product
+}
+
+/// Compute dotproduct optimized for values being 0 / 1
+pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
+    assert_eq!(a.len(), b.len());
+
+    let dot_product = (0..a.len()).into_par_iter().map(|i| {
+        if a[i].is_zero() || b[i].is_zero() {
+            F::zero()
+        } else if a[i].is_one() {
+            b[i]
+        } else if b[i].is_one() {
+            a[i]
+        } else {
+            a[i] * b[i]
+        }
+    }).sum();
 
     dot_product
 }
