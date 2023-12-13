@@ -11,7 +11,7 @@ use strum::{EnumCount, IntoEnumIterator};
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
-use crate::utils::split_poly_flagged;
+use crate::utils::{split_poly_flagged, mul_0_1_optimized};
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -504,17 +504,15 @@ where
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
+                let gamma_square = &gamma.square();
+
                 let leaf_fingerprints = (0..self.num_lookups)
-                    .into_par_iter()
                     .map(|i| {
-                        (
-                            polynomials.dim[dim_index][i],
-                            polynomials.E_polys[memory_index][i],
-                            polynomials.read_cts[memory_index][i],
-                            None,
-                        )
+                        let a = &polynomials.dim[dim_index][i];
+                        let v = &polynomials.E_polys[memory_index][i];
+                        let t = &polynomials.read_cts[memory_index][i];
+                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -532,16 +530,15 @@ where
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
+                let gamma_square = &gamma.square();
+
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
-                        (
-                            polynomials.dim[dim_index][i],
-                            polynomials.E_polys[memory_index][i],
-                            polynomials.read_cts[memory_index][i] + F::one(),
-                            None,
-                        )
+                        let a = &polynomials.dim[dim_index][i];
+                        let v = &polynomials.E_polys[memory_index][i];
+                        let t = &(polynomials.read_cts[memory_index][i] + F::one());
+                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -559,16 +556,17 @@ where
             .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
+
                 let leaf_fingerprints = (0..M)
                     .map(|i| {
-                        (
-                            F::from(i as u64),
-                            self.materialized_subtables[subtable_index][i],
-                            F::zero(),
-                            None,
-                        )
+                        let a = &F::from(i as u64);
+                        let v = &self.materialized_subtables[subtable_index][i];
+                        // let t = F::zero();
+
+                        // Compute h(a,v,t) where t == 0
+
+                        mul_0_1_optimized(v, gamma) + a - tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -586,16 +584,16 @@ where
             .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
+                let gamma_square = &gamma.square();
+                
                 let leaf_fingerprints = (0..M)
                     .map(|i| {
-                        (
-                            F::from(i as u64),
-                            self.materialized_subtables[subtable_index][i],
-                            polynomials.final_cts[memory_index][i],
-                            None,
-                        )
+                        let a = &F::from(i as u64);
+                        let v = &self.materialized_subtables[subtable_index][i];
+                        let t = &polynomials.final_cts[memory_index][i];
+
+                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
