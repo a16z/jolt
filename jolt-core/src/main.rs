@@ -5,6 +5,10 @@ use tracing_flame::FlameLayer;
 use tracing_subscriber::{self, fmt, fmt::format::FmtSpan, prelude::*, registry::Registry};
 use tracing_chrome::ChromeLayerBuilder;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
 struct Cli {
@@ -44,6 +48,10 @@ fn setup_global_subscriber() -> impl Drop {
 
 fn main() {
     let args = Cli::parse();
+
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     match args.format {
         Format::Default => {
             let collector = tracing_subscriber::fmt()
