@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
+use textplots::{Chart, Plot, Shape};
 
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
