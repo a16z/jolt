@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use itertools::izip;
 use liblasso::benches::bench::{benchmarks, BenchType};
+use plotters::prelude::*;
 use rgb::RGB8;
 use std::{fs::File, io::BufWriter, time::Instant};
 use textplots::{Chart, ColorPlot, Plot, Shape};
@@ -46,6 +47,9 @@ struct PlotArgs {
     #[clap(long, value_enum, num_args = 1..)]
     bench: Vec<BenchType>,
 
+    #[clap(short, long)]
+    out: Option<String>,
+
     /// Number of cycles to run the benchmark for
     #[clap(short, long, num_args = 1..)]
     num_cycles: Vec<usize>,
@@ -73,7 +77,13 @@ fn main() {
 
     match cli.command {
         Commands::Trace(args) => trace(args),
-        Commands::Plot(args) => plot(args),
+        Commands::Plot(args) => {
+            let (x, y) = perforamnce_points(&args);
+            terminal_plot(&args, &x, &y);
+            if let Some(ref path) = args.out {
+                svg_plot(&args, path.as_str(), &x, &y);
+            }
+        }
     }
 }
 
@@ -91,7 +101,27 @@ fn bench_to_color(bench_type: &BenchType) -> RGB8 {
     }
 }
 
-fn plot(args: PlotArgs) {
+fn bench_to_label(bench_type: &BenchType) -> String {
+    match bench_type {
+        BenchType::EverythingExceptR1CS => "Bytecode + Memory + Instructions".to_owned(),
+        BenchType::ReadWriteMemory => "Read-write memory".to_owned(),
+        BenchType::Bytecode => "Bytecode".to_owned(),
+        BenchType::InstructionLookups => "Instruction lookups".to_owned(),
+        _ => panic!("Unsupported bench type"),
+    }
+}
+
+fn plot_x_label(args: &PlotArgs) -> String {
+    if args.num_cycles.len() > 1 {
+        "# cycles".to_owned()
+    } else if args.memory_size.len() > 1 {
+        "Memory size (B)".to_owned()
+    } else {
+        "Bytecode size (B)".to_owned()
+    }
+}
+
+fn perforamnce_points(args: &PlotArgs) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
     let mut x: Vec<Vec<f32>> = Vec::with_capacity(args.bench.len());
     let mut y: Vec<Vec<f32>> = Vec::with_capacity(args.bench.len());
 
@@ -169,6 +199,79 @@ fn plot(args: PlotArgs) {
         }
     }
 
+    (x, y)
+}
+
+fn svg_plot(
+    args: &PlotArgs,
+    path: &str,
+    x: &Vec<Vec<f32>>,
+    y: &Vec<Vec<f32>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let xmin = x
+        .iter()
+        .flatten()
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let xmax = x
+        .iter()
+        .flatten()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let ymax = y
+        .iter()
+        .flatten()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+
+    let root = SVGBackend::new(path, (1024, 768)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let x_tick_labels = (16..24)
+        .map(|i| (i as f32).exp2())
+        .filter(|tick| tick >= xmin && tick <= xmax)
+        .collect();
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Proving times", ("sans-serif", (5).percent_height()))
+        .set_label_area_size(LabelAreaPosition::Left, (8).percent())
+        .set_label_area_size(LabelAreaPosition::Bottom, (4).percent())
+        .margin((1).percent())
+        .build_cartesian_2d(
+            (*xmin..*xmax).log_scale().with_key_points(x_tick_labels),
+            0.0..*ymax,
+        )?;
+
+    chart
+        .configure_mesh()
+        .x_desc(plot_x_label(&args))
+        .y_desc("Proving time (s)")
+        .draw()?;
+
+    let points: Vec<_> = izip!(x, y)
+        .map(|(x_i, y_i)| izip!(x_i.clone(), y_i.clone()).collect::<Vec<(f32, f32)>>())
+        .collect();
+
+    for (i, bench_type) in args.bench.iter().enumerate() {
+        let color = Palette99::pick(i).mix(0.9);
+        chart
+            .draw_series(LineSeries::new(
+                points[i].clone(),
+                Palette99::pick(i).mix(0.9).stroke_width(3),
+            ))?
+            .label(bench_to_label(bench_type))
+            .legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 10, y + 5)], color.filled()));
+    }
+
+    chart.configure_series_labels().border_style(BLACK).draw()?;
+
+    root.present()?;
+    println!("Plot has been saved to {}", path);
+
+    Ok(())
+}
+
+fn terminal_plot(args: &PlotArgs, x: &Vec<Vec<f32>>, y: &Vec<Vec<f32>>) {
     let xmin = x
         .iter()
         .flatten()
@@ -187,7 +290,7 @@ fn plot(args: PlotArgs) {
 
     let mut chart = &mut Chart::new_with_y_range(120, 80, *xmin, *xmax, 0.0, *ymax);
     let points: Vec<_> = izip!(x, y)
-        .map(|(x_i, y_i)| izip!(x_i, y_i).collect::<Vec<(f32, f32)>>())
+        .map(|(x_i, y_i)| izip!(x_i.clone(), y_i.clone()).collect::<Vec<(f32, f32)>>())
         .collect();
     let lines: Vec<_> = points.iter().map(|p| Shape::Lines(p)).collect();
     for (i, bench_type) in args.bench.iter().enumerate() {

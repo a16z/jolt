@@ -9,7 +9,7 @@ authors = [
     # authors who contributed to Lasso
     "Michael Zhu <mzhu@a16z.com>",
     "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>"
+    "Noah Citron <ncitron@a16z.com>",
 ]
 edition = "2021"
 description = "The lookup singularity. Based on Spartan; built on Arkworks."
@@ -46,6 +46,7 @@ seq-macro = "0.3.3"
 ark-curve25519 = "0.4.0"
 rgb = "0.8.37"
 textplots = "0.8.4"
+plotters = "0.3.5"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
 tracing-texray = "0.2.0"
@@ -71,7 +72,13 @@ name = "liblasso"
 path = "src/lib.rs"
 
 [features]
-default = ["ark-ec/parallel", "ark-ff/parallel", "ark-std/parallel", "ark-ff/asm", "multicore"]
+default = [
+    "ark-ec/parallel",
+    "ark-ff/parallel",
+    "ark-std/parallel",
+    "ark-ff/asm",
+    "multicore",
+]
 multicore = ["rayon"]
 ark-msm = [] # run with arkworks MSM without small field element optimization
 dhat-heap = []
