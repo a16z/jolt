@@ -336,8 +336,8 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
-    for Surge<F, G, Instruction, C, M>
+impl<F, G, Instruction, const C: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
+    for Surge<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -409,7 +409,7 @@ where
         (0..Self::num_memories())
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..M)
+                let leaf_fingerprints = (0..self.M)
                     .map(|i| {
                         (
                             F::from(i as u64),
@@ -434,7 +434,7 @@ where
             .map(|memory_index| {
                 let dimndex = Self::memory_to_dimension_index(memory_index);
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..M)
+                let leaf_fingerprints = (0..self.M)
                     .map(|i| {
                         (
                             F::from(i as u64),
@@ -454,8 +454,8 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, SurgePolys<F, G>> for Surge<F, G, Instruction, C, M>
+impl<F, G, Instruction, const C: usize> MemoryCheckingVerifier<F, G, SurgePolys<F, G>>
+    for Surge<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -535,7 +535,7 @@ pub struct SurgePrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     openings: PrimarySumcheckOpenings<F, G>,
 }
 
-pub struct Surge<F, G, Instruction, const C: usize, const M: usize>
+pub struct Surge<F, G, Instruction, const C: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -547,6 +547,7 @@ where
     ops: Vec<Instruction>,
     materialized_subtables: Vec<Vec<F>>,
     num_lookups: usize,
+    M: usize,
 }
 
 pub struct SurgeProof<F, G>
@@ -568,7 +569,7 @@ where
     >,
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize> Surge<F, G, Instruction, C, M>
+impl<F, G, Instruction, const C: usize> Surge<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -579,7 +580,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::new")]
-    pub fn new(ops: Vec<Instruction>) -> Self {
+    pub fn new(ops: Vec<Instruction>, M: usize) -> Self {
         let num_lookups = ops.len().next_power_of_two();
         let instruction = Instruction::default();
 
@@ -596,6 +597,7 @@ where
             ops,
             materialized_subtables,
             num_lookups,
+            M,
         }
     }
 
@@ -632,7 +634,7 @@ where
             num_rounds,
         );
         let eq = DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
-        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
+        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq, self.M);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -645,7 +647,7 @@ where
         let combine_lookups_eq = |vals: &[F]| -> F {
             let vals_no_eq: &[F] = &vals[0..(vals.len() - 1)];
             let eq = vals[vals.len() - 1];
-            instruction.combine_lookups(vals_no_eq, C, M) * eq
+            instruction.combine_lookups(vals_no_eq, C, self.M) * eq
         };
 
         let (primary_sumcheck_proof, r_z, _) =
@@ -695,6 +697,7 @@ where
     pub fn verify(
         proof: SurgeProof<F, G>,
         transcript: &mut Transcript,
+        M: usize,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
         let instruction = Instruction::default();
@@ -746,8 +749,8 @@ where
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; self.num_lookups]; C];
 
         let mut read_cts = vec![vec![0usize; self.num_lookups]; C];
-        let mut final_cts = vec![vec![0usize; M]; C];
-        let log_M = ark_std::log2(M) as usize;
+        let mut final_cts = vec![vec![0usize; self.M]; C];
+        let log_M = ark_std::log2(self.M) as usize;
 
         for (op_index, op) in self.ops.iter().enumerate() {
             let access_sequence = op.to_indices(C, log_M);
@@ -755,7 +758,7 @@ where
 
             for dimension_index in 0..C {
                 let memory_address = access_sequence[dimension_index];
-                debug_assert!(memory_address < M);
+                debug_assert!(memory_address < self.M);
 
                 dim_usize[dimension_index][op_index] = memory_address;
 
@@ -822,7 +825,11 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, G>, eq: &DensePolynomial<F>) -> F {
+    fn compute_primary_sumcheck_claim(
+        polys: &SurgePolys<F, G>,
+        eq: &DensePolynomial<F>,
+        M: usize,
+    ) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -862,7 +869,7 @@ mod tests {
         const M: usize = 1 << 8;
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::new(ops);
+        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C>>::new(ops, M);
         let proof = surge.prove(&mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
@@ -883,11 +890,11 @@ mod tests {
         const M: usize = 1 << 8;
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::new(ops);
+        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C>>::new(ops, M);
         let proof = surge.prove(&mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::verify(proof, &mut transcript)
+        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript)
             .expect("should work");
     }
 }

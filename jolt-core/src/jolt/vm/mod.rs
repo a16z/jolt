@@ -140,10 +140,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> ReadWriteMemoryProof<F, G> {
-        const MAX_TRACE_SIZE: usize = 1 << 22;
-        // TODO: Support longer traces
-        assert!(memory_trace.len() <= MAX_TRACE_SIZE);
-
+        let memory_trace_size = memory_trace.len();
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
@@ -162,14 +159,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .map(|(i, &ts)| SLTUInstruction(ts, i as u64 + 1))
             .collect();
 
+        let surge_M = memory_trace_size.next_power_of_two();
         let timestamp_validity_proof =
-            <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::new(timestamp_validity_lookups)
+            <Surge<F, G, SLTUInstruction, 2>>::new(timestamp_validity_lookups, surge_M)
                 .prove(transcript);
 
         ReadWriteMemoryProof {
             memory_checking_proof,
             commitment,
             timestamp_validity_proof,
+            memory_trace_size,
         }
     }
 
@@ -177,15 +176,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         proof: ReadWriteMemoryProof<F, G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        const MAX_TRACE_SIZE: usize = 1 << 22;
         ReadWriteMemory::verify_memory_checking(
             proof.memory_checking_proof,
             &proof.commitment,
             transcript,
         )?;
-        <Surge<F, G, SLTUInstruction, 2, MAX_TRACE_SIZE>>::verify(
+        let surge_M = proof.memory_trace_size.next_power_of_two();
+        <Surge<F, G, SLTUInstruction, 2>>::verify(
             proof.timestamp_validity_proof,
             transcript,
+            surge_M,
         )
     }
 
