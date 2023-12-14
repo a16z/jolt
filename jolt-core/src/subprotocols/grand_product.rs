@@ -66,11 +66,9 @@ impl<F: PrimeField> GrandProductCircuit<F> {
     }
 
     pub fn new_split(left_leaves: DensePolynomial<F>, right_leaves: DensePolynomial<F>) -> Self {
-        let mut left_vec: Vec<DensePolynomial<F>> = Vec::new();
-        let mut right_vec: Vec<DensePolynomial<F>> = Vec::new();
-
         let num_layers = left_leaves.len().log_2() + 1; 
-        // let (outp_left, outp_right) = leaves.split(leaves.len() / 2);
+        let mut left_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
+        let mut right_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
 
         left_vec.push(left_leaves);
         right_vec.push(right_leaves);

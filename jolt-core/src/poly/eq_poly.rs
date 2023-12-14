@@ -18,6 +18,7 @@ impl<F: PrimeField> EqPolynomial<F> {
             .product()
     }
 
+    #[tracing::instrument(skip_all, name = "EqPolynomial.evals")]
     pub fn evals(&self) -> Vec<F> {
         let ell = self.r.len();
 

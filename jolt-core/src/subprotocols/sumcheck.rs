@@ -842,7 +842,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // bound all tables to the verifier's challenege
             let bound_span = tracing::span!(tracing::Level::TRACE, "apply_bound_poly_var_top");
             let _bound_enter = bound_span.enter();
-            params.apply_bound_poly_var_top(&r_j);
+            params.poly_As.par_iter_mut()
+                .for_each(|poly| poly.bound_poly_var_top(&r_j));
+            params.poly_eq.bound_poly_var_top_many_ones(&r_j);
+            params.poly_Bs.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
             drop(_bound_enter);
             drop(bound_span);
 

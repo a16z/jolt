@@ -8,7 +8,6 @@ use std::marker::PhantomData;
 use std::{any::TypeId, collections::HashMap};
 use strum::{EnumCount, IntoEnumIterator};
 
-#[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
 use crate::utils::{split_poly_flagged, mul_0_1_optimized};
@@ -121,14 +120,24 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        // TODO(JOLT-82): These merges are wasteful clones.
-        let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
+        use rayon::prelude::*;
+        let (batched_dim_read, (batched_final, batched_E, batched_flag)) = rayon::join(
+            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
+            || {
+                let batched_final = DensePolynomial::merge(&self.final_cts);
+                let (batched_E, batched_flag) = rayon::join(
+                    || DensePolynomial::merge(&self.E_polys),
+                    || DensePolynomial::merge(&self.instruction_flag_polys),
+                );
+                (batched_final, batched_E, batched_flag)
+            },
+        );
 
         Self::BatchedPolynomials {
-            batched_dim_read: DensePolynomial::merge(&dim_read_polys),
-            batched_final: DensePolynomial::merge(&self.final_cts),
-            batched_E: DensePolynomial::merge(&self.E_polys),
-            batched_flag: DensePolynomial::merge(&self.instruction_flag_polys),
+            batched_dim_read,
+            batched_final,
+            batched_E,
+            batched_flag,
         }
     }
 
@@ -846,13 +855,20 @@ where
 
         // TODO: compartmentalize all primary sumcheck logic
         // TODO: Clones here are wasteful.
+        let span = tracing::span!(tracing::Level::DEBUG, "Cloning polynomials");
+        let _guard = span.enter();
+        let mut E_polys_clone = polynomials.E_polys.clone();
+        let mut instruction_flag_polys_clone = polynomials.instruction_flag_polys.clone();
+        drop(_guard);
+        drop(span);
+
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
             Self::prove_primary_sumcheck(
                 &F::zero(),
                 num_rounds,
                 &mut eq_poly,
-                &mut polynomials.E_polys.clone(),
-                &mut polynomials.instruction_flag_polys.clone(),
+                &mut E_polys_clone,
+                &mut instruction_flag_polys_clone,
                 Self::sumcheck_poly_degree(),
                 transcript,
             );
@@ -1073,6 +1089,11 @@ where
             debug_assert_eq!(flag_polys[index].len(), poly_len);
         }
 
+        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
+            .map(|op| Self::instruction_to_memory_indices(&op))
+            .collect();
+
+
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
 
@@ -1147,15 +1168,16 @@ where
                     let mut inner_sum = vec![F::zero(); num_eval_points];
                     for instruction in InstructionSet::iter() {
                         let instruction_index = instruction.to_opcode() as usize;
-                        let memory_indices: Vec<usize> =
-                            Self::instruction_to_memory_indices(&instruction);
+                        let memory_indices: &Vec<usize> = &instruction_to_memory_indices_map[instruction_index];
 
                         for eval_index in 0..num_eval_points {
                             let flag_eval = multi_flag_evals[eval_index][instruction_index];
                             if flag_eval == F::zero() {
                                 continue;
                             }; // Early exit if no contribution.
-                               // TODO(sragss): On the final layer we can be even more creative about computing / not computing flags.
+
+                            // TODO(sragss): On the final layer we can be even more creative about computing / not computing flags.
+                            // - When flags are both 0, higher evals of flags will also be 0, no need to compute E evals.
 
                             let terms: Vec<F> = memory_indices
                                 .iter()
@@ -1206,12 +1228,8 @@ where
             let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
             let _bind_enter = _bind_span.enter();
             eq_poly.bound_poly_var_top(&r_j);
-            for flag_instruction_index in 0..flag_polys.len() {
-                flag_polys[flag_instruction_index].bound_poly_var_top(&r_j);
-            }
-            for memory_index in 0..memory_polys.len() {
-                memory_polys[memory_index].bound_poly_var_top(&r_j);
-            }
+            flag_polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
+            memory_polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
             drop(_bind_enter);
             drop(_bind_span);
         } // End rounds

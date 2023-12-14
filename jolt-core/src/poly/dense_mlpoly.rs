@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
+use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
@@ -326,8 +326,9 @@ impl<F: PrimeField> DensePolynomial<F> {
 
         for i in 0..n {
             let m = self.Z[i + n] - self.Z[i];
-            if !m.is_zero() {
-                self.Z[i] += *r * m;
+            let term = mul_0_1_optimized(r, &m);
+            if !term.is_zero() {
+                self.Z[i] += term;
             }
         }
         self.num_vars -= 1;
@@ -383,15 +384,34 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly.merge")]
-    pub fn merge<T>(polys: &Vec<T>) -> DensePolynomial<F>
+    pub fn merge<T>(polys: &[T]) -> DensePolynomial<F>
     where
         T: AsRef<DensePolynomial<F>>,
     {
         let total_len: usize = polys.iter().map(|poly| poly.as_ref().vec().len()).sum();
         let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
-        for i in 0..polys.len() {
-            Z.extend_from_slice(polys[i].as_ref().vec());
+        for poly in polys {
+            Z.extend_from_slice(poly.as_ref().vec());
         }
+
+        // pad the polynomial with zero polynomial at the end
+        Z.resize(Z.capacity(), F::zero());
+
+        DensePolynomial::new(Z)
+    }
+
+    #[tracing::instrument(skip_all, name = "DensePoly.merge_dual")]
+    pub fn merge_dual<T>(polys_a: &[T], polys_b: &[T]) -> DensePolynomial<F>
+    where
+        T: AsRef<DensePolynomial<F>>,
+    {
+        let total_len_a: usize = polys_a.iter().map(|poly| poly.as_ref().len()).sum();
+        let total_len_b: usize = polys_b.iter().map(|poly| poly.as_ref().len()).sum();
+        let total_len = total_len_a + total_len_b;
+
+        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
+        polys_a.iter().for_each(|poly| Z.extend_from_slice(poly.as_ref().vec()));
+        polys_b.iter().for_each(|poly| Z.extend_from_slice(poly.as_ref().vec()));
 
         // pad the polynomial with zero polynomial at the end
         Z.resize(Z.capacity(), F::zero());
