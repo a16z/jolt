@@ -51,7 +51,7 @@ pub struct RVTraceRow {
 }
 
 impl RVTraceRow {
-    fn new(
+    pub fn new(
         pc: u64,
         opcode: RV32IM,
         rd: Option<u64>,

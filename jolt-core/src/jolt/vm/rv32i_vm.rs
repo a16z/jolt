@@ -7,6 +7,7 @@ use pasta_curves::pallas::Scalar;
 use std::any::TypeId;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use merlin::Transcript;
+use ark_std::test_rng;
 
 use super::Jolt;
 use super::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory};
@@ -122,7 +123,18 @@ subtable_enum!(
 
 // ==================== JOLT ====================
 
-pub struct RV32IJoltVM<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub enum RV32IJoltVM {}
+
+impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
+    type InstructionSet = RV32I;
+    type Subtables = RV32ISubtables<F>;
+}
+
+pub struct RV32IJoltVM2<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     memory_size: usize, 
     program: Vec<ELFRow>, 
     trace: Vec<RVTraceRow>,
@@ -133,7 +145,7 @@ pub struct RV32IJoltVM<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 const C: usize = 4;
 const M: usize = 1 << 16;
 
-impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM<F, G>
+impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM2<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -152,52 +164,59 @@ where
             .flat_map(|row| row.to_jolt_instructions())
             .collect::<Vec<_>>();
 
-        let r: Vec<F> = (0..instruction_ops.len()).map(|_| F::one()).collect();
+        // let r: Vec<F> = (0..instruction_ops.len()).map(|_| F::one()).collect();
+        let mut rng = test_rng();
+        let mut r: Vec<F> = Vec::with_capacity(instruction_ops.len());
+        for _ in 0..instruction_ops.len() {
+            r.push(F::rand(&mut rng));
+        }
 
-        // Prepare program code
-        let elf_rows = 
-            self
-            .trace
-            .iter()
-            .map(|row| row.to_pc_trace())
-            .collect::<Vec<_>>();
 
-        let pc_polys = PCPolys::<F, G>::new_program(
-            self.program.clone(), 
-            elf_rows
-        );
 
-        let circuit_flags = 
-            self
-            .trace
-            .iter()
-            .flat_map(|row| row.to_circuit_flags::<F>())
-            .collect::<Vec<_>>();
+        // // Prepare program code
+        // let elf_rows = 
+        //     self
+        //     .trace
+        //     .iter()
+        //     .map(|row| row.to_pc_trace())
+        //     .collect::<Vec<_>>();
 
-        // Prove RAM and Registers  
-        let memory_trace = 
-            self
-            .trace
-            .iter()
-            .flat_map(|row| row.to_ram_ops())
-            .collect::<Vec<_>>();
+        // let pc_polys = PCPolys::<F, G>::new_program(
+        //     self.program.clone(), 
+        //     elf_rows
+        // );
 
-        let (rw_memory, _) = ReadWriteMemory::<F, G>::new(
-            memory_trace.clone(),
-            self.memory_size, 
-            &mut transcript,
-        );
+        // let circuit_flags = 
+        //     self
+        //     .trace
+        //     .iter()
+        //     .flat_map(|row| row.to_circuit_flags::<F>())
+        //     .collect::<Vec<_>>();
+
+        // // Prove RAM and Registers  
+        // let memory_trace = 
+        //     self
+        //     .trace
+        //     .iter()
+        //     .flat_map(|row| row.to_ram_ops())
+        //     .collect::<Vec<_>>();
+
+        // let (rw_memory, _) = ReadWriteMemory::<F, G>::new(
+        //     memory_trace.clone(),
+        //     self.memory_size, 
+        //     &mut transcript,
+        // );
 
         Self::prove_instruction_lookups(instruction_ops.clone(), r, &mut transcript);
-        // TODO: call pc prover 
-        Self::prove_memory(memory_trace, self.memory_size, &mut transcript);
-        Self::prove_r1cs(
-            self.trace.len(),
-            pc_polys,
-            rw_memory,
-            instruction_ops,
-            circuit_flags,
-        );
+        // // TODO: call pc prover 
+        // Self::prove_memory(memory_trace, self.memory_size, &mut transcript);
+        // Self::prove_r1cs(
+        //     self.trace.len(),
+        //     pc_polys,
+        //     rw_memory,
+        //     instruction_ops,
+        //     circuit_flags,
+        // );
     }
 }
 
@@ -205,6 +224,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::RV32IJoltVM2; 
     use ark_curve25519::{EdwardsProjective, Fr};
     use ark_ec::CurveGroup;
     use ark_ff::PrimeField;
@@ -214,6 +234,9 @@ mod tests {
     use rand_chacha::rand_core::RngCore;
     use std::collections::HashSet;
 
+    use common::{constants::REGISTER_COUNT, RV32InstructionFormat, RV32IM};
+    use crate::jolt::vm::pc::{ELFRow, FiveTuplePoly, PCPolys};
+    use crate::jolt::trace::rv::RVTraceRow;
     use crate::jolt::instruction::{
         add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
         bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
@@ -300,5 +323,31 @@ mod tests {
             <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::COUNT,
             "Unused enum variants in Subtables"
         );
+    }
+
+    #[test]
+    fn rv32ijoltvm_tiny_trace() {
+        let program = vec![
+            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+        ];
+        let trace = vec![
+            // ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+            // ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            RVTraceRow::new(1, RV32IM::AND, Some(4u64), Some(4u64), Some(4u64), Some(4u32), Some(0), Some(0), Some(0), Some(0), None, None),
+            // RVTraceRow::new(1, RV32IM::SUB, Some(2u64), Some(2u64), Some(2u64), Some(2u32), Some(0), Some(0), Some(0), Some(0), None, None),
+        ];
+
+        let mut vm = RV32IJoltVM2::<Fr, EdwardsProjective> {
+            memory_size: 1024,
+            program,
+            trace,
+            _p1: std::marker::PhantomData,
+            _p2: std::marker::PhantomData,
+        };
+
+        vm.prove();
     }
 }

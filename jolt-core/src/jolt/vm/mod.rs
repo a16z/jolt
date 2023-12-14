@@ -26,7 +26,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
-    fn prove(&self);
+    fn prove(&self) {
+        unimplemented!();
+    }
 
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
