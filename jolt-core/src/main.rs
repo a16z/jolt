@@ -261,7 +261,7 @@ fn svg_plot(
         .caption(plot_title(args), ("sans-serif", (5).percent_height()))
         .set_label_area_size(LabelAreaPosition::Left, (8).percent())
         .set_label_area_size(LabelAreaPosition::Bottom, (4).percent())
-        .margin((1).percent())
+        .margin((8).percent())
         .build_cartesian_2d(
             (*xmin..*xmax).log_scale().with_key_points(x_tick_labels),
             0.0..*ymax,
@@ -286,6 +286,16 @@ fn svg_plot(
             ))?
             .label(bench_to_label(bench_type))
             .legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 10, y + 5)], color.filled()));
+        chart.draw_series(PointSeries::of_element(
+            points[i].clone(),
+            4,
+            Palette99::pick(i).mix(0.9).filled(),
+            &|coord, size, style| {
+                EmptyElement::at(coord)
+                    + Circle::new((0, 0), size, style)
+                    + Text::new(format!("{:.3}s", coord.1), (0, 15), ("sans-serif", 14))
+            },
+        ))?;
     }
 
     chart.configure_series_labels().border_style(BLACK).draw()?;
