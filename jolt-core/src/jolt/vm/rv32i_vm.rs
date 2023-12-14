@@ -29,6 +29,7 @@ use crate::jolt::subtable::{
     truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, zero_lsb::ZeroLSBSubtable,
     LassoSubtable,
 };
+use crate::utils::math::Math;
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
 /// are callable on the enum type via enum_dispatch.
@@ -167,7 +168,7 @@ where
         // let r: Vec<F> = (0..instruction_ops.len()).map(|_| F::one()).collect();
         let mut rng = test_rng();
         let mut r: Vec<F> = Vec::with_capacity(instruction_ops.len());
-        for _ in 0..instruction_ops.len() {
+        for _ in 0..instruction_ops.len().log_2() {
             r.push(F::rand(&mut rng));
         }
 
@@ -337,7 +338,7 @@ mod tests {
             // ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
             // ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
             RVTraceRow::new(1, RV32IM::AND, Some(4u64), Some(4u64), Some(4u64), Some(4u32), Some(0), Some(0), Some(0), Some(0), None, None),
-            // RVTraceRow::new(1, RV32IM::SUB, Some(2u64), Some(2u64), Some(2u64), Some(2u32), Some(0), Some(0), Some(0), Some(0), None, None),
+            RVTraceRow::new(1, RV32IM::SUB, Some(2u64), Some(2u64), Some(2u64), Some(2u32), Some(0), Some(0), Some(0), Some(0), None, None),
         ];
 
         let mut vm = RV32IJoltVM2::<Fr, EdwardsProjective> {
