@@ -94,6 +94,7 @@ where
     >,
     pub commitment: MemoryCommitment<G>,
     pub timestamp_validity_proof: SurgeProof<F, G>,
+    pub memory_trace_size: usize,
 }
 
 #[derive(Debug, PartialEq, Clone)]

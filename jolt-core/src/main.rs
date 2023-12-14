@@ -47,16 +47,19 @@ struct PlotArgs {
     #[clap(long, value_enum, num_args = 1..)]
     bench: Vec<BenchType>,
 
+    /// SVG output file path
     #[clap(short, long)]
     out: Option<String>,
 
-    /// Number of cycles to run the benchmark for
+    /// Number of cycles to run benchmarks for
     #[clap(short, long, num_args = 1..)]
     num_cycles: Vec<usize>,
 
+    /// Size of read-write memory to run benchmarks with
     #[clap(short, long, num_args = 1..)]
     memory_size: Vec<usize>,
 
+    /// Size of bytecode to run benchmarks with
     #[clap(short, long, num_args = 1..)]
     bytecode_size: Vec<usize>,
 }
@@ -118,6 +121,28 @@ fn plot_x_label(args: &PlotArgs) -> String {
         "Memory size (B)".to_owned()
     } else {
         "Bytecode size (B)".to_owned()
+    }
+}
+
+fn plot_title(args: &PlotArgs) -> String {
+    if args.num_cycles.len() > 1 {
+        format!(
+            "Proving times (memory_size = {}, bytecode_size = {})",
+            args.memory_size[0], args.bytecode_size[0]
+        )
+        .to_owned()
+    } else if args.memory_size.len() > 1 {
+        format!(
+            "Proving times (num_cycles = {}, bytecode_size = {})",
+            args.num_cycles[0], args.bytecode_size[0]
+        )
+        .to_owned()
+    } else {
+        format!(
+            "Proving times (num_cycles = {}, memory_size = {})",
+            args.num_cycles[0], args.memory_size[0]
+        )
+        .to_owned()
     }
 }
 
@@ -233,7 +258,7 @@ fn svg_plot(
         .collect();
 
     let mut chart = ChartBuilder::on(&root)
-        .caption("Proving times", ("sans-serif", (5).percent_height()))
+        .caption(plot_title(args), ("sans-serif", (5).percent_height()))
         .set_label_area_size(LabelAreaPosition::Left, (8).percent())
         .set_label_area_size(LabelAreaPosition::Bottom, (4).percent())
         .margin((1).percent())
