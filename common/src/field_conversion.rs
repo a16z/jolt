@@ -2,11 +2,16 @@ use ark_bn254::Fr as ArkFr;
 use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
 
 use ff::PrimeField as GenericPrimeField;
-use spartan2::provider::bn256_grumpkin::bn256::Base as Spartan2Fr;
+use spartan2::provider::bn256_grumpkin::bn256::Scalar as Spartan2Fr;
 
-pub fn ark_to_spartan(ark: ArkFr) -> Spartan2Fr {
-    let bigint = ark.into_bigint();
-    Spartan2Fr::from_raw(bigint.0)
+pub fn ark_to_spartan<ArkF: ArkPrimeField>(ark: ArkF) -> Spartan2Fr {
+    let bigint: <ArkF as ArkPrimeField>::BigInt = ark.into_bigint();
+    let bytes = bigint.to_bytes_le();
+    let mut array = [0u64; 4];
+    for (i, chunk) in bytes.chunks(8).enumerate() {
+        array[i] = u64::from_le_bytes(chunk.try_into().unwrap());
+    }
+    Spartan2Fr::from_raw(array)
 }
 
 pub fn spartan_to_ark(bell: Spartan2Fr) -> ArkFr {

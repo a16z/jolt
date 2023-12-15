@@ -5,8 +5,7 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
 
-use crate::common::ark_to_ff; 
-use crate::r1cs::snark::JoltCircuit;
+use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit};
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
@@ -239,9 +238,26 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             lookup_outputs,
             circuit_flags,
         ];
-        let jolt_circuit = JoltCircuit::<F>::new_from_inputs(32, C, inputs);
-        // let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-        // assert!(result_verify.is_ok());
+
+        // TODO: move this conversion to the r1cs module 
+        use spartan2::provider::bn256_grumpkin::bn256;
+        use bn256::Scalar as Spartan2Fr;
+        type G1 = bn256::Point;
+        use common::field_conversion::ark_to_spartan; 
+        type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
+        type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+
+        let inputs_ff = inputs
+            .into_iter()
+            .map(|input| input
+                .into_iter()
+                .map(|x| ark_to_spartan(x))
+                .collect::<Vec<Spartan2Fr>>()
+            ).collect::<Vec<Vec<Spartan2Fr>>>();
+
+        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff);
+        let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+        assert!(result_verify.is_ok());
     }
 }
 

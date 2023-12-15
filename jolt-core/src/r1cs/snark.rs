@@ -9,6 +9,7 @@ use spartan2::{
 use bellpepper_core::{Circuit, ConstraintSystem, SynthesisError};
 use core::marker::PhantomData;
 use ff::PrimeField;
+// use ark_ff::PrimeField; 
 
 use circom_scotia::{calculate_witness, r1cs::CircomConfig};
 
