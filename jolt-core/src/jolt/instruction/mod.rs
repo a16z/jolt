@@ -9,6 +9,7 @@ use crate::utils::index_to_field_bitvector;
 
 #[enum_dispatch]
 pub trait JoltInstruction: Sync {
+    fn operands(&self) -> [u64; 2];
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
     /// output of the instruction. This function can also be thought of as the low-degree extension
@@ -49,7 +50,14 @@ pub trait JoltInstruction: Sync {
 
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
-
+    fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
+        self.operands()
+            .iter()
+            .map(|&operand| chunk_operand(operand, C, log_M))
+            .collect::<Vec<Vec<u64>>>()
+            .try_into()
+            .unwrap()
+    }
     fn random(&self, rng: &mut StdRng) -> Self;
 }
 

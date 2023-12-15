@@ -11,6 +11,10 @@ use crate::{
 pub struct SLTUInstruction(pub u64, pub u64);
 
 impl JoltInstruction for SLTUInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         let mut sum = F::zero();
         let mut eq_prod = F::one();

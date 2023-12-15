@@ -14,6 +14,10 @@ use crate::{
 pub struct SLTInstruction(pub u64, pub u64);
 
 impl JoltInstruction for SLTInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         debug_assert!(vals.len() % C == 0);
         let mut vals_by_subtable = vals.chunks_exact(C);
