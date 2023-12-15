@@ -198,74 +198,7 @@ mod tests {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
-        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
-
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
-
-        let bytecode_trace: Vec<ELFRow> = converted_trace
-            .iter()
-            .map(|row| row.to_bytecode_trace())
-            .collect();
-
-        let instructions: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
-
-        // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // something about Linux boot requiring it...
-        let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        memory_trace.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
-        let next_power_of_two = memory_trace.len().next_power_of_two();
-        memory_trace.resize(next_power_of_two, MemoryOp::no_op());
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        let bytecode_proof: BytecodeProof<Fr, EdwardsProjective> = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
-        let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let instruction_lookups: InstructionLookupsProof<_, _> =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
-
-        let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
-            instruction_lookups,
-            read_write_memory: memory_proof,
-            bytecode: bytecode_proof,
-        };
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
-        assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            jolt_proof.instruction_lookups,
-            &mut transcript
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn fib_r1cs() {
-        use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        use ark_std::log2;
-
-        let trace_location = JoltPaths::trace_path("fibonacci");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-        let mut bytecode_rows: Vec<ELFRow> = bytecode.iter().map(ELFRow::from).collect();
+        let mut bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -290,22 +223,30 @@ mod tests {
         let next_power_of_two = memory_trace.len().next_power_of_two();
         memory_trace.resize(next_power_of_two, MemoryOp::no_op());
 
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-
-        // for each value in bytecode_trace, flat map to_circuit_flags 
+        // R1CS processing
         let circuit_flags = converted_trace.clone()
             .iter()
             .flat_map(|row| (*row).to_circuit_flags())
             .collect::<Vec<_>>();
 
-        let chunks_query = instructions.iter()
+        let chunks_query = instructions.clone().iter()
             .flat_map(|instruction| instruction.to_indices(C, log2(M) as usize))
             .collect::<Vec<_>>();
 
-        // r1cs testing
-        RV32IJoltVM::prove_r1cs(
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        let mut random_tape: RandomTape<EdwardsProjective> =
+            RandomTape::new(b"Jolt prover randomness");
+        let bytecode_proof: BytecodeProof<Fr, EdwardsProjective> = RV32IJoltVM::prove_bytecode(
+            bytecode_rows.clone(),
+            bytecode_trace.clone(),
+            &mut transcript,
+            &mut random_tape,
+        );
+        let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
+            RV32IJoltVM::prove_memory(bytecode.clone(), memory_trace.clone(), &mut transcript, &mut random_tape);
+        let instruction_lookups: InstructionLookupsProof<_, _> =
+            RV32IJoltVM::prove_instruction_lookups(instructions.clone(), &mut transcript, &mut random_tape);
+        let r1cs_proof = RV32IJoltVM::prove_r1cs(
             instructions, 
             bytecode_rows,
             bytecode_trace,
@@ -316,32 +257,20 @@ mod tests {
             &mut random_tape,
         );
 
-        // let bytecode_proof: BytecodeProof<Fr, EdwardsProjective> = RV32IJoltVM::prove_bytecode(
-        //     bytecode_rows.clone(),
-        //     bytecode_trace.clone(),
-        //     &mut transcript,
-        //     &mut random_tape,
-        // );
+        let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
+            instruction_lookups,
+            read_write_memory: memory_proof,
+            bytecode: bytecode_proof,
+        };
 
-        // let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
-        //     RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        // let instruction_lookups: InstructionLookupsProof<_, _> =
-        //     RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
-
-        // let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
-        //     instruction_lookups,
-        //     read_write_memory: memory_proof,
-        //     bytecode: bytecode_proof,
-        // };
-
-        // let mut transcript = Transcript::new(b"Jolt transcript");
-        // assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_instruction_lookups(
-        //     jolt_proof.instruction_lookups,
-        //     &mut transcript
-        // )
-        // .is_ok());
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
+        assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
+        assert!(RV32IJoltVM::verify_instruction_lookups(
+            jolt_proof.instruction_lookups,
+            &mut transcript
+        )
+        .is_ok());
     }
 
     #[test]
