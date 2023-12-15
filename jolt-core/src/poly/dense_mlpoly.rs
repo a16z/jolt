@@ -314,6 +314,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         let n = self.len() / 2;
 
         for i in 0..n {
+            // let low' = low + r * (high - low)
             let m = self.Z[i + n] - self.Z[i];
             self.Z[i] += *r * m;
         }
@@ -325,11 +326,15 @@ impl<F: PrimeField> DensePolynomial<F> {
         let n = self.len() / 2;
 
         for i in 0..n {
-            let m = self.Z[i + n] - self.Z[i];
-            let term = mul_0_1_optimized(r, &m);
-            if !term.is_zero() {
-                self.Z[i] += term;
+            let low = &self.Z[i];
+            let high = &self.Z[i + n];
+            if high == low {
+                continue;
             }
+
+            let m = *high - low;
+            let term = mul_0_1_optimized(r, &m);
+            self.Z[i] += term;
         }
         self.num_vars -= 1;
         self.len = n;
