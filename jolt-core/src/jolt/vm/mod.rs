@@ -3,7 +3,10 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
+use ark_std::log2;
 
+use crate::common::ark_to_ff; 
+use crate::r1cs::snark::JoltCircuit;
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
@@ -196,26 +199,47 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) {
+        let log_M = log2(M) as usize;
         let [prog_a_rw, prog_v_rw, prog_t_reads] = 
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
         let [memreg_a_rw, memreg_v_reads, memreg_v_writes, memreg_t_reads] = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
-        
-        // let inputs = vec![
-        //     prog_a_rw,
-        //     prog_v_rw,
-        //     prog_t_reads,
-        //     memreg_a_rw,
-        //     memreg_v_reads, 
-        //     memreg_v_writes,
-        //     memreg_t_reads, 
-        //     chunks_x, 
-        //     chunks_y,
-        //     chunks_query,
-        //     lookup_outputs,
-        //     circuit_flags,
-        // ];
-        // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
+
+        let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
+            instructions
+            .iter()
+            .flat_map(|op| {
+                let chunks_xy = op.operand_chunks(C, log_M);
+                let chunks_x = chunks_xy[0].clone();
+                let chunks_y = chunks_xy[1].clone();
+                chunks_x.into_iter().zip(chunks_y.into_iter())
+            })
+            .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
+            .unzip();
+
+        let chunks_query = instructions.iter()
+            .flat_map(|op| op.to_indices(C, log_M))
+            .map(|x| x as u64)
+            .map(F::from)
+            .collect::<Vec<F>>();
+
+        let lookup_outputs = instructions.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+
+        let inputs = vec![
+            prog_a_rw,
+            prog_v_rw,
+            prog_t_reads,
+            memreg_a_rw,
+            memreg_v_reads, 
+            memreg_v_writes,
+            memreg_t_reads, 
+            chunks_x, 
+            chunks_y,
+            chunks_query,
+            lookup_outputs,
+            circuit_flags,
+        ];
+        let jolt_circuit = JoltCircuit::<F>::new_from_inputs(32, C, inputs);
         // let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
         // assert!(result_verify.is_ok());
     }

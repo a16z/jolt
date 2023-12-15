@@ -6,6 +6,7 @@ use std::marker::Sync;
 
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::index_to_field_bitvector;
+use crate::utils::instruction_utils::chunk_operand;
 
 #[enum_dispatch]
 pub trait JoltInstruction: Sync {
