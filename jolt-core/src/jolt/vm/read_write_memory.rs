@@ -235,6 +235,113 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             t_read,
         )
     }
+
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
+    pub fn get_r1cs_polys(
+        bytecode: Vec<ELFInstruction>,
+        memory_trace: Vec<MemoryOp>,
+        transcript: &mut Transcript,
+    ) -> [Vec<F>; 4] {
+        let m = memory_trace.len();
+        assert!(m.is_power_of_two());
+
+        let remap_address = |a: u64| {
+            assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+            if a >= RAM_START_ADDRESS {
+                a - RAM_START_ADDRESS + REGISTER_COUNT
+            } else {
+                // If a < REGISTER_COUNT, it is one of the registers and doesn't
+                // need to be remapped
+                a
+            }
+        };
+
+        let max_memory_address = memory_trace
+            .iter()
+            .map(|op| match op {
+                MemoryOp::Read(a, _) => remap_address(*a),
+                MemoryOp::Write(a, _) => remap_address(*a),
+            })
+            .max()
+            .unwrap_or(0);
+        let max_bytecode_address = bytecode
+            .iter()
+            .map(|instr| remap_address(instr.address))
+            .max()
+            .unwrap_or(0)
+            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+        let memory_size =
+            max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
+
+        let mut v_init: Vec<u64> = vec![0; memory_size];
+        for instr in bytecode {
+            let address = remap_address(instr.address);
+            let raw = instr.raw;
+            for i in 0..(BYTES_PER_INSTRUCTION as u64) {
+                // Write one byte of raw to v_init
+                v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+            }
+        }
+
+        let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
+        let mut v_read: Vec<u64> = Vec::with_capacity(m);
+        let mut v_write: Vec<u64> = Vec::with_capacity(m);
+        let mut v_final: Vec<u64> = v_init.clone(); // TODO(moodlezoup): avoid clone
+        let mut t_read: Vec<u64> = Vec::with_capacity(m);
+        let mut t_write: Vec<u64> = Vec::with_capacity(m);
+        let mut t_final: Vec<u64> = vec![0; memory_size];
+
+        let mut timestamp: u64 = 0;
+        for memory_access in memory_trace {
+            match memory_access {
+                MemoryOp::Read(a, v) => {
+                    let remapped_a = remap_address(a);
+                    debug_assert_eq!(v, v_final[remapped_a as usize]);
+                    a_read_write.push(remapped_a);
+                    v_read.push(v);
+                    v_write.push(v);
+                    t_read.push(t_final[remapped_a as usize]);
+                    t_write.push(timestamp + 1);
+                    t_final[remapped_a as usize] = timestamp + 1;
+                }
+                MemoryOp::Write(a, v_new) => {
+                    let remapped_a = remap_address(a);
+                    let v_old = v_final[remapped_a as usize];
+                    a_read_write.push(remapped_a);
+                    v_read.push(v_old);
+                    v_write.push(v_new);
+                    v_final[remapped_a as usize] = v_new;
+                    t_read.push(t_final[remapped_a as usize]);
+                    t_write.push(timestamp + 1);
+                    t_final[remapped_a as usize] = timestamp + 1;
+                }
+            }
+            timestamp += 1;
+        }
+
+        [
+            DensePolynomial::from_u64(&a_read_write).evals(),
+            DensePolynomial::from_u64(&v_read).evals(),
+            DensePolynomial::from_u64(&v_write).evals(),
+            DensePolynomial::from_u64(&t_read).evals(),
+        ]
+
+        // (
+        //     Self {
+        //         _group: PhantomData,
+        //         memory_size,
+        //         v_init: DensePolynomial::from_u64(&v_init),
+        //         a_read_write: DensePolynomial::from_u64(&a_read_write),
+        //         v_read: DensePolynomial::from_u64(&v_read),
+        //         v_write: DensePolynomial::from_u64(&v_write),
+        //         v_final: DensePolynomial::from_u64(&v_final),
+        //         t_read: DensePolynomial::from_u64(&t_read),
+        //         t_write: DensePolynomial::from_u64(&t_write),
+        //         t_final: DensePolynomial::from_u64(&t_final),
+        //     },
+        //     t_read,
+        // )
+    }
 }
 
 pub struct BatchedMemoryPolynomials<F: PrimeField> {

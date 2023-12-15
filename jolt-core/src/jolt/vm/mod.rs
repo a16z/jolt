@@ -186,8 +186,38 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
-    fn prove_r1cs() {
-        unimplemented!("todo")
+    fn prove_r1cs(
+        instructions: Vec<Self::InstructionSet>,
+        mut bytecode_rows: Vec<ELFRow>,
+        mut trace: Vec<ELFRow>,
+        bytecode: Vec<ELFInstruction>,
+        memory_trace: Vec<MemoryOp>,
+        circuit_flags: Vec<F>,
+        transcript: &mut Transcript,
+        random_tape: &mut RandomTape<G>,
+    ) {
+        let [prog_a_rw, prog_v_rw, prog_t_reads] = 
+            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
+
+        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, memreg_t_reads] = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
+        
+        // let inputs = vec![
+        //     prog_a_rw,
+        //     prog_v_rw,
+        //     prog_t_reads,
+        //     memreg_a_rw,
+        //     memreg_v_reads, 
+        //     memreg_v_writes,
+        //     memreg_t_reads, 
+        //     chunks_x, 
+        //     chunks_y,
+        //     chunks_query,
+        //     lookup_outputs,
+        //     circuit_flags,
+        // ];
+        // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
+        // let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+        // assert!(result_verify.is_ok());
     }
 }
 

@@ -175,6 +175,16 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             self.imm.evaluate(r),
         ]
     }
+
+    pub fn get_r1cs_polys(&self) -> Vec<F> {
+        [
+            self.opcode.evals(), 
+            self.rd.evals(), 
+            self.rs1.evals(), 
+            self.rs2.evals(), 
+            self.imm.evals()
+        ].concat()
+    }
 }
 
 pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -239,6 +249,42 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             t_read,
             t_final,
         }
+    }
+
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
+    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> [Vec<F>; 3] {
+        Self::validate_bytecode(&bytecode, &trace);
+        Self::preprocess(&mut bytecode, &mut trace);
+        let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
+
+        // TODO: avoid padding
+
+        let num_ops = trace.len().next_power_of_two();
+        // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
+        let code_size = (max_bytecode_address + 1).next_power_of_two();
+
+        let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
+        let mut read_cts: Vec<usize> = vec![0; num_ops];
+        let mut final_cts: Vec<usize> = vec![0; code_size];
+
+        for (trace_index, trace) in trace.iter().enumerate() {
+            let address = trace.address;
+            debug_assert!(address < code_size);
+            a_read_write_usize[trace_index] = address;
+            let counter = final_cts[address];
+            read_cts[trace_index] = counter;
+            final_cts[address] = counter + 1;
+        }
+
+        let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
+        let v_read_write = FiveTuplePoly::from_elf(&trace);
+        let t_read = DensePolynomial::from_usize(&read_cts);
+
+        [
+            a_read_write.evals(), 
+            v_read_write.get_r1cs_polys(), 
+            t_read.evals(),
+        ]
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
