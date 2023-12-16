@@ -855,9 +855,13 @@ where
 
         // TODO: compartmentalize all primary sumcheck logic
         // TODO: Clones here are wasteful.
-        let span = tracing::span!(tracing::Level::DEBUG, "Cloning polynomials");
+        let span = tracing::span!(tracing::Level::DEBUG, "Cloning E polynomials");
         let _guard = span.enter();
         let mut E_polys_clone = polynomials.E_polys.clone();
+        drop(_guard);
+        drop(span);
+        let span = tracing::span!(tracing::Level::DEBUG, "Cloning instruction_flag polynomials");
+        let _guard = span.enter();
         let mut instruction_flag_polys_clone = polynomials.instruction_flag_polys.clone();
         drop(_guard);
         drop(span);
