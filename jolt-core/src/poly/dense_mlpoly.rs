@@ -54,7 +54,7 @@ pub struct PolyCommitmentBlinds<F> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize, PartialEq)]
 pub struct PolyCommitment<G: CurveGroup> {
-    C: Vec<G>,
+    pub(crate) C: Vec<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]

@@ -873,7 +873,7 @@ mod tests {
         let proof = surge.prove(&mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::verify(proof, &mut transcript)
+        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript, M)
             .expect("should work");
     }
 
@@ -894,7 +894,7 @@ mod tests {
         let proof = surge.prove(&mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript)
+        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript, M)
             .expect("should work");
     }
 }

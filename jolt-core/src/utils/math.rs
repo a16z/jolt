@@ -13,8 +13,9 @@ impl Math for usize {
 
     #[inline]
     fn pow2(self) -> usize {
-        let base: usize = 2;
-        base.pow(self as u32)
+        1 << self
+        // let base: usize = 2;
+        // base.pow(self as u32)
     }
 
     /// Returns the num_bits from n in a canonical order
