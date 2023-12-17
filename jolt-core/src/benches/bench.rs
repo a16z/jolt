@@ -1,4 +1,19 @@
 use crate::jolt::instruction::JoltInstruction;
+use crate::jolt::instruction::add::ADDInstruction;
+use crate::jolt::instruction::and::ANDInstruction;
+use crate::jolt::instruction::beq::BEQInstruction;
+use crate::jolt::instruction::bge::BGEInstruction;
+use crate::jolt::instruction::bgeu::BGEUInstruction;
+use crate::jolt::instruction::blt::BLTInstruction;
+use crate::jolt::instruction::bltu::BLTUInstruction;
+use crate::jolt::instruction::bne::BNEInstruction;
+use crate::jolt::instruction::jal::JALInstruction;
+use crate::jolt::instruction::jalr::JALRInstruction;
+use crate::jolt::instruction::or::ORInstruction;
+use crate::jolt::instruction::sll::SLLInstruction;
+use crate::jolt::instruction::sra::SRAInstruction;
+use crate::jolt::instruction::srl::SRLInstruction;
+use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::vm::bytecode::{random_bytecode_trace, ELFRow};
 use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
 use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction};
@@ -30,7 +45,10 @@ pub enum BenchType {
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
-pub fn benchmarks(bench_type: BenchType, num_cycles: Option<usize>) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+pub fn benchmarks(
+    bench_type: BenchType,
+    num_cycles: Option<usize>,
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
         BenchType::JoltDemo => jolt_demo_benchmarks(),
         BenchType::Halo2Comparison => halo2_comparison_benchmarks(),
@@ -116,10 +134,42 @@ fn halo2_comparison_benchmarks() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn rv32i_lookup_benchmarks(num_cycles: Option<usize>) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+    // let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+    let mut rng = test_rng();
 
     let num_cycles = num_cycles.unwrap_or(64_000);
-    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); num_cycles];
+    // let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); num_cycles];
+    let ops_sample: Vec<RV32I> = vec![
+        RV32I::ADD(ADDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::AND(ANDInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::BEQ(BEQInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::BGE(BGEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::BGEU(BGEUInstruction(
+            rng.next_u32() as u64,
+            rng.next_u32() as u64,
+        )),
+        RV32I::BLT(BLTInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::BLTU(BLTUInstruction(
+            rng.next_u32() as u64,
+            rng.next_u32() as u64,
+        )),
+        RV32I::BNE(BNEInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::JAL(JALInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::JALR(JALRInstruction(
+            rng.next_u32() as u64,
+            rng.next_u32() as u64,
+        )),
+        RV32I::OR(ORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::SLL(SLLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::SRA(SRAInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::SRL(SRLInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::SUB(SUBInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+        RV32I::XOR(XORInstruction(rng.next_u32() as u64, rng.next_u32() as u64)),
+    ];
+    let mut ops: Vec<RV32I> = vec![];
+    while ops.len() < num_cycles {
+        ops.extend(ops_sample.clone());
+    }
     println!("Running {:?}", ops.len());
 
     let work = Box::new(|| {
