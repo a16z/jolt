@@ -10,7 +10,7 @@ use strum::{EnumCount, IntoEnumIterator};
 
 use rayon::prelude::*;
 
-use crate::utils::{split_poly_flagged, mul_0_1_optimized};
+use crate::utils::{mul_0_1_optimized, split_poly_flagged, count_poly_zeros};
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -295,21 +295,28 @@ where
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
-        let dim_openings = polynomials.dim.par_iter().map(|poly| poly.evaluate_at_chi_low_optimized(&chis)).collect();
-        let read_openings = polynomials.read_cts.par_iter().map(|poly| poly.evaluate_at_chi_low_optimized(&chis)).collect();
-        let E_poly_openings = polynomials.E_polys.par_iter().map(|poly| poly.evaluate_at_chi_low_optimized(&chis)).collect();
+        let dim_openings = polynomials
+            .dim
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+        let read_openings = polynomials
+            .read_cts
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
+        let E_poly_openings = polynomials
+            .E_polys
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
+            .collect();
         let flag_openings = polynomials
             .instruction_flag_polys
             .par_iter()
             .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
             .collect();
 
-        [
-            dim_openings,
-            read_openings,
-            E_poly_openings,
-            flag_openings,
-        ]
+        [dim_openings, read_openings, E_poly_openings, flag_openings]
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
@@ -594,7 +601,7 @@ where
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let gamma_square = &gamma.square();
-                
+
                 let leaf_fingerprints = (0..M)
                     .map(|i| {
                         let a = &F::from(i as u64);
@@ -631,13 +638,19 @@ where
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i);
                 let flag = &polynomials.subtable_flag_polys[subtable_index];
-                let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) = split_poly_flagged(&read_fingerprints[i], &flag);
-                let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) = split_poly_flagged(&write_fingerprints[i], &flag);
+                let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
+                    split_poly_flagged(&read_fingerprints[i], &flag);
+                let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
+                    split_poly_flagged(&write_fingerprints[i], &flag);
 
-                let read_circuit =
-                    GrandProductCircuit::new_split(DensePolynomial::new(toggled_read_fingerprints_l), DensePolynomial::new(toggled_read_fingerprints_r));
-                let write_circuit =
-                    GrandProductCircuit::new_split(DensePolynomial::new(toggled_write_fingerprints_l), DensePolynomial::new(toggled_write_fingerprints_r));
+                let read_circuit = GrandProductCircuit::new_split(
+                    DensePolynomial::new(toggled_read_fingerprints_l),
+                    DensePolynomial::new(toggled_read_fingerprints_r),
+                );
+                let write_circuit = GrandProductCircuit::new_split(
+                    DensePolynomial::new(toggled_write_fingerprints_l),
+                    DensePolynomial::new(toggled_write_fingerprints_r),
+                );
                 vec![read_circuit, write_circuit]
             })
             .collect();
@@ -854,25 +867,14 @@ where
         let num_rounds = self.ops.len().log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
-        // TODO: Clones here are wasteful.
-        let span = tracing::span!(tracing::Level::DEBUG, "Cloning E polynomials");
-        let _guard = span.enter();
-        let mut E_polys_clone = polynomials.E_polys.clone();
-        drop(_guard);
-        drop(span);
-        let span = tracing::span!(tracing::Level::DEBUG, "Cloning instruction_flag polynomials");
-        let _guard = span.enter();
-        let mut instruction_flag_polys_clone = polynomials.instruction_flag_polys.clone();
-        drop(_guard);
-        drop(span);
 
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
             Self::prove_primary_sumcheck(
                 &F::zero(),
                 num_rounds,
                 &mut eq_poly,
-                &mut E_polys_clone,
-                &mut instruction_flag_polys_clone,
+                &polynomials.E_polys,
+                &polynomials.instruction_flag_polys,
                 Self::sumcheck_poly_degree(),
                 transcript,
             );
@@ -1079,8 +1081,8 @@ where
         _claim: &F,
         num_rounds: usize,
         eq_poly: &mut DensePolynomial<F>,
-        memory_polys: &mut Vec<DensePolynomial<F>>,
-        flag_polys: &mut Vec<DensePolynomial<F>>,
+        memory_polys: &Vec<DensePolynomial<F>>,
+        flag_polys: &Vec<DensePolynomial<F>>,
         degree: usize,
         transcript: &mut Transcript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>) {
@@ -1097,143 +1099,45 @@ where
             .map(|op| Self::instruction_to_memory_indices(&op))
             .collect();
 
-
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-
         let num_eval_points = degree + 1;
-        for _round in 0..num_rounds {
-            let mle_len = eq_poly.len();
-            let mle_half = mle_len / 2;
 
-            let evaluate_mles_iterator = (0..mle_half).into_par_iter();
+        let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys, &memory_polys, num_eval_points, &instruction_to_memory_indices_map);
+        let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
+        random_vars.push(r_j);
 
-            // Loop over half MLE size (size of MLE next round)
-            //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
-            //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
-            // After: Sum over MLE elements (with combine)
+        let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
+        let _bind_enter = _bind_span.enter();
+        eq_poly.bound_poly_var_top(&r_j);
+        let mut flag_polys_updated: Vec<DensePolynomial<F>> = flag_polys
+            .par_iter()
+            .map(|poly| poly.new_poly_from_bound_poly_var_top_flags(&r_j))
+            .collect();
+        let mut memory_polys_updated: Vec<DensePolynomial<F>> = memory_polys 
+            .par_iter()
+            .map(|poly| poly.new_poly_from_bound_poly_var_top(&r_j))
+            .collect();
+        drop(_bind_enter);
+        drop(_bind_span);
 
-            // Tracing span for evaluate_mles_iterator
-            let _span = tracing::span!(
-                tracing::Level::TRACE,
-                "PrimarySumcheck.evaluate_mles_iterator"
-            );
-            let _enter = _span.enter();
-            let evaluations: Vec<F> = evaluate_mles_iterator
-                .map(|low_index| {
-                    let high_index = mle_half + low_index;
 
-                    let mut eq_evals: Vec<F> = vec![F::zero(); num_eval_points];
-                    let mut multi_flag_evals: Vec<Vec<F>> =
-                        vec![vec![F::zero(); Self::NUM_INSTRUCTIONS]; num_eval_points];
-                    let mut multi_memory_evals: Vec<Vec<F>> =
-                        vec![vec![F::zero(); Self::NUM_MEMORIES]; num_eval_points];
-
-                    eq_evals[0] = eq_poly[low_index];
-                    eq_evals[1] = eq_poly[high_index];
-                    let eq_m = eq_poly[high_index] - eq_poly[low_index];
-                    for eval_index in 2..num_eval_points {
-                        let eq_eval = eq_evals[eval_index - 1] + eq_m;
-                        eq_evals[eval_index] = eq_eval;
-                    }
-
-                    for flag_instruction_index in 0..Self::NUM_INSTRUCTIONS {
-                        multi_flag_evals[0][flag_instruction_index] =
-                            flag_polys[flag_instruction_index][low_index];
-                        multi_flag_evals[1][flag_instruction_index] =
-                            flag_polys[flag_instruction_index][high_index];
-                        let flag_m = flag_polys[flag_instruction_index][high_index]
-                            - flag_polys[flag_instruction_index][low_index];
-                        for eval_index in 2..num_eval_points {
-                            let flag_eval =
-                                multi_flag_evals[eval_index - 1][flag_instruction_index] + flag_m;
-                            multi_flag_evals[eval_index][flag_instruction_index] = flag_eval;
-                        }
-                    }
-
-                    for memory_index in 0..Self::NUM_MEMORIES {
-                        multi_memory_evals[0][memory_index] = memory_polys[memory_index][low_index];
-                        multi_memory_evals[1][memory_index] =
-                            memory_polys[memory_index][high_index];
-                        let memory_m = memory_polys[memory_index][high_index]
-                            - memory_polys[memory_index][low_index];
-                        for eval_index in 2..num_eval_points {
-                            multi_memory_evals[eval_index][memory_index] =
-                                multi_memory_evals[eval_index - 1][memory_index] + memory_m;
-                        }
-                    }
-
-                    // Accumulate inner terms.
-                    // S({0,1,... num_eval_points}) = eq * [ INNER TERMS ]
-                    //            = eq[000] * [ flags_0[000] * g_0(E_0)[000] + flags_1[000] * g_1(E_1)[000]]
-                    //            + eq[001] * [ flags_0[001] * g_0(E_0)[001] + flags_1[001] * g_1(E_1)[001]]
-                    //            + ...
-                    //            + eq[111] * [ flags_0[111] * g_0(E_0)[111] + flags_1[111] * g_1(E_1)[111]]
-                    let mut inner_sum = vec![F::zero(); num_eval_points];
-                    for instruction in InstructionSet::iter() {
-                        let instruction_index = instruction.to_opcode() as usize;
-                        let memory_indices: &Vec<usize> = &instruction_to_memory_indices_map[instruction_index];
-
-                        for eval_index in 0..num_eval_points {
-                            let flag_eval = multi_flag_evals[eval_index][instruction_index];
-                            if flag_eval == F::zero() {
-                                continue;
-                            }; // Early exit if no contribution.
-
-                            // TODO(sragss): On the final layer we can be even more creative about computing / not computing flags.
-                            // - When flags are both 0, higher evals of flags will also be 0, no need to compute E evals.
-
-                            let terms: Vec<F> = memory_indices
-                                .iter()
-                                .map(|memory_index| multi_memory_evals[eval_index][*memory_index])
-                                .collect();
-                            let instruction_collation_eval =
-                                instruction.combine_lookups(&terms, C, M);
-
-                            // TODO(sragss): Additionally could sum all shared inner terms before multiplying by the flag eval
-                            inner_sum[eval_index] += flag_eval * instruction_collation_eval;
-                        }
-                    }
-                    let evaluations: Vec<F> = (0..num_eval_points)
-                        .map(|eval_index| eq_evals[eval_index] * inner_sum[eval_index])
-                        .collect();
-                    evaluations
-                })
-                .reduce(
-                    || vec![F::zero(); num_eval_points],
-                    |running, new| {
-                        debug_assert_eq!(running.len(), new.len());
-                        running
-                            .iter()
-                            .zip(new.iter())
-                            .map(|(r, n)| *r + n)
-                            .collect()
-                    },
-                );
-            drop(_enter);
-            drop(_span);
-
-            let round_uni_poly = UniPoly::from_evals(&evaluations);
-            compressed_polys.push(round_uni_poly.compress());
-
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
-                &round_uni_poly,
-                b"poly",
-                transcript,
-            );
-
-            let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
+        for _round in 1..num_rounds {
+            let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys_updated, &memory_polys_updated, num_eval_points, &instruction_to_memory_indices_map);
+            let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
             random_vars.push(r_j);
 
             // Bind all polys
             let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
             let _bind_enter = _bind_span.enter();
             eq_poly.bound_poly_var_top(&r_j);
-            flag_polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
-            memory_polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
+            flag_polys_updated
+                .par_iter_mut()
+                .for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
+            memory_polys_updated
+                .par_iter_mut()
+                .for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
+
             drop(_bind_enter);
             drop(_bind_span);
         } // End rounds
@@ -1243,9 +1147,10 @@ where
         // - E(r) * NUM_SUBTABLES
 
         // Polys are fully defined so we can just take the first (and only) evaluation
-        let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
-        let memory_evals = (0..memory_polys.len())
-            .map(|i| memory_polys[i][0])
+        // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
+        let flag_evals = (0..flag_polys_updated.len()).map(|i| flag_polys_updated[i][0]).collect();
+        let memory_evals = (0..memory_polys_updated.len())
+            .map(|i| memory_polys_updated[i][0])
             .collect();
 
         (
@@ -1254,6 +1159,135 @@ where
             flag_evals,
             memory_evals,
         )
+    }
+
+    #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop")]
+    fn primary_sumcheck_inner_loop(
+        eq_poly: &DensePolynomial<F>,
+        flag_polys: &Vec<DensePolynomial<F>>,
+        memory_polys: &Vec<DensePolynomial<F>>,
+        num_eval_points: usize,
+        instruction_to_memory_indices_map: &Vec<Vec<usize>>
+    ) -> UniPoly<F> {
+        let mle_len = eq_poly.len();
+        let mle_half = mle_len / 2;
+
+        let evaluate_mles_iterator = (0..mle_half).into_par_iter();
+
+        // Loop over half MLE size (size of MLE next round)
+        //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
+        //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
+        // After: Sum over MLE elements (with combine)
+
+        let evaluations: Vec<F> = evaluate_mles_iterator
+            .map(|low_index| {
+                let high_index = mle_half + low_index;
+
+                let mut eq_evals: Vec<F> = vec![F::zero(); num_eval_points];
+                let mut multi_flag_evals: Vec<Vec<F>> =
+                    vec![vec![F::zero(); Self::NUM_INSTRUCTIONS]; num_eval_points];
+                let mut multi_memory_evals: Vec<Vec<F>> =
+                    vec![vec![F::zero(); Self::NUM_MEMORIES]; num_eval_points];
+
+                eq_evals[0] = eq_poly[low_index];
+                eq_evals[1] = eq_poly[high_index];
+                let eq_m = eq_poly[high_index] - eq_poly[low_index];
+                for eval_index in 2..num_eval_points {
+                    let eq_eval = eq_evals[eval_index - 1] + eq_m;
+                    eq_evals[eval_index] = eq_eval;
+                }
+
+                // TODO: Exactly one flag across NUM_INSTRUCTIONS is non-zero
+                for flag_instruction_index in 0..Self::NUM_INSTRUCTIONS {
+                    multi_flag_evals[0][flag_instruction_index] =
+                        flag_polys[flag_instruction_index][low_index];
+                    multi_flag_evals[1][flag_instruction_index] =
+                        flag_polys[flag_instruction_index][high_index];
+                    let flag_m = flag_polys[flag_instruction_index][high_index]
+                        - flag_polys[flag_instruction_index][low_index];
+                    for eval_index in 2..num_eval_points {
+                        let flag_eval =
+                            multi_flag_evals[eval_index - 1][flag_instruction_index] + flag_m;
+                        multi_flag_evals[eval_index][flag_instruction_index] = flag_eval;
+                    }
+                }
+
+                // TODO: Some of these intermediates need not be computed if flags is computed
+                for memory_index in 0..Self::NUM_MEMORIES {
+                    multi_memory_evals[0][memory_index] =
+                        memory_polys[memory_index][low_index];
+
+                    multi_memory_evals[1][memory_index] =
+                        memory_polys[memory_index][high_index];
+                    let memory_m = memory_polys[memory_index][high_index]
+                        - memory_polys[memory_index][low_index];
+                    for eval_index in 2..num_eval_points {
+                        multi_memory_evals[eval_index][memory_index] =
+                            multi_memory_evals[eval_index - 1][memory_index] + memory_m;
+                    }
+                }
+
+                // Accumulate inner terms.
+                // S({0,1,... num_eval_points}) = eq * [ INNER TERMS ]
+                //            = eq[000] * [ flags_0[000] * g_0(E_0)[000] + flags_1[000] * g_1(E_1)[000]]
+                //            + eq[001] * [ flags_0[001] * g_0(E_0)[001] + flags_1[001] * g_1(E_1)[001]]
+                //            + ...
+                //            + eq[111] * [ flags_0[111] * g_0(E_0)[111] + flags_1[111] * g_1(E_1)[111]]
+                let mut inner_sum = vec![F::zero(); num_eval_points];
+                for instruction in InstructionSet::iter() {
+                    let instruction_index = instruction.to_opcode() as usize;
+                    let memory_indices: &Vec<usize> =
+                        &instruction_to_memory_indices_map[instruction_index];
+
+                    for eval_index in 0..num_eval_points {
+                        let flag_eval = multi_flag_evals[eval_index][instruction_index];
+                        if flag_eval == F::zero() {
+                            continue;
+                        }; // Early exit if no contribution.
+
+                        let terms: Vec<F> = memory_indices
+                            .iter()
+                            .map(|memory_index| multi_memory_evals[eval_index][*memory_index])
+                            .collect();
+                        let instruction_collation_eval = instruction.combine_lookups(&terms, C, M);
+
+                        // TODO(sragss): Could sum all shared inner terms before multiplying by the flag eval
+                        inner_sum[eval_index] += flag_eval * instruction_collation_eval;
+                    }
+                }
+                let evaluations: Vec<F> = (0..num_eval_points)
+                    .map(|eval_index| eq_evals[eval_index] * inner_sum[eval_index])
+                    .collect();
+                evaluations
+            })
+            .reduce(
+                || vec![F::zero(); num_eval_points],
+                |running, new| {
+                    debug_assert_eq!(running.len(), new.len());
+                    running
+                        .iter()
+                        .zip(new.iter())
+                        .map(|(r, n)| *r + n)
+                        .collect()
+                },
+            );
+
+        let round_uni_poly = UniPoly::from_evals(&evaluations);
+        round_uni_poly
+    }
+
+    fn update_primary_sumcheck_transcript(round_uni_poly: UniPoly<F>, transcript: &mut Transcript) -> F {
+        compressed_polys.push(round_uni_poly.compress());
+        <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
+            &round_uni_poly,
+            b"poly",
+            transcript,
+        );
+        let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
+            transcript,
+            b"challenge_nextround",
+        );
+        r_j
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_sumcheck_claim")]

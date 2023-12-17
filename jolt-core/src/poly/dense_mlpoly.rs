@@ -322,6 +322,70 @@ impl<F: PrimeField> DensePolynomial<F> {
         self.len = n;
     }
 
+    #[tracing::instrument(skip_all)]
+    pub fn new_poly_from_bound_poly_var_top(&self, r: &F) -> Self {
+        let n = self.len() / 2;
+        let mut new_evals = vec![F::zero(); n];
+
+        for i in 0..n {
+            // let low' = low + r * (high - low)
+            let low = self.Z[i];
+            let high = self.Z[i + n];
+            if !(low.is_zero() && high.is_zero()) {
+                let m = high - low;
+                new_evals[i] = low + *r * m;
+            }
+        }
+        let num_vars = self.num_vars - 1;
+        let len = n;
+
+        Self {
+            num_vars,
+            len,
+            Z: new_evals
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn new_poly_from_bound_poly_var_top_flags(&self, r: &F) -> Self {
+        let n = self.len() / 2;
+        let mut new_evals = vec![F::zero(); n];
+
+        for i in 0..n {
+            // let low' = low + r * (high - low)
+            // Special truth table here
+            //         high 0   high 1 
+            // low 0     0        r
+            // low 1   (1-r)      1
+            let low = self.Z[i];
+            let high = self.Z[i + n];
+
+            if low.is_zero() {
+                if high.is_one() {
+                    new_evals[i] = *r;
+                } else if !high.is_zero() {
+                    panic!("Shouldn't happen for a flag poly");
+                }
+            } else if low.is_one() {
+                if high.is_one() {
+                    new_evals[i] = F::one();
+                } else if high.is_zero() {
+                    new_evals[i] = F::one() - r;
+                } else {
+                    panic!("Shouldn't happen for a flag poly");
+                }
+            }
+        }
+        let num_vars = self.num_vars - 1;
+        let len = n;
+
+        Self {
+            num_vars,
+            len,
+            Z: new_evals
+        }
+    }
+
     pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
         let n = self.len() / 2;
 
