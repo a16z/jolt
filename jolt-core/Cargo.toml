@@ -40,6 +40,7 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 
+bitvec = "1.0.1"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 num-integer = "0.1.45"
 seq-macro = "0.3.3"
