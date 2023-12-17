@@ -151,6 +151,16 @@ pub fn split_poly_flagged<F: PrimeField>(poly: &DensePolynomial<F>, flags: &Dens
     (left, right)
 }
 
+pub fn count_poly_zeros<F: PrimeField>(poly: &DensePolynomial<F>) -> usize {
+    let mut count = 0;
+    for i in 0..poly.len() {
+        if poly[i].is_zero() {
+            count += 1;
+        }
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
