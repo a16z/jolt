@@ -13,7 +13,7 @@ use crate::{
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
         identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{BatchablePolynomials, StructuredOpeningProof}, combined_poly::CombinedPoly,
     },
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, random::RandomTape},
@@ -240,10 +240,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 pub struct BatchedMemoryPolynomials<F: PrimeField> {
     /// Contains:
     /// a_read_write, v_read, v_write, t_read, t_write
-    batched_read_write: DensePolynomial<F>,
+    batched_read_write: CombinedPoly<F>,
     /// Contains:
     /// v_init, v_final, t_final
-    batched_init_final: DensePolynomial<F>,
+    batched_init_final: CombinedPoly<F>,
 }
 
 pub struct MemoryCommitment<G: CurveGroup> {
@@ -272,7 +272,7 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let batched_read_write = DensePolynomial::merge(&vec![
+        let batched_read_write = CombinedPoly::new(vec![
             &self.a_read_write,
             &self.v_read,
             &self.v_write,
@@ -280,7 +280,7 @@ where
             &self.t_write,
         ]);
         let batched_init_final =
-            DensePolynomial::merge(&vec![&self.v_init, &self.v_final, &self.t_final]);
+            CombinedPoly::new(vec![&self.v_init, &self.v_final, &self.t_final]);
 
         Self::BatchedPolynomials {
             batched_read_write,

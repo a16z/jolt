@@ -4,7 +4,7 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-    poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
+    poly::{dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof}, combined_poly::CombinedPoly},
     utils::{
         errors::ProofVerifyError,
         math::Math,
@@ -31,7 +31,7 @@ pub struct CombinedTableEvalProof<G: CurveGroup> {
 
 impl<G: CurveGroup> CombinedTableEvalProof<G> {
     fn prove_single(
-        joint_poly: &DensePolynomial<G::ScalarField>,
+        joint_poly: &CombinedPoly<G::ScalarField>,
         r: &[G::ScalarField],
         evals: &[G::ScalarField],
         gens: &PolyCommitmentGens<G>,
@@ -87,7 +87,7 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
     /// evalues both polynomials at r and produces a joint proof of opening
     #[tracing::instrument(skip_all, name = "CombinedEval.prove")]
     pub fn prove(
-        combined_poly: &DensePolynomial<G::ScalarField>,
+        combined_poly: &CombinedPoly<G::ScalarField>,
         eval_ops_val_vec: &[G::ScalarField],
         r: &[G::ScalarField],
         gens: &PolyCommitmentGens<G>,

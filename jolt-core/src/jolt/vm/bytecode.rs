@@ -8,6 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::{to_ram_address, ELFInstruction};
 
+use crate::poly::combined_poly::CombinedPoly;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
@@ -297,11 +298,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 pub struct BatchedBytecodePolynomials<F: PrimeField> {
     /// Contains:
     /// - a_read_write, t_read, v_read_write
-    combined_read_write: DensePolynomial<F>,
+    combined_read_write: CombinedPoly<F>,
 
     // Contains:
     // - t_final, v_init_final
-    combined_init_final: DensePolynomial<F>,
+    combined_init_final: CombinedPoly<F>,
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
@@ -330,7 +331,7 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let combined_read_write = DensePolynomial::merge(&vec![
+        let combined_read_write = CombinedPoly::new(vec![
             &self.a_read_write,
             &self.t_read,
             &self.v_read_write.opcode,
@@ -339,7 +340,7 @@ where
             &self.v_read_write.rs2,
             &self.v_read_write.imm,
         ]);
-        let combined_init_final = DensePolynomial::merge(&vec![
+        let combined_init_final = CombinedPoly::new(vec![
             &self.t_final,
             &self.v_init_final.opcode,
             &self.v_init_final.rd,

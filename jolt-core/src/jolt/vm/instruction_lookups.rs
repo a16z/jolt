@@ -10,6 +10,7 @@ use strum::{EnumCount, IntoEnumIterator};
 
 use rayon::prelude::*;
 
+use crate::poly::combined_poly::CombinedPoly;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged, count_poly_zeros};
 use crate::{
     jolt::{
@@ -77,13 +78,13 @@ where
 /// Batched version of InstructionPolynomials.
 pub struct BatchedInstructionPolynomials<F: PrimeField> {
     /// dim_i and read_cts_i polynomials, batched together.
-    batched_dim_read: DensePolynomial<F>,
+    batched_dim_read: CombinedPoly<F>,
     /// final_cts_i polynomials, batched together.
-    batched_final: DensePolynomial<F>,
+    batched_final: CombinedPoly<F>,
     /// E_i polynomials, batched together.
-    batched_E: DensePolynomial<F>,
+    batched_E: CombinedPoly<F>,
     /// flag polynomials, batched together.
-    batched_flag: DensePolynomial<F>,
+    batched_flag: CombinedPoly<F>,
 }
 
 /// Commitments to BatchedInstructionPolynomials.
@@ -120,18 +121,11 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        use rayon::prelude::*;
-        let (batched_dim_read, (batched_final, batched_E, batched_flag)) = rayon::join(
-            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
-            || {
-                let batched_final = DensePolynomial::merge(&self.final_cts);
-                let (batched_E, batched_flag) = rayon::join(
-                    || DensePolynomial::merge(&self.E_polys),
-                    || DensePolynomial::merge(&self.instruction_flag_polys),
-                );
-                (batched_final, batched_E, batched_flag)
-            },
-        );
+        let flattened_dim_read: Vec<&DensePolynomial<F>> = self.dim.iter().chain(self.read_cts.iter()).collect();
+        let batched_dim_read = CombinedPoly::new(flattened_dim_read);
+        let batched_final = CombinedPoly::new(self.final_cts.iter().collect());
+        let batched_E = CombinedPoly::new(self.E_polys.iter().collect());
+        let batched_flag = CombinedPoly::new(self.instruction_flag_polys.iter().collect());
 
         Self::BatchedPolynomials {
             batched_dim_read,
@@ -804,6 +798,7 @@ where
     num_lookups: usize,
 }
 
+// TODO(sragss): Think I need a lifetime here for polynomials and batched_polynomials to share references.
 impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
     InstructionLookups<F, G, InstructionSet, Subtables, C, M>
 where
