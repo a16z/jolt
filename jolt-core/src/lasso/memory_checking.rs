@@ -452,7 +452,7 @@ mod tests {
     impl StructuredOpeningProof<Fr, EdwardsProjective, NormalMems> for FakeOpeningProof {
       type Openings = FakeType;
       fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
-      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn prove_openings(_: &NormalMems, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
       fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 
@@ -636,7 +636,7 @@ mod tests {
     impl StructuredOpeningProof<Fr, EdwardsProjective, Polys> for FakeOpeningProof {
       type Openings = FakeType;
       fn open(_: &Polys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
-      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn prove_openings(_: &Polys, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
       fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 
@@ -894,7 +894,7 @@ mod tests {
     impl StructuredOpeningProof<Fr, EdwardsProjective, FlagPolys> for FakeOpeningProof {
       type Openings = FakeType;
       fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
-      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
+      fn prove_openings(_: &FlagPolys, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
       fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
     }
 

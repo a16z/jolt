@@ -39,6 +39,21 @@ pub struct PolyCommitmentGens<G> {
     pub gens: DotProductProofGens<G>,
 }
 
+pub enum CombinedCommitRow {
+    /// (poly_index, start_index, end_index)
+    SinglePolySlice(usize, usize, usize),
+
+
+    /// (poly_a_index, poly_b_index, a_start_index, a_end_index, b_start_index, b_end_index)
+    TwoPolySlice(usize, usize, usize, usize, usize, usize),
+
+    /// (poly_index, start_index, end_index)
+    PaddedPolySlice(usize, usize, usize),
+
+    /// Zero
+    Zero
+}
+
 impl<G: CurveGroup> PolyCommitmentGens<G> {
     // the number of variables in the multilinear polynomial
     pub fn new(num_vars: usize, label: &'static [u8]) -> Self {
@@ -507,42 +522,107 @@ impl<F: PrimeField> DensePolynomial<F> {
     where
         G: CurveGroup<ScalarField = F>,
     {
+        let poly_len = polys[0].len();
+        debug_assert!(polys.iter().all(|poly| poly.len() == poly_len), "All polys should be the same length");
+        
         let n_unextended: usize = polys.iter().map(|poly| poly.len()).sum();
         let n = n_unextended.next_power_of_two();
         let num_vars: usize = log2(n) as usize;
         let generators: PolyCommitmentGens<G> = PolyCommitmentGens::new(num_vars, label);
 
-        todo!("touche")
-        // let joint_evals: Vec<F> = polys.iter().flat_map(|poly| poly.evals_ref()).collect();
-        // let (joint_commitment, _) = self.commit(&generators, None);
-        
-        // TODO(sragss): Need implicit resizing
-        // let fill_len = n - joint_evals.len();
-        // for _ in joint_evals.len()..fill_len {
-        //     joint_evals.push(F::zero());
-        // }
-        // joint_evals.resize(n, F::zero()); // TODO(sragss): DOn't think this works.
+        let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(num_vars);
+        let L_size = left_num_vars.pow2();   // Always even, L_SIZE >= R_SIZE
+        let R_size = right_num_vars.pow2();  // L_SIZE == R_SIZE || L_SIZE == R_SIZE + 1
+        assert_eq!(L_size * R_size, n);
 
+        let gens: Vec<G::Affine> = CurveGroup::normalize_batch(&generators.gens.gens_n.G);
 
+        // 4 cases:
+        // 1. Full slice from one our our polys[j].eval_refs()[...indexing...]
+        // 2. 2 partial slices from polys[j].eval_refs(), polys[j + 1].eval_refs()
+        // 3. Full slice and 0 padd polys[j].eval_refs(), (short gens, ignore zeros)
+        // 4: Full zero Row
+        let mut combined_index = 0;
+        let mut poly_start_index = 0;
+        let mut poly_end_index = R_size - 1;
+        let mut commit_rows: Vec<CombinedCommitRow> = Vec::with_capacity(L_size);
+        assert!(L_size < poly_len);
+        for _ in 0..L_size {
+            if poly_end_index < poly_len && combined_index < polys.len() {
+                commit_rows.push(CombinedCommitRow::SinglePolySlice(combined_index, poly_start_index, poly_end_index));
 
-        // let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(num_vars);
-        // let L_size = left_num_vars.pow2();
-        // let R_size = right_num_vars.pow2();
-        // assert_eq!(L_size * R_size, n);
+                if poly_end_index + 1 == poly_len { // Case of perfect fit.
+                    combined_index += 1;
+                    poly_start_index = 0;
+                    poly_end_index = R_size - 1;
+                } else {
+                    poly_start_index += R_size;
+                    poly_end_index += R_size;
+                }
+            } else {
+                if combined_index + 1 < polys.len() {
+                    let a_end_index = poly_len - 1;
+                    let a_usage = a_end_index - poly_start_index + 1;
+                    let b_end_index = R_size - a_usage;
+                    commit_rows.push(CombinedCommitRow::TwoPolySlice(combined_index, combined_index + 1, poly_start_index, poly_len - 1, 0, b_end_index));
+                    poly_start_index = 0;
+                    poly_end_index = R_size - 1;
+                    combined_index += 1;
+                } else if combined_index + 1 == polys.len() {
+                    let end_index = poly_len - 1;
+                    commit_rows.push(CombinedCommitRow::PaddedPolySlice(combined_index, poly_start_index, end_index));
+                    combined_index += 1;
+                } else {
+                    commit_rows.push(CombinedCommitRow::Zero);
+                }
+            }
+        }
 
-        // // (self.commit_inner(&blinds.blinds, &gens.gens.gens_n), blinds)
-        // let gens = CurveGroup::normalize_batch(&generators.G);
+        let C = commit_rows.into_par_iter().enumerate().map(|(i, commit_row)| {
+            match commit_row {
+                CombinedCommitRow::SinglePolySlice(combined_index, poly_start_index, poly_end_index) => {
+                    debug_assert_eq!(poly_end_index - poly_start_index + 1, R_size);
 
-        // let C = (0..L_size)
-        //     .into_par_iter()
-        //     .map(|i| {
-        //         Commitments::batch_commit(
-        //             joint_evals[R_size * i..R_size * (i + 1)].as_ref(),
-        //             &gens,
-        //         )
-        //     })
-        //     .collect();
-        // (generators, CombinedTableCommitment::new(PolyCommitment { C }))
+                    let scalars = &polys[combined_index].evals_ref()[poly_start_index..(poly_end_index+1)];
+                    Commitments::batch_commit(scalars, &gens)
+                },
+                CombinedCommitRow::TwoPolySlice(
+                    combined_index_a, 
+                    combined_index_b, 
+                    a_start_index, 
+                    a_end_index, 
+                    b_start_index, 
+                    b_end_index) => {
+                        debug_assert!(a_end_index - a_start_index + 1 == R_size);
+
+                        let a_len = a_end_index - a_start_index + 1;
+                        let b_len = b_end_index - b_start_index + 1;
+                        debug_assert_eq!(a_len + b_len, R_size);
+
+                        let a = &polys[combined_index_a].evals_ref()[a_start_index..(a_end_index+1)];
+                        let gens_a = &gens[0..(a_len-1)];
+                        let commit_a: G = Commitments::batch_commit(a, gens_a);
+
+                        let b = &polys[combined_index_b].evals_ref()[b_start_index..(b_end_index+1)];
+                        let gens_b = &gens[a_len..];
+                        let commit_b: G = Commitments::batch_commit(b, gens_b);
+
+                        commit_a + commit_b
+                },
+                CombinedCommitRow::PaddedPolySlice(combined_index, start_index, end_index) => {
+                    debug_assert_eq!(end_index - start_index + 1, R_size);
+
+                    let scalars = &polys[combined_index].evals_ref()[start_index..(end_index+1)];
+                    let len = end_index - start_index + 1;
+                    let gens = &gens[0..len];
+                    Commitments::batch_commit(scalars, gens)
+                },
+                CombinedCommitRow::Zero => {
+                    G::zero()
+                }
+            }
+        }).collect();
+        (generators, CombinedTableCommitment::new(PolyCommitment { C }))
     }
 
     pub fn combined_commit_with_hint<G>(
@@ -1116,5 +1196,31 @@ mod tests {
         let b = poly.commit_with_hint(&gens, CommitHint::Small);
 
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn combined_commit_parity() {
+        let mut rng = test_rng();
+
+        let size = 1 << 13;
+        let num_polys = 5;
+        let mut polys: Vec<DensePolynomial<Fr>> = vec![];
+        for _ in 0..num_polys {
+            let mut evals: Vec<Fr> = vec![Fr::from(rng.gen::<u64>()); size];
+            let poly = DensePolynomial::new(evals);
+            polys.push(poly);
+        }
+
+        let ref_polys: Vec<&DensePolynomial<Fr>> = polys.iter().collect();
+        let merged_poly = DensePolynomial::merge(&polys);
+
+
+        let log_size = (num_polys * size).next_power_of_two().log_2();
+        let gens: PolyCommitmentGens<G1Projective> =
+            PolyCommitmentGens::new(log_size, b"test_gens");
+        let commit = merged_poly.commit_with_hint(&gens, CommitHint::Normal);
+
+        let (other_gens, other_commit) = DensePolynomial::combined_commit_new(ref_polys, b"test_gens");
+        assert_eq!(other_commit.joint_commitment, commit);
     }
 }

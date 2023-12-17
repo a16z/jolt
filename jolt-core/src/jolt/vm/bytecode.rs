@@ -844,7 +844,6 @@ mod tests {
 
         let proof = polys.prove_memory_checking(
             &polys,
-            &batch,
             &commitments,
             &mut transcript,
             &mut random_tape,

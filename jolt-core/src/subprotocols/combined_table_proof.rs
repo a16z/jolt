@@ -15,7 +15,7 @@ use crate::{
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CombinedTableCommitment<G: CurveGroup> {
-    joint_commitment: PolyCommitment<G>,
+    pub joint_commitment: PolyCommitment<G>,
 }
 
 impl<G: CurveGroup> CombinedTableCommitment<G> {
