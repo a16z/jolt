@@ -95,7 +95,6 @@ where
     fn prove_memory_checking(
         &self,
         polynomials: &Polynomials,
-        batched_polys: &Polynomials::BatchedPolynomials,
         commitments: &Polynomials::Commitment,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
@@ -113,7 +112,7 @@ where
 
         // fka "HashLayerProof"
         let read_write_openings = Self::ReadWriteOpenings::prove_openings(
-            batched_polys,
+            &polynomials,
             commitments,
             &r_read_write,
             Self::ReadWriteOpenings::open(polynomials, &r_read_write),
@@ -121,7 +120,7 @@ where
             random_tape,
         );
         let init_final_openings = Self::InitFinalOpenings::prove_openings(
-            batched_polys,
+            &polynomials,
             commitments,
             &r_init_final,
             Self::InitFinalOpenings::open(polynomials, &r_init_final),
@@ -460,10 +459,8 @@ mod tests {
         #[rustfmt::skip]
     impl BatchablePolynomials for NormalMems {
       type Commitment = FakeType;
-      type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
+      fn commit(&self) -> Self::Commitment { unimplemented!() }
     }
 
         struct TestProver {}
@@ -646,10 +643,8 @@ mod tests {
         #[rustfmt::skip]
     impl BatchablePolynomials for Polys {
       type Commitment = FakeType;
-      type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
+      fn commit(&self) -> Self::Commitment { unimplemented!() }
     }
 
         struct TestProver {}
@@ -906,10 +901,8 @@ mod tests {
         #[rustfmt::skip]
     impl BatchablePolynomials for FlagPolys {
       type Commitment = FakeType;
-      type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
+      fn commit(&self) -> Self::Commitment { unimplemented!() }
     }
 
         struct TestProver {}

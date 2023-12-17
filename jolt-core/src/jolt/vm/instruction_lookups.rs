@@ -10,7 +10,6 @@ use strum::{EnumCount, IntoEnumIterator};
 
 use rayon::prelude::*;
 
-use crate::poly::combined_poly::CombinedPoly;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged, count_poly_zeros};
 use crate::{
     jolt::{
@@ -75,18 +74,6 @@ where
     pub subtable_flag_polys: Vec<DensePolynomial<F>>,
 }
 
-/// Batched version of InstructionPolynomials.
-pub struct BatchedInstructionPolynomials<F: PrimeField> {
-    /// dim_i and read_cts_i polynomials, batched together.
-    batched_dim_read: CombinedPoly<F>,
-    /// final_cts_i polynomials, batched together.
-    batched_final: CombinedPoly<F>,
-    /// E_i polynomials, batched together.
-    batched_E: CombinedPoly<F>,
-    /// flag polynomials, batched together.
-    batched_flag: CombinedPoly<F>,
-}
-
 /// Commitments to BatchedInstructionPolynomials.
 pub struct InstructionCommitment<G: CurveGroup> {
     /// Group generators used for commitments.
@@ -110,45 +97,46 @@ pub struct InstructionCommitmentGenerators<G: CurveGroup> {
     pub flag_commitment_gens: PolyCommitmentGens<G>,
 }
 
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> InstructionPolynomials<F, G> {
+    /// dim_i and read_cts_i polynomials, batched together.
+    fn batch_dim_read(&self) -> Vec<&DensePolynomial<F>> {
+        self.dim.iter().chain(self.read_cts.iter()).collect()
+    }
+
+    /// final_cts_i polynomials, batched together.
+    fn batch_final(&self) -> Vec<&DensePolynomial<F>> {
+        self.final_cts.iter().collect()
+    }
+
+    /// E_i polynomials, batched together.
+    fn batch_E(&self) -> Vec<&DensePolynomial<F>> {
+        self.E_polys.iter().collect()
+    }
+
+    /// flag polynomials, batched together.
+    fn batch_flag(&self) -> Vec<&DensePolynomial<F>> {
+        self.instruction_flag_polys.iter().collect()
+    }
+}
+
 // TODO: macro?
 impl<F, G> BatchablePolynomials for InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = BatchedInstructionPolynomials<F>;
     type Commitment = InstructionCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        let flattened_dim_read: Vec<&DensePolynomial<F>> = self.dim.iter().chain(self.read_cts.iter()).collect();
-        let batched_dim_read = CombinedPoly::new(flattened_dim_read);
-        let batched_final = CombinedPoly::new(self.final_cts.iter().collect());
-        let batched_E = CombinedPoly::new(self.E_polys.iter().collect());
-        let batched_flag = CombinedPoly::new(self.instruction_flag_polys.iter().collect());
-
-        Self::BatchedPolynomials {
-            batched_dim_read,
-            batched_final,
-            batched_E,
-            batched_flag,
-        }
-    }
-
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
-            .batched_dim_read
-            .combined_commit(b"BatchedInstructionPolynomials.dim_read");
-        let (final_commitment_gens, final_commitment) = batched_polys
-            .batched_final
-            .combined_commit(b"BatchedInstructionPolynomials.final_cts");
-        let (E_commitment_gens, E_commitment) = batched_polys
-            .batched_E
-            .combined_commit(b"BatchedInstructionPolynomials.E_poly");
-        let (flag_commitment_gens, instruction_flag_commitment) = batched_polys
-            .batched_flag
-            .combined_commit_with_hint(b"BatchedInstructionPolynomials.flag");
+    fn commit(&self) -> Self::Commitment {
+        let (dim_read_commitment_gens, dim_read_commitment) =
+            DensePolynomial::<F>::combined_commit_new(self.batch_dim_read(), b"BatchedInstructionPolynomials.dim_read");
+        let (final_commitment_gens, final_commitment) =
+            DensePolynomial::<F>::combined_commit_new(self.batch_final(), b"BatchedInstructionPolynomials.final_cts");
+        let (E_commitment_gens, E_commitment) =
+            DensePolynomial::<F>::combined_commit_new(self.batch_E(), b"BatchedInstructionPolynomials.E_polys");
+        let (flag_commitment_gens, instruction_flag_commitment) =
+            DensePolynomial::<F>::combined_commit_new(self.batch_flag(), b"BatchedInstructionPolynomials.flag");
 
         let generators = InstructionCommitmentGenerators {
             dim_read_commitment_gens,
@@ -197,7 +185,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: (Vec<F>, Vec<F>),
@@ -208,7 +196,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         let flag_openings = &openings.1;
 
         let E_poly_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_E,
+            polynomials.batch_E(),
             E_poly_openings,
             opening_point,
             &commitment.generators.E_commitment_gens,
@@ -216,7 +204,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
             random_tape,
         );
         let flag_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_flag,
+            polynomials.batch_flag(),
             flag_openings,
             opening_point,
             &commitment.generators.flag_commitment_gens,
@@ -315,7 +303,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: [Vec<F>; 4],
@@ -333,7 +321,7 @@ where
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
         let dim_read_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_dim_read,
+            polynomials.batch_dim_read(),
             &dim_read_openings,
             &opening_point,
             &commitment.generators.dim_read_commitment_gens,
@@ -341,7 +329,7 @@ where
             random_tape,
         );
         let E_poly_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_E,
+            polynomials.batch_E(),
             E_poly_openings,
             &opening_point,
             &commitment.generators.E_commitment_gens,
@@ -349,7 +337,7 @@ where
             random_tape,
         );
         let flag_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_flag,
+            polynomials.batch_flag(),
             flag_openings,
             &opening_point,
             &commitment.generators.flag_commitment_gens,
@@ -441,7 +429,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: Vec<F>,
@@ -449,7 +437,7 @@ where
         random_tape: &mut RandomTape<G>,
     ) -> Self {
         let final_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_final,
+            polynomials.batch_final(),
             &openings,
             &opening_point,
             &commitment.generators.final_commitment_gens,
@@ -836,8 +824,7 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = self.polynomialize();
-        let batched_polys = polynomials.batch();
-        let commitment = InstructionPolynomials::commit(&batched_polys);
+        let commitment = polynomials.commit();
 
         commitment
             .E_commitment
@@ -876,7 +863,7 @@ where
 
         // Create a single opening proof for the flag_evals and memory_evals
         let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
-            &batched_polys,
+            &polynomials,
             &commitment,
             &r_primary_sumcheck,
             (E_evals, flag_evals),
@@ -893,7 +880,6 @@ where
 
         let memory_checking = self.prove_memory_checking(
             &polynomials,
-            &batched_polys,
             &commitment,
             transcript,
             random_tape,
@@ -1099,6 +1085,7 @@ where
         let num_eval_points = degree + 1;
 
         let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys, &memory_polys, num_eval_points, &instruction_to_memory_indices_map);
+        compressed_polys.push(round_uni_poly.compress());
         let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
         random_vars.push(r_j);
 
@@ -1119,6 +1106,7 @@ where
 
         for _round in 1..num_rounds {
             let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys_updated, &memory_polys_updated, num_eval_points, &instruction_to_memory_indices_map);
+            compressed_polys.push(round_uni_poly.compress());
             let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
             random_vars.push(r_j);
 
@@ -1272,7 +1260,6 @@ where
     }
 
     fn update_primary_sumcheck_transcript(round_uni_poly: UniPoly<F>, transcript: &mut Transcript) -> F {
-        compressed_polys.push(round_uni_poly.compress());
         <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
             &round_uni_poly,
             b"poly",

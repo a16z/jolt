@@ -8,16 +8,11 @@ use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
 pub trait BatchablePolynomials {
-    /// The batched form of these polynomials.
-    type BatchedPolynomials;
     /// The batched commitment to these polynomials.
     type Commitment;
 
-    /// Organizes polynomials into a batch, to be subsequently committed. Typically
-    /// uses `DensePolynomial::merge` to combine polynomials of the same size.
-    fn batch(&self) -> Self::BatchedPolynomials;
     /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment;
+    fn commit(&self) -> Self::Commitment;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
@@ -38,7 +33,7 @@ where
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
     /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
     fn prove_openings(
-        polynomials: &Polynomials::BatchedPolynomials,
+        polynomials: &Polynomials,
         commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
         openings: Self::Openings,

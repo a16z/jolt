@@ -14,7 +14,7 @@ use ark_ec::CurveGroup;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::{test_rng, UniformRand, Zero};
+use ark_std::{test_rng, UniformRand, Zero, log2};
 use core::ops::Index;
 use merlin::Transcript;
 use std::ops::AddAssign;
@@ -498,6 +498,51 @@ impl<F: PrimeField> DensePolynomial<F> {
         let generators = PolyCommitmentGens::new(self.num_vars, label);
         let (joint_commitment, _) = self.commit(&generators, None);
         (generators, CombinedTableCommitment::new(joint_commitment))
+    }
+
+    pub fn combined_commit_new<G>(
+        polys: Vec<&Self>,
+        label: &'static [u8],
+    ) -> (PolyCommitmentGens<G>, CombinedTableCommitment<G>)
+    where
+        G: CurveGroup<ScalarField = F>,
+    {
+        let n_unextended: usize = polys.iter().map(|poly| poly.len()).sum();
+        let n = n_unextended.next_power_of_two();
+        let num_vars: usize = log2(n) as usize;
+        let generators: PolyCommitmentGens<G> = PolyCommitmentGens::new(num_vars, label);
+
+        todo!("touche")
+        // let joint_evals: Vec<F> = polys.iter().flat_map(|poly| poly.evals_ref()).collect();
+        // let (joint_commitment, _) = self.commit(&generators, None);
+        
+        // TODO(sragss): Need implicit resizing
+        // let fill_len = n - joint_evals.len();
+        // for _ in joint_evals.len()..fill_len {
+        //     joint_evals.push(F::zero());
+        // }
+        // joint_evals.resize(n, F::zero()); // TODO(sragss): DOn't think this works.
+
+
+
+        // let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(num_vars);
+        // let L_size = left_num_vars.pow2();
+        // let R_size = right_num_vars.pow2();
+        // assert_eq!(L_size * R_size, n);
+
+        // // (self.commit_inner(&blinds.blinds, &gens.gens.gens_n), blinds)
+        // let gens = CurveGroup::normalize_batch(&generators.G);
+
+        // let C = (0..L_size)
+        //     .into_par_iter()
+        //     .map(|i| {
+        //         Commitments::batch_commit(
+        //             joint_evals[R_size * i..R_size * (i + 1)].as_ref(),
+        //             &gens,
+        //         )
+        //     })
+        //     .collect();
+        // (generators, CombinedTableCommitment::new(PolyCommitment { C }))
     }
 
     pub fn combined_commit_with_hint<G>(
