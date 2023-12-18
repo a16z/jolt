@@ -520,6 +520,14 @@ impl<F: PrimeField> DensePolynomial<F> {
         )
     }
 
+    pub fn from_u8(Z: &[u8]) -> Self {
+        DensePolynomial::new(
+            (0..Z.len())
+                .map(|i| F::from(Z[i] as u64))
+                .collect::<Vec<F>>(),
+        )
+    }
+
     pub fn from_u64(Z: &[u64]) -> Self {
         DensePolynomial::new((0..Z.len()).map(|i| F::from(Z[i])).collect::<Vec<F>>())
     }

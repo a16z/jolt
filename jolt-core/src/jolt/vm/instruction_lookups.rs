@@ -10,7 +10,7 @@ use strum::{EnumCount, IntoEnumIterator};
 
 use rayon::prelude::*;
 
-use crate::utils::{mul_0_1_optimized, split_poly_flagged, count_poly_zeros};
+use crate::utils::{mul_0_1_optimized, split_poly_flagged, count_poly_zeros, split_poly_flagged_fast};
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -69,9 +69,13 @@ where
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
     pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
+    pub instruction_flag_bitvectors: Vec<Vec<u8>>,
+
     /// NUM_SUBTABLES sized – uncommitted but used by the prover for grand products. Can be derived by verifier
     /// via summation of all instruction_flags that use a given subtable
     pub subtable_flag_polys: Vec<DensePolynomial<F>>,
+
+    pub subtable_flag_bitvectors: Vec<Vec<u8>>
 }
 
 /// Batched version of InstructionPolynomials.
@@ -637,30 +641,29 @@ where
 
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i);
-                let flag = &polynomials.subtable_flag_polys[subtable_index];
+                // let flag = &polynomials.subtable_flag_polys[subtable_index];
+                // let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
+                //     split_poly_flagged(&read_fingerprints[i], &flag);
+                // let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
+                //     split_poly_flagged(&write_fingerprints[i], &flag);
+                let flag_bits = &polynomials.subtable_flag_bitvectors[subtable_index];
                 let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
-                    split_poly_flagged(&read_fingerprints[i], &flag);
+                    split_poly_flagged_fast(&read_fingerprints[i], &flag_bits);
                 let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
-                    split_poly_flagged(&write_fingerprints[i], &flag);
+                    split_poly_flagged_fast(&write_fingerprints[i], &flag_bits);
 
-                let read_circuit = GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_read_fingerprints_l),
-                    DensePolynomial::new(toggled_read_fingerprints_r),
-                );
-                let write_circuit = GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_write_fingerprints_l),
-                    DensePolynomial::new(toggled_write_fingerprints_r),
-                );
+                let read_circuit = GrandProductCircuit::new_split(DensePolynomial::new(toggled_read_fingerprints_l), DensePolynomial::new(toggled_read_fingerprints_r));
+                let write_circuit = GrandProductCircuit::new_split(DensePolynomial::new(toggled_write_fingerprints_l), DensePolynomial::new(toggled_write_fingerprints_r));
                 vec![read_circuit, write_circuit]
             })
             .collect();
         let read_hashes: Vec<F> = circuits
-            .par_iter()
+            .iter()
             .step_by(2)
             .map(|circuit| circuit.evaluate())
             .collect();
         let write_hashes: Vec<F> = circuits
-            .par_iter()
+            .iter()
             .skip(1)
             .step_by(2)
             .map(|circuit| circuit.evaluate())
@@ -1036,8 +1039,8 @@ where
             })
             .collect();
 
-        let mut instruction_flag_bitvectors: Vec<Vec<usize>> =
-            vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
+        let mut instruction_flag_bitvectors: Vec<Vec<u8>> =
+            vec![vec![0u8; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in self.ops.iter().enumerate() {
             let opcode_index = op.to_opcode() as usize;
             instruction_flag_bitvectors[opcode_index][j] = 1;
@@ -1045,10 +1048,11 @@ where
 
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
             .iter()
-            .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
+            .map(|flag_bitvector| DensePolynomial::from_u8(&flag_bitvector))
             .collect();
 
         let subtable_flag_polys = Self::subtable_flag_polys(&instruction_flag_polys);
+        let subtable_flag_bitvectors = Self::subtable_flag_bitvectors(&instruction_flag_bitvectors);
 
         InstructionPolynomials {
             _group: PhantomData,
@@ -1056,7 +1060,9 @@ where
             read_cts,
             final_cts,
             instruction_flag_polys,
+            instruction_flag_bitvectors,
             subtable_flag_polys,
+            subtable_flag_bitvectors,
             E_polys,
         }
     }
@@ -1371,6 +1377,7 @@ where
     /// Converts instruction flag polynomials into subtable flag polynomials. A subtable flag polynomial
     /// can be computed by summing over the instructions that use that subtable: if a given execution step
     /// accesses the subtable, it must be executing exactly one of those instructions.
+    #[tracing::instrument(skip_all)]
     fn subtable_flag_polys(
         instruction_flag_polys: &Vec<DensePolynomial<F>>,
     ) -> Vec<DensePolynomial<F>> {
@@ -1391,6 +1398,30 @@ where
             })
             .collect();
         subtable_flag_polys
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn subtable_flag_bitvectors(
+        instruction_flag_bitvectors: &Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        let m = instruction_flag_bitvectors[0].len();
+        let subtable_flag_bitvectors = (0..Self::NUM_SUBTABLES)
+            .into_par_iter()
+            .map(|subtable_index| {
+                let mut subtable_bitvector = vec![0u8; m];
+                for (i, instruction) in InstructionSet::iter().enumerate() {
+                    if instruction.subtables::<F>(C).iter().any(|subtable| {
+                        Subtables::from(subtable.subtable_id()).into() == subtable_index
+                    }) {
+                        for (j, bit) in instruction_flag_bitvectors[i].iter().enumerate() {
+                            subtable_bitvector[j] |= bit;
+                        }
+                    }
+                }
+                subtable_bitvector
+            })
+            .collect();
+        subtable_flag_bitvectors
     }
 
     /// Converts an instruction into the memory indices that it "accesses". Each instruction uses some

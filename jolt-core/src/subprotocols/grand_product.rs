@@ -65,6 +65,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GrandProduct::new_split")]
     pub fn new_split(left_leaves: DensePolynomial<F>, right_leaves: DensePolynomial<F>) -> Self {
         let num_layers = left_leaves.len().log_2() + 1; 
         let mut left_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
@@ -84,6 +85,31 @@ impl<F: PrimeField> GrandProductCircuit<F> {
             left_vec,
             right_vec,
         }
+    }
+
+    #[tracing::instrument(skip_all, name = "GrandProduct::new_split_turbo")]
+    pub fn new_split_turbo(left_leaves: Vec<F>, right_leaves: Vec<F>, flags: &Vec<Vec<u8>>) -> Self {
+        let half_leaf_len = left_leaves.len();
+        assert_eq!(half_leaf_len, right_leaves.len());
+        assert_eq!(half_leaf_len * 2, flags.len());
+
+        let num_layers = left_leaves.len().log_2() + 1; 
+        let mut left_vec: Vec<Vec<F>> = Vec::with_capacity(num_layers);
+        let mut right_vec: Vec<Vec<F>> = Vec::with_capacity(num_layers);
+
+        left_vec.push(left_leaves);
+        right_vec.push(right_leaves);
+
+        let mut layer_size = half_leaf_len / 2;
+        for _ in 0..num_layers - 1 {
+            left_vec.push(vec![F::one(); layer_size]);
+            right_vec.push(vec![F::one(); layer_size]);
+            layer_size /= 2
+        }
+
+        // Dumb way (check before multiplying)
+        todo!()
+
     }
 
     pub fn evaluate(&self) -> F {

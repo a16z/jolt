@@ -125,7 +125,7 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
 }
 
 #[inline]
-#[tracing::instrument(skip_all, name = "split_poly_flagged")]
+#[tracing::instrument(skip_all, name = "Utils::split_poly_flagged")]
 pub fn split_poly_flagged<F: PrimeField>(poly: &DensePolynomial<F>, flags: &DensePolynomial<F>) -> (Vec<F>, Vec<F>)  {
     let poly_evals: &[F] = poly.evals_ref();
     let len = poly_evals.len();
@@ -150,6 +150,31 @@ pub fn split_poly_flagged<F: PrimeField>(poly: &DensePolynomial<F>, flags: &Dens
     }
     (left, right)
 }
+
+#[inline]
+#[tracing::instrument(skip_all, name = "Utils::split_poly_flagged_fast")]
+pub fn split_poly_flagged_fast<F: PrimeField>(poly: &DensePolynomial<F>, flags: &Vec<u8>) -> (Vec<F>, Vec<F>)  {
+    let poly_evals: &[F] = poly.evals_ref();
+    let len = poly_evals.len();
+    let half = len / 2;
+    let mut left: Vec<F> = vec![F::one(); half];
+    let mut right: Vec<F> = vec![F::one(); half];
+
+    // Left
+    for i in 0..half{
+        if flags[i] != 0u8 {
+            left[i] = poly_evals[i];
+        }
+    }
+    // Right
+    for i in 0..half {
+        if flags[i + half] != 0u8 {
+            right[i] = poly_evals[i + half];
+        }
+    }
+    (left, right)
+}
+
 
 pub fn count_poly_zeros<F: PrimeField>(poly: &DensePolynomial<F>) -> usize {
     let mut count = 0;
