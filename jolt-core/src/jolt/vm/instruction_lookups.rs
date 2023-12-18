@@ -1104,6 +1104,7 @@ where
         let num_eval_points = degree + 1;
 
         let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys, &memory_polys, num_eval_points, &instruction_to_memory_indices_map);
+        compressed_polys.push(round_uni_poly.compress());
         let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
         random_vars.push(r_j);
 
@@ -1124,6 +1125,7 @@ where
 
         for _round in 1..num_rounds {
             let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys_updated, &memory_polys_updated, num_eval_points, &instruction_to_memory_indices_map);
+            compressed_polys.push(round_uni_poly.compress());
             let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
             random_vars.push(r_j);
 
@@ -1277,7 +1279,6 @@ where
     }
 
     fn update_primary_sumcheck_transcript(round_uni_poly: UniPoly<F>, transcript: &mut Transcript) -> F {
-        compressed_polys.push(round_uni_poly.compress());
         <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
             &round_uni_poly,
             b"poly",
