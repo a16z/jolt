@@ -641,11 +641,7 @@ where
 
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i);
-                // let flag = &polynomials.subtable_flag_polys[subtable_index];
-                // let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
-                //     split_poly_flagged(&read_fingerprints[i], &flag);
-                // let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
-                //     split_poly_flagged(&write_fingerprints[i], &flag);
+
                 let flag_bits = &polynomials.subtable_flag_bitvectors[subtable_index];
                 let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
                     split_poly_flagged_fast(&read_fingerprints[i], &flag_bits);
@@ -669,17 +665,18 @@ where
             .map(|circuit| circuit.evaluate())
             .collect();
 
-        // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
         let expanded_flag_map: Vec<usize> = (0..2 * Self::NUM_MEMORIES)
             .map(|i| Self::memory_to_subtable_index(i / 2))
             .collect();
 
-        // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
+        let interleaved_fingerprints = interleave(read_fingerprints, write_fingerprints).collect();
+        let subtable_flag_polys_cloned: Vec<DensePolynomial<F>> = polynomials.subtable_flag_polys.par_iter().map(|poly| poly.clone()).collect();
+
         let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
             circuits,
-            polynomials.subtable_flag_polys.clone(),
+            subtable_flag_polys_cloned,
             expanded_flag_map,
-            interleave(read_fingerprints, write_fingerprints).collect(),
+            interleaved_fingerprints,
         );
 
         (batched_circuits, read_hashes, write_hashes)
