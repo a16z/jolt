@@ -1,13 +1,17 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use itertools::izip;
-use liblasso::benches::bench::{benchmarks, BenchType};
+use liblasso::benches::{
+    bench::{benchmarks, BenchType},
+    sum_timer::CumulativeTimingLayer,
+};
 use plotters::prelude::*;
 use rgb::RGB8;
-use std::{fs::File, io::BufWriter, time::Instant};
+use std::{fs::File, io::BufWriter, time::Instant, any::Any};
 use textplots::{Chart, ColorPlot, Plot, Shape};
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_flame::FlameLayer;
+use tracing_flame::{FlameLayer, FlushGuard};
 use tracing_subscriber::{self, fmt, fmt::format::FmtSpan, prelude::*};
+use tracing_texray::TeXRayLayer;
 
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
@@ -28,9 +32,9 @@ enum Commands {
 
 #[derive(Args, Debug)]
 struct TraceArgs {
-    /// Output format
-    #[clap(short, long, value_enum, default_value_t = Format::Default)]
-    format: Format,
+    /// Output formats
+    #[clap(short, long, value_enum)]
+    format: Option<Vec<Format>>,
 
     /// Type of benchmark to run
     #[clap(long, value_enum)]
@@ -64,12 +68,13 @@ struct PlotArgs {
     bytecode_size: Vec<usize>,
 }
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, ValueEnum, PartialEq)]
 enum Format {
     Default,
     Texray,
     Flamegraph,
     Chrome,
+    Sum,
 }
 
 fn main() {
@@ -335,53 +340,45 @@ fn terminal_plot(args: &PlotArgs, x: &Vec<Vec<f32>>, y: &Vec<Vec<f32>>) {
 }
 
 fn trace(args: TraceArgs) {
-    match args.format {
-        Format::Default => {
-            let collector = tracing_subscriber::fmt()
-                .with_max_level(tracing::Level::TRACE)
-                .with_span_events(FmtSpan::CLOSE)
-                .finish();
-            tracing::subscriber::set_global_default(collector)
-                .expect("setting tracing default failed");
-            for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
-                span.to_owned().in_scope(|| {
-                    bench();
-                    tracing::info!("Bench Complete");
-                });
-            }
-        }
-        Format::Texray => {
-            tracing_texray::init();
-            for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
-                tracing_texray::examine(span.to_owned()).in_scope(bench);
-            }
-        }
-        Format::Flamegraph => {
-            let fmt_layer = fmt::Layer::default();
-            let (flame_layer, _guard) = FlameLayer::with_file("./tracing.folded").unwrap();
-            tracing_subscriber::registry()
-                .with(fmt_layer)
-                .with(flame_layer)
-                .init();
+    let mut layers = Vec::new();
 
-            for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
-                span.to_owned().in_scope(|| {
-                    bench();
-                    tracing::info!("Bench Complete");
-                });
-            }
+    let mut guards: Vec<Box<dyn Any>> = vec![];
+
+    if let Some(format) = &args.format {
+        if format.contains(&Format::Default) {
+            let collector_layer = tracing_subscriber::fmt::layer()
+                .with_span_events(FmtSpan::CLOSE)
+                .boxed();
+            layers.push(collector_layer);
         }
-        Format::Chrome => {
-            let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
-            tracing_subscriber::registry().with(chrome_layer).init();
+        if format.contains(&Format::Texray) {
+            let texray_layer = TeXRayLayer::new();
+            layers.push(texray_layer.boxed());
+        }
+        if format.contains(&Format::Flamegraph) {
+            let (flame_layer, guard) = FlameLayer::with_file("./tracing.folded").unwrap();
+            layers.push(flame_layer.boxed());
+            guards.push(Box::new(guard));
+        }
+        if format.contains(&Format::Chrome) {
+            let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
+            layers.push(chrome_layer.boxed());
+            guards.push(Box::new(guard));
             println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in chrome://tracing.");
-            for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
-                span.to_owned().in_scope(|| {
-                    bench();
-                    tracing::info!("Bench Complete");
-                });
-            }
-            drop(_guard);
         }
+        if format.contains(&Format::Sum) {
+            let (sum_timing_layer, guard) = CumulativeTimingLayer::new(None);
+            layers.push(sum_timing_layer.boxed());
+            guards.push(Box::new(guard));
+        }
+    }
+
+    let subscriber = tracing_subscriber::registry().with(layers).init();
+
+    for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
+        span.to_owned().in_scope(|| {
+            bench();
+            tracing::info!("Bench Complete");
+        });
     }
 }
