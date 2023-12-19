@@ -6,12 +6,14 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     lasso::surge::SurgeProof,
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
@@ -442,13 +444,19 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         [
-            polynomials.a_read_write.evaluate(&opening_point),
-            polynomials.v_read.evaluate(&opening_point),
-            polynomials.v_write.evaluate(&opening_point),
-            polynomials.t_read.evaluate(&opening_point),
-            polynomials.t_write.evaluate(&opening_point),
+            &polynomials.a_read_write,
+            &polynomials.v_read,
+            &polynomials.v_write,
+            &polynomials.t_read,
+            &polynomials.t_write,
         ]
+        .par_iter()
+        .map(|poly| poly.evaluate_at_chi(&chis))
+        .collect::<Vec<F>>()
+        .try_into()
+        .unwrap()
     }
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
@@ -529,11 +537,17 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         [
-            polynomials.v_init.evaluate(&opening_point),
-            polynomials.v_final.evaluate(&opening_point),
-            polynomials.t_final.evaluate(&opening_point),
+            &polynomials.v_init,
+            &polynomials.v_final,
+            &polynomials.t_final,
         ]
+        .par_iter()
+        .map(|poly| poly.evaluate_at_chi(&chis))
+        .collect::<Vec<F>>()
+        .try_into()
+        .unwrap()
     }
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
