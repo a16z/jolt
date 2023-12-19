@@ -64,7 +64,6 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
     result
 }
 
-
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
@@ -79,9 +78,10 @@ pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
 pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
 
-    let dot_product = (0..a.len()).into_par_iter().map(|i| {
-        mul_0_1_optimized(&a[i], &b[i])
-    }).sum();
+    let dot_product = (0..a.len())
+        .into_par_iter()
+        .map(|i| mul_0_1_optimized(&a[i], &b[i]))
+        .sum();
 
     dot_product
 }
@@ -94,8 +94,18 @@ pub fn mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
         *b
     } else if b.is_one() {
         *a
-    } else { // TODO(sragss): Negative 1
+    } else {
+        // TODO(sragss): Negative 1
         *a * b
+    }
+}
+
+#[inline(always)]
+pub fn mul_0_optimized<F: PrimeField>(likely_zero: &F, x: &F) -> F {
+    if likely_zero.is_zero() {
+        F::zero()
+    } else {
+        *likely_zero * x
     }
 }
 
@@ -126,7 +136,10 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
 
 #[inline]
 #[tracing::instrument(skip_all, name = "split_poly_flagged")]
-pub fn split_poly_flagged<F: PrimeField>(poly: &DensePolynomial<F>, flags: &DensePolynomial<F>) -> (Vec<F>, Vec<F>)  {
+pub fn split_poly_flagged<F: PrimeField>(
+    poly: &DensePolynomial<F>,
+    flags: &DensePolynomial<F>,
+) -> (Vec<F>, Vec<F>) {
     let poly_evals: &[F] = poly.evals_ref();
     let len = poly_evals.len();
     let half = len / 2;
