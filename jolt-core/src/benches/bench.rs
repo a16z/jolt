@@ -1,4 +1,3 @@
-use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::instruction::add::ADDInstruction;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
@@ -14,6 +13,7 @@ use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
+use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::vm::bytecode::{random_bytecode_trace, ELFRow};
 use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
 use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction};
@@ -74,7 +74,9 @@ fn prove_e2e_except_r1cs(
     let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
-    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); num_cycles];
+    let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
+        .take(num_cycles)
+        .collect();
 
     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
         .map(|i| ELFInstruction::random(i, &mut rng))
@@ -166,7 +168,9 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
-    let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); num_cycles];
+    let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
+        .take(num_cycles)
+        .collect();
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");

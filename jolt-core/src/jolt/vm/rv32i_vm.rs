@@ -256,7 +256,9 @@ mod tests {
     fn instruction_lookups() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
         const NUM_CYCLES: usize = 100;
-        let ops: Vec<RV32I> = vec![RV32I::random_instruction(&mut rng); NUM_CYCLES];
+        let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
+            .take(num_cycles)
+            .collect();
 
         let mut prover_transcript = Transcript::new(b"example");
         let mut random_tape = RandomTape::new(b"test_tape");
