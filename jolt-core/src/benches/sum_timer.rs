@@ -11,7 +11,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
 /// SumTimingLayer sums up spans of the same name and prints.
-pub struct SumTimingLayer {
+pub struct CumulativeTimingLayer {
     span_durations: Arc<Mutex<HashMap<String, u128>>>,
 }
 
@@ -50,26 +50,25 @@ impl Drop for FlushGuard {
             Some(filter) => {
                 for name in filter {
                     if let Some(duration) = durations.get(name) {
-                        println!("'{}': {:?} ms", name, duration);
+                        println!("'{}': {:?} ms", name, duration / 1_000_000);
                     }
                 }
             }
             None => {
                 for (name, duration) in durations.iter() {
-                    println!("'{}': {:?} ms", name, duration);
+                    println!("'{}': {:?} ms", name, duration / 1_000_000);
                 }
             }
         }
     }
-
 }
 
-impl SumTimingLayer {
+impl CumulativeTimingLayer {
     /// Creates a new SumTimingLayer with an optional `filter: Option<Vec<String>>` of named spans.
     /// Also returns a FlushGuard. Prints sum details when the FlushGuard is dropped.
     pub fn new(filter: Option<Vec<String>>) -> (Self, FlushGuard) {
         let span_durations = Arc::new(Mutex::new(HashMap::new()));
-        let layer = SumTimingLayer {
+        let layer = CumulativeTimingLayer {
             span_durations: Arc::clone(&span_durations),
         };
         let guard = FlushGuard {
@@ -80,7 +79,7 @@ impl SumTimingLayer {
     }
 }
 
-impl<S> Layer<S> for SumTimingLayer
+impl<S> Layer<S> for CumulativeTimingLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
@@ -94,7 +93,7 @@ where
         if let Some(span) = ctx.span(id) {
             let span_name = span.name().to_string();
             if let Some(start_time) = span.extensions_mut().remove::<Instant>() {
-                let duration = start_time.elapsed().as_millis();
+                let duration = start_time.elapsed().as_nanos();
                 let mut durations = self.span_durations.lock().unwrap();
                 *durations.entry(span_name).or_insert(0) += duration;
             }

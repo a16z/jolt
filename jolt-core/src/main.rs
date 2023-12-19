@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use itertools::izip;
 use liblasso::benches::{
     bench::{benchmarks, BenchType},
-    sum_timer::SumTimingLayer,
+    sum_timer::CumulativeTimingLayer,
 };
 use plotters::prelude::*;
 use rgb::RGB8;
@@ -367,7 +367,7 @@ fn trace(args: TraceArgs) {
             println!("Running tracing-chrome. Files will be saved as trace-<some timestamp>.json and can be viewed in chrome://tracing.");
         }
         if format.contains(&Format::Sum) {
-            let (sum_timing_layer, guard) = SumTimingLayer::new(None);
+            let (sum_timing_layer, guard) = CumulativeTimingLayer::new(None);
             layers.push(sum_timing_layer.boxed());
             guards.push(Box::new(guard));
         }
