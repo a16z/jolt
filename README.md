@@ -40,6 +40,13 @@ Note: requires nightly Rust
 -   `cargo run --release -- -p jolt-core --name <bench_name> --chart`: Display performance gant chart
 -   `cargo run --release -p jolt-core --features ark-msm -- --name <bench_name>`: Run without MSM small field optimizations
 
+## Performance plots
+
+Example:
+```
+cargo run -p jolt-core --release -- plot  --bench bytecode instruction-lookups read-write-memory --out test.svg --num-cycles 65536 131072 262144 524288  --bytecode-size 65536 --memory-size 2097152
+```
+
 ## Flamegraph
 
 Requires `inferno`:
