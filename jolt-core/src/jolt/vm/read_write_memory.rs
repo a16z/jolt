@@ -6,7 +6,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -18,7 +18,7 @@ use crate::{
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
-    utils::{errors::ProofVerifyError, random::RandomTape},
+    utils::{errors::ProofVerifyError, mul_0_optimized, random::RandomTape},
 };
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::{to_ram_address, ELFInstruction};
@@ -513,36 +513,30 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::read_leaves")]
     fn read_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         let num_ops = polynomials.a_read_write.len();
         let read_fingerprints = (0..num_ops)
+            .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
-                    &(
-                        polynomials.a_read_write[i],
-                        polynomials.v_read[i],
-                        polynomials.t_read[i],
-                    ),
-                    gamma,
-                    tau,
-                )
+                polynomials.t_read[i] * gamma_squared
+                    + mul_0_optimized(&polynomials.v_read[i], gamma)
+                    + polynomials.a_read_write[i]
+                    - *tau
             })
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::write_leaves")]
     fn write_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         let num_ops = polynomials.a_read_write.len();
         let write_fingerprints = (0..num_ops)
+            .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
-                    &(
-                        polynomials.a_read_write[i],
-                        polynomials.v_write[i],
-                        polynomials.t_write[i],
-                    ),
-                    gamma,
-                    tau,
-                )
+                polynomials.t_write[i] * gamma_squared
+                    + mul_0_optimized(&polynomials.v_write[i], gamma)
+                    + polynomials.a_read_write[i]
+                    - *tau
             })
             .collect();
         vec![DensePolynomial::new(write_fingerprints)]
@@ -550,29 +544,21 @@ where
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::init_leaves")]
     fn init_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let init_fingerprints = (0..self.memory_size)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
-                    &(F::from(i as u64), polynomials.v_init[i], F::zero()),
-                    gamma,
-                    tau,
-                )
-            })
+            .into_par_iter()
+            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from(i as u64) - *tau)
             .collect();
         vec![DensePolynomial::new(init_fingerprints)]
     }
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::final_leaves")]
     fn final_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         let final_fingerprints = (0..self.memory_size)
+            .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, Self>>::fingerprint(
-                    &(
-                        F::from(i as u64),
-                        polynomials.v_final[i],
-                        polynomials.t_final[i],
-                    ),
-                    gamma,
-                    tau,
-                )
+                mul_0_optimized(&polynomials.t_final[i], &gamma_squared)
+                    + mul_0_optimized(&polynomials.v_final[i], gamma)
+                    + F::from(i as u64)
+                    - *tau
             })
             .collect();
         vec![DensePolynomial::new(final_fingerprints)]
