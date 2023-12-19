@@ -51,7 +51,7 @@ pub struct RVTraceRow {
 }
 
 impl RVTraceRow {
-    fn new(
+    pub fn new(
         pc: u64,
         opcode: RV32IM,
         rd: Option<u64>,
@@ -824,7 +824,6 @@ impl JoltProvableTrace for RVTraceRow {
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         rd_write(),
-        MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),

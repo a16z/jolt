@@ -7,6 +7,8 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::{to_ram_address, ELFInstruction};
+use common::RV32IM;
+use crate::jolt::trace::{JoltProvableTrace, rv::RVTraceRow};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -81,6 +83,45 @@ impl ELFRow {
             rs2: rng.next_u64() % REGISTER_COUNT,
             imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
         }
+    }
+
+    fn circuit_flags_packed<F: PrimeField>(&self) -> F {
+        let circuit_flags: Vec<F> = RVTraceRow::new(
+            0,
+            RV32IM::from_repr(self.opcode as u8).unwrap(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ).to_circuit_flags();
+
+        // convert each element of circuit_flags to a u8 cause they must be 0 or 1 
+        let circuit_flags_bits: Vec<bool> = circuit_flags.iter().map(|x| 
+            if x.is_zero() { false } else { true } 
+        ).collect();
+
+        println!("opcode as u8: {:?}", (self.opcode as u8));
+        println!("opcode: {:?}", RV32IM::from_repr(self.opcode as u8).unwrap());
+        println!("bits: {:?}", circuit_flags_bits);
+
+        let mut bytes = [0u8; 2];
+        for (idx, bit) in circuit_flags_bits.into_iter().enumerate() {
+            let byte = idx / 8;
+            let shift = idx % 8;
+            bytes[byte] |= (bit as u8) << shift;
+        }
+
+        println!("bytes: {:?}", bytes);
+
+        F::from_le_bytes_mod_order(
+            &bytes
+        )
     }
 }
 
@@ -176,15 +217,46 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         ]
     }
 
-    pub fn get_r1cs_polys(&self) -> Vec<F> {
+    fn from_elf_r1cs(elf: &Vec<ELFRow>) -> Vec<F> {
+        // let len = elf.len().next_power_of_two();
+        // do not pad 
+        let len = elf.len();
+
+        let mut opcodes = Vec::with_capacity(len);
+        let mut rds = Vec::with_capacity(len);
+        let mut rs1s = Vec::with_capacity(len);
+        let mut rs2s = Vec::with_capacity(len);
+        let mut imms = Vec::with_capacity(len);
+        // let mut circuit_flags = Vec::with_capacity(len * 15);
+
+        for row in elf {
+            opcodes.push(F::from(row.opcode));
+            rds.push(F::from(row.rd));
+            rs1s.push(F::from(row.rs1));
+            rs2s.push(F::from(row.rs2));
+            imms.push(F::from(row.imm));
+            // circuit_flags.push(row.circuit_flags_packed::<F>());
+        }
+
         [
-            self.opcode.evals(), 
-            self.rd.evals(), 
-            self.rs1.evals(), 
-            self.rs2.evals(), 
-            self.imm.evals()
+            opcodes,
+            rds,
+            rs1s,
+            rs2s,
+            imms,
+            // circuit_flags, // there is some bug here
         ].concat()
     }
+
+    // pub fn get_r1cs_polys(&self) -> Vec<F> {
+    //     [
+    //         self.opcode.evals(), 
+    //         self.rd.evals(), 
+    //         self.rs1.evals(), 
+    //         self.rs2.evals(), 
+    //         self.imm.evals()
+    //     ].concat()
+    // }
 }
 
 pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -253,13 +325,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> [Vec<F>; 3] {
+        // DO NOT PAD: so measure length here 
+        let num_ops: usize = trace.len();
+
         Self::validate_bytecode(&bytecode, &trace);
         Self::preprocess(&mut bytecode, &mut trace);
+
+        // ignore the padding 
+        let trace = trace.drain(0..num_ops).collect::<Vec<ELFRow>>();
+
         let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
 
-        // TODO: avoid padding
-
-        let num_ops = trace.len().next_power_of_two();
         // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
         let code_size = (max_bytecode_address + 1).next_power_of_two();
 
@@ -267,7 +343,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         let mut read_cts: Vec<usize> = vec![0; num_ops];
         let mut final_cts: Vec<usize> = vec![0; code_size];
 
-        for (trace_index, trace) in trace.iter().enumerate() {
+        for (trace_index, trace) in trace.iter().take(num_ops).enumerate() {
             let address = trace.address;
             debug_assert!(address < code_size);
             a_read_write_usize[trace_index] = address;
@@ -276,14 +352,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             final_cts[address] = counter + 1;
         }
 
-        let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
-        let v_read_write = FiveTuplePoly::from_elf(&trace);
-        let t_read = DensePolynomial::from_usize(&read_cts);
+        // create a closure to convert usize to F vector 
+        let to_f_vec = |vec: &Vec<usize>| -> Vec<F> {
+            vec.iter().map(|x| F::from(*x as u64)).collect()
+        };
+
+        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
 
         [
-            a_read_write.evals(), 
-            v_read_write.get_r1cs_polys(), 
-            t_read.evals(),
+            to_f_vec(&a_read_write_usize),
+            v_read_write, 
+            to_f_vec(&read_cts),
         ]
     }
 

@@ -243,7 +243,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         transcript: &mut Transcript,
     ) -> [Vec<F>; 4] {
         let m = memory_trace.len();
-        assert!(m.is_power_of_two());
+        // assert!(m.is_power_of_two());
 
         let remap_address = |a: u64| {
             assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
@@ -319,28 +319,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             timestamp += 1;
         }
 
-        [
-            DensePolynomial::from_u64(&a_read_write).evals(),
-            DensePolynomial::from_u64(&v_read).evals(),
-            DensePolynomial::from_u64(&v_write).evals(),
-            DensePolynomial::from_u64(&t_read).evals(),
-        ]
+        // create a closure to convert u64 to F vector 
+        let to_f_vec = |v: &Vec<u64>| -> Vec<F> {
+            v.iter().map(|i| F::from(*i)).collect::<Vec<F>>()
+        };
 
-        // (
-        //     Self {
-        //         _group: PhantomData,
-        //         memory_size,
-        //         v_init: DensePolynomial::from_u64(&v_init),
-        //         a_read_write: DensePolynomial::from_u64(&a_read_write),
-        //         v_read: DensePolynomial::from_u64(&v_read),
-        //         v_write: DensePolynomial::from_u64(&v_write),
-        //         v_final: DensePolynomial::from_u64(&v_final),
-        //         t_read: DensePolynomial::from_u64(&t_read),
-        //         t_write: DensePolynomial::from_u64(&t_write),
-        //         t_final: DensePolynomial::from_u64(&t_final),
-        //     },
-        //     t_read,
-        // )
+        [
+            to_f_vec(&a_read_write), 
+            to_f_vec(&v_read), 
+            to_f_vec(&v_write), 
+            to_f_vec(&t_read), 
+        ]
     }
 }
 

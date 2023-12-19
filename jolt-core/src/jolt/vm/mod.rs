@@ -198,9 +198,28 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) {
+        let TRACE_LEN = trace.len();
         let log_M = log2(M) as usize;
-        let [prog_a_rw, prog_v_rw, prog_t_reads] = 
+
+        let [prog_a_rw, prog_v_rw_wo_flags_packed, prog_t_reads] = 
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
+
+        // get circuit_flags_packed 
+        // for every 15 values in circuit_flags, convert to a single value
+        let circuit_flags_packed = circuit_flags
+            .chunks(15)
+            .map(|x| {
+                let mut packed = F::ZERO;
+                for (i, flag) in x.iter().enumerate() {
+                    packed += *flag * F::from(2u64.pow(i as u32));
+                }
+                packed
+            })
+            .collect::<Vec<F>>();
+
+        // append this to prog_v_rw
+        let mut prog_v_rw = prog_v_rw_wo_flags_packed;
+        prog_v_rw.extend(circuit_flags_packed);
 
         let [memreg_a_rw, memreg_v_reads, memreg_v_writes, memreg_t_reads] = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
 
@@ -224,25 +243,69 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let lookup_outputs = instructions.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
+        // assert
+        assert_eq!(prog_a_rw.len(), TRACE_LEN);
+        assert_eq!(prog_v_rw.len(), TRACE_LEN * 6); 
+        assert_eq!(memreg_a_rw.len(), TRACE_LEN * 7);
+        assert_eq!(memreg_v_reads.len(), TRACE_LEN * 7);
+        assert_eq!(memreg_v_writes.len(), TRACE_LEN * 7);
+        assert_eq!(chunks_x.len(), TRACE_LEN * C);
+        assert_eq!(chunks_y.len(), TRACE_LEN * C);
+        assert_eq!(chunks_query.len(), TRACE_LEN * C);
+        assert_eq!(lookup_outputs.len(), TRACE_LEN);
+        assert_eq!(circuit_flags.len(), TRACE_LEN * 15);
+
         let inputs = vec![
-            prog_a_rw,
-            prog_v_rw,
-            prog_t_reads,
-            memreg_a_rw,
-            memreg_v_reads, 
-            memreg_v_writes,
-            memreg_t_reads, 
-            chunks_x, 
-            chunks_y,
-            chunks_query,
-            lookup_outputs,
-            circuit_flags,
+            prog_a_rw.clone(),
+            prog_v_rw.clone(),
+            // memreg_a_rw,
+            // memreg_v_reads, 
+            // memreg_v_writes,
+            // memreg_t_reads, 
+            // chunks_x, 
+            // chunks_y,
+            // chunks_query,
+            // lookup_outputs,
+            circuit_flags.to_vec(),
         ];
+
+        // print the last 15 circuit flags 
+        // println!("circuit flags: {:?}", circuit_flags[TRACE_LEN * 15 - 15*117..TRACE_LEN * 15 - 15*116].to_vec());
+        println!("circuit flags: {:?}", circuit_flags[15 * 6.. 15 * 7].to_vec());
+
+        // print the last trace_len values in prog_v_rw
+        // println!("prog_v_rw: {:?}", prog_v_rw[TRACE_LEN * 6 - 117..TRACE_LEN*6-116].to_vec());
+        println!("prog_v_rw: {:?}", prog_v_rw[TRACE_LEN * 6 - TRACE_LEN + 6]);
+
+        // let NUM_STEPS = TRACE_LEN;
+        // let inputs = vec![
+        //     prog_a_rw.clone()[..NUM_STEPS].to_vec(),
+        //     prog_v_rw[..NUM_STEPS * 6].to_vec(),
+        //     // memreg_a_rw,
+        //     // memreg_v_reads, 
+        //     // memreg_v_writes,
+        //     // memreg_t_reads, 
+        //     // chunks_x, 
+        //     // chunks_y,
+        //     // chunks_query,
+        //     // lookup_outputs,
+        //     circuit_flags[..NUM_STEPS * 15].to_vec(),
+        // ];
+
+
+
+        // // print prog_a_rw
+        // println!("prog_a_rw: {:?}", prog_a_rw); 
+
+        // // print flags 
+        // println!("flags len : {:?}", circuit_flags.len());
 
         // TODO: move this conversion to the r1cs module 
         use spartan2::provider::bn256_grumpkin::bn256;
+        use spartan2::traits::Group;
         use bn256::Scalar as Spartan2Fr;
         type G1 = bn256::Point;
+        use ff::Field;
         use common::field_conversion::ark_to_spartan; 
         type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
         type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
@@ -255,9 +318,20 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
 
+        // let end_index = std::cmp::min(15*7, inputs_ff[2].len());
+        // println!("inputs_ff[2][0..{}]: {:?}", end_index, &inputs_ff[2][0..end_index]);
+        // // print the last trace_len elements of inputs_ff[1]
+        // println!("inputs_ff[1]: {:?}", inputs_ff[1][TRACE_LEN*6-TRACE_LEN+5]);
+        // convert inputs_ff[2] to binary values 
+        println!("inputs_ff circuit_flags: {:?}", &inputs_ff[2]);
+
+        // println!("inputs_ff.len : {:?}", inputs_ff.len());
+
         let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-        // assert!(result_verify.is_ok());
+        assert!(result_verify.is_ok());
+        println!("The circuit passed.");
+        assert!(false);
     }
 }
 

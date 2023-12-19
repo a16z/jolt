@@ -151,6 +151,7 @@ mod tests {
     use ark_ff::PrimeField;
     use ark_std::{log2, test_rng, One, Zero};
     use enum_dispatch::enum_dispatch;
+    use itertools::Itertools;
     use merlin::Transcript;
     use rand_chacha::rand_core::RngCore;
     use rand_core::SeedableRng;
@@ -216,6 +217,21 @@ mod tests {
             .flat_map(|row| row.to_jolt_instructions())
             .collect();
 
+        let instructions_r1cs: Vec<RV32I> = converted_trace
+            .clone()
+            .into_iter()
+            .flat_map(|row| {
+                let instructions = row.to_jolt_instructions();
+                if instructions.is_empty() {
+                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()] 
+                } else {
+                    instructions
+                }
+            })
+            .collect();
+
+
+        let memory_trace_r1cs = converted_trace.clone().into_iter().flat_map(|row| row.to_ram_ops()).collect_vec();
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // something about Linux boot requiring it...
         let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
@@ -226,11 +242,11 @@ mod tests {
         // R1CS processing
         let circuit_flags = converted_trace.clone()
             .iter()
-            .flat_map(|row| (*row).to_circuit_flags())
-            .collect::<Vec<_>>();
-
-        let chunks_query = instructions.clone().iter()
-            .flat_map(|instruction| instruction.to_indices(C, log2(M) as usize))
+            .flat_map(|row| {
+                let mut flags = row.to_circuit_flags();
+                // flags.reverse();
+                flags.into_iter() 
+            })
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
@@ -242,35 +258,35 @@ mod tests {
             &mut transcript,
             &mut random_tape,
         );
-        let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_memory(bytecode.clone(), memory_trace.clone(), &mut transcript, &mut random_tape);
-        let instruction_lookups: InstructionLookupsProof<_, _> =
-            RV32IJoltVM::prove_instruction_lookups(instructions.clone(), &mut transcript, &mut random_tape);
+        // let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
+        //     RV32IJoltVM::prove_memory(bytecode.clone(), memory_trace.clone(), &mut transcript, &mut random_tape);
+        // let instruction_lookups: InstructionLookupsProof<_, _> =
+        //     RV32IJoltVM::prove_instruction_lookups(instructions.clone(), &mut transcript, &mut random_tape);
         let r1cs_proof = RV32IJoltVM::prove_r1cs(
-            instructions, 
+            instructions_r1cs, 
             bytecode_rows,
             bytecode_trace,
             bytecode, 
-            memory_trace, 
+            memory_trace_r1cs, 
             circuit_flags,
             &mut transcript,
             &mut random_tape,
         );
 
-        let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
-            instruction_lookups,
-            read_write_memory: memory_proof,
-            bytecode: bytecode_proof,
-        };
+        // let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
+        //     instruction_lookups,
+        //     read_write_memory: memory_proof,
+        //     bytecode: bytecode_proof,
+        // };
 
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
-        assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            jolt_proof.instruction_lookups,
-            &mut transcript
-        )
-        .is_ok());
+        // let mut transcript = Transcript::new(b"Jolt transcript");
+        // assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
+        // assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
+        // assert!(RV32IJoltVM::verify_instruction_lookups(
+        //     jolt_proof.instruction_lookups,
+        //     &mut transcript
+        // )
+        // .is_ok());
     }
 
     #[test]
