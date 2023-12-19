@@ -70,12 +70,18 @@ pub fn random_memory_trace(
             }
             memory_trace.push(MemoryOp::Read(address, value));
         } else {
-            let new_value = rng.next_u64();
-            memory[address as usize] = new_value;
             if address >= REGISTER_COUNT {
+                // RAM is byte-addressable, so values are a single byte
+                let new_value = rng.next_u64() & 0xff;
+                memory[address as usize] = new_value;
                 address = address + RAM_START_ADDRESS;
+                memory_trace.push(MemoryOp::Write(address, new_value));
+            } else {
+                /// Registers are 32 bits
+                let new_value = rng.next_u32() as u64;
+                memory[address as usize] = new_value;
+                memory_trace.push(MemoryOp::Write(address, new_value));
             }
-            memory_trace.push(MemoryOp::Write(address, new_value));
         }
     }
     memory_trace
