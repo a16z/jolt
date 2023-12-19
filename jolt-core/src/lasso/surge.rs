@@ -4,6 +4,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     jolt::instruction::JoltInstruction,
@@ -115,10 +116,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .E_polys
-            .iter()
-            .map(|poly| poly.evaluate(opening_point))
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
             .collect()
     }
 
@@ -184,11 +186,12 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
-        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate(&opening_point) };
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         [
-            polynomials.dim.iter().map(evaluate).collect(),
-            polynomials.read_cts.iter().map(evaluate).collect(),
-            polynomials.E_polys.iter().map(evaluate).collect(),
+            polynomials.dim.par_iter().map(evaluate).collect(),
+            polynomials.read_cts.par_iter().map(evaluate).collect(),
+            polynomials.E_polys.par_iter().map(evaluate).collect(),
         ]
     }
 
@@ -287,10 +290,11 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .final_cts
-            .iter()
-            .map(|poly| poly.evaluate(opening_point))
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
             .collect()
     }
 
