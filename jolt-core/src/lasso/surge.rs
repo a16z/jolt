@@ -64,12 +64,20 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
+        let (batched_dim_read, (batched_final, batched_E)) = rayon::join(
+            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
+            || {
+                rayon::join(
+                    || DensePolynomial::merge(&self.final_cts),
+                    || DensePolynomial::merge(&self.E_polys),
+                )
+            },
+        );
 
         Self::BatchedPolynomials {
-            batched_dim_read: DensePolynomial::merge(&dim_read_polys),
-            batched_final: DensePolynomial::merge(&self.final_cts),
-            batched_E: DensePolynomial::merge(&self.E_polys),
+            batched_dim_read,
+            batched_final,
+            batched_E,
         }
     }
 
@@ -594,10 +602,11 @@ where
         let instruction = Instruction::default();
 
         let num_subtables = instruction.subtables::<F>(C).len();
-        let mut materialized_subtables = Vec::with_capacity(num_subtables);
-        for subtable in instruction.subtables(C).iter() {
-            materialized_subtables.push(subtable.materialize(M));
-        }
+        let materialized_subtables = instruction
+            .subtables(C)
+            .par_iter()
+            .map(|subtable| subtable.materialize(M))
+            .collect();
 
         Self {
             _field: PhantomData,
@@ -848,6 +857,7 @@ where
         let instruction = Instruction::default();
 
         (0..hypercube_size)
+            .into_par_iter()
             .map(|eval_index| {
                 let g_operands: Vec<F> = (0..Self::num_memories())
                     .map(|memory_index| g_operands[memory_index][eval_index])
