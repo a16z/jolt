@@ -4,7 +4,8 @@ pragma circom 2.1.6;
 function NUM_STEPS() {return 185;}
 function W() {return 32;}
 function C() {return 4;}
-function MEMREG_OPS_PER_STEP() {if (W() == 32) {return 7;} else {return 11;}}
+// memreg ops per step 
+function MOPS() {if (W() == 32) {return 7;} else {return 11;}}
 
 function N_FLAGS() {return 15;}
 
@@ -88,7 +89,7 @@ template JoltStep() {
     signal input immediate;
     signal input op_flags_packed;
 
-    // signal input memreg_a_rw[11];
+    signal input memreg_a_rw[MOPS()];
     // signal input memreg_v_reads[11];
     // signal input memreg_v_writes[11];
 
@@ -141,25 +142,25 @@ template JoltStep() {
     signal sign_imm <== op_flags[13];
     signal is_concat <== op_flags[14];
 
-    // // /*******  Register Reading Constraints: 
+    // /*******  Register Reading Constraints: 
 
-    // // Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
-    // // and the last is the write to rd.
+    // Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
+    // and the last is the write to rd.
 
-    // // 1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
-    // // 2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
+    // 1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
+    // 2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
 
-    // // // TODO: encode virtual address for memory and registers
-    // // */
-    // rs1 === memreg_a_rw[0];
+    // // TODO: encode virtual address for memory and registers
+    // */
+    rs1 === memreg_a_rw[0];
     // memreg_v_reads[0] === memreg_v_writes[0]; 
     // signal rs1_val <== memreg_v_reads[0];
 
-    // rs2 === memreg_a_rw[1];
+    rs2 === memreg_a_rw[1];
     // memreg_v_reads[1] === memreg_v_writes[1];
     // signal rs2_val <== memreg_v_reads[1];
 
-    // rd === memreg_a_rw[10]; // the correctness of the write value will be handled later
+    rd === memreg_a_rw[2]; // the correctness of the write value will be handled later
 
     // /******* Assigning operands x and y */
     // signal x <== if_else()([op_flags[0], rs1_val, input_state[1]]);
@@ -316,14 +317,14 @@ template JoltMain(N) {
     signal input prog_a_rw[N]; 
     signal input prog_v_rw[N * 6];
 
-    // // The combined registers and memory a/v/t vectors. 
-    // // These are ordered chronologically in terms of reads. 
-    // /* Each step has 11 mem ops: 
-    //         1-2. Reading the two source registers. 
-    //         3-10. The 8 bytes of memory read/written.
-    //         11. Writing to the destination register. 
-    // */
-    // signal input memreg_a_rw[N * 11];
+    // The combined registers and memory a/v/t vectors. 
+    // These are ordered chronologically in terms of reads. 
+    /* Each step has 11 mem ops: 
+            1-2. Reading the two source registers. 
+            3-10. The 8 bytes of memory read/written.
+            11. Writing to the destination register. 
+    */
+    signal input memreg_a_rw[N * MOPS()];
     // signal input memreg_v_reads[N * 11];
     // signal input memreg_v_writes[N * 11];
 
@@ -356,7 +357,7 @@ template JoltMain(N) {
 
     component jolt_steps[N];
 
-    for (var i=0; i<N; i++) {
+    for (var i=0; i<1; i++) {
         jolt_steps[i] = JoltStep();
 
         if (i==0) {
@@ -374,7 +375,7 @@ template JoltMain(N) {
         jolt_steps[i].immediate <== immediate_v_rw[i];
         jolt_steps[i].op_flags_packed <== opflags_packed_v_rw[i];
 
-        // jolt_steps[i].memreg_a_rw <== subarray(i*11, 11, N*11)(memreg_a_rw);
+        jolt_steps[i].memreg_a_rw <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_a_rw);
         // jolt_steps[i].memreg_v_reads <== subarray(i*11, 11, N*11)(memreg_v_reads);
         // jolt_steps[i].memreg_v_writes <== subarray(i*11, 11, N*11)(memreg_v_writes);
 
@@ -393,7 +394,7 @@ template JoltMain(N) {
 component main {public [
         prog_a_rw, 
         prog_v_rw, 
-        // memreg_a_rw, 
+        memreg_a_rw, 
         // memreg_v_reads, 
         // memreg_v_writes, 
         // memreg_t_reads,

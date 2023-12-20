@@ -229,8 +229,7 @@ mod tests {
                 }
             })
             .collect();
-
-
+    
         let memory_trace_r1cs = converted_trace.clone().into_iter().flat_map(|row| row.to_ram_ops()).collect_vec();
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // something about Linux boot requiring it...

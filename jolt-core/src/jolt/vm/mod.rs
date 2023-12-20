@@ -255,10 +255,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert_eq!(lookup_outputs.len(), TRACE_LEN);
         assert_eq!(circuit_flags.len(), TRACE_LEN * 15);
 
+        println!("memreg_a_rw: {:?}", memreg_a_rw);
+
         let inputs = vec![
             prog_a_rw.clone(),
             prog_v_rw.clone(),
-            // memreg_a_rw,
+            memreg_a_rw,
             // memreg_v_reads, 
             // memreg_v_writes,
             // memreg_t_reads, 
@@ -268,14 +270,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             // lookup_outputs,
             circuit_flags.to_vec(),
         ];
-
-        // print the last 15 circuit flags 
-        // println!("circuit flags: {:?}", circuit_flags[TRACE_LEN * 15 - 15*117..TRACE_LEN * 15 - 15*116].to_vec());
-        println!("circuit flags: {:?}", circuit_flags[15 * 6.. 15 * 7].to_vec());
-
-        // print the last trace_len values in prog_v_rw
-        // println!("prog_v_rw: {:?}", prog_v_rw[TRACE_LEN * 6 - 117..TRACE_LEN*6-116].to_vec());
-        println!("prog_v_rw: {:?}", prog_v_rw[TRACE_LEN * 6 - TRACE_LEN + 6]);
 
         // let NUM_STEPS = TRACE_LEN;
         // let inputs = vec![
@@ -291,8 +285,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         //     // lookup_outputs,
         //     circuit_flags[..NUM_STEPS * 15].to_vec(),
         // ];
-
-
 
         // // print prog_a_rw
         // println!("prog_a_rw: {:?}", prog_a_rw); 
@@ -318,14 +310,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
 
-        // let end_index = std::cmp::min(15*7, inputs_ff[2].len());
-        // println!("inputs_ff[2][0..{}]: {:?}", end_index, &inputs_ff[2][0..end_index]);
-        // // print the last trace_len elements of inputs_ff[1]
-        // println!("inputs_ff[1]: {:?}", inputs_ff[1][TRACE_LEN*6-TRACE_LEN+5]);
-        // convert inputs_ff[2] to binary values 
-        println!("inputs_ff circuit_flags: {:?}", &inputs_ff[2]);
+        // print input_ff[1]
+        //println!("input_ff[1]: {:?}", inputs_ff[1][2*TRACE_LEN]);
 
-        // println!("inputs_ff.len : {:?}", inputs_ff.len());
 
         let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);

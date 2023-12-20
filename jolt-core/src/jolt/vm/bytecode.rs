@@ -237,12 +237,14 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             imms.push(F::from(row.imm));
             // circuit_flags.push(row.circuit_flags_packed::<F>());
         }
+        
+        println!("rs1s: {:?}", rs1s); 
 
         [
             opcodes,
-            rds,
             rs1s,
             rs2s,
+            rds,
             imms,
             // circuit_flags, // there is some bug here
         ].concat()
