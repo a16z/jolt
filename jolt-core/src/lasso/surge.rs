@@ -20,7 +20,8 @@ use crate::{
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
-        errors::ProofVerifyError, math::Math, random::RandomTape, transcript::ProofTranscript,
+        errors::ProofVerifyError, math::Math, mul_0_1_optimized, random::RandomTape,
+        transcript::ProofTranscript,
     },
 };
 
@@ -362,18 +363,18 @@ where
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
-                        (
-                            polynomials.dim[dimndex][i],
-                            polynomials.E_polys[memory_index][i],
-                            polynomials.read_cts[dimndex][i],
-                        )
+                        mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
+                            + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                            + polynomials.dim[dim_index][i]
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -386,18 +387,20 @@ where
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
-                        (
-                            polynomials.dim[dimndex][i],
-                            polynomials.E_polys[memory_index][i],
-                            polynomials.read_cts[dimndex][i] + F::one(),
-                        )
+                        mul_0_1_optimized(
+                            &(polynomials.read_cts[dim_index][i] + F::one()),
+                            &gamma_squared,
+                        ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                            + polynomials.dim[dim_index][i]
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -411,17 +414,16 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let leaf_fingerprints = (0..self.M)
                     .map(|i| {
-                        (
-                            F::from(i as u64),
-                            self.materialized_subtables[subtable_index][i],
-                            F::zero(),
-                        )
+                        // 0 * gamma^2 +
+                        mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
+                            + F::from(i as u64)
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -434,19 +436,22 @@ where
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 let leaf_fingerprints = (0..self.M)
                     .map(|i| {
-                        (
-                            F::from(i as u64),
-                            self.materialized_subtables[subtable_index][i],
-                            polynomials.final_cts[dimndex][i],
-                        )
+                        mul_0_1_optimized(&polynomials.final_cts[dim_index][i], &gamma_squared)
+                            + mul_0_1_optimized(
+                                &self.materialized_subtables[subtable_index][i],
+                                gamma,
+                            )
+                            + F::from(i as u64)
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -480,11 +485,11 @@ where
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
-                    openings.dim_openings[dimndex],
+                    openings.dim_openings[dim_index],
                     openings.E_poly_openings[memory_index],
-                    openings.read_openings[dimndex],
+                    openings.read_openings[dim_index],
                 )
             })
             .collect()
@@ -492,11 +497,11 @@ where
     fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
-                    openings.dim_openings[dimndex],
+                    openings.dim_openings[dim_index],
                     openings.E_poly_openings[memory_index],
-                    openings.read_openings[dimndex] + F::one(),
+                    openings.read_openings[dim_index] + F::one(),
                 )
             })
             .collect()
@@ -521,11 +526,11 @@ where
 
         (0..Self::num_memories())
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
                     a_init,
                     v_init[Self::memory_to_subtable_index(memory_index)],
-                    openings.final_openings[dimndex],
+                    openings.final_openings[dim_index],
                 )
             })
             .collect()
