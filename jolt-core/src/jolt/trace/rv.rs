@@ -869,7 +869,7 @@ impl JoltProvableTrace for RVTraceRow {
         // 11: Instruction asserts lookup output as false
         // 12: Instruction asserts lookup output as true
         // 13: Sign-bit of imm
-        // 14: Instruction is lui
+        // 14: Is concat (Note: used to be is_lui)
 
         let mut flags = vec![false; 15];
 
@@ -971,8 +971,18 @@ impl JoltProvableTrace for RVTraceRow {
             _ => false,
         };
 
+        // flags[14] = match self.opcode {
+        //     RV32IM::LUI => true,
+        //     _ => false,
+        // };
+
         flags[14] = match self.opcode {
-            RV32IM::LUI => true,
+            RV32IM::XOR | RV32IM::XORI | RV32IM::OR | RV32IM::ORI | RV32IM::AND | RV32IM::ANDI | 
+            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI |
+            RV32IM::SLT | RV32IM::SLTU | RV32IM::SLTI | RV32IM::SLTIU | 
+            RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | 
+            RV32IM::BLTU | RV32IM::BGEU 
+            => true, 
             _ => false,
         };
 
