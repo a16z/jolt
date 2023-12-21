@@ -18,7 +18,7 @@ use crate::{
     },
     utils::math::Math,
 };
-use common::ELFInstruction;
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
 
 use self::bytecode::{
     BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeProof,
@@ -154,10 +154,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
             .iter()
             .enumerate()
-            .map(|(i, &ts)| SLTUInstruction(ts, i as u64 + 1))
+            .map(|(i, &ts)| SLTUInstruction(ts, (i / MEMORY_OPS_PER_INSTRUCTION) as u64 + 1))
             .collect();
-
-        let surge_M = memory_trace_size.next_power_of_two();
+        let surge_M = memory_trace_size
+            .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
+            .next_power_of_two();
         let timestamp_validity_proof =
             <Surge<F, G, SLTUInstruction, 2>>::new(timestamp_validity_lookups, surge_M)
                 .prove(transcript);
