@@ -181,6 +181,15 @@ impl RVTraceRow {
         }
     }
 
+    // Arasu: does the same as above but pre-processes the imm 
+    pub fn from_common_r1cs(common: common::RVTraceRow) -> Self {
+        let mut res = Self::from_common(common); 
+        res.imm = match res.imm_u64() {
+            (imm) => Some(imm as u32),
+        };
+        res 
+    }
+
     fn RType(
         pc: u64,
         opcode: RV32IM,
@@ -686,9 +695,11 @@ impl JoltProvableTrace for RVTraceRow {
       RV32IM::BGE  => vec![BGEInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::BGEU => vec![BGEUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
 
-      RV32IM::JAL  => vec![JALInstruction(self.pc, self.imm_u64()).into()],
-      RV32IM::JALR => vec![JALRInstruction(self.rs1_val.unwrap(), self.imm_u64()).into()],
+    //   RV32IM::JAL  => vec![JALInstruction(self.pc, self.imm_u64()).into()],
+    //   RV32IM::JALR => vec![JALRInstruction(self.rs1_val.unwrap(), self.imm_u64()).into()],
 
+      RV32IM::JAL  => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
+      RV32IM::JALR => vec![ADDInstruction::<32>(self.rs1_val.unwrap(), self.imm_u64()).into()],
       RV32IM::AUIPC => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
 
       _ => vec![]
@@ -870,11 +881,14 @@ impl JoltProvableTrace for RVTraceRow {
         // 12: Instruction asserts lookup output as true
         // 13: Sign-bit of imm
         // 14: Is concat (Note: used to be is_lui)
+        // Arasu: Extra to get things working
+        // 15: is lui or auipc
+        // 16: is jal
 
-        let mut flags = vec![false; 15];
+        let mut flags = vec![false; 17];
 
         flags[0] = match self.opcode {
-            RV32IM::JAL | RV32IM::JALR | RV32IM::LUI | RV32IM::AUIPC => true,
+            RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
             _ => false,
         };
 
@@ -887,7 +901,10 @@ impl JoltProvableTrace for RVTraceRow {
             | RV32IM::SRLI
             | RV32IM::SRAI
             | RV32IM::SLTI
-            | RV32IM::SLTIU => true,
+            | RV32IM::SLTIU
+            | RV32IM::AUIPC 
+            | RV32IM::JAL 
+            | RV32IM::JALR => true,
             _ => false,
         };
 
@@ -929,14 +946,19 @@ impl JoltProvableTrace for RVTraceRow {
             | RV32IM::BGE
             | RV32IM::BLTU
             | RV32IM::BGEU
-            | RV32IM::JAL
+            | RV32IM::JAL 
             | RV32IM::JALR
             | RV32IM::LUI => false,
             _ => true,
         };
 
         flags[7] = match self.opcode {
-            RV32IM::ADD | RV32IM::ADDI | RV32IM::JAL | RV32IM::JALR | RV32IM::AUIPC => true,
+            RV32IM::ADD 
+            | RV32IM::ADDI 
+            // Arasu: don't count these here. 
+            // | RV32IM::JAL 
+            // | RV32IM::JALR 
+            | RV32IM::AUIPC => true,
             _ => false,
         };
 
@@ -983,6 +1005,16 @@ impl JoltProvableTrace for RVTraceRow {
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | 
             RV32IM::BLTU | RV32IM::BGEU 
             => true, 
+            _ => false,
+        };
+
+        flags[15] = match self.opcode {
+            RV32IM::LUI | RV32IM::AUIPC => true,
+            _ => false,
+        };
+
+        flags[16] = match self.opcode {
+            RV32IM::JAL => true,
             _ => false,
         };
 

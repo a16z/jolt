@@ -55,7 +55,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for JALInstruction<WORD_SIZE> {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        add_and_chunk_operands(self.0 as u128, self.1 as u128 + 4, C, log_M)
+        add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -83,7 +83,7 @@ mod test {
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-            let z = x.overflowing_add(y.overflowing_add(4).0).0;
+            let z = x.overflowing_add(y).0;
             jolt_instruction_test!(JALInstruction::<WORD_SIZE>(x as u64, y as u64), z.into());
             assert_eq!(
                 JALInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),

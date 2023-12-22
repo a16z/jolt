@@ -217,7 +217,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         ]
     }
 
-    fn from_elf_r1cs(elf: &Vec<ELFRow>) -> Vec<F> {
+    fn from_elf_r1cs(elf: &Vec<ELFRow>, N_SKIP: usize) -> Vec<F> {
         // let len = elf.len().next_power_of_two();
         // do not pad 
         let len = elf.len();
@@ -237,8 +237,13 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             imms.push(F::from(row.imm));
             // circuit_flags.push(row.circuit_flags_packed::<F>());
         }
-        
-        println!("rs1s: {:?}", rs1s); 
+
+        // skip the first N_SKIP elements of each vector 
+        let opcodes = opcodes.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
+        let rds = rds.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
+        let rs1s = rs1s.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
+        let rs2s = rs2s.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
+        let imms = imms.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
 
         [
             opcodes,
@@ -326,7 +331,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
-    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> [Vec<F>; 3] {
+    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>, N_SKIP: usize) -> [Vec<F>; 3] {
         // DO NOT PAD: so measure length here 
         let num_ops: usize = trace.len();
 
@@ -346,12 +351,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         let mut final_cts: Vec<usize> = vec![0; code_size];
 
         for (trace_index, trace) in trace.iter().take(num_ops).enumerate() {
-            let address = trace.address;
-            debug_assert!(address < code_size);
+            let address = trace.address * 4 + RAM_START_ADDRESS as usize;
+            // debug_assert!(address < code_size);
             a_read_write_usize[trace_index] = address;
-            let counter = final_cts[address];
+            let counter = final_cts[trace.address];
             read_cts[trace_index] = counter;
-            final_cts[address] = counter + 1;
+            final_cts[trace.address] = counter + 1;
         }
 
         // create a closure to convert usize to F vector 
@@ -359,12 +364,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             vec.iter().map(|x| F::from(*x as u64)).collect()
         };
 
-        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
+        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace, N_SKIP);
 
+        let a_read_write_usize_skipped = a_read_write_usize.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
+        let read_cts_skipped = read_cts.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
         [
-            to_f_vec(&a_read_write_usize),
+            to_f_vec(&a_read_write_usize_skipped),
             v_read_write, 
-            to_f_vec(&read_cts),
+            to_f_vec(&read_cts_skipped),
         ]
     }
 

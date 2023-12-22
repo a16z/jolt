@@ -1,23 +1,25 @@
 pragma circom 2.1.6;
 
 /* Compiler Variables */
-function NUM_STEPS() {return 185;}
+function NUM_STEPS() {return 182;} // ignore first 3 and the last one 
 function W() {return 32;}
 function C() {return 4;}
 // memreg ops per step 
 function MOPS() {if (W() == 32) {return 7;} else {return 11;}}
 
-function N_FLAGS() {return 15;}
+function N_FLAGS() {return 17;}
 
 /*  Constants: written as functions because circom.
 */
-function L_CHUNK() {
-    if (W() % C() == 0) {
-        return W()/C();
-    } else {
-        return W() / C() + 1;
-    }
-}
+// function L_CHUNK() {
+//     if (W() % C() == 0) {
+//         return W()/C();
+//     } else {
+//         return W() / C() + 1;
+//     }
+// }
+function LOG_M() { return 16; }
+function L_CHUNK() { return 8; }
 function L_MS_CHUNK() {return W() % L_CHUNK();}
 function ALL_ONES() {if (W() == 32) {return 0x11111111;} else {return 0x1111111111111111;} } 
 
@@ -50,14 +52,15 @@ template if_else() {
     signal input in[3]; 
     signal output out; 
 
-    signal zero_for_a <-- in[0];
-    signal a <-- in[1];
-    signal b <-- in[2];
+    signal zero_for_a <== in[0];
+    signal a <== in[1];
+    signal b <== in[2];
 
-    signal _please_help_me_god <-- (1-zero_for_a) * a;
-    out <-- _please_help_me_god + (zero_for_a) * b;
+    signal _please_help_me_god <== (1-zero_for_a) * a;
+    out <== _please_help_me_god + (zero_for_a) * b;
 }
 
+// big-endian 
 template combine_chunks(N, L) {
     signal input in[N];
     signal output out;
@@ -65,13 +68,46 @@ template combine_chunks(N, L) {
     signal combine[N];
     for (var i=0; i<N; i++) {
         if (i==0) {
-            combine[i] <== in[0];
+            combine[i] <==  (1 << ((N-1-i)*L)) * in[i];
+        } else {
+            combine[i] <== combine[i-1] + (1 << ((N-1-i)*L)) * in[i];
+        }
+    }
+    
+    out <== combine[N-1];
+}
+
+template combine_chunks_le(N, L) {
+    signal input in[N];
+    signal output out;
+
+    signal combine[N];
+    for (var i=0; i<N; i++) {
+        if (i==0) {
+            combine[i] <==  (1 << (i*L)) * in[i];
         } else {
             combine[i] <== combine[i-1] + (1 << (i*L)) * in[i];
         }
     }
     
     out <== combine[N-1];
+}
+
+template prodZeroTest(N) {
+    signal input in[N];
+    signal prod[N];
+    signal output out; 
+
+    for (var i=0; i<N; i++) {
+        if (i==0) {
+            prod[i] <== in[i];
+        } else {
+            prod[i] <== prod[i-1] * in[i];
+        }
+    }
+    
+    0 === prod[N-1];
+    out <== 0; 
 }
 
 // One CPU step of jolt 
@@ -86,18 +122,18 @@ template JoltStep() {
     signal input rs1;
     signal input rs2;
     signal input rd;
-    signal input immediate;
+    signal input immediate_before_processing;
     signal input op_flags_packed;
 
     signal input memreg_a_rw[MOPS()];
-    // signal input memreg_v_reads[11];
-    // signal input memreg_v_writes[11];
+    signal input memreg_v_reads[MOPS()];
+    signal input memreg_v_writes[MOPS()];
 
-    // signal input chunks_x[C()];
-    // signal input chunks_y[C()];
-    // signal input chunks_query[C()];
+    signal input chunks_x[C()];
+    signal input chunks_y[C()];
+    signal input chunks_query[C()];
 
-    // signal input lookup_output;
+    signal input lookup_output;
 
     signal input op_flags[N_FLAGS()];
 
@@ -110,23 +146,6 @@ template JoltStep() {
     */
     signal flags_combined <== combine_chunks(N_FLAGS(), 1)(op_flags);
     op_flags_packed === flags_combined;
-    // // op_flags_packed === 0xc1; 
-    // op_flags[0] === 1;
-    // // op_flags[1] === 0;
-    // // op_flags[2] === 0;
-    // // op_flags[3] === 0;
-    // // op_flags[4] === 0;
-    // // op_flags[5] === 0;
-    // op_flags[6] === 1;
-    // op_flags[7] === 1;
-    // // op_flags[8] === 0;
-    // // op_flags[9] === 0;
-    // // op_flags[10] === 0;
-    // // op_flags[11] === 0;
-    // // op_flags[12] === 0;
-    // // op_flags[13] === 0;
-    // // op_flags[14] === 0;
-
 
     signal is_load_instr <== op_flags[2];
     signal is_store_instr <== op_flags[3];
@@ -141,140 +160,148 @@ template JoltStep() {
     signal is_assert_true_instr <== op_flags[12];
     signal sign_imm <== op_flags[13];
     signal is_concat <== op_flags[14];
+    signal is_lui_auipc <== op_flags[15];
+    signal is_jal <== op_flags[16];
 
-    // /*******  Register Reading Constraints: 
+    // Pre-processing the imm 
+    signal _immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
+    signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
 
-    // Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
-    // and the last is the write to rd.
+    /*******  Register Reading Constraints: 
 
-    // 1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
-    // 2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
+    Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
+    and the last is the write to rd.
 
-    // // TODO: encode virtual address for memory and registers
+    1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
+    2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
+
+    // TODO: encode virtual address for memory and registers
     // */
     rs1 === memreg_a_rw[0];
-    // memreg_v_reads[0] === memreg_v_writes[0]; 
-    // signal rs1_val <== memreg_v_reads[0];
+    memreg_v_reads[0] === memreg_v_writes[0];
+    signal rs1_val <== memreg_v_reads[0];
 
     rs2 === memreg_a_rw[1];
-    // memreg_v_reads[1] === memreg_v_writes[1];
-    // signal rs2_val <== memreg_v_reads[1];
+    memreg_v_reads[1] === memreg_v_writes[1];
+    signal rs2_val <== memreg_v_reads[1];
 
     rd === memreg_a_rw[2]; // the correctness of the write value will be handled later
 
-    // /******* Assigning operands x and y */
-    // signal x <== if_else()([op_flags[0], rs1_val, input_state[1]]);
+    /******* Assigning operands x and y */
+    signal x <== if_else()([op_flags[0], rs1_val, read_pc]); // TODO: change this for virtual instructions
 
-    // signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
-    // signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
+    signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
+    signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
 
-    // // /******* LOAD-STORE CONSTRAINTS */
+    /******* LOAD-STORE CONSTRAINTS */
 
-    // // /* Take the 8 bytes of memory read/written and combine into one 64-bit value.
-    // // */
-    // signal mem_v_bytes[8] <== subarray(2, 8, 11)(memreg_v_writes);
-    // signal load_or_store_value <== combine_chunks(8, 8)(mem_v_bytes); 
+    /* Take the 8 bytes of memory read/written and combine into one 64-bit value.
+    */
+    signal mem_v_bytes[MOPS()-3] <== subarray(3, MOPS()-3, MOPS())(memreg_v_writes);
+    signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
 
-    // // /* Verify all 8 addresses involved. The starting should be rs1_val + immediate
-    // // */
-    // // signal _load_store_addr <== rs1_val + sign_imm * immediate;
-    // // signal load_store_addr <== is_load_instr * _load_store_addr;
-    // // memreg_a_rw[2] === (is_load_instr+is_store_instr) *load_store_addr; 
+    /* Verify all 8 addresses involved. The starting should be rs1_val + immediate
+    */
 
-    // // for (var i=1; i<8; i++) {
-    // //     // the first two are rs1, rs2 so memory starts are index 2
-    // //     // memreg_a_rw[2+i] === memreg_a_rw[2]+i; 
-    // //     // ^ the constraint should be that but we have a special case when memories are 0
-    // //     // TODO: this isn't correct yet
-    // //     is_load_instr * (memreg_a_rw[2+i] - memreg_a_rw[2]+i) === 0; 
-    // // }
+    signal is_load_store_instr <== is_load_instr + is_store_instr;
 
-    // // /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
-    // // */
-    // // for (var i=0; i<8; i++) {
-    // //     (memreg_v_reads[2+i] - memreg_v_writes[2+i]) * is_load_instr === 0;
-    // // }
-    // // // NOTE: we will ensure that the loaded value is stored into rd near the end
+    // if sign_imm = 1, then immmediate = ALL_ONES() - immediate + 1
+    signal immediate_ld_st <== if_else()([sign_imm * is_load_instr, immediate, ALL_ONES() - immediate + 1]);
+    signal real_sign_imm <== 1-2*sign_imm;
 
-    // // /*  For stores, ensure that the value stored is what is rs2.
-    // //     As "stores" are memory writes, we do not check memreg_v_reads against memreg_v_writes, as in loads
-    // // */
-    // // // TODO: uncomment this after fixing weirdness above 
-    // // // load_or_store_value === rs2_val;
+    signal _load_store_addr <== rs1_val + real_sign_imm * immediate_ld_st;
+    signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
+    memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
 
-    // // /******** Constraints for Lookup Query Chunking  */
+    for (var i=1; i<MOPS()-3; i++) {
+        // the first three are rs1, rs2, rd so memory starts are index 3
+        memreg_a_rw[3+i] === memreg_a_rw[3] + i * is_load_store_instr; 
+    }
 
-    // /* Create the lookup query 
-    //     - First, obtain z.
-    //     - Then verify that the chunks of x, y, z are correct. 
-    // */
+    /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
+    */
+    for (var i=0; i<MOPS()-3; i++) {
+        (memreg_v_reads[3+i] - memreg_v_writes[3+i]) * is_load_instr === 0;
+    }
+    // NOTE: we will ensure that the loaded value is stored into rd near the end
 
-    // // Store the right query format into z
-    // signal z_concat <== x * (2**64) + y;
-    // signal z_add <== x + y;
-    // signal z_jump <== z_add + 4;
-    // signal z_sub <== x + (ALL_ONES() - y + 1);
-    // signal z_mul <== x * y;
+    /*  For stores, ensure that the value stored is what is rs2.
+        As "stores" are memory writes, we do not check memreg_v_reads against memreg_v_writes, as in loads
+    */
+    is_store_instr * (load_or_store_value - rs2_val) === 0;
 
-    // signal z__5 <== is_concat * z_concat;
-    // signal z__4 <== z__5 + is_add_instr * z_add;
-    // signal z__3 <== z__4 + is_jump_instr * z_jump;
-    // signal z__2 <== z__3 + is_sub_instr * z_sub;
-    // signal z__1 <== z__2 + is_mul_instr * z_mul;
-    // signal z <== z__1;
+    // /******** Constraints for Lookup Query Chunking  */
 
-    // // verify chunks_x
-    // signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
-    // (combined_x_chunks - x) * is_concat === 0;
+    /* Create the lookup query 
+        - First, obtain z.
+        - Then verify that the chunks of x, y, z are correct. 
+    */
 
-    // // verify chunks_y 
-    // signal combined_y_chunks <== combine_chunks(C(), L_CHUNK())(chunks_y);
-    // (combined_y_chunks-y) * is_concat === 0;
+    // Store the right query format into z
+    signal z_concat <== x * (2**W()) + y;
+    signal z_add <== x + y;
+    signal z_jump <== z_add; // Arasu: the +4 was wrong 
+    signal z_sub <== x + (ALL_ONES() - y + 1);
+    signal z_mul <== x * y;
 
-    // /* Constraints to check correctness of chunks_query 
-    // If NOT a concat query: chunks_query === chunks_z 
-    // If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
-    // */
-    // signal combined_z_chunks <== combine_chunks(C(), L_CHUNK())(chunks_query);
-    // assert((combined_z_chunks-z) * (1-is_concat) == 0);
+    signal z__5 <== is_concat * z_concat;
+    signal z__4 <== z__5 + is_add_instr * z_add;
+    signal z__3 <== z__4 + is_jump_instr * z_jump;
+    signal z__2 <== z__3 + is_sub_instr * z_sub;
+    signal z__1 <== z__2 + is_mul_instr * z_mul;
+    signal z <== z__1;
 
-    // // the concat checks: 
-    // // the most significant chunk has a shorter length!
-    // for (var i=0; i<C(); i++) {
-    //   chunks_query[i] - (chunks_x[i] + chunks_y[i] * 2**L_CHUNK()) * is_concat === 0;
-    // } 
+    // verify chunks_x
+    signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
+    (combined_x_chunks - x) * is_concat === 0;
+
+    // verify chunks_y 
+    signal combined_y_chunks <== combine_chunks(C(), L_CHUNK())(chunks_y);
+    (combined_y_chunks-y) * is_concat === 0;
+
+    /* Constraints to check correctness of chunks_query 
+    If NOT a concat query: chunks_query === chunks_z 
+    If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
+    */
+    signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
+    (combined_z_chunks-z) * (1-(is_concat)) === 0;
+
+    // the concat checks: 
+    // the most significant chunk has a shorter length!
+    for (var i=0; i<C(); i++) {
+      (chunks_query[i] - (chunks_y[i] + chunks_x[i] * 2**(L_CHUNK()))) * is_concat === 0;
+    } 
+
+    // TODO: this is wrong when chunk length divides w 
     // // handles the "most significant" chunk here
     // var idx_ms_chunk = C()-1;
     // (chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK()))) * is_concat === 0;
 
-    // // For assert instructions 
-    // is_assert_false_instr * (1-lookup_output) === 0;
-    // is_assert_true_instr * lookup_output === 0;
+    // For assert instructions 
+    is_assert_false_instr * (1-lookup_output) === 0;
+    is_assert_true_instr * lookup_output === 0;
 
-    // /* Constraints for storing value in register rd.
+    /* Constraints for storing value in register rd.
+    */
+    // lui doesn't need a lookup and simply requires the lookup_output to be set to immediate 
+    // so it can be stored in the destination register. 
+
+    signal rd_val <== memreg_v_writes[2]; 
+    is_load_instr * (rd_val - load_or_store_value) === 0;
+    // TODO: add another flag for lui (again)
+    // is_lui * (rd_val - immediate) === 0;
+    signal _rd_val_test1 <== prodZeroTest(3)([rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]);
+    signal _rd_val_test2 <== prodZeroTest(3)([rd, is_jump_instr, (rd_val - (read_pc+4))]);
+
+    // /* Store into output state
     // */
-    // // lui doesn't need a lookup and simply requires the lookup_output to be set to immediate 
-    // // so it can be stored in the destination register. 
+    output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1;
 
-    // signal rd_val <== memreg_v_writes[10]; 
-    // is_load_instr * (rd_val - load_or_store_value) === 0;
-    // // TODO: add another flag for lui (again)
-    // // is_lui * (rd_val - immediate) === 0;
-    // if_update_rd_with_lookup_output * (rd_val - lookup_output) === 0;
-    // is_jump_instr * (rd_val - (lookup_output-4)) === 0;
-
-    // // /* Store into output state
-    // // */
-    // output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1;
-
-    // // // set next PC 
-    // signal next_pc_j <== if_else()([is_jump_instr, lookup_output-4, input_state[PC_IDX()] + 4]);
-    // signal next_pc_j_b <== if_else()([is_branch_instr * lookup_output, input_state[PC_IDX()] + sign_imm * immediate, next_pc_j]);
-    // output_state[PC_IDX()] <== next_pc_j_b;
-
-    output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()] + rs1 + rs2 + rd; 
-    output_state[PC_IDX()] <== input_state[PC_IDX()] + 1;  
+    // set next PC 
+    signal next_pc_j <== if_else()([is_jump_instr, lookup_output, input_state[PC_IDX()] + 4]);
+    signal next_pc_j_b <== if_else()([is_branch_instr * lookup_output, input_state[PC_IDX()] + sign_imm * immediate, next_pc_j]);
+    output_state[PC_IDX()] <== next_pc_j_b;
 }
 
 /* Input elements: 
@@ -325,18 +352,18 @@ template JoltMain(N) {
             11. Writing to the destination register. 
     */
     signal input memreg_a_rw[N * MOPS()];
-    // signal input memreg_v_reads[N * 11];
-    // signal input memreg_v_writes[N * 11];
+    signal input memreg_v_reads[N * MOPS()];
+    signal input memreg_v_writes[N * MOPS()];
 
-    // // These are the chunks of the two operands and the 'query'.
-    // // Here, query could be the z = x+y or z=x*y or,
-    // // in the case of concatenation, the chunks are [x_i || y_i]
-    // signal input chunks_x[N * C()];
-    // signal input chunks_y[N * C()];
-    // signal input chunks_query[N * C()];
+    // These are the chunks of the two operands and the 'query'.
+    // Here, query could be the z = x+y or z=x*y or,
+    // in the case of concatenation, the chunks are [x_i || y_i]
+    signal input chunks_x[N * C()];
+    signal input chunks_y[N * C()];
+    signal input chunks_query[N * C()];
 
-    // // The 'a' vector from Lasso containing the table entries looked up.
-    // signal input lookup_outputs[N]; 
+    // The 'a' vector from Lasso containing the table entries looked up.
+    signal input lookup_outputs[N]; 
 
     // The individual op_flags that guide the circuit. 
     // Unpacked from op_flags_packed, which is read from code.
@@ -357,14 +384,18 @@ template JoltMain(N) {
 
     component jolt_steps[N];
 
-    for (var i=0; i<1; i++) {
+    var BASE = 0;
+    var TEST_STEPS = N;
+    for (var i=BASE; i<BASE+TEST_STEPS; i++) {
         jolt_steps[i] = JoltStep();
 
-        if (i==0) {
-            jolt_steps[i].input_state <== [0, 0];
-        } else {
-            jolt_steps[i].input_state <== jolt_steps[i-1].output_state;
-        }
+        // if (i==BASE) {
+        //     jolt_steps[i].input_state <== [0, 0];
+        // } else {
+        //     jolt_steps[i].input_state <== jolt_steps[i-1].output_state;
+        // }
+
+        jolt_steps[i].input_state <== [0, 0];
 
         jolt_steps[i].read_pc <== prog_a_rw[i];
 
@@ -372,36 +403,35 @@ template JoltMain(N) {
         jolt_steps[i].rs1 <== rs1_v_rw[i];
         jolt_steps[i].rs2 <== rs2_v_rw[i];
         jolt_steps[i].rd <== rd_v_rw[i];
-        jolt_steps[i].immediate <== immediate_v_rw[i];
+        jolt_steps[i].immediate_before_processing <== immediate_v_rw[i];
         jolt_steps[i].op_flags_packed <== opflags_packed_v_rw[i];
 
         jolt_steps[i].memreg_a_rw <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_a_rw);
-        // jolt_steps[i].memreg_v_reads <== subarray(i*11, 11, N*11)(memreg_v_reads);
-        // jolt_steps[i].memreg_v_writes <== subarray(i*11, 11, N*11)(memreg_v_writes);
+        jolt_steps[i].memreg_v_reads <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_v_reads);
+        jolt_steps[i].memreg_v_writes <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_v_writes);
 
-        // jolt_steps[i].chunks_x <== subarray(i*C(), C(), N*C())(chunks_x);
-        // jolt_steps[i].chunks_y <== subarray(i*C(), C(), N*C())(chunks_y);
-        // jolt_steps[i].chunks_query <== subarray(i*C(), C(), N*C())(chunks_y);
+        jolt_steps[i].chunks_x <== subarray(i*C(), C(), N*C())(chunks_x);
+        jolt_steps[i].chunks_y <== subarray(i*C(), C(), N*C())(chunks_y);
+        jolt_steps[i].chunks_query <== subarray(i*C(), C(), N*C())(chunks_query);
 
-        // jolt_steps[i].lookup_output <== lookup_outputs[i];
+        jolt_steps[i].lookup_output <== lookup_outputs[i];
 
         jolt_steps[i].op_flags <== subarray(i*N_FLAGS(), N_FLAGS(), N*N_FLAGS())(op_flags);
     }
 
-    // out <== jolt_steps[N-1].output_state;
+    // out <== jolt_steps[BASE+TEST_STEPS-1].output_state;
 }
 
 component main {public [
         prog_a_rw, 
         prog_v_rw, 
         memreg_a_rw, 
-        // memreg_v_reads, 
-        // memreg_v_writes, 
-        // memreg_t_reads,
-        // chunks_x, 
-        // chunks_y, 
-        // chunks_query, 
-        // lookup_outputs, 
+        memreg_v_reads, 
+        memreg_v_writes, 
+        chunks_x, 
+        chunks_y, 
+        chunks_query, 
+        lookup_outputs, 
         op_flags
         ]} 
     = JoltMain(NUM_STEPS());

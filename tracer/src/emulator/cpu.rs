@@ -1754,6 +1754,7 @@ fn parse_format_u(word: u32) -> FormatU {
 }
 
 fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
+    println!("f format: {:x}", word);
     let f = parse_format_u(word);
     let mut s = String::new();
     s += &format!("{}", get_register_name(f.rd));
@@ -1895,7 +1896,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
 }
 
 fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
-    let f = parse_format_u(word);
+    let f = parse_format_j(word);
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),

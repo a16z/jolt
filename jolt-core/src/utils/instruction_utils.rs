@@ -22,11 +22,11 @@ pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: us
 }
 
 /// Returns the chunks of an operand passed as input 
-pub fn chunk_operand(x: u64, C: usize, log_M: usize) -> Vec<u64> {
-    let bit_mask = (1 << log_M) - 1;
+pub fn chunk_operand(x: u64, C: usize, chunk_len: usize) -> Vec<u64> {
+    let bit_mask = (1 << chunk_len) - 1;
     (0..C)
       .map(|i| {
-        let shift = ((C - i - 1) * log_M) as u32;
+        let shift = ((C - i - 1) * chunk_len) as u32;
         x.checked_shr(shift).unwrap_or(0) & bit_mask
       })
       .collect()

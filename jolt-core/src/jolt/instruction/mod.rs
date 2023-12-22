@@ -52,9 +52,10 @@ pub trait JoltInstruction: Sync {
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
     fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
+        assert!(log_M % 2 == 0, "log_M must be even for operand_chunks to work");
         self.operands()
             .iter()
-            .map(|&operand| chunk_operand(operand, C, log_M))
+            .map(|&operand| chunk_operand(operand, C, log_M/2))
             .collect::<Vec<Vec<u64>>>()
             .try_into()
             .unwrap()

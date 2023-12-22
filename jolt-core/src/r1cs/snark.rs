@@ -75,7 +75,18 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
     let cfg = CircomConfig::new(wtns_path, r1cs_path.clone()).unwrap();
 
     // let variable_names = ["prog_a_rw", "prog_v_rw", "prog_t_reads", "memreg_a_rw", "memreg_v_reads", "memreg_v_writes", "memreg_t_reads", "chunks_x", "chunks_y", "lookup_outputs", "chunks_query", "op_flags"];
-    let variable_names = ["prog_a_rw", "prog_v_rw", "memreg_a_rw", "op_flags"];
+    let variable_names = [
+      "prog_a_rw", 
+      "prog_v_rw", 
+      "memreg_a_rw", 
+      "memreg_v_reads", 
+      "memreg_v_writes", 
+      "chunks_x", 
+      "chunks_y", 
+      "chunks_query", 
+      "lookup_outputs", 
+      "op_flags"
+    ];
 
     let input: Vec<(String, Vec<F>)> = variable_names
       .iter()

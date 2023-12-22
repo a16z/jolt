@@ -198,20 +198,26 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) {
-        let TRACE_LEN = trace.len();
+        let N_SKIP = 3; 
+        let N_FLAGS = 17;
+        let TRACE_LEN = trace.len()-N_SKIP;
         let log_M = log2(M) as usize;
 
-        let [prog_a_rw, prog_v_rw_wo_flags_packed, prog_t_reads] = 
-            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
+        // skip the first N_SKIP instructions 
+        let instructions = &instructions[N_SKIP..];
+        let circuit_flags = &circuit_flags[N_FLAGS * N_SKIP..];
+
+        let [mut prog_a_rw, prog_v_rw_wo_flags_packed, prog_t_reads] = 
+            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace, N_SKIP);
 
         // get circuit_flags_packed 
         // for every 15 values in circuit_flags, convert to a single value
         let circuit_flags_packed = circuit_flags
-            .chunks(15)
+            .chunks(N_FLAGS)
             .map(|x| {
                 let mut packed = F::ZERO;
                 for (i, flag) in x.iter().enumerate() {
-                    packed += *flag * F::from(2u64.pow(i as u32));
+                    packed += *flag * F::from(2u64.pow((N_FLAGS-1-i) as u32));
                 }
                 packed
             })
@@ -221,7 +227,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut prog_v_rw = prog_v_rw_wo_flags_packed;
         prog_v_rw.extend(circuit_flags_packed);
 
-        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, memreg_t_reads] = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
+        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
+
+        // skip the first N_SKIP values of each memreg vector 
+        let memreg_a_rw = memreg_a_rw[N_SKIP * 7..].to_vec();
+        let memreg_v_reads = memreg_v_reads[N_SKIP * 7..].to_vec();
+        let memreg_v_writes = memreg_v_writes[N_SKIP * 7..].to_vec();
 
         let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
             instructions
@@ -230,19 +241,45 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 let chunks_xy = op.operand_chunks(C, log_M);
                 let chunks_x = chunks_xy[0].clone();
                 let chunks_y = chunks_xy[1].clone();
+                // println!("chunks_x: {:?}", chunks_x);
+                // println!("chunks_y: {:?}", chunks_y);
                 chunks_x.into_iter().zip(chunks_y.into_iter())
             })
             .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
             .unzip();
 
         let chunks_query = instructions.iter()
-            .flat_map(|op| op.to_indices(C, log_M))
+            .flat_map(|op| {
+                let mut chunks = op.to_indices(C, log_M);
+                // chunks.reverse();
+                chunks 
+            })
             .map(|x| x as u64)
             .map(F::from)
             .collect::<Vec<F>>();
 
         let lookup_outputs = instructions.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
+        // print first 15 circuit flags 
+        let end_index = std::cmp::min(N_FLAGS, circuit_flags.len());
+        println!("circuit_flags[0..{}]: {:?}", end_index, &circuit_flags[0..end_index]);
+
+        let idx = 4;
+        for i in 0..4 {
+            println!("chunks_x[{}]: {:?}", i, chunks_x[idx*4+i]);
+            println!("chunks_y[{}]: {:?}", i, chunks_y[idx*4+i]);
+            println!("chunks_query[{}]: {:?}", i, chunks_query[idx*4+i]);
+        }
+
+        for i in 0..4 {
+            println!("memreg_v_reads[{}]: {}", i, memreg_v_reads[idx * 7 + 3 + i]); 
+        }
+
+        // the address for the memory read is: 
+        println!("rs2_val: {}", memreg_v_reads[idx * 7 + 1]);
+        println!("the first memreg_a_rw address for instr idx : {}", memreg_a_rw[idx * 7 + 3]);
+
+        
         // assert
         assert_eq!(prog_a_rw.len(), TRACE_LEN);
         assert_eq!(prog_v_rw.len(), TRACE_LEN * 6); 
@@ -253,23 +290,21 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert_eq!(chunks_y.len(), TRACE_LEN * C);
         assert_eq!(chunks_query.len(), TRACE_LEN * C);
         assert_eq!(lookup_outputs.len(), TRACE_LEN);
-        assert_eq!(circuit_flags.len(), TRACE_LEN * 15);
-
-        println!("memreg_a_rw: {:?}", memreg_a_rw);
+        assert_eq!(circuit_flags.len(), TRACE_LEN * N_FLAGS);
 
         let inputs = vec![
             prog_a_rw.clone(),
             prog_v_rw.clone(),
             memreg_a_rw,
-            // memreg_v_reads, 
-            // memreg_v_writes,
-            // memreg_t_reads, 
-            // chunks_x, 
-            // chunks_y,
-            // chunks_query,
-            // lookup_outputs,
+            memreg_v_reads, 
+            memreg_v_writes,
+            chunks_x, 
+            chunks_y,
+            chunks_query,
+            lookup_outputs,
             circuit_flags.to_vec(),
         ];
+
 
         // let NUM_STEPS = TRACE_LEN;
         // let inputs = vec![
@@ -285,12 +320,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         //     // lookup_outputs,
         //     circuit_flags[..NUM_STEPS * 15].to_vec(),
         // ];
-
-        // // print prog_a_rw
-        // println!("prog_a_rw: {:?}", prog_a_rw); 
-
-        // // print flags 
-        // println!("flags len : {:?}", circuit_flags.len());
 
         // TODO: move this conversion to the r1cs module 
         use spartan2::provider::bn256_grumpkin::bn256;

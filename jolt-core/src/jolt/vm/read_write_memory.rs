@@ -248,7 +248,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let remap_address = |a: u64| {
             assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
             if a >= RAM_START_ADDRESS {
-                a - RAM_START_ADDRESS + REGISTER_COUNT
+                // a - RAM_START_ADDRESS + REGISTER_COUNT
+                // Arasu: for r1cs, do not substract RAM_START_ADDRESS
+                a 
             } else {
                 // If a < REGISTER_COUNT, it is one of the registers and doesn't
                 // need to be remapped
