@@ -181,15 +181,6 @@ impl RVTraceRow {
         }
     }
 
-    // Arasu: does the same as above but pre-processes the imm 
-    pub fn from_common_r1cs(common: common::RVTraceRow) -> Self {
-        let mut res = Self::from_common(common); 
-        res.imm = match res.imm_u64() {
-            (imm) => Some(imm as u32),
-        };
-        res 
-    }
-
     fn RType(
         pc: u64,
         opcode: RV32IM,

@@ -218,8 +218,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
     }
 
     fn from_elf_r1cs(elf: &Vec<ELFRow>, N_SKIP: usize) -> Vec<F> {
-        // let len = elf.len().next_power_of_two();
-        // do not pad 
+        // Do not pad. 
         let len = elf.len();
 
         let mut opcodes = Vec::with_capacity(len);
@@ -227,6 +226,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         let mut rs1s = Vec::with_capacity(len);
         let mut rs2s = Vec::with_capacity(len);
         let mut imms = Vec::with_capacity(len);
+        // TODO: handle circuit flags here and not in prove_r1cs()
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
         for row in elf {
@@ -251,19 +251,9 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             rs2s,
             rds,
             imms,
-            // circuit_flags, // there is some bug here
+            // circuit_flags, 
         ].concat()
     }
-
-    // pub fn get_r1cs_polys(&self) -> Vec<F> {
-    //     [
-    //         self.opcode.evals(), 
-    //         self.rd.evals(), 
-    //         self.rs1.evals(), 
-    //         self.rs2.evals(), 
-    //         self.imm.evals()
-    //     ].concat()
-    // }
 }
 
 pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -332,7 +322,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>, N_SKIP: usize) -> [Vec<F>; 3] {
-        // DO NOT PAD: so measure length here 
+        // As R1CS isn't padded, measure length here before padding is applied. 
         let num_ops: usize = trace.len();
 
         Self::validate_bytecode(&bytecode, &trace);

@@ -196,7 +196,7 @@ template JoltStep() {
 
     signal immediate_absolute <== if_else()([sign_imm_flag, immediate, ALL_ONES() - immediate + 1]);
     signal sign_of_immediate <== 1-2*sign_imm_flag;
-    signal immediate_signed <== real_sign_imm * immediate_absolute;
+    signal immediate_signed <== sign_of_immediate * immediate_absolute;
 
     signal _load_store_addr <== rs1_val + immediate_signed;
     signal load_store_addr <== is_load_store_instr * _load_store_addr;
@@ -410,7 +410,7 @@ template JoltMain(N) {
         jolt_steps[i].op_flags <== subarray(i*N_FLAGS(), N_FLAGS(), N*N_FLAGS())(op_flags);
     }
 
-    out <== jolt_steps[BASE+TEST_STEPS-1].output_state;
+    out <== jolt_steps[N-1].output_state;
 }
 
 component main {public [
