@@ -71,10 +71,8 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
     let r1cs_path = circuit_dir.join("jolt.r1cs");
     let wtns_path = circuit_dir.join("jolt_js/jolt.wasm");
 
-
     let cfg = CircomConfig::new(wtns_path, r1cs_path.clone()).unwrap();
 
-    // let variable_names = ["prog_a_rw", "prog_v_rw", "prog_t_reads", "memreg_a_rw", "memreg_v_reads", "memreg_v_writes", "memreg_t_reads", "chunks_x", "chunks_y", "lookup_outputs", "chunks_query", "op_flags"];
     let variable_names = [
       "prog_a_rw", 
       "prog_v_rw", 
@@ -96,15 +94,15 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
     let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
 
-        let _ = circom_scotia::synthesize(
-            cs, //.namespace(|| "jolt_circom"),
-            cfg.r1cs.clone(),
-            Some(jolt_witness),
-        )
-        .unwrap();
+    let _ = circom_scotia::synthesize(
+        cs, //.namespace(|| "jolt_circom"),
+        cfg.r1cs.clone(),
+        Some(jolt_witness),
+    )
+    .unwrap();
 
-        Ok(())
-    }
+    Ok(())
+  }
 }
 
 fn run_jolt_spartan() {

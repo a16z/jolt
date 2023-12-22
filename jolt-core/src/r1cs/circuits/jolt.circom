@@ -4,26 +4,19 @@ pragma circom 2.1.6;
 function NUM_STEPS() {return 182;} // ignore first 3 and the last one 
 function W() {return 32;}
 function C() {return 4;}
+function PROG_START_ADDR() {return 2147483664;}
+function N_FLAGS() {return 17;}
+function LOG_M() { return 16; }
+function L_CHUNK() { return 8; }
+
 // memreg ops per step 
 function MOPS() {if (W() == 32) {return 7;} else {return 11;}}
 
-function N_FLAGS() {return 17;}
-
 /*  Constants: written as functions because circom.
 */
-// function L_CHUNK() {
-//     if (W() % C() == 0) {
-//         return W()/C();
-//     } else {
-//         return W() / C() + 1;
-//     }
-// }
-function LOG_M() { return 16; }
-function L_CHUNK() { return 8; }
-function L_MS_CHUNK() {return W() % L_CHUNK();}
-function ALL_ONES() {if (W() == 32) {return 0x11111111;} else {return 0x1111111111111111;} } 
 
-// state: [field; 2] = [step_num, pc]
+function ALL_ONES() {if (W() == 32) {return 0xffffffff;} else {return 0xffffffffffffffff;} } 
+
 function STEP_NUM_IDX() {return 0;}
 function PC_IDX() {return 1;}
 
@@ -138,7 +131,7 @@ template JoltStep() {
     signal input op_flags[N_FLAGS()];
 
     /* Enforce that read_pc === input_state.pc */
-    // read_pc === input_state[PC_IDX()];
+    read_pc === input_state[PC_IDX()];
         
     /* Constraints for op_flags: 
         1. Verify they combine to form op_flags_packed
@@ -158,7 +151,7 @@ template JoltStep() {
     signal is_advice_instr <== op_flags[10]; // these use a dummy lookup where output is y
     signal is_assert_false_instr <== op_flags[11];
     signal is_assert_true_instr <== op_flags[12];
-    signal sign_imm <== op_flags[13];
+    signal sign_imm_flag <== op_flags[13];
     signal is_concat <== op_flags[14];
     signal is_lui_auipc <== op_flags[15];
     signal is_jal <== op_flags[16];
@@ -168,14 +161,10 @@ template JoltStep() {
     signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
 
     /*******  Register Reading Constraints: 
-
-    Of the 11 memory reads, the first 2 are reads from rs1, rs2, 
-    and the last is the write to rd.
+    Of the 7 (or 11) memory reads, the first 3 are reads from rs1, rs2, rd. 
 
     1. Ensure that the address of the reads and writes are indeed rs1, rs2, rd.
     2. For memory "reads", the same value is written back, so check that memreg_v_reads[i] === memread_v_writes[i].
-
-    // TODO: encode virtual address for memory and registers
     // */
     rs1 === memreg_a_rw[0];
     memreg_v_reads[0] === memreg_v_writes[0];
@@ -195,21 +184,21 @@ template JoltStep() {
 
     /******* LOAD-STORE CONSTRAINTS */
 
-    /* Take the 8 bytes of memory read/written and combine into one 64-bit value.
+    /* Take the 4 (or 8) bytes of memory read/written and combine into one 64-bit value.
     */
     signal mem_v_bytes[MOPS()-3] <== subarray(3, MOPS()-3, MOPS())(memreg_v_writes);
     signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
 
-    /* Verify all 8 addresses involved. The starting should be rs1_val + immediate
+    /* Verify all 4 (or 8) addresses involved. The starting should be rs1_val + immediate
     */
 
     signal is_load_store_instr <== is_load_instr + is_store_instr;
 
-    // if sign_imm = 1, then immmediate = ALL_ONES() - immediate + 1
-    signal immediate_ld_st <== if_else()([sign_imm * is_load_instr, immediate, ALL_ONES() - immediate + 1]);
-    signal real_sign_imm <== 1-2*sign_imm;
+    signal immediate_absolute <== if_else()([sign_imm_flag, immediate, ALL_ONES() - immediate + 1]);
+    signal sign_of_immediate <== 1-2*sign_imm_flag;
+    signal immediate_signed <== real_sign_imm * immediate_absolute;
 
-    signal _load_store_addr <== rs1_val + real_sign_imm * immediate_ld_st;
+    signal _load_store_addr <== rs1_val + immediate_signed;
     signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
     memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
@@ -241,7 +230,7 @@ template JoltStep() {
     // Store the right query format into z
     signal z_concat <== x * (2**W()) + y;
     signal z_add <== x + y;
-    signal z_jump <== z_add; // Arasu: the +4 was wrong 
+    signal z_jump <== z_add; // This is superfluous. TODO: change 
     signal z_sub <== x + (ALL_ONES() - y + 1);
     signal z_mul <== x * y;
 
@@ -261,8 +250,8 @@ template JoltStep() {
     (combined_y_chunks-y) * is_concat === 0;
 
     /* Constraints to check correctness of chunks_query 
-    If NOT a concat query: chunks_query === chunks_z 
-    If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
+        If NOT a concat query: chunks_query === chunks_z 
+        If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
     */
     signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
     (combined_z_chunks-z) * (1-(is_concat)) === 0;
@@ -273,8 +262,7 @@ template JoltStep() {
       (chunks_query[i] - (chunks_y[i] + chunks_x[i] * 2**(L_CHUNK()))) * is_concat === 0;
     } 
 
-    // TODO: this is wrong when chunk length divides w 
-    // // handles the "most significant" chunk here
+    // TODO: handle case when C() doesn't divide W() 
     // var idx_ms_chunk = C()-1;
     // (chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK()))) * is_concat === 0;
 
@@ -289,18 +277,26 @@ template JoltStep() {
 
     signal rd_val <== memreg_v_writes[2]; 
     is_load_instr * (rd_val - load_or_store_value) === 0;
-    // TODO: add another flag for lui (again)
-    // is_lui * (rd_val - immediate) === 0;
     signal _rd_val_test1 <== prodZeroTest(3)([rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]);
     signal _rd_val_test2 <== prodZeroTest(3)([rd, is_jump_instr, (rd_val - (read_pc+4))]);
+    // TODO: LUI - add another flag for lui (again)
+    // is_lui * (rd_val - immediate) === 0;
 
-    // /* Store into output state
-    // */
+    /* Store into output state
+    */
     output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1;
 
     // set next PC 
-    signal next_pc_j <== if_else()([is_jump_instr, lookup_output, input_state[PC_IDX()] + 4]);
-    signal next_pc_j_b <== if_else()([is_branch_instr * lookup_output, input_state[PC_IDX()] + sign_imm * immediate, next_pc_j]);
+    signal next_pc_j <== if_else()([
+        is_jump_instr,  
+        input_state[PC_IDX()] + 4, 
+        lookup_output
+    ]);
+    signal next_pc_j_b <== if_else()([
+        is_branch_instr * lookup_output, 
+        next_pc_j, 
+        input_state[PC_IDX()] + immediate_signed
+    ]);
     output_state[PC_IDX()] <== next_pc_j_b;
 }
 
@@ -317,7 +313,7 @@ Each of the vectors below are 6 * N in length.
 3. prog_t_reads
 
 Memory: Here, we need a separate vector for v_reads and v_writes. 
-Each vector is 8 * N in length. 
+Each vector is (7 or 11) * N in length. 
 4. mem_a_rw
 5. mem_v_reads
 6. mem_v_writes
@@ -347,9 +343,8 @@ template JoltMain(N) {
     // The combined registers and memory a/v/t vectors. 
     // These are ordered chronologically in terms of reads. 
     /* Each step has 11 mem ops: 
-            1-2. Reading the two source registers. 
-            3-10. The 8 bytes of memory read/written.
-            11. Writing to the destination register. 
+            1-3. Reading the two source and one destination register. 
+            4-7 (or 11). The 4 (or 8) bytes of memory read/written.
     */
     signal input memreg_a_rw[N * MOPS()];
     signal input memreg_v_reads[N * MOPS()];
@@ -384,18 +379,14 @@ template JoltMain(N) {
 
     component jolt_steps[N];
 
-    var BASE = 0;
-    var TEST_STEPS = N;
-    for (var i=BASE; i<BASE+TEST_STEPS; i++) {
+    for (var i=0; i<N; i++) {
         jolt_steps[i] = JoltStep();
 
-        // if (i==BASE) {
-        //     jolt_steps[i].input_state <== [0, 0];
-        // } else {
-        //     jolt_steps[i].input_state <== jolt_steps[i-1].output_state;
-        // }
-
-        jolt_steps[i].input_state <== [0, 0];
+        if (i==0) {
+            jolt_steps[i].input_state <== [0, PROG_START_ADDR()]; 
+        } else {
+            jolt_steps[i].input_state <== jolt_steps[i-1].output_state;
+        }
 
         jolt_steps[i].read_pc <== prog_a_rw[i];
 
@@ -419,7 +410,7 @@ template JoltMain(N) {
         jolt_steps[i].op_flags <== subarray(i*N_FLAGS(), N_FLAGS(), N*N_FLAGS())(op_flags);
     }
 
-    // out <== jolt_steps[BASE+TEST_STEPS-1].output_state;
+    out <== jolt_steps[BASE+TEST_STEPS-1].output_state;
 }
 
 component main {public [

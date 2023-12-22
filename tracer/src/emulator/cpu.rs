@@ -1819,7 +1819,9 @@ fn normalize_is_imm(value: i64) -> u32 {
 }
 
 fn normalize_b_imm(value: u64) -> u32 {
-    ((value as i32) >> 1) as u32
+    // TODO: Hack – value should be unnormalized in the tracer
+    (value as i32) as u32
+    // ((value as i32) >> 1) as u32
 }
 
 fn normalize_uj_imm(value: u64) -> u32 {
