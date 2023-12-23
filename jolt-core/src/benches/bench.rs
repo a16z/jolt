@@ -23,14 +23,12 @@ use crate::lasso::surge::Surge;
 use crate::poly::dense_mlpoly::bench::{
     init_commit_bench, init_commit_bench_ones, init_commit_small, run_commit_bench,
 };
-use crate::poly::dense_mlpoly::{CommitHint, DensePolynomial};
-use crate::poly::eq_poly::EqPolynomial;
-use crate::subprotocols::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
+use crate::poly::dense_mlpoly::CommitHint;
 use crate::utils::math::Math;
-use crate::utils::{index_to_field_bitvector, random::RandomTape};
+use crate::utils::random::RandomTape;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
-use ark_std::{test_rng, UniformRand, Zero};
+use ark_std::test_rng;
 use common::ELFInstruction;
 use criterion::black_box;
 use merlin::Transcript;
@@ -44,7 +42,6 @@ pub enum BenchType {
     Bytecode,
     ReadWriteMemory,
     InstructionLookups,
-    Sumcheck,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -62,70 +59,8 @@ pub fn benchmarks(
         BenchType::Bytecode => prove_bytecode(num_cycles, bytecode_size),
         BenchType::ReadWriteMemory => prove_memory(num_cycles, memory_size, bytecode_size),
         BenchType::InstructionLookups => prove_instruction_lookups(num_cycles),
-        BenchType::Sumcheck => bench_sumcheck(),
         _ => panic!("BenchType does not have a mapping"),
     }
-}
-
-fn bench_sumcheck() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let mut rng = test_rng();
-
-    let num_vars = 22;
-    let batch_size = 2;
-
-    let mut tasks = vec![];
-
-    for _ in 0..10 {
-        let r_eq = std::iter::repeat_with(|| Fr::rand(&mut rng))
-            .take(num_vars)
-            .collect();
-        let eq = DensePolynomial::new(EqPolynomial::new(r_eq).evals());
-        let mut poly_as = Vec::with_capacity(batch_size);
-        let mut poly_bs = Vec::with_capacity(batch_size);
-        for _ in 0..batch_size {
-            let ra = std::iter::repeat_with(|| Fr::rand(&mut rng))
-                .take(num_vars)
-                .collect();
-            let rb = std::iter::repeat_with(|| Fr::rand(&mut rng))
-                .take(num_vars)
-                .collect();
-            let a = DensePolynomial::new(EqPolynomial::new(ra).evals());
-            let b = DensePolynomial::new(EqPolynomial::new(rb).evals());
-            poly_as.push(a);
-            poly_bs.push(b);
-        }
-        let params =
-            CubicSumcheckParams::new_prod(poly_as.clone(), poly_bs.clone(), eq.clone(), num_vars);
-        let coeffs: Vec<Fr> = std::iter::repeat_with(|| Fr::rand(&mut rng))
-            .take(batch_size)
-            .collect();
-
-        let mut joint_claim = Fr::zero();
-        for batch_i in 0..batch_size {
-            let mut claim = Fr::zero();
-            for var_i in 0..num_vars {
-                let eval_a = poly_as[batch_i].evaluate(&index_to_field_bitvector(var_i, num_vars));
-                let eval_b = poly_bs[batch_i].evaluate(&index_to_field_bitvector(var_i, num_vars));
-                let eval_eq = eq.evaluate(&index_to_field_bitvector(var_i, num_vars));
-
-                claim += eval_a * eval_b * eval_eq;
-            }
-            joint_claim += coeffs[batch_i] * claim;
-        }
-
-        let work = Box::new(move || {
-            let mut transcript = Transcript::new(b"example");
-            black_box(SumcheckInstanceProof::prove_cubic_batched::<
-                EdwardsProjective,
-            >(&joint_claim, params, &coeffs, &mut transcript));
-        });
-        tasks.push((
-            tracing::info_span!("batched cubic sumcheck"),
-            work as Box<dyn FnOnce()>,
-        ));
-    }
-
-    tasks
 }
 
 fn prove_e2e_except_r1cs(
