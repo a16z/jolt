@@ -85,7 +85,8 @@ pub trait MemoryCheckingProver<F, G, Polynomials>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials,
+    Polynomials: BatchablePolynomials + std::marker::Sync,
+    Self: std::marker::Sync,
 {
     type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
     type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
@@ -213,8 +214,10 @@ where
         gamma: &F,
         tau: &F,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let read_leaves: Vec<DensePolynomial<F>> = self.read_leaves(polynomials, gamma, tau);
-        let write_leaves: Vec<DensePolynomial<F>> = self.write_leaves(polynomials, gamma, tau);
+        let (read_leaves, write_leaves) = rayon::join(
+            || self.read_leaves(polynomials, gamma, tau),
+            || self.write_leaves(polynomials, gamma, tau),
+        );
         debug_assert_eq!(read_leaves.len(), write_leaves.len());
         let num_memories = read_leaves.len();
 
@@ -256,8 +259,10 @@ where
         gamma: &F,
         tau: &F,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let init_leaves: Vec<DensePolynomial<F>> = self.init_leaves(polynomials, gamma, tau);
-        let final_leaves: Vec<DensePolynomial<F>> = self.final_leaves(polynomials, gamma, tau);
+        let (init_leaves, final_leaves) = rayon::join(
+            || self.init_leaves(polynomials, gamma, tau),
+            || self.final_leaves(polynomials, gamma, tau),
+        );
         debug_assert_eq!(init_leaves.len(), final_leaves.len());
         let num_memories = init_leaves.len();
 
@@ -323,7 +328,7 @@ pub trait MemoryCheckingVerifier<F, G, Polynomials>:
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials,
+    Polynomials: BatchablePolynomials + std::marker::Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
