@@ -1895,7 +1895,7 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
 }
 
 fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
-    let f = parse_format_u(word);
+    let f = parse_format_j(word);
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
