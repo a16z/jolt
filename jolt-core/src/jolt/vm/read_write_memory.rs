@@ -20,7 +20,9 @@ use crate::{
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, mul_0_optimized, random::RandomTape},
 };
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{
+    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
+};
 use common::{to_ram_address, ELFInstruction};
 
 pub trait RandomInstruction {
@@ -86,6 +88,10 @@ pub fn random_memory_trace(
             }
         }
     }
+
+    let next_power_of_two = memory_trace.len().next_power_of_two();
+    memory_trace.resize(next_power_of_two, MemoryOp::no_op());
+
     memory_trace
 }
 
@@ -201,28 +207,30 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let mut t_final: Vec<u64> = vec![0; memory_size];
 
         let mut timestamp: u64 = 0;
-        for memory_access in memory_trace {
-            match memory_access {
-                MemoryOp::Read(a, v) => {
-                    let remapped_a = remap_address(a);
-                    debug_assert_eq!(v, v_final[remapped_a as usize]);
-                    a_read_write.push(remapped_a);
-                    v_read.push(v);
-                    v_write.push(v);
-                    t_read.push(t_final[remapped_a as usize]);
-                    t_write.push(timestamp + 1);
-                    t_final[remapped_a as usize] = timestamp + 1;
-                }
-                MemoryOp::Write(a, v_new) => {
-                    let remapped_a = remap_address(a);
-                    let v_old = v_final[remapped_a as usize];
-                    a_read_write.push(remapped_a);
-                    v_read.push(v_old);
-                    v_write.push(v_new);
-                    v_final[remapped_a as usize] = v_new;
-                    t_read.push(t_final[remapped_a as usize]);
-                    t_write.push(timestamp + 1);
-                    t_final[remapped_a as usize] = timestamp + 1;
+        for step in memory_trace.chunks(MEMORY_OPS_PER_INSTRUCTION) {
+            for memory_access in step {
+                match memory_access {
+                    MemoryOp::Read(a, v) => {
+                        let remapped_a = remap_address(*a);
+                        debug_assert_eq!(*v, v_final[remapped_a as usize]);
+                        a_read_write.push(remapped_a);
+                        v_read.push(*v);
+                        v_write.push(*v);
+                        t_read.push(t_final[remapped_a as usize]);
+                        t_write.push(timestamp + 1);
+                        t_final[remapped_a as usize] = timestamp + 1;
+                    }
+                    MemoryOp::Write(a, v_new) => {
+                        let remapped_a = remap_address(*a);
+                        let v_old = v_final[remapped_a as usize];
+                        a_read_write.push(remapped_a);
+                        v_read.push(v_old);
+                        v_write.push(*v_new);
+                        v_final[remapped_a as usize] = *v_new;
+                        t_read.push(t_final[remapped_a as usize]);
+                        t_write.push(timestamp + 1);
+                        t_final[remapped_a as usize] = timestamp + 1;
+                    }
                 }
             }
             timestamp += 1;

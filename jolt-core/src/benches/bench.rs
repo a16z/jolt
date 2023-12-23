@@ -29,7 +29,7 @@ use crate::utils::random::RandomTape;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::test_rng;
-use common::ELFInstruction;
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
 use criterion::black_box;
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
@@ -152,8 +152,12 @@ fn prove_memory(
     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
-    // 7 memory ops per instruction, rounded up to still be a power of 2
-    let memory_trace = random_memory_trace(&bytecode, memory_size, 8 * num_cycles, &mut rng);
+    let memory_trace = random_memory_trace(
+        &bytecode,
+        memory_size,
+        MEMORY_OPS_PER_INSTRUCTION * num_cycles,
+        &mut rng,
+    );
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
