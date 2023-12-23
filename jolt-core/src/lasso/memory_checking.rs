@@ -15,8 +15,10 @@ use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use std::marker::PhantomData;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator, ParallelIterator};
 
 pub struct MultisetHashes<F: PrimeField> {
     /// Multiset hash of "init" tuple(s)
@@ -216,13 +218,27 @@ where
         debug_assert_eq!(read_leaves.len(), write_leaves.len());
         let num_memories = read_leaves.len();
 
-        let circuits: Vec<GrandProductCircuit<F>> = (0..num_memories).into_par_iter().flat_map(|memory_index| {
-            let read_circuit = GrandProductCircuit::new(&read_leaves[memory_index]);
-            let write_circuit = GrandProductCircuit::new(&write_leaves[memory_index]);
-            vec![read_circuit, write_circuit]
-        }).collect();
-        let read_hashes: Vec<F> = circuits.par_iter().step_by(2).map(|circuit| circuit.evaluate()).collect();
-        let write_hashes: Vec<F> = circuits.par_iter().skip(1).step_by(2).map(|circuit| circuit.evaluate()).collect();
+        let circuits: Vec<GrandProductCircuit<F>> = (0..num_memories)
+            .into_par_iter()
+            .flat_map(|memory_index| {
+                let (read_circuit, write_circuit) = rayon::join(
+                    || GrandProductCircuit::new(&read_leaves[memory_index]),
+                    || GrandProductCircuit::new(&write_leaves[memory_index]),
+                );
+                vec![read_circuit, write_circuit]
+            })
+            .collect();
+        let read_hashes: Vec<F> = circuits
+            .par_iter()
+            .step_by(2)
+            .map(|circuit| circuit.evaluate())
+            .collect();
+        let write_hashes: Vec<F> = circuits
+            .par_iter()
+            .skip(1)
+            .step_by(2)
+            .map(|circuit| circuit.evaluate())
+            .collect();
 
         (
             BatchedGrandProductCircuit::new_batch(circuits),
@@ -245,13 +261,27 @@ where
         debug_assert_eq!(init_leaves.len(), final_leaves.len());
         let num_memories = init_leaves.len();
 
-        let circuits: Vec<GrandProductCircuit<F>> = (0..num_memories).into_par_iter().flat_map(|memory_index| {
-            let init_circuit = GrandProductCircuit::new(&init_leaves[memory_index]);
-            let final_circuit = GrandProductCircuit::new(&final_leaves[memory_index]);
-            vec![init_circuit, final_circuit]
-        }).collect();
-        let init_hashes: Vec<F> = circuits.par_iter().step_by(2).map(|circuit| circuit.evaluate()).collect();
-        let final_hashes: Vec<F> = circuits.par_iter().skip(1).step_by(2).map(|circuit| circuit.evaluate()).collect();
+        let circuits: Vec<GrandProductCircuit<F>> = (0..num_memories)
+            .into_par_iter()
+            .flat_map(|memory_index| {
+                let (init_circuit, final_circuit) = rayon::join(
+                    || GrandProductCircuit::new(&init_leaves[memory_index]),
+                    || GrandProductCircuit::new(&final_leaves[memory_index]),
+                );
+                vec![init_circuit, final_circuit]
+            })
+            .collect();
+        let init_hashes: Vec<F> = circuits
+            .par_iter()
+            .step_by(2)
+            .map(|circuit| circuit.evaluate())
+            .collect();
+        let final_hashes: Vec<F> = circuits
+            .par_iter()
+            .skip(1)
+            .step_by(2)
+            .map(|circuit| circuit.evaluate())
+            .collect();
 
         (
             BatchedGrandProductCircuit::new_batch(circuits),

@@ -10,7 +10,7 @@ use strum::{EnumCount, IntoEnumIterator};
 
 use rayon::prelude::*;
 
-use crate::utils::{mul_0_1_optimized, split_poly_flagged, count_poly_zeros};
+use crate::utils::{count_poly_zeros, mul_0_1_optimized, split_poly_flagged};
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -516,11 +516,11 @@ where
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_square = &gamma.square();
         (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
-                let gamma_square = &gamma.square();
 
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
@@ -542,11 +542,11 @@ where
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_square = &gamma.square();
         (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
-                let gamma_square = &gamma.square();
 
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
@@ -596,11 +596,11 @@ where
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_square = &gamma.square();
         (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let gamma_square = &gamma.square();
 
                 let leaf_fingerprints = (0..M)
                     .map(|i| {
@@ -624,9 +624,10 @@ where
         gamma: &F,
         tau: &F,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let read_fingerprints: Vec<DensePolynomial<F>> = self.read_leaves(polynomials, gamma, tau);
-        let write_fingerprints: Vec<DensePolynomial<F>> =
-            self.write_leaves(polynomials, gamma, tau);
+        let (read_fingerprints, write_fingerprints) = rayon::join(
+            || self.read_leaves(polynomials, gamma, tau),
+            || self.write_leaves(polynomials, gamma, tau),
+        );
         assert_eq!(read_fingerprints.len(), write_fingerprints.len());
         assert_eq!(read_fingerprints.len(), Self::NUM_MEMORIES);
 
@@ -643,13 +644,19 @@ where
                 let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
                     split_poly_flagged(&write_fingerprints[i], &flag);
 
-                let read_circuit = GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_read_fingerprints_l),
-                    DensePolynomial::new(toggled_read_fingerprints_r),
-                );
-                let write_circuit = GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_write_fingerprints_l),
-                    DensePolynomial::new(toggled_write_fingerprints_r),
+                let (read_circuit, write_circuit) = rayon::join(
+                    || {
+                        GrandProductCircuit::new_split(
+                            DensePolynomial::new(toggled_read_fingerprints_l),
+                            DensePolynomial::new(toggled_read_fingerprints_r),
+                        )
+                    },
+                    || {
+                        GrandProductCircuit::new_split(
+                            DensePolynomial::new(toggled_write_fingerprints_l),
+                            DensePolynomial::new(toggled_write_fingerprints_r),
+                        )
+                    },
                 );
                 vec![read_circuit, write_circuit]
             })
@@ -1103,7 +1110,13 @@ where
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
         let num_eval_points = degree + 1;
 
-        let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys, &memory_polys, num_eval_points, &instruction_to_memory_indices_map);
+        let round_uni_poly = Self::primary_sumcheck_inner_loop(
+            &eq_poly,
+            &flag_polys,
+            &memory_polys,
+            num_eval_points,
+            &instruction_to_memory_indices_map,
+        );
         compressed_polys.push(round_uni_poly.compress());
         let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
         random_vars.push(r_j);
@@ -1115,16 +1128,21 @@ where
             .par_iter()
             .map(|poly| poly.new_poly_from_bound_poly_var_top_flags(&r_j))
             .collect();
-        let mut memory_polys_updated: Vec<DensePolynomial<F>> = memory_polys 
+        let mut memory_polys_updated: Vec<DensePolynomial<F>> = memory_polys
             .par_iter()
             .map(|poly| poly.new_poly_from_bound_poly_var_top(&r_j))
             .collect();
         drop(_bind_enter);
         drop(_bind_span);
 
-
         for _round in 1..num_rounds {
-            let round_uni_poly = Self::primary_sumcheck_inner_loop(&eq_poly, &flag_polys_updated, &memory_polys_updated, num_eval_points, &instruction_to_memory_indices_map);
+            let round_uni_poly = Self::primary_sumcheck_inner_loop(
+                &eq_poly,
+                &flag_polys_updated,
+                &memory_polys_updated,
+                num_eval_points,
+                &instruction_to_memory_indices_map,
+            );
             compressed_polys.push(round_uni_poly.compress());
             let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
             random_vars.push(r_j);
@@ -1150,7 +1168,9 @@ where
 
         // Polys are fully defined so we can just take the first (and only) evaluation
         // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
-        let flag_evals = (0..flag_polys_updated.len()).map(|i| flag_polys_updated[i][0]).collect();
+        let flag_evals = (0..flag_polys_updated.len())
+            .map(|i| flag_polys_updated[i][0])
+            .collect();
         let memory_evals = (0..memory_polys_updated.len())
             .map(|i| memory_polys_updated[i][0])
             .collect();
@@ -1169,7 +1189,7 @@ where
         flag_polys: &Vec<DensePolynomial<F>>,
         memory_polys: &Vec<DensePolynomial<F>>,
         num_eval_points: usize,
-        instruction_to_memory_indices_map: &Vec<Vec<usize>>
+        instruction_to_memory_indices_map: &Vec<Vec<usize>>,
     ) -> UniPoly<F> {
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
@@ -1216,11 +1236,9 @@ where
 
                 // TODO: Some of these intermediates need not be computed if flags is computed
                 for memory_index in 0..Self::NUM_MEMORIES {
-                    multi_memory_evals[0][memory_index] =
-                        memory_polys[memory_index][low_index];
+                    multi_memory_evals[0][memory_index] = memory_polys[memory_index][low_index];
 
-                    multi_memory_evals[1][memory_index] =
-                        memory_polys[memory_index][high_index];
+                    multi_memory_evals[1][memory_index] = memory_polys[memory_index][high_index];
                     let memory_m = memory_polys[memory_index][high_index]
                         - memory_polys[memory_index][low_index];
                     for eval_index in 2..num_eval_points {
@@ -1278,7 +1296,10 @@ where
         round_uni_poly
     }
 
-    fn update_primary_sumcheck_transcript(round_uni_poly: UniPoly<F>, transcript: &mut Transcript) -> F {
+    fn update_primary_sumcheck_transcript(
+        round_uni_poly: UniPoly<F>,
+        transcript: &mut Transcript,
+    ) -> F {
         <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
             &round_uni_poly,
             b"poly",
