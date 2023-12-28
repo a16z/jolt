@@ -125,8 +125,8 @@ impl<F: PrimeField> SparseEntry<F> {
 
 #[derive(Debug, Clone)]
 pub struct SparseGrandProductCircuit<F> {
-    left_vec: Vec<Vec<F>>,
-    right_vec: Vec<Vec<F>>,
+    left_vec: Vec<Vec<SparseEntry<F>>>,
+    right_vec: Vec<Vec<SparseEntry<F>>>,
 }
 
 impl<F: PrimeField> SparseGrandProductCircuit<F> {
@@ -138,10 +138,11 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
         let mut lefts: Vec<Vec<SparseEntry<F>>> = Vec::with_capacity(num_layers);
         let mut rights: Vec<Vec<SparseEntry<F>>> = Vec::with_capacity(num_layers);
 
-        // TODO(sragss): Attempt rough capacity planning here?
+        // TODO(sragss): Attempt rough capacity planning here? We could construct metadata from initial flag scan.
         let mut left: Vec<SparseEntry<F>> = Vec::new();
         let mut right: Vec<SparseEntry<F>> = Vec::new();
 
+        // First layer
         for leaf_index in 0..num_leaves {
             if flags[leaf_index] { 
                 if leaf_index < leaf_half {
