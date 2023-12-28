@@ -6,7 +6,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
 use textplots::{Chart, Plot, Shape};
 
-use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit};
+use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit, prove_jolt_circuit, verify_jolt_circuit};
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
@@ -31,7 +31,6 @@ use self::read_write_memory::{
     MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
     ReadWriteMemoryProof,
 };
-
 struct JoltProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     instruction_lookups: InstructionLookupsProof<F, G>,
     read_write_memory: ReadWriteMemoryProof<F, G>,
@@ -211,16 +210,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let [mut prog_a_rw, mut prog_v_rw, prog_t_reads] = 
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace, N_SKIP);
+        // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order. 
         prog_v_rw.extend(circuit_flags
             .chunks(N_FLAGS)
             .map(|x| {
-                let mut packed = F::ZERO;
-                for (i, flag) in x.iter().enumerate() {
-                    packed += *flag * F::from(2u64.pow((N_FLAGS-1-i) as u32));
-                }
-                packed
+                x.iter()
+                 .enumerate()
+                 .fold(F::zero(), |packed, (i, flag)| {
+                     packed + *flag * F::from(2u64.pow((N_FLAGS-1-i) as u32))
+                 })
             })
-            .collect::<Vec<F>>()
         );
 
         let [mut memreg_a_rw, mut memreg_v_reads, mut memreg_v_writes, _] 
@@ -278,12 +277,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         ];
 
         // TODO: move this conversion to the r1cs module 
+        use common::field_conversion::ark_to_ff; 
+        // Exact instantiations of the field used
         use spartan2::provider::bn256_grumpkin::bn256;
-        use spartan2::traits::Group;
         use bn256::Scalar as Spartan2Fr;
         type G1 = bn256::Point;
-        use ff::Field;
-        use common::field_conversion::ark_to_spartan; 
         type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
         type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
 
@@ -291,7 +289,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .into_iter()
             .map(|input| input
                 .into_iter()
-                .map(|x| ark_to_spartan(x))
+                .map(|x| ark_to_ff(x))
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
 

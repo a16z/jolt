@@ -1,15 +1,16 @@
 pragma circom 2.1.6;
 
 /* Compiler Variables */
-function NUM_STEPS() {return 182;} // ignore first 3 and the last one 
+function NUM_STEPS() {return 182;} // NOTE: Fibonacci ignores first 3
 function W() {return 32;}
 function C() {return 4;}
 function PROG_START_ADDR() {return 2147483664;}
 function N_FLAGS() {return 17;}
 function LOG_M() { return 16; }
-function L_CHUNK() { return 8; }
+/* End of Compiler Variables */
 
-// memreg ops per step 
+function L_CHUNK() { return LOG_M()/2; } 
+// "memreg ops per step" 
 function MOPS() {if (W() == 32) {return 7;} else {return 11;}}
 
 /*  Constants: written as functions because circom.

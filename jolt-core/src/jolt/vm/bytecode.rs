@@ -101,7 +101,6 @@ impl ELFRow {
             None,
         ).to_circuit_flags();
 
-        // convert each element of circuit_flags to a u8 cause they must be 0 or 1 
         let circuit_flags_bits: Vec<bool> = circuit_flags.iter().map(|x| 
             if x.is_zero() { false } else { true } 
         ).collect();
@@ -217,8 +216,10 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         ]
     }
 
+    // A prefix of N_SKIP trace rows preceding the actual program. 
+    // This happens in Fibonacci when the program gets into an infinite loop at the start. 
+    // TODO(arasuarun): See if this can be done before calling prove_r1cs. 
     fn from_elf_r1cs(elf: &Vec<ELFRow>, N_SKIP: usize) -> Vec<F> {
-        // Do not pad. 
         let len = elf.len();
 
         let mut opcodes = Vec::with_capacity(len);
@@ -226,7 +227,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         let mut rs1s = Vec::with_capacity(len);
         let mut rs2s = Vec::with_capacity(len);
         let mut imms = Vec::with_capacity(len);
-        // TODO: handle circuit flags here and not in prove_r1cs()
+        // TODO(arasuarun): handle circuit flags here and not in prove_r1cs()
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
         for row in elf {

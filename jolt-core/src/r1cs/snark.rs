@@ -3,7 +3,7 @@ use std::env::current_dir;
 use spartan2::{
   provider::bn256_grumpkin::bn256,
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
-  SNARK, errors::SpartanError,
+  SNARK, errors::SpartanError, VerifierKey,
 };
 
 use bellpepper_core::{Circuit, ConstraintSystem, SynthesisError};
@@ -144,6 +144,20 @@ pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circ
   let res = snark.verify(&vk);
   // assert!(res.is_ok());
   res 
+}
+
+pub fn prove_jolt_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<(VerifierKey<G, S>, SNARK<G, S, JoltCircuit<<G as Group>::Scalar>>), SpartanError> {
+  let (pk, vk) = SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
+  let res = SNARK::prove(&pk, circuit);
+  assert!(res.is_ok());
+  Ok((vk, res.unwrap())) 
+}
+
+pub fn verify_jolt_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(
+  vk: VerifierKey<G, S>, 
+  proof: SNARK<G, S, JoltCircuit<<G as Group>::Scalar>>
+) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
+  proof.verify(&vk)
 }
 
 mod test {
