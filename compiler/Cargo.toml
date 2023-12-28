@@ -1,0 +1,10 @@
+[package]
+name = "compiler"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.4.11"
+common = { path = "../common" }
+jolt-core = { path = "../jolt-core" }
+tracer = { path = "../tracer" }
