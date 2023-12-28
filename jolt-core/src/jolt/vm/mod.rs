@@ -4,6 +4,7 @@ use merlin::Transcript;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
+use textplots::{Chart, Plot, Shape};
 
 use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit};
 use crate::jolt::{
