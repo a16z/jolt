@@ -157,7 +157,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .enumerate()
             .map(|(i, &ts)| SLTUInstruction(ts, (i / MEMORY_OPS_PER_INSTRUCTION) as u64 + 1))
             .collect();
-        let surge_M = memory_trace_size
+        let surge_M = 2 * memory_trace_size
             .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
             .next_power_of_two();
         let timestamp_validity_proof =
@@ -181,7 +181,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &proof.commitment,
             transcript,
         )?;
-        let surge_M = proof.memory_trace_size.next_power_of_two();
+        let surge_M = 2 * proof.memory_trace_size.next_power_of_two();
         <Surge<F, G, SLTUInstruction, 2>>::verify(
             proof.timestamp_validity_proof,
             transcript,
