@@ -1,5 +1,6 @@
 use std::env::current_dir;
 
+use common::path::JoltPaths;
 use spartan2::{
   provider::bn256_grumpkin::bn256,
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
@@ -65,11 +66,10 @@ impl<F: PrimeField> JoltCircuit<F> {
 
 impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-    let circuit_dir = std::env::var("CIRCUIT_DIR").expect("failed to read CICUIT_DIR, should've been set by build.rs");
-    println!("CIRCUIT DIR IS: {}", circuit_dir);
-    let circuit_dir = std::path::PathBuf::from(&circuit_dir);
-    let r1cs_path = circuit_dir.join("jolt.r1cs");
-    let wtns_path = circuit_dir.join("jolt_js/jolt.wasm");
+    // TODO(sragss): These paths should not be hardcoded.
+    let circuit_dir = JoltPaths::circuit_artifacts_path();
+    let r1cs_path = circuit_dir.join("jolt-fibonacci.r1cs");
+    let wtns_path = circuit_dir.join("jolt-fibonacci_js/jolt-fibonacci.wasm");
 
     let cfg = CircomConfig::new(wtns_path, r1cs_path.clone()).unwrap();
 

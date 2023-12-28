@@ -8,6 +8,7 @@ pub mod JoltPaths {
     const TRACE_DIR_NAME: &'static str = "traces";
     const TRACE_FILE_SUFFIX: &'static str = "jolttrace";
     const BYTECODE_FILE_SUFFIX: &'static str = "joltbytecode";
+    const CIRCUIT_DIR_NAME: &'static str = "circuits";
 
     fn root() -> PathBuf {
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
@@ -33,5 +34,21 @@ pub mod JoltPaths {
         target_dir()
             .join(TRACE_DIR_NAME)
             .join(format!("{}.{}", program_name, BYTECODE_FILE_SUFFIX))
+    }
+
+    pub fn circuit_template_path() -> PathBuf {
+        root().join("../jolt-core/src/r1cs/circuits/jolt.template.circom").canonicalize().unwrap()
+    }
+
+    pub fn circom_build_script_path() -> PathBuf {
+        root().join("../jolt-core/src/r1cs/scripts/compile_jolt.sh").canonicalize().unwrap()
+    }
+
+    pub fn circuit_artifacts_path() -> PathBuf {
+        target_dir().join(CIRCUIT_DIR_NAME)
+    }
+
+    pub fn compiled_circuit_path(program_name: &str) -> PathBuf {
+        circuit_artifacts_path().join(format!("jolt-{program_name}.circom"))
     }
 }

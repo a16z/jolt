@@ -1,36 +1,15 @@
 extern crate tracer;
 
 use std::env;
-
 use common::path::JoltPaths;
-use common::serializable::Serializable;
-use tracer::{decode, trace};
+use tracer::run_tracer_with_paths;
 
-pub fn run_tracer(program_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_tracer(program_name: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     let elf_location = JoltPaths::elf_path(program_name);
     let trace_destination = JoltPaths::trace_path(program_name);
     let bytecode_destination = JoltPaths::bytecode_path(program_name);
 
-    if !elf_location.exists() {
-        return Err(format!("Could not find ELF file at location {:?}", elf_location).into());
-    }
-
-    let rows = trace(&elf_location);
-    rows.serialize_to_file(&trace_destination)?;
-    println!(
-        "Wrote {} rows to         {}.",
-        rows.len(),
-        trace_destination.display()
-    );
-
-    let instructions = decode(&elf_location);
-    instructions.serialize_to_file(&bytecode_destination)?;
-    println!(
-        "Wrote {} instructions to {}.",
-        instructions.len(),
-        bytecode_destination.display()
-    );
-    Ok(())
+    run_tracer_with_paths(elf_location, trace_destination, bytecode_destination)
 }
 
 pub fn main() {
