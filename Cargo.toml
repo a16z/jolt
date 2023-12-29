@@ -25,7 +25,8 @@ members = [
     "common",
     "compiler",
     "examples/fibonacci",
-    "examples/hash"
+    "examples/hash",
+    "integration-tests"
 ]
 
 [profile.release]
