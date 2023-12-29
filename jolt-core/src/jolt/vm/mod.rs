@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use std::any::TypeId;
+use std::path::PathBuf;
 use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
 use textplots::{Chart, Plot, Shape};
@@ -199,6 +200,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
+        witness_generator_path: PathBuf,
+        r1cs_path: PathBuf
     ) {
         let N_SKIP = 3;  // the instructions at the beginning of the trace to be skipped 
         let N_FLAGS = 17;
@@ -295,7 +298,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
 
-        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff);
+        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff, witness_generator_path, r1cs_path);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
         assert!(result_verify.is_ok());
     }

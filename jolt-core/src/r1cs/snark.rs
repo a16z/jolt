@@ -1,4 +1,4 @@
-use std::env::current_dir;
+use std::{env::current_dir, path::PathBuf};
 
 use common::path::JoltPaths;
 use spartan2::{
@@ -8,7 +8,6 @@ use spartan2::{
 };
 
 use bellpepper_core::{Circuit, ConstraintSystem, SynthesisError};
-use core::marker::PhantomData;
 use ff::PrimeField;
 // use ark_ff::PrimeField; 
 
@@ -31,18 +30,23 @@ pub struct JoltCircuit<F: PrimeField> {
   // chunks_query: Vec<F>, 
   // lookup_outputs: Vec<F>, 
   // op_flags: Vec<F>,
+  witness_generator_path: PathBuf,
+  r1cs_path: PathBuf,
 }
 
 impl<F: PrimeField> JoltCircuit<F> {
-  pub fn new_from_inputs(W: usize, c: usize, inputs: Vec<Vec<F>>) -> Self {
+  pub fn new_from_inputs(W: usize, c: usize, inputs: Vec<Vec<F>>, witness_generator_path: PathBuf, r1cs_path: PathBuf) -> Self {
+    // TODO(sragss): What is W?
     JoltCircuit{
-      width: 64,
-      c: 6,
+      width: W,
+      c: c,
       inputs: inputs,
+      witness_generator_path, 
+      r1cs_path
     }
   }
 
-  pub fn all_zeros(W: usize, c: usize, N: usize) -> Self {
+  pub fn all_zeros(W: usize, c: usize, N: usize, witness_generator_path: PathBuf, r1cs_path: PathBuf) -> Self {
     JoltCircuit{
       width: W,
       c: c,
@@ -59,7 +63,9 @@ impl<F: PrimeField> JoltCircuit<F> {
         vec![F::ZERO; N * c],
         vec![F::ZERO; N],
         vec![F::ZERO; N * 15],
-      ]
+      ],
+      witness_generator_path,
+      r1cs_path
     }
   }
 }
@@ -71,7 +77,7 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
     let r1cs_path = circuit_dir.join("jolt-fibonacci.r1cs");
     let wtns_path = circuit_dir.join("jolt-fibonacci_js/jolt-fibonacci.wasm");
 
-    let cfg = CircomConfig::new(wtns_path, r1cs_path.clone()).unwrap();
+    let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
 
     let variable_names = [
       "prog_a_rw", 
@@ -114,20 +120,21 @@ fn run_jolt_spartan() {
 }
 
 fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>() {
-  let circuit: JoltCircuit<<G as Group>::Scalar> = JoltCircuit::all_zeros(64, 6, 2);
+  unimplemented!()
+  // let circuit: JoltCircuit<<G as Group>::Scalar> = JoltCircuit::all_zeros(64, 6, 2);
 
-    // produce keys
-    let (pk, vk) =
-        SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
+  //   // produce keys
+  //   let (pk, vk) =
+  //       SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
 
-    // produce a SNARK
-    let res = SNARK::prove(&pk, circuit);
-    assert!(res.is_ok());
-    let snark = res.unwrap();
+  //   // produce a SNARK
+  //   let res = SNARK::prove(&pk, circuit);
+  //   assert!(res.is_ok());
+  //   let snark = res.unwrap();
 
-    // verify the SNARK
-    let res = snark.verify(&vk);
-    assert!(res.is_ok());
+  //   // verify the SNARK
+  //   let res = snark.verify(&vk);
+  //   assert!(res.is_ok());
 }
 
 
@@ -199,9 +206,10 @@ mod test {
       op_flags,
     ];
 
-    let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
-    let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-    assert!(res_verifier.is_ok());
+    unimplemented!("Need to commit a src/r1cs/test-artifacts/ <witness generator> / <r1cs>");
+    // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
+    // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+    // assert!(res_verifier.is_ok());
   }
 
   #[test]
@@ -267,9 +275,10 @@ mod test {
       op_flags,
     ];
 
-    let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
-    let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-    assert!(res_verifier.is_ok());
+    unimplemented!("Need to commit a src/r1cs/test-artifacts/ <witness generator> / <r1cs>");
+    // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
+    // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+    // assert!(res_verifier.is_ok());
   }
 
   #[test]
@@ -333,8 +342,9 @@ mod test {
       op_flags,
     ];
 
-    let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
-    let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-    assert!(res_verifier.is_err());
+    unimplemented!("Need to commit a src/r1cs/test-artifacts/ <witness generator> / <r1cs>");
+    // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
+    // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+    // assert!(res_verifier.is_err());
   }
 }
