@@ -199,7 +199,7 @@ mod tests {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
-        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -265,7 +265,7 @@ mod tests {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
-        let mut bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
+        let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -310,16 +310,17 @@ mod tests {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
-        RV32IJoltVM::prove_r1cs(
-            instructions_r1cs, 
-            bytecode_rows,
-            bytecode_trace,
-            bytecode, 
-            memory_trace_r1cs, 
-            circuit_flags,
-            &mut transcript,
-            &mut random_tape,
-        );
+        unimplemented!("RV32IJoltVM::prove_r1cs requires witness_generator_path, r1cs_path – which are custom to fibonacci, thus these tests should be moved to an integration-tests workspace");
+        // RV32IJoltVM::prove_r1cs(
+        //     instructions_r1cs, 
+        //     bytecode_rows,
+        //     bytecode_trace,
+        //     bytecode, 
+        //     memory_trace_r1cs, 
+        //     circuit_flags,
+        //     &mut transcript,
+        //     &mut random_tape,
+        // );
     }
 
 

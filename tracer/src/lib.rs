@@ -2,7 +2,7 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use common;
+use common::{self, serializable::Serializable};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
@@ -18,6 +18,44 @@ mod trace;
 pub use common::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
 
 use crate::decode::decode_raw;
+
+/// Runs the tracer with the provided paths.
+///
+/// # Parameters
+///
+/// * `elf_location`: The path to the ELF file.
+/// * `trace_destination`: The path where the trace will be written.
+/// * `bytecode_destination`: The path where the bytecode will be written.
+///
+/// # Returns
+///
+/// * A `Result` containing a tuple of the num trace rows and instructions if successful, or an error if not.
+pub fn run_tracer_with_paths(
+    elf_location: PathBuf,
+    trace_destination: PathBuf,
+    bytecode_destination: PathBuf,
+) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    if !elf_location.exists() {
+        return Err(format!("Could not find ELF file at location {:?}", elf_location).into());
+    }
+
+    let rows = trace(&elf_location);
+    rows.serialize_to_file(&trace_destination)?;
+    println!(
+        "Wrote {} rows to         {}.",
+        rows.len(),
+        trace_destination.display()
+    );
+
+    let instructions = decode(&elf_location);
+    instructions.serialize_to_file(&bytecode_destination)?;
+    println!(
+        "Wrote {} instructions to {}.",
+        instructions.len(),
+        bytecode_destination.display()
+    );
+    Ok((rows.len(), instructions.len()))
+}
 
 pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     let term = DefaultTerminal::new();
