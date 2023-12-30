@@ -6,5 +6,4 @@ edition = "2021"
 [dependencies]
 clap = "4.4.11"
 common = { path = "../common" }
-jolt-core = { path = "../jolt-core" }
 tracer = { path = "../tracer" }
