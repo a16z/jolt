@@ -67,6 +67,8 @@ eyre = "0.6.9"
 tracing-chrome = "0.7.1"
 dhat = "0.3.2"
 
+compiler = { path = "../compiler" }
+
 [lib]
 name = "liblasso"
 path = "src/lib.rs"

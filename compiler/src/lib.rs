@@ -8,6 +8,22 @@ use common::constants::RAM_START_ADDRESS;
 use common::path::JoltPaths;
 use tracer::run_tracer_with_paths;
 
+pub fn cached_compile_example(example_name: &str) {
+    let elf_location = JoltPaths::elf_path(example_name);
+    let trace_destination = JoltPaths::trace_path(example_name);
+    let bytecode_destination = JoltPaths::bytecode_path(example_name);
+    let witness_gen_location = JoltPaths::witness_generator_path(example_name);
+    let r1cs_location = JoltPaths::r1cs_path(example_name);
+    let circom_location = JoltPaths::compiled_circuit_path(example_name);
+
+    if elf_location.exists() && trace_destination.exists() && bytecode_destination.exists() &&
+       witness_gen_location.exists() && r1cs_location.exists() && circom_location.exists() {
+        println!("{example_name} circuit cached");
+    } else {
+        compile_example(example_name);
+    }
+}
+
 pub fn compile_example(example_name: &str) {
     // Cargo Build
     let cargo_build_status = std::process::Command::new("cargo")

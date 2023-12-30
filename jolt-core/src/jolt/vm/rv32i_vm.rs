@@ -191,6 +191,7 @@ mod tests {
     #[test]
     fn fib_e2e() {
         use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
+        compiler::cached_compile_example("fibonacci");
 
         let trace_location = JoltPaths::trace_path("fibonacci");
         let loaded_trace: Vec<common::RVTraceRow> =
@@ -257,6 +258,7 @@ mod tests {
     #[test]
     fn fib_r1cs() {
         use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
+        compiler::cached_compile_example("fibonacci");
 
         let trace_location = JoltPaths::trace_path("fibonacci");
         let loaded_trace: Vec<common::RVTraceRow> =
@@ -301,7 +303,7 @@ mod tests {
         let circuit_flags = converted_trace.clone()
             .iter()
             .flat_map(|row| {
-                let mut flags = row.to_circuit_flags();
+                let mut flags: Vec<Fr> = row.to_circuit_flags();
                 // flags.reverse();
                 flags.into_iter() 
             })
@@ -310,17 +312,18 @@ mod tests {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
-        unimplemented!("RV32IJoltVM::prove_r1cs requires witness_generator_path, r1cs_path – which are custom to fibonacci, thus these tests should be moved to an integration-tests workspace");
-        // RV32IJoltVM::prove_r1cs(
-        //     instructions_r1cs, 
-        //     bytecode_rows,
-        //     bytecode_trace,
-        //     bytecode, 
-        //     memory_trace_r1cs, 
-        //     circuit_flags,
-        //     &mut transcript,
-        //     &mut random_tape,
-        // );
+        RV32IJoltVM::prove_r1cs(
+            instructions_r1cs, 
+            bytecode_rows,
+            bytecode_trace,
+            bytecode, 
+            memory_trace_r1cs, 
+            circuit_flags,
+            &mut transcript,
+            &mut random_tape,
+            JoltPaths::witness_generator_path("fibonacci"),
+            JoltPaths::r1cs_path("fibonacci")
+        );
     }
 
 

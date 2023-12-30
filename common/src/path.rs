@@ -51,4 +51,12 @@ pub mod JoltPaths {
     pub fn compiled_circuit_path(program_name: &str) -> PathBuf {
         circuit_artifacts_path().join(format!("jolt-{program_name}.circom"))
     }
+
+    pub fn r1cs_path(program_name: &str) -> PathBuf {
+        circuit_artifacts_path().join(format!("jolt-{program_name}.r1cs"))
+    }
+
+    pub fn witness_generator_path(program_name: &str) -> PathBuf {
+        circuit_artifacts_path().join(format!("jolt-{program_name}_js/jolt-{program_name}.wasm"))
+    }
 }
