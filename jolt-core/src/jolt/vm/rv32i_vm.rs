@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn fib_e2e() {
         use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        compiler::compile_example("fibonacci");
+        compiler::cached_compile_example("fibonacci");
 
         let trace_location = JoltPaths::trace_path("fibonacci");
         let loaded_trace: Vec<common::RVTraceRow> =
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn fib_r1cs() {
         use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        compiler::compile_example("fibonacci");
+        compiler::cached_compile_example("fibonacci");
 
         let trace_location = JoltPaths::trace_path("fibonacci");
         let loaded_trace: Vec<common::RVTraceRow> =
