@@ -80,3 +80,7 @@ harness = false
 [[bench]]
 name = "dense_mlpoly"
 harness = false
+
+[[bench]]
+name = "materialize"
+harness = false
