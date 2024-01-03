@@ -20,14 +20,13 @@ impl<F: PrimeField> EqSubtable<F> {
 
 impl<F: PrimeField> LassoSubtable<F> for EqSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries: Vec<F> = vec![F::zero(); M];
         let bits_per_operand = (log2(M) / 2) as usize;
 
         // Materialize table entries in order where (x | y) ranges 0..M
-        for idx in 0..M {
-            let (x, y) = split_bits(idx, bits_per_operand);
-            let row = if x == y { F::one() } else { F::zero() };
-            entries.push(row);
+        for idx in 0..(1 << bits_per_operand) {
+            let concat_idx = idx | (idx << bits_per_operand);
+            entries[concat_idx] = F::one();
         }
         entries
     }
