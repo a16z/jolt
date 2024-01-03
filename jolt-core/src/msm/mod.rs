@@ -117,6 +117,12 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 
     let num_bits = max_num_bits;
     let digits_count = (num_bits + c - 1) / c;
+    #[cfg(feature = "parallel")]
+    let scalar_digits = scalars
+        .into_par_iter()
+        .flat_map_iter(|s| make_digits(s, c, num_bits))
+        .collect::<Vec<_>>();
+    #[cfg(not(feature = "parallel"))]
     let scalar_digits = scalars
         .iter()
         .flat_map(|s| make_digits(s, c, num_bits))
