@@ -3,7 +3,6 @@ use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
-use crate::utils::split_bits;
 
 #[derive(Default)]
 pub struct EqSubtable<F: PrimeField> {
