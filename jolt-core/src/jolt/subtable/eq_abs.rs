@@ -21,10 +21,11 @@ impl<F: PrimeField> LassoSubtable<F> for EqAbsSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = vec![F::zero(); M];
         let bits_per_operand = (log2(M) / 2) as usize;
-        // 0b01111...11
-        let lower_bits_mask = (1 << (bits_per_operand - 1)) - 1;
 
         // Materialize table entries in order where (x | y) ranges 0..M
+        // Below is the optimized loop for the condition:
+        // lower_bits_mask = 0b01111...11
+        // table[x | y] == (x & lower_bits_mask) == (y & lower_bits_mask)
         for idx in 0..(1 << (bits_per_operand)) {
             // we set the bit in the table where x == y
             // e.g. 01010011 | 01010011 = 1

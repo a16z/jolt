@@ -23,6 +23,8 @@ impl<F: PrimeField> LassoSubtable<F> for EqSubtable<F> {
         let bits_per_operand = (log2(M) / 2) as usize;
 
         // Materialize table entries in order where (x | y) ranges 0..M
+        // Below is the optimized loop for the condition:
+        // table[x | y] = x == y
         for idx in 0..(1 << bits_per_operand) {
             let concat_idx = idx | (idx << bits_per_operand);
             entries[concat_idx] = F::one();
