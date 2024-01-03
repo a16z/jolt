@@ -74,10 +74,11 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     // TODO(sragss): These paths should not be hardcoded.
     let circuit_dir = JoltPaths::circuit_artifacts_path();
-    let r1cs_path = circuit_dir.join("jolt-fibonacci.r1cs");
-    let wtns_path = circuit_dir.join("jolt-fibonacci_js/jolt-fibonacci.wasm");
+    let r1cs_path = circuit_dir.join("jolt_single_step.r1cs");
+    let wtns_path = circuit_dir.join("jolt_single_step_js/jolt_single_step.wasm");
 
-    let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
+    // let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
+    let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
 
     let variable_names = [
       "prog_a_rw", 
@@ -88,24 +89,42 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
       "chunks_x", 
       "chunks_y", 
       "chunks_query", 
-      "lookup_outputs", 
+      "lookup_output", 
       "op_flags"
     ];
 
-    let input: Vec<(String, Vec<F>)> = variable_names
-      .iter()
-      .zip(self.inputs.into_iter())
-      .map(|(name, input)| (name.to_string(), input))
+    let NUM_STEPS = self.inputs[0].len();
+
+    // for variable [v], step_inputs[v][j] is the variable input for step j
+    let inputs_chunked : Vec<Vec<_>> = self.inputs
+      .into_iter()
+      .map(|inner_vec| inner_vec.chunks(inner_vec.len()/NUM_STEPS).map(|chunk| chunk.to_vec()).collect())
       .collect();
 
-    let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
+    let mut current_state = [F::from(16), F::from(2147483664)];
 
-    let _ = circom_scotia::synthesize(
-        cs, //.namespace(|| "jolt_circom"),
-        cfg.r1cs.clone(),
-        Some(jolt_witness),
-    )
-    .unwrap();
+    for i in 0..NUM_STEPS {
+      let step_inputs = inputs_chunked.iter().map(|v| v[i].clone()).collect::<Vec<_>>();
+
+      let mut input: Vec<(String, Vec<F>)> = variable_names
+        .iter()
+        .zip(step_inputs.into_iter())
+        .map(|(name, input)| (name.to_string(), input))
+        .collect();
+
+      input.push(("input_state".to_string(), current_state.to_vec()));
+
+      let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
+
+      current_state = [jolt_witness[1], jolt_witness[2]]; 
+
+      let _ = circom_scotia::synthesize(
+          &mut cs.namespace(|| format!("jolt_step_{}", i)),
+          cfg.r1cs.clone(),
+          Some(jolt_witness),
+      )
+      .unwrap();
+    }
 
     Ok(())
   }
