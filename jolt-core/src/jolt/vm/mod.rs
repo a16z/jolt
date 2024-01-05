@@ -214,6 +214,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let [prog_a_rw, mut prog_v_rw, prog_t_reads] = 
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace, N_SKIP);
+
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order. 
         prog_v_rw.extend(circuit_flags
             .chunks(N_FLAGS)
@@ -226,7 +227,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             })
         );
 
-        println!("beginning transformation"); 
         /* Transformation for single-step version */
         let prog_v_components = prog_v_rw.chunks(TRACE_LEN).collect::<Vec<_>>();
         let mut new_prog_v_rw = Vec::with_capacity(prog_v_rw.len());
@@ -241,8 +241,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         prog_v_rw = new_prog_v_rw;
         /* End of transformation for single-step version */
-
-        println!("ending transformation"); 
 
         let [mut memreg_a_rw, mut memreg_v_reads, mut memreg_v_writes, _] 
             = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);

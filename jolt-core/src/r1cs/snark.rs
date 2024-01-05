@@ -7,7 +7,7 @@ use spartan2::{
   SNARK, errors::SpartanError, VerifierKey,
 };
 
-use bellpepper_core::{Circuit, ConstraintSystem, SynthesisError};
+use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index};
 use ff::PrimeField;
 // use ark_ff::PrimeField; 
 
@@ -126,6 +126,28 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
       .unwrap();
     }
 
+    /* Consistency constraints between steps: 
+    - Note that all steps use the same CS::one() variable as the constant 
+    - The only task then is to ensure that the input of each step is the output of the previous step  
+
+    Every variable is allocated into Aux and is in the following order: 
+    Aux: [out0, in0, aux0, ..., out_i, in_i, aux_i ...]
+     */
+
+    let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
+    let STATE_SIZE = 2; 
+    for i in 0..NUM_STEPS-1 {
+      let out_start_index = NUM_VARS_PER_STEP * i;
+      let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
+      for j in 0..STATE_SIZE {
+        cs.enforce(
+          || format!("io consistency constraint {}, {}", i, j),
+          |_| LinearCombination::<F>::zero() + (F::from(1), CS::one()), 
+          |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(in_start_next+j))), 
+          |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(out_start_index+j))), 
+        );
+      }
+    }
     Ok(())
   }
 }
