@@ -876,7 +876,7 @@ impl JoltProvableTrace for RVTraceRow {
         // 15: is lui or auipc
         // 16: is jal
 
-        let mut flags = vec![false; 17];
+        let mut flags = vec![false; 18];
 
         flags[0] = match self.opcode {
             RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
@@ -1006,6 +1006,11 @@ impl JoltProvableTrace for RVTraceRow {
 
         flags[16] = match self.opcode {
             RV32IM::JAL => true,
+            _ => false,
+        };
+
+        flags[17] = match self.opcode {
+            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI => true,
             _ => false,
         };
 
