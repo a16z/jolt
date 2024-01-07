@@ -17,6 +17,8 @@ use circom_scotia::{calculate_witness, r1cs::CircomConfig};
 pub struct JoltCircuit<F: PrimeField> {
   width: usize,
   c: usize,
+  num_steps: usize,
+  pc_start_addr: F,
   inputs: Vec<Vec<F>>,
   // prog_a_rw: Vec<F>, 
   // prog_v_rw: Vec<F>, 
@@ -35,11 +37,13 @@ pub struct JoltCircuit<F: PrimeField> {
 }
 
 impl<F: PrimeField> JoltCircuit<F> {
-  pub fn new_from_inputs(W: usize, c: usize, inputs: Vec<Vec<F>>, witness_generator_path: PathBuf, r1cs_path: PathBuf) -> Self {
+  pub fn new_from_inputs(W: usize, c: usize, num_steps: usize, PC_START_ADDR: F, inputs: Vec<Vec<F>>, witness_generator_path: PathBuf, r1cs_path: PathBuf) -> Self {
     // TODO(sragss): What is W?
     JoltCircuit{
       width: W,
       c: c,
+      num_steps: num_steps,
+      pc_start_addr: PC_START_ADDR,
       inputs: inputs,
       witness_generator_path, 
       r1cs_path
@@ -50,6 +54,8 @@ impl<F: PrimeField> JoltCircuit<F> {
     JoltCircuit{
       width: W,
       c: c,
+      num_steps: N,
+      pc_start_addr: 0.into(),
       inputs: vec![
         vec![F::ZERO; N * 6], // TODO: change this to just N * 1 as prog code address is de-duplicated
         vec![F::ZERO; N * 6],
@@ -93,15 +99,17 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
       "op_flags"
     ];
 
-    let NUM_STEPS = self.inputs[0].len();
+    assert_eq!(self.num_steps, self.inputs[0].len()); 
+    let TRACE_LEN = self.inputs[0].len();
+    let NUM_STEPS = 100;
 
     // for variable [v], step_inputs[v][j] is the variable input for step j
     let inputs_chunked : Vec<Vec<_>> = self.inputs
       .into_iter()
-      .map(|inner_vec| inner_vec.chunks(inner_vec.len()/NUM_STEPS).map(|chunk| chunk.to_vec()).collect())
+      .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
       .collect();
 
-    let mut current_state = [F::from(16), F::from(2147483664)];
+    let mut current_state = [F::from(0), self.pc_start_addr];
 
     for i in 0..NUM_STEPS {
       let step_inputs = inputs_chunked.iter().map(|v| v[i].clone()).collect::<Vec<_>>();

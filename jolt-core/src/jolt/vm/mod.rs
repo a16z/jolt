@@ -200,11 +200,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
+        N_SKIP: usize, // the instructions at the beginning of the trace to be skipped 
         witness_generator_path: PathBuf,
-        r1cs_path: PathBuf
+        r1cs_path: PathBuf,
     ) {
-        let N_SKIP = 3;  // the instructions at the beginning of the trace to be skipped 
-        let N_FLAGS = 17;
+        let N_FLAGS = 18;
         let TRACE_LEN = trace.len()-N_SKIP;
 
         let log_M = log2(M) as usize;
@@ -313,7 +313,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
 
-        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff, witness_generator_path, r1cs_path);
+        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff, witness_generator_path, r1cs_path);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
         assert!(result_verify.is_ok());
     }

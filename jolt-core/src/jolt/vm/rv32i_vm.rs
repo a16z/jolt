@@ -321,8 +321,81 @@ mod tests {
             circuit_flags,
             &mut transcript,
             &mut random_tape,
+            3,
             JoltPaths::witness_generator_path("fibonacci"),
             JoltPaths::r1cs_path("fibonacci")
+        );
+    }
+
+    #[test]
+    fn hash_r1cs() {
+        use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
+        compiler::cached_compile_example("hash");
+
+        let trace_location = JoltPaths::trace_path("hash");
+        let loaded_trace: Vec<common::RVTraceRow> =
+            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
+                .expect("deserialization failed");
+        let bytecode_location = JoltPaths::bytecode_path("hash");
+        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+            .expect("deserialization failed");
+        let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
+
+        let converted_trace: Vec<RVTraceRow> = loaded_trace
+            .into_iter()
+            .map(|common| RVTraceRow::from_common(common))
+            .collect();
+
+        let bytecode_trace: Vec<ELFRow> = converted_trace
+            .iter()
+            .map(|row| row.to_bytecode_trace())
+            .collect();
+
+        let instructions: Vec<RV32I> = converted_trace
+            .clone()
+            .into_iter()
+            .flat_map(|row| row.to_jolt_instructions())
+            .collect();
+
+        let instructions_r1cs: Vec<RV32I> = converted_trace
+            .clone()
+            .into_iter()
+            .flat_map(|row| {
+                let instructions = row.to_jolt_instructions();
+                if instructions.is_empty() {
+                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()] 
+                } else {
+                    instructions
+                }
+            })
+            .collect();
+    
+        let memory_trace_r1cs = converted_trace.clone().into_iter().flat_map(|row| row.to_ram_ops()).collect_vec();
+
+        let circuit_flags = converted_trace.clone()
+            .iter()
+            .flat_map(|row| {
+                let mut flags: Vec<Fr> = row.to_circuit_flags();
+                // flags.reverse();
+                flags.into_iter() 
+            })
+            .collect::<Vec<_>>();
+
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        let mut random_tape: RandomTape<EdwardsProjective> =
+            RandomTape::new(b"Jolt prover randomness");
+        RV32IJoltVM::prove_r1cs(
+            instructions_r1cs, 
+            bytecode_rows,
+            bytecode_trace,
+            bytecode, 
+            memory_trace_r1cs, 
+            circuit_flags,
+            &mut transcript,
+            &mut random_tape,
+            954,
+            JoltPaths::witness_generator_path("hash"),
+            JoltPaths::r1cs_path("hash")
         );
     }
 
