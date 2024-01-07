@@ -101,7 +101,7 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
     assert_eq!(self.num_steps, self.inputs[0].len()); 
     let TRACE_LEN = self.inputs[0].len();
-    let NUM_STEPS = 100;
+    let NUM_STEPS = TRACE_LEN;
 
     // for variable [v], step_inputs[v][j] is the variable input for step j
     let inputs_chunked : Vec<Vec<_>> = self.inputs
