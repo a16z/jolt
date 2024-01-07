@@ -5,7 +5,7 @@ function NUM_STEPS() {return 182;} // NOTE: Fibonacci ignores first 3
 function W() {return 32;}
 function C() {return 4;}
 function PROG_START_ADDR() {return 2147483664;}
-function N_FLAGS() {return 17;}
+function N_FLAGS() {return 18;}
 function LOG_M() { return 16; }
 /* End of Compiler Variables */
 
@@ -158,6 +158,7 @@ template JoltStep() {
     signal is_concat <== op_flags[14];
     signal is_lui_auipc <== op_flags[15];
     signal is_jal <== op_flags[16];
+    signal is_shift <== op_flags[17];
 
     // Pre-processing the imm 
     signal _immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
@@ -208,7 +209,7 @@ template JoltStep() {
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts are index 3
-        memreg_a_rw[3+i] === memreg_a_rw[3] + i * is_load_store_instr; 
+        (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
     /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
@@ -261,8 +262,10 @@ template JoltStep() {
 
     // the concat checks: 
     // the most significant chunk has a shorter length!
+    signal chunk_y_used[C()]; 
     for (var i=0; i<C(); i++) {
-      (chunks_query[i] - (chunks_y[i] + chunks_x[i] * 2**(L_CHUNK()))) * is_concat === 0;
+        chunk_y_used[i] <== if_else()([is_shift, chunks_y[i], chunks_y[C()-1]]);
+        (chunks_query[i] - (chunk_y_used[i] + chunks_x[i] * 2**L_CHUNK())) * is_concat === 0;
     } 
 
     // TODO: handle case when C() doesn't divide W() 
