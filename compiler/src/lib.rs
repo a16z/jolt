@@ -54,24 +54,25 @@ pub fn compile_example(example_name: &str) {
     };
 
     // Template
-    let circuit_template_location = JoltPaths::circuit_template_path();
-    let circuit_destination = JoltPaths::compiled_circuit_path(example_name);
-    execute_template(&circuit_template_location, &circuit_destination, num_trace_rows, RAM_START_ADDRESS as usize);
+    // let circuit_template_location = JoltPaths::circuit_template_path();
+    // let circuit_destination = JoltPaths::compiled_circuit_path(example_name);
+    // execute_template(&circuit_template_location, &circuit_destination, num_trace_rows, RAM_START_ADDRESS as usize);
 
     // Circom build
-    let build_script_path = JoltPaths::circom_build_script_path();
-    let circuit_artifacts_destination = JoltPaths::circuit_artifacts_path();
-    let circom_build_status = std::process::Command::new(build_script_path)
-        .arg(&circuit_destination)
-        .arg(&circuit_artifacts_destination)
-        .output()
-        .expect("Failed to build circom");
-    if !circom_build_status.status.success() {
-        println!("Failed to build circom: {}", example_name);
-        std::process::exit(1);
-    }
+    // let build_script_path = JoltPaths::circom_build_script_path();
+    // let circuit_artifacts_destination = JoltPaths::circuit_artifacts_path();
+    // let circom_build_status = std::process::Command::new(build_script_path)
+    //     .arg(&circuit_destination)
+    //     .arg(&circuit_artifacts_destination)
+    //     .output()
+    //     .expect("Failed to build circom");
+    // if !circom_build_status.status.success() {
+    //     println!("Failed to build circom: {}", example_name);
+    //     std::process::exit(1);
+    // }
 
-    println!("Successfully built circom {} -> {}", circuit_destination.display(), circuit_artifacts_destination.display())
+    // println!("Successfully built circom {} -> {}", circuit_destination.display(), circuit_artifacts_destination.display())
+
 }
 
 pub fn execute_template(circuit_template_location: &PathBuf, circuit_destination: &PathBuf, num_steps: usize, prog_start: usize) {
