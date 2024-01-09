@@ -36,34 +36,53 @@ impl<F: PrimeField> SparsePoly<F> {
         let mut high_sparse_index: usize = self.upper_index;
         let index_half: usize = 1 << self.num_vars / 2;
         let mut new_entries = Vec::with_capacity(self.entries.len()); // May overshoot by a factor of 2
+        let mut upper_index: Option<usize> = None;
 
         // TODO(sragss): Figure out how to swap in place. Queue system?
+        // TODO(sragss): upper_index compute doesn't work.
 
-        while low_sparse_index < self.upper_index && high_sparse_index < self.entries.len() {
+        while low_sparse_index < self.upper_index || high_sparse_index < self.entries.len() {
             // Mere existence of these indices means they're "non-sparse": not equal to 1.
             let low_index = self.entries[low_sparse_index].index;
             let high_index = self.entries[high_sparse_index].index;
 
             if low_index == (high_index - index_half) {
-                let m = self.entries[low_sparse_index].value - self.entries[low_sparse_index].value;
+                println!("compute");
+                let m = self.entries[high_sparse_index].value - self.entries[low_sparse_index].value;
                 let value: F = self.entries[low_sparse_index].value + *r * m;
                 let entry = SparseEntry::new(value, low_index);
                 new_entries.push(entry);
                 low_sparse_index += 1;
                 high_sparse_index += 1;
-            } else if low_sparse_index < (high_sparse_index - index_half) {
+
+                if upper_index.is_none() && low_index >= index_half {
+                    upper_index = Some(new_entries.len() - 1);
+                }
+            } else if low_index < (high_index - index_half) {
+                println!("clone low");
                 new_entries.push(self.entries[low_sparse_index].clone()); 
                 low_sparse_index += 1;
-            } else if (high_sparse_index - index_half) < low_sparse_index {
+
+                if upper_index.is_none() && low_index >= index_half {
+                    upper_index = Some(new_entries.len() - 1);
+                }
+            } else if (high_index - index_half) < low_index {
+                println!("clone high");
                 let mut entry = self.entries[high_sparse_index].clone();
-                entry.index = high_sparse_index / 2;
+                entry.index = high_index / 2;
                 new_entries.push(entry);
                 high_sparse_index += 1;
+
+                if upper_index.is_none() && high_index >= index_half {
+                    upper_index = Some(new_entries.len() - 1);
+                }
             } else {
                 unreachable!();
             }
         }
         self.entries = new_entries;
+        self.num_vars -= 1;
+        self.upper_index = upper_index.unwrap();
     }
 
     pub fn len(&self) -> usize {
@@ -213,5 +232,24 @@ mod tests {
         let dense = DensePolynomial::new(vec![Fr::one(), Fr::one(), Fr::from(8), Fr::from(8)]);
         let sparse = SparsePoly::new(vec![SparseEntry::new(Fr::from(8), 2), SparseEntry::new(Fr::from(8), 3)], 2, 0);
         assert_eq!(dense, sparse.to_dense());
+    }
+
+    #[test]
+    fn bound_poly_var_top() {
+        let mut dense = DensePolynomial::new(vec![Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]);
+        let mut sparse = SparsePoly::new(
+            vec![
+                SparseEntry::new(Fr::from(4), 0),
+                SparseEntry::new(Fr::from(5), 1),
+                SparseEntry::new(Fr::from(6), 2),
+                SparseEntry::new(Fr::from(7), 3),
+            ], 2, 2);
+        assert_eq!(dense, sparse.clone().to_dense());
+        let r = Fr::from(12);
+        dense.bound_poly_var_top(&r);
+        sparse.bound_poly_var_top(&r);
+        assert_eq!(dense.evals_ref()[0..1], sparse.clone().to_dense().evals_ref()[0..1]);
+        assert_eq!(dense, sparse.to_dense());
+
     }
 }
