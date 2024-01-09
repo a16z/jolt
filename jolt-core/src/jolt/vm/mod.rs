@@ -191,6 +191,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
     fn prove_r1cs(
         instructions: Vec<Self::InstructionSet>,
         mut bytecode_rows: Vec<ELFRow>,
@@ -204,6 +205,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         witness_generator_path: PathBuf,
         r1cs_path: PathBuf,
     ) {
+        println!("[sam]: prove_r1cs"); // TODO(sragss): rm
         let N_FLAGS = 18;
         let TRACE_LEN = trace.len()-N_SKIP;
 
@@ -269,6 +271,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .map(F::from)
             .collect::<Vec<F>>();
 
+        // TODO(sragss): Move to separate function for tracing
         let lookup_outputs = instructions.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
 
         // assert lengths 
@@ -312,7 +315,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 .map(|x| ark_to_ff(x))
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
-
+        
+        println!("[sam]: Running spartan"); // TODO(sragss): rm
         let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff, witness_generator_path, r1cs_path);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
         assert!(result_verify.is_ok());
