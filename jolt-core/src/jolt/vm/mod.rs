@@ -305,7 +305,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         use spartan2::provider::bn256_grumpkin::bn256;
         use bn256::Scalar as Spartan2Fr;
         type G1 = bn256::Point;
-        // type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
         type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
         type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
 

@@ -192,9 +192,10 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 // pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
 pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
   // produce keys
-  let span = tracing::span!(tracing::Level::INFO, "produce keys");
+  let circuit_clone = circuit.clone();
+  let span = tracing::span!(tracing::Level::INFO, "setup SNARK");
   let _guard = span.enter();
-  let (pk, vk) = SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
+  let (pk, vk) = SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit_clone).unwrap();
   drop(_guard);
   drop(span);
 
