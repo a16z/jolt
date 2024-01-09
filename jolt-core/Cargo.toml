@@ -57,8 +57,6 @@ ff = "0.13.0"
 pasta_curves = "0.5.1"
 bellpepper-core = "0.2.1"
 circom-scotia = "0.1.2"
-# spartan2 = "0.1.0"
-# spartan2 = { path = "../Spartan2/" }
 strum = "0.25.0"
 strum_macros = "0.25.2"
 enum_dispatch = "0.3.12"
@@ -67,8 +65,7 @@ common = { path = "../common" }
 eyre = "0.6.9"
 tracing-chrome = "0.7.1"
 dhat = "0.3.2"
-
-spartan2 = { path = "../../arasu-spartan" }
+spartan2 = { git = "https://github.com/arasuarun/spartan2", branch = "hyrax_pc2" }
 
 
 compiler = { path = "../compiler" }
