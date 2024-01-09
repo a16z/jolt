@@ -77,6 +77,7 @@ impl<F: PrimeField> JoltCircuit<F> {
 }
 
 impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
+  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     // TODO(sragss): These paths should not be hardcoded.
     let circuit_dir = JoltPaths::circuit_artifacts_path();
@@ -187,18 +188,30 @@ fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>() {
 }
 
 
+#[tracing::instrument(skip_all, name = "JoltCircuit::run_jolt_spartan_with_circuit")]
 pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
   // produce keys
+  let span = tracing::span!(tracing::Level::INFO, "produce keys");
+  let _guard = span.enter();
   let (pk, vk) = SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
+  drop(_guard);
+  drop(span);
 
   // produce a SNARK
+  let span = tracing::span!(tracing::Level::INFO, "produce a SNARK");
+  let _guard = span.enter();
   let res = SNARK::prove(&pk, circuit);
   assert!(res.is_ok());
   let snark = res.unwrap();
+  drop(_guard);
+  drop(span);
 
   // verify the SNARK
+  let span = tracing::span!(tracing::Level::INFO, "verify the SNARK");
+  let _guard = span.enter();
   let res = snark.verify(&vk);
-  // assert!(res.is_ok());
+  drop(_guard);
+  drop(span);
   res 
 }
 
