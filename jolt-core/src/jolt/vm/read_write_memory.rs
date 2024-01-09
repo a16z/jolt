@@ -265,9 +265,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let remap_address = |a: u64| {
             assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
             if a >= RAM_START_ADDRESS {
-                // a - RAM_START_ADDRESS + REGISTER_COUNT
-                // Arasu: for r1cs, do not substract RAM_START_ADDRESS
-                a
+                a - RAM_START_ADDRESS + REGISTER_COUNT
+                // // Arasu: for r1cs, do not substract RAM_START_ADDRESS
+                // a 
             } else {
                 // If a < REGISTER_COUNT, it is one of the registers and doesn't
                 // need to be remapped
@@ -316,7 +316,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 MemoryOp::Read(a, v) => {
                     let remapped_a = remap_address(a);
                     // TODO(arasuarun): This is a hack to get the memory parts of the hash example to work
-                    // debug_assert_eq!(v, v_final[remapped_a as usize]);
+                    debug_assert_eq!(v, v_final[remapped_a as usize]);
                     a_read_write.push(remapped_a);
                     v_read.push(v);
                     v_write.push(v);
@@ -343,11 +343,21 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let to_f_vec =
             |v: &Vec<u64>| -> Vec<F> { v.iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
 
+        let un_remap_address = |a: &Vec<u64>| {
+            a.iter().map(|addr| 
+                if *addr >= REGISTER_COUNT {
+                    addr + RAM_START_ADDRESS - REGISTER_COUNT
+                } else {
+                    *addr
+                }
+            ).collect::<Vec<u64>>()
+        }; 
+
         [
-            to_f_vec(&a_read_write),
-            to_f_vec(&v_read),
-            to_f_vec(&v_write),
-            to_f_vec(&t_read),
+            to_f_vec(&un_remap_address(&a_read_write)), 
+            to_f_vec(&v_read), 
+            to_f_vec(&v_write), 
+            to_f_vec(&t_read), 
         ]
     }
 }
