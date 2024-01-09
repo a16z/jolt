@@ -7,7 +7,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
 use textplots::{Chart, Plot, Shape};
 
-use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit, prove_jolt_circuit, verify_jolt_circuit};
+use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit};
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
@@ -305,7 +305,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         use spartan2::provider::bn256_grumpkin::bn256;
         use bn256::Scalar as Spartan2Fr;
         type G1 = bn256::Point;
-        type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
+        // type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
+        type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
         type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
 
         let inputs_ff = inputs

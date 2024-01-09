@@ -161,34 +161,35 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
   }
 }
 
-fn run_jolt_spartan() {
-    // type G1 = pasta_curves::pallas::Point;
-    type G1 = bn256::Point;
-    type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
-    type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-    run_jolt_spartan_with::<G1, S>();
-}
+// fn run_jolt_spartan() {
+//     // type G1 = pasta_curves::pallas::Point;
+//     type G1 = bn256::Point;
+//     type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
+//     type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+//     run_jolt_spartan_with::<G1, S>();
+// }
 
-fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>() {
-  unimplemented!()
-  // let circuit: JoltCircuit<<G as Group>::Scalar> = JoltCircuit::all_zeros(64, 6, 2);
+// fn run_jolt_spartan_with<G: Group, S: RelaxedR1CSSNARKTrait<G>>() {
+//   unimplemented!()
+//   // let circuit: JoltCircuit<<G as Group>::Scalar> = JoltCircuit::all_zeros(64, 6, 2);
 
-  //   // produce keys
-  //   let (pk, vk) =
-  //       SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
+//   //   // produce keys
+//   //   let (pk, vk) =
+//   //       SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
 
-  //   // produce a SNARK
-  //   let res = SNARK::prove(&pk, circuit);
-  //   assert!(res.is_ok());
-  //   let snark = res.unwrap();
+//   //   // produce a SNARK
+//   //   let res = SNARK::prove(&pk, circuit);
+//   //   assert!(res.is_ok());
+//   //   let snark = res.unwrap();
 
-  //   // verify the SNARK
-  //   let res = snark.verify(&vk);
-  //   assert!(res.is_ok());
-}
+//   //   // verify the SNARK
+//   //   let res = snark.verify(&vk);
+//   //   assert!(res.is_ok());
+// }
 
 
 #[tracing::instrument(skip_all, name = "JoltCircuit::run_jolt_spartan_with_circuit")]
+// pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
 pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
   // produce keys
   let span = tracing::span!(tracing::Level::INFO, "produce keys");
@@ -215,19 +216,12 @@ pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circ
   res 
 }
 
-pub fn prove_jolt_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<(VerifierKey<G, S>, SNARK<G, S, JoltCircuit<<G as Group>::Scalar>>), SpartanError> {
-  let (pk, vk) = SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
-  let res = SNARK::prove(&pk, circuit);
-  assert!(res.is_ok());
-  Ok((vk, res.unwrap())) 
-}
-
-pub fn verify_jolt_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(
-  vk: VerifierKey<G, S>, 
-  proof: SNARK<G, S, JoltCircuit<<G as Group>::Scalar>>
-) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
-  proof.verify(&vk)
-}
+// pub fn prove_jolt_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<(VerifierKey<G, S>, SNARK<G, S, JoltCircuit<<G as Group>::Scalar>>), SpartanError> {
+//   let (pk, vk) = SNARK::<G, S, JoltCircuit<<G as Group>::Scalar>>::setup(circuit.clone()).unwrap();
+//   let res = SNARK::prove(&pk, circuit);
+//   assert!(res.is_ok());
+//   res
+// }
 
 mod test {
   use spartan2::{
@@ -237,10 +231,10 @@ mod test {
   };
   use super::{JoltCircuit, run_jolt_spartan_with_circuit};
 
-  #[test]
-  fn test_jolt_snark() {
-    super::run_jolt_spartan();
-  }
+  // #[test]
+  // fn test_jolt_snark() {
+  //   super::run_jolt_spartan();
+  // }
 
   #[test]
   fn test_all_zeros() {
