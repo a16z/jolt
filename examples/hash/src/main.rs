@@ -11,7 +11,7 @@ global_asm!(include_str!("entry.s"));
 #[no_mangle]
 pub extern "C" fn main() {
     let mut hasher = Keccak256::new();
-    let inputs = [5u8; 1024];
+    let inputs = [5u8; 256];
     hasher.update(inputs);
     let _result = hasher.finalize();
 }
