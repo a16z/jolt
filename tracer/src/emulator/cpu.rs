@@ -1890,9 +1890,8 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
 }
 
 fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
-    println!("trace_u");
     let f = parse_format_u(word);
-    let instruction = common::ELFInstruction {
+    common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
@@ -1900,17 +1899,13 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-    };
-    println!("instruction: {:?}", instruction);
-
-    instruction
+    }
 }
 
 // (UJ)
 fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
-    println!("trace_j");
     let f = parse_format_j(word);
-    let instruction = common::ELFInstruction {
+    common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
@@ -1918,11 +1913,7 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
-    };
-
-    println!("instruction: {:?}", instruction);
-
-    instruction
+    }
 }
 
 const INSTRUCTION_NUM: usize = 116;
