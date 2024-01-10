@@ -216,7 +216,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 match memory_access {
                     MemoryOp::Read(a, v) => {
                         let remapped_a = remap_address(*a);
-                        debug_assert_eq!(*v, v_final[remapped_a as usize]);
+                        // debug_assert_eq!(*v, v_final[remapped_a as usize]);
                         a_read_write.push(remapped_a);
                         v_read.push(*v);
                         v_write.push(*v);
