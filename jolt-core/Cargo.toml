@@ -58,6 +58,7 @@ pasta_curves = "0.5.1"
 bellpepper-core = "0.2.1"
 circom-scotia = "0.1.2"
 spartan2 = { git = "https://github.com/microsoft/Spartan2.git", branch = "hyrax_pc2"}
+# spartan2 = { path = "../../Spartan2" }
 strum = "0.25.0"
 strum_macros = "0.25.2"
 enum_dispatch = "0.3.12"

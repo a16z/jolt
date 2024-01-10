@@ -311,7 +311,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         println!("[sam]: Running spartan"); // TODO(sragss): rm
         let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff, witness_generator_path, r1cs_path);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-        assert!(result_verify.is_ok());
+        assert!(result_verify.is_ok(), "{:?}", result_verify.err().unwrap());
     }
 }
 

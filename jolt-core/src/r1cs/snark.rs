@@ -123,16 +123,24 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
       input.push(("input_state".to_string(), current_state.to_vec()));
 
+      let span = tracing::span!(tracing::Level::INFO, "calculate_witness");
+      let _guard = span.enter();
       let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
+      drop(_guard);
+      drop(span);
 
       current_state = [jolt_witness[1], jolt_witness[2]]; 
 
+      let span = tracing::span!(tracing::Level::INFO, "jolt_step");
+      let _guard = span.enter();
       let _ = circom_scotia::synthesize(
           &mut cs.namespace(|| format!("jolt_step_{}", i)),
           cfg.r1cs.clone(),
           Some(jolt_witness),
       )
       .unwrap();
+      drop(_guard);
+      drop(span);
     }
 
     /* Consistency constraints between steps: 
@@ -145,6 +153,8 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
     let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
     let STATE_SIZE = 2; 
+    let span = tracing::span!(tracing::Level::INFO, "add_constraint");
+    let _guard = span.enter();
     for i in 0..NUM_STEPS-1 {
       let out_start_index = NUM_VARS_PER_STEP * i;
       let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
@@ -157,6 +167,8 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
         );
       }
     }
+    drop(_guard);
+    drop(span);
     Ok(())
   }
 }

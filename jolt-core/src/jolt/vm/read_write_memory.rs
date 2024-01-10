@@ -318,7 +318,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         drop(_enter);
         drop(span);
 
-        println!("Initializing stuff, m: {m}, memory_size: {memory_size}");
+        println!("Initializing get r1cs_polys, m: {m}, memory_size: {memory_size}");
         let span = tracing::span!(tracing::Level::DEBUG, "initialize_vectors");
         let _enter = span.enter();
         let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
