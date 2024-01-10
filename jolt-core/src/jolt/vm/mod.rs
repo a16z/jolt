@@ -201,21 +201,17 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-        N_SKIP: usize, // the instructions at the beginning of the trace to be skipped 
         witness_generator_path: PathBuf,
         r1cs_path: PathBuf,
     ) {
         println!("[sam]: prove_r1cs"); // TODO(sragss): rm
         let N_FLAGS = 18;
-        let TRACE_LEN = trace.len()-N_SKIP;
+        let TRACE_LEN = trace.len();
 
         let log_M = log2(M) as usize;
 
-        let instructions = &instructions[N_SKIP..];
-        let circuit_flags = &circuit_flags[N_FLAGS * N_SKIP..];
-
-        let [prog_a_rw, mut prog_v_rw, prog_t_reads] = 
-            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace, N_SKIP);
+        let [prog_a_rw, mut prog_v_rw, _] = 
+            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order. 
         prog_v_rw.extend(circuit_flags
@@ -244,11 +240,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         prog_v_rw = new_prog_v_rw;
         /* End of transformation for single-step version */
 
-        let [mut memreg_a_rw, mut memreg_v_reads, mut memreg_v_writes, _] 
+        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] 
             = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
-        memreg_a_rw.drain(..N_SKIP * 7);
-        memreg_v_reads.drain(..N_SKIP * 7);
-        memreg_v_writes.drain(..N_SKIP * 7);
 
         let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
             instructions
@@ -264,8 +257,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let chunks_query = instructions.iter()
             .flat_map(|op| {
-                let mut chunks = op.to_indices(C, log_M);
-                chunks 
+                op.to_indices(C, log_M)
             })
             .map(|x| x as u64)
             .map(F::from)

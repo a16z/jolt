@@ -321,7 +321,6 @@ mod tests {
             circuit_flags,
             &mut transcript,
             &mut random_tape,
-            0,
             JoltPaths::witness_generator_path("fibonacci"),
             JoltPaths::r1cs_path("fibonacci")
         );
@@ -460,7 +459,6 @@ mod tests {
             circuit_flags,
             &mut transcript,
             &mut random_tape,
-            954,
             JoltPaths::witness_generator_path("hash"),
             JoltPaths::r1cs_path("hash")
         );
