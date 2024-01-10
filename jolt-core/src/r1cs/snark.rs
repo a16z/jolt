@@ -105,13 +105,19 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
     let NUM_STEPS = TRACE_LEN;
 
     // for variable [v], step_inputs[v][j] is the variable input for step j
+    let span = tracing::span!(tracing::Level::INFO, "inner_vec_mapping");
+    let _guard = span.enter();
     let inputs_chunked : Vec<Vec<_>> = self.inputs
       .into_iter()
       .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
       .collect();
+    drop(_guard);
+    drop(span);
 
     let mut current_state = [F::from(0), self.pc_start_addr];
 
+    let span = tracing::span!(tracing::Level::INFO, "NUM_STEPS_LOOP");
+    let _guard = span.enter();
     for i in 0..NUM_STEPS {
       let step_inputs = inputs_chunked.iter().map(|v| v[i].clone()).collect::<Vec<_>>();
 
@@ -142,6 +148,8 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
       drop(_guard);
       drop(span);
     }
+    drop(_guard);
+    drop(span);
 
     /* Consistency constraints between steps: 
     - Note that all steps use the same CS::one() variable as the constant 
@@ -190,7 +198,7 @@ impl<F: PrimeField> JoltSkeleton<F> {
 }
 
 impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
-  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
+  #[tracing::instrument(skip_all, name = "JoltSkeleton::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     // TODO(sragss): These paths should not be hardcoded.
     let circuit_dir = JoltPaths::circuit_artifacts_path();
@@ -198,10 +206,16 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
     let wtns_path = circuit_dir.join("jolt_single_step_js/jolt_single_step.wasm");
 
     // let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
+    let load_cfg_span = tracing::span!(tracing::Level::INFO, "load_cfg");
+    let _load_cfg_guard = load_cfg_span.enter();
     let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
+    drop(_load_cfg_guard);
+    drop(load_cfg_span);
 
     let NUM_STEPS = self.num_steps;
 
+    let synthesize_span = tracing::span!(tracing::Level::INFO, "circom_scotia_synthesize");
+    let _synthesize_guard = synthesize_span.enter();
     for i in 0..NUM_STEPS {
       // let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
       let _ = circom_scotia::synthesize(
@@ -211,8 +225,12 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
       )
       .unwrap();
     }
+    drop(_synthesize_guard);
+    drop(synthesize_span);
     let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
     let STATE_SIZE = 2; 
+    let span = tracing::span!(tracing::Level::INFO, "constraint_loop");
+    let _guard = span.enter();
     for i in 0..NUM_STEPS-1 {
       let out_start_index = NUM_VARS_PER_STEP * i;
       let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
@@ -225,6 +243,8 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
         );
       }
     }
+    drop(_guard);
+    drop(span);
     Ok(())
   }
 }
