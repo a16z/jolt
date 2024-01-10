@@ -161,8 +161,8 @@ template JoltStep() {
     signal is_shift <== op_flags[17];
 
     // Pre-processing the imm 
-    signal _immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
-    signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
+    signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
+    // signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
 
     /*******  Register Reading Constraints: 
     Of the 7 (or 11) memory reads, the first 3 are reads from rs1, rs2, rd. 

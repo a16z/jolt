@@ -643,7 +643,8 @@ impl RVTraceRow {
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
 
             // UJ-type instructions point to address offsets: even numbers.
-            RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 1u64,
+            // TODO: De-normalizing was already done elsewhere. Should make this is consistent. 
+            RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 0u64,
             _ => unimplemented!(),
         }
     }
