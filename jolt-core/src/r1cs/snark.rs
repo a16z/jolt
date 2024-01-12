@@ -1,17 +1,14 @@
 use std::collections::HashMap;
-
 use common::path::JoltPaths;
 use spartan2::{
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
   SNARK, errors::SpartanError,
 };
-
 use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index};
 use ff::PrimeField;
 use ruint::aliases::U256;
-
-
 use circom_scotia::r1cs::CircomConfig;
+use rayon::prelude::*;
 
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
@@ -32,8 +29,8 @@ pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
   // chunks_x: Vec<F>, 
   // chunks_y: Vec<F>, 
   // chunks_query: Vec<F>, 
-  // lookup_outputs: Vec<F>, 
-  // op_flags: Vec<F>,
+  // lookup_outputs: Vec<F>,  
+  // op_flags: Vec<F>,  
 }
 
 impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
@@ -130,9 +127,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
       let _guard = span.enter();
 
 
-
-
-      // TODO(sragss): idt this works.
       let rs_wtns_span = tracing::span!(tracing::Level::INFO, "rs_wtns");
       let rs_wtns_guard = rs_wtns_span.enter();
       let input_converted: HashMap<String, Vec<U256>> = input

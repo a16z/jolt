@@ -274,16 +274,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(span);
 
         // assert lengths 
-        assert_eq!(prog_a_rw.len(), TRACE_LEN);
-        assert_eq!(prog_v_rw.len(), TRACE_LEN * 6); 
-        assert_eq!(memreg_a_rw.len(), TRACE_LEN * 7);
-        assert_eq!(memreg_v_reads.len(), TRACE_LEN * 7);
+        assert_eq!(prog_a_rw.len(),       TRACE_LEN);
+        assert_eq!(prog_v_rw.len(),       TRACE_LEN * 6); 
+        assert_eq!(memreg_a_rw.len(),     TRACE_LEN * 7);
+        assert_eq!(memreg_v_reads.len(),  TRACE_LEN * 7);
         assert_eq!(memreg_v_writes.len(), TRACE_LEN * 7);
-        assert_eq!(chunks_x.len(), TRACE_LEN * C);
-        assert_eq!(chunks_y.len(), TRACE_LEN * C);
-        assert_eq!(chunks_query.len(), TRACE_LEN * C);
-        assert_eq!(lookup_outputs.len(), TRACE_LEN);
-        assert_eq!(circuit_flags.len(), TRACE_LEN * N_FLAGS);
+        assert_eq!(chunks_x.len(),        TRACE_LEN * C);
+        assert_eq!(chunks_y.len(),        TRACE_LEN * C);
+        assert_eq!(chunks_query.len(),    TRACE_LEN * C);
+        assert_eq!(lookup_outputs.len(),  TRACE_LEN);
+        assert_eq!(circuit_flags.len(),   TRACE_LEN * N_FLAGS);
 
         let inputs = vec![
             prog_a_rw,
