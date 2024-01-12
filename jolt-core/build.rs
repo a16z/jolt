@@ -20,14 +20,16 @@ fn main() {
     // 3. circom-witness-rs compiles cpp using cxx bridge to make a rust binary
     // 4. circom-witness-rs::generate::build_witness() generates a graph.bin file
     // We only need the 4th artifact. Currently this can be created by generating all the other artifacts in the circom-witness-rs working directory
-    // 1. Uncomment this line
-    // 2. Set jolt-core/cargo.toml build-dependencies:
+    //
+    // BUILD INSTRUCTIONS (graph.bin):
+    // 1. Uncomment the following line
+    // 2. Set jolt-core/Cargo.toml build-dependencies:
     //     [build-dependencies]
     //     witness = { git = "https://github.com/philsippl/circom-witness-rs", features = ["build-witness"]}
     // 3. WITNESS_CPP=/Users/sragsdale/Documents/Code/a16z/lasso-cp-2/jolt-core/src/r1cs/circuits/jolt_single_step.circom cargo build -p jolt-core
     // 4. mv jolt-core/graph.bin jolt-core/src/r1cs/graph.bin
     // 5. Commit
-    // 6. Remove trash
+    // 6. Remove trash (circuit.cc / circuit.new / constants.dat)
     // witness::generate::build_witness();
 
     println!("cargo:rerun-if-changed={}", JoltPaths::circom_build_script_path().display());
