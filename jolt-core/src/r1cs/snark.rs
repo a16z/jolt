@@ -1,20 +1,22 @@
-use std::{env::current_dir, path::PathBuf};
+use std::collections::HashMap;
 
 use common::path::JoltPaths;
 use spartan2::{
-  provider::bn256_grumpkin::bn256,
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
-  SNARK, errors::SpartanError, VerifierKey,
+  SNARK, errors::SpartanError,
 };
 
 use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index};
 use ff::PrimeField;
-// use ark_ff::PrimeField; 
+use ruint::aliases::U256;
 
-use circom_scotia::{calculate_witness, r1cs::CircomConfig};
+
+use circom_scotia::r1cs::CircomConfig;
+
+const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
 #[derive(Clone, Debug, Default)]
-pub struct JoltCircuit<F: PrimeField> {
+pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
   width: usize,
   c: usize,
   num_steps: usize,
@@ -32,12 +34,10 @@ pub struct JoltCircuit<F: PrimeField> {
   // chunks_query: Vec<F>, 
   // lookup_outputs: Vec<F>, 
   // op_flags: Vec<F>,
-  witness_generator_path: PathBuf,
-  r1cs_path: PathBuf,
 }
 
-impl<F: PrimeField> JoltCircuit<F> {
-  pub fn new_from_inputs(W: usize, c: usize, num_steps: usize, PC_START_ADDR: F, inputs: Vec<Vec<F>>, witness_generator_path: PathBuf, r1cs_path: PathBuf) -> Self {
+impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
+  pub fn new_from_inputs(W: usize, c: usize, num_steps: usize, PC_START_ADDR: F, inputs: Vec<Vec<F>>) -> Self {
     // TODO(sragss): What is W?
     JoltCircuit{
       width: W,
@@ -45,12 +45,10 @@ impl<F: PrimeField> JoltCircuit<F> {
       num_steps: num_steps,
       pc_start_addr: PC_START_ADDR,
       inputs: inputs,
-      witness_generator_path, 
-      r1cs_path
     }
   }
 
-  pub fn all_zeros(W: usize, c: usize, N: usize, witness_generator_path: PathBuf, r1cs_path: PathBuf) -> Self {
+  pub fn all_zeros(W: usize, c: usize, N: usize) -> Self {
     JoltCircuit{
       width: W,
       c: c,
@@ -70,19 +68,16 @@ impl<F: PrimeField> JoltCircuit<F> {
         vec![F::ZERO; N],
         vec![F::ZERO; N * 15],
       ],
-      witness_generator_path,
-      r1cs_path
     }
   }
 }
 
-impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
+impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
   #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     // TODO(sragss): These paths should not be hardcoded.
-    let circuit_dir = JoltPaths::circuit_artifacts_path();
-    let r1cs_path = circuit_dir.join("jolt_single_step.r1cs");
-    let wtns_path = circuit_dir.join("jolt_single_step_js/jolt_single_step.wasm");
+    let r1cs_path = JoltPaths::r1cs_path();
+    let wtns_path = JoltPaths::witness_generator_path();
 
     // let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
     let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
@@ -116,8 +111,10 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
     let mut current_state = [F::from(0), self.pc_start_addr];
 
-    let span = tracing::span!(tracing::Level::INFO, "NUM_STEPS_LOOP");
-    let _guard = span.enter();
+    let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
+    let _compute_witness_guard = compute_witness_span.enter();
+
+    let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
     for i in 0..NUM_STEPS {
       let step_inputs = inputs_chunked.iter().map(|v| v[i].clone()).collect::<Vec<_>>();
 
@@ -131,13 +128,38 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
       let span = tracing::span!(tracing::Level::INFO, "calculate_witness");
       let _guard = span.enter();
-      let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
+
+
+
+
+      // TODO(sragss): idt this works.
+      let rs_wtns_span = tracing::span!(tracing::Level::INFO, "rs_wtns");
+      let rs_wtns_guard = rs_wtns_span.enter();
+      let input_converted: HashMap<String, Vec<U256>> = input
+          .into_iter()
+          .map(|(k, v)| {
+            (k, v.into_iter().map(|x| {
+              let bytes  = x.to_repr();
+              let bytes: &[u8] = bytes.as_ref();
+              let bi: [u8; 32] = bytes.try_into().unwrap();
+              U256::from_le_bytes(bi)
+            }).collect())
+          })
+          .collect();
+      let uint_jolt_witness = witness::calculate_witness(input_converted, &graph).unwrap();
+      drop(rs_wtns_guard);
+      drop(rs_wtns_span);
+
+      let jolt_witness: Vec<F> = uint_jolt_witness.into_iter().map(|x| {
+        let bytes: [u8; 32] = x.to_le_bytes().try_into().expect("should be 256 bits");
+        F::from_repr(bytes).unwrap()
+      }).collect::<Vec<_>>();
       drop(_guard);
       drop(span);
 
       current_state = [jolt_witness[1], jolt_witness[2]]; 
 
-      let span = tracing::span!(tracing::Level::INFO, "jolt_step");
+      let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
       let _guard = span.enter();
       let _ = circom_scotia::synthesize(
           &mut cs.namespace(|| format!("jolt_step_{}", i)),
@@ -148,8 +170,8 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
       drop(_guard);
       drop(span);
     }
-    drop(_guard);
-    drop(span);
+    drop(_compute_witness_guard);
+    drop(compute_witness_span);
 
     /* Consistency constraints between steps: 
     - Note that all steps use the same CS::one() variable as the constant 
@@ -161,7 +183,7 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
     let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
     let STATE_SIZE = 2; 
-    let span = tracing::span!(tracing::Level::INFO, "add_constraint");
+    let span = tracing::span!(tracing::Level::INFO, "constraint_system::enforce_io_consistency");
     let _guard = span.enter();
     for i in 0..NUM_STEPS-1 {
       let out_start_index = NUM_VARS_PER_STEP * i;
@@ -183,12 +205,12 @@ impl<F: PrimeField> Circuit<F> for JoltCircuit<F> {
 
 
 #[derive(Clone, Debug, Default)]
-pub struct JoltSkeleton<F: PrimeField> {
+pub struct JoltSkeleton<F: PrimeField<Repr = [u8; 32]>> {
   num_steps: usize,
   _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField> JoltSkeleton<F> {
+impl<F: PrimeField<Repr = [u8; 32]>> JoltSkeleton<F> {
   pub fn from_num_steps(num_steps: usize) -> Self {
     JoltSkeleton::<F>{
       num_steps: num_steps,
@@ -197,7 +219,7 @@ impl<F: PrimeField> JoltSkeleton<F> {
   }
 }
 
-impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
+impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
   #[tracing::instrument(skip_all, name = "JoltSkeleton::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     // TODO(sragss): These paths should not be hardcoded.
@@ -253,7 +275,7 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
 
 #[tracing::instrument(skip_all, name = "JoltCircuit::run_jolt_spartan_with_circuit")]
 // pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
-pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<(), SpartanError> {
+pub fn run_jolt_spartan_with_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
   let num_steps = circuit.inputs[0].len(); 
   // produce keys
   // let circuit_clone = circuit.clone();

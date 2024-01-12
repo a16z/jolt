@@ -315,8 +315,6 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             circuit_flags,
             &mut transcript,
             &mut random_tape,
-            JoltPaths::witness_generator_path("hash"),
-            JoltPaths::r1cs_path("hash"),
         );
 
 
@@ -453,8 +451,6 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             circuit_flags,
             &mut transcript,
             &mut random_tape,
-            JoltPaths::witness_generator_path("fibonacci"),
-            JoltPaths::r1cs_path("fibonacci")
         );
 
 

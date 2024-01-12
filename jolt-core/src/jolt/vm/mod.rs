@@ -201,9 +201,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-        witness_generator_path: PathBuf,
-        r1cs_path: PathBuf,
+        random_tape: &mut RandomTape<G>
     ) {
         println!("[sam]: prove_r1cs"); // TODO(sragss): rm
         let N_FLAGS = 18;
@@ -322,8 +320,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(span);
         
         println!("[sam]: Running spartan"); // TODO(sragss): rm
-        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff, witness_generator_path, r1cs_path);
-        let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
+        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
+        let result_verify = run_jolt_spartan_with_circuit::<G1, S, Spartan2Fr>(jolt_circuit);
         assert!(result_verify.is_ok(), "{:?}", result_verify.err().unwrap());
     }
 }
