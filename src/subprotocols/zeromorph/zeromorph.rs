@@ -1,15 +1,17 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use std::{borrow::Borrow, marker::PhantomData, ops::Neg};
+use std::{borrow::Borrow, marker::PhantomData, ops::Neg, iter};
 
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::traits::CommitmentScheme;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{BigInt, Field};
+use ark_ff::{BigInt, Field, batch_inversion};
 use ark_std::{iterable::Iterable, One, Zero};
+use ark_poly_commit::{kzg10::{Proof, KZG10}, PolynomialCommitment};
+use itertools::Itertools;
 use merlin::Transcript;
 use thiserror::Error;
 
@@ -27,6 +29,7 @@ use super::data_structures::{
 };
 
 // Just return vec of P::Scalar
+// u_challenge = Point
 fn compute_multilinear_quotients<P: Pairing>(
   poly: &DensePolynomial<P::ScalarField>,
   u_challenge: &[P::ScalarField],
@@ -34,7 +37,7 @@ fn compute_multilinear_quotients<P: Pairing>(
   assert_eq!(poly.get_num_vars(), u_challenge.len());
 
   let mut g = poly.Z.to_vec();
-  let mut quotients = u_challenge
+  let mut quotients: Vec<_> = u_challenge
     .iter()
     .enumerate()
     .map(|(i, x_i)| {
@@ -43,13 +46,12 @@ fn compute_multilinear_quotients<P: Pairing>(
 
       quotient
         .par_iter_mut()
-        .zip(&*g_lo)
-        .zip(&*g_hi)
-        .for_each(|((mut q, g_lo), g_hi)| {
+        .zip_eq(&*g_lo)
+        .zip_eq(&*g_hi)
+        .for_each(|((q, g_lo), g_hi)| {
           *q = *g_hi - *g_lo;
         });
-      g_lo.par_iter_mut().zip(g_hi).for_each(|(g_lo, g_hi)| {
-        // WHAT IS THIS BLACK MAGIC &_
+      g_lo.par_iter_mut().zip_eq(g_hi).for_each(|(g_lo, g_hi)| {
         *g_lo += (*g_hi - g_lo as &_) * x_i;
       });
 
@@ -57,7 +59,7 @@ fn compute_multilinear_quotients<P: Pairing>(
 
       UniPoly::from_coeff(quotient)
     })
-    .collect::<Vec<UniPoly<P::ScalarField>>>();
+    .collect();
   quotients.reverse();
   (quotients, g[0])
 }
@@ -68,6 +70,8 @@ fn compute_batched_lifted_degree_quotient<const N: usize, P: Pairing>(
 ) -> UniPoly<P::ScalarField> {
   // Batched Lifted Degreee Quotient Polynomials
   let mut res: Vec<P::ScalarField> = vec![P::ScalarField::zero(); N];
+
+  //TODO: separate and scan for y_powers
 
   // Compute \hat{q} = \sum_k y^k * X^{N - d_k - 1} * q_k
   let mut scalar = P::ScalarField::one(); // y^k
@@ -83,6 +87,50 @@ fn compute_batched_lifted_degree_quotient<const N: usize, P: Pairing>(
   }
 
   UniPoly::from_coeff(res)
+}
+
+fn eval_and_quotient_scalars<P: Pairing>(y_challenge: P::ScalarField, x_challenge: P::ScalarField, z_challenge: P::ScalarField, challenges: &[P::ScalarField]) -> (P::ScalarField, (Vec<P::ScalarField>, Vec<P::ScalarField>)) {
+  let num_vars = challenges.len();
+
+  // squares of x = [x, x^2, .. x^{2^k}, .. x^{2^num_vars}]
+  let squares_of_x: Vec<_> = iter::successors(Some(x_challenge), |&x| Some(x.square())).take(num_vars + 1).collect();
+
+  // offsets of x = 
+  let offsets_of_x = {
+    let mut offsets_of_x = squares_of_x.iter().rev().skip(1).scan(P::ScalarField::one(), |acc, pow_x| {
+      *acc *= pow_x;
+      Some(*acc)
+    }).collect::<Vec<_>>();
+    offsets_of_x.reverse();
+    offsets_of_x
+  };
+
+  let vs = {
+    let v_numer = squares_of_x[num_vars] - P::ScalarField::one();
+    // TODO: Batch Invert
+    // TODO: Switch to Result and Handle Error from Inversion
+    let mut v_denoms = squares_of_x.iter().map(|squares_of_x| *squares_of_x - P::ScalarField::one()).collect::<Vec<_>>();
+    batch_inversion(&mut v_denoms);
+    v_denoms.iter().map(|v_denom| v_numer * v_denom).collect::<Vec<_>>()
+  };
+
+  // Note this assumes challenges come in big-endian form -> This is shared between the implementations x1, x2, x3, ...
+  let q_scalars = iter::successors(Some(P::ScalarField::one()), |acc| Some(*acc * y_challenge))
+  .take(num_vars)
+  .zip_eq(offsets_of_x)
+  .zip(squares_of_x)
+  .zip(&vs)
+  .zip_eq(&vs[1..])
+  .zip_eq(challenges.iter().rev())
+  .map(
+    |(((((power_of_y, offset_of_x), square_of_x), v_i), v_j), u_i)| {
+      (-(power_of_y * offset_of_x), -(z_challenge * (square_of_x * v_j - *u_i * v_i)))
+    }
+  )
+  .unzip();
+
+  // -vs[0] * z = -z * (x^(2^num_vars) - 1) / (x - 1) = -z Φ_n(x)
+  (-vs[0] * z_challenge, q_scalars)
 }
 
 fn compute_partially_evaluated_degree_check_polynomial<const N: usize, P: Pairing>(
@@ -171,6 +219,7 @@ fn compute_partially_evaluated_zeromorph_identity_polynomial<const N: usize, P: 
 }
 
 //TODO: Need SRS
+/*
 fn compute_batched_evaluation_and_degree_check_quotient<const N: usize, P: Pairing>(
   zeta_x: UniPoly<P::ScalarField>,
   z_x: UniPoly<P::ScalarField>,
@@ -199,6 +248,7 @@ fn compute_batched_evaluation_and_degree_check_quotient<const N: usize, P: Pairi
 
   batched_quotient
 }
+*/
 
 fn compute_C_zeta_x<const N: usize, P: Pairing>(
   q_hat_com: &P::G1,
@@ -277,10 +327,12 @@ fn compute_C_Z_x<const N: usize, P: Pairing>(
   <P::G1 as VariableBaseMSM>::msm(&commitments, &scalars).unwrap()
 }
 
+
+
 #[derive(Error, Debug)]
 pub enum ZeromorphError {
   #[error("oh no {0}")]
-  ShitIsFucked(String),
+  Invalid(String),
 }
 
 pub struct Zeromorph<const N: usize, P: Pairing> {
@@ -349,7 +401,8 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
 
       batched_evaluation += rhos[i] * evals[i];
     }
-    let f_polynomial = UniPoly::from_coeff(f_batched.clone());
+    // confirm if these need to be interpolated or not
+    let mut pi_poly = UniPoly::from_coeff(f_batched.clone());
 
     // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
     let (quotients, _) =
@@ -384,32 +437,33 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
     let z_challenge =
       <Transcript as ProofTranscript<P::G1>>::challenge_scalar(transcript, b"ZM: z");
 
-    // Compute degree check polynomials \zeta partially evaluated at x
-    let zeta_x = compute_partially_evaluated_degree_check_polynomial::<N, P>(
-      &q_hat,
-      &quotients,
-      &y_challenge,
-      &x_challenge,
-    );
+    let (eval_scalar, (zeta_degree_check_q_scalars, z_zmpoly_q_scalars)) = eval_and_quotient_scalars::<P>(y_challenge, x_challenge, z_challenge, challenges);
+    // f = z * poly.Z + q_hat + (-z * Φ_n(x) * e) + ∑_k (q_scalars_k * q_k)
+    // TODO implement MulAssign and Mul
+    pi_poly += &z_challenge;
+    pi_poly += &q_hat;
+    pi_poly[0] += batched_evaluation * eval_scalar;
+    quotients.into_iter().zip_eq(zeta_degree_check_q_scalars).zip_eq(z_zmpoly_q_scalars).for_each(|((mut q, zeta_degree_check_q_scalar), z_zmpoly_q_scalar)| {
+      q *= &(zeta_degree_check_q_scalar + z_zmpoly_q_scalar);
+      pi_poly += &q;
+    });
 
-    // Compute Zeromorph identity polynomial Z partially evaluated at x
-    let Z_x = compute_partially_evaluated_zeromorph_identity_polynomial::<N, P>(
-      &f_polynomial,
-      &quotients,
-      &batched_evaluation,
-      challenges,
-      &x_challenge,
-    );
+    debug_assert_eq!(pi_poly.evaluate(&x_challenge), P::ScalarField::zero());
 
-    // Compute batched degree-check and ZM-identity quotient polynomial pi
-    let pi_poly = compute_batched_evaluation_and_degree_check_quotient::<N, P>(
-      zeta_x,
-      Z_x,
-      x_challenge,
-      z_challenge,
-    );
+    //TODO: add msm or use arkworks
+    // Use arkworks polycommit
 
-    let pi = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers, &pi_poly.coeffs).unwrap();
+    // Compute the KZG opening proof pi_poly; -> TODO Should it really be a proof
+    let (pi, eval) = {
+      let div = UniPoly::from_coeff(vec![-x_challenge, P::ScalarField::one()]);
+      // TODO: make it result
+      let witness_poly = pi_poly.divide_with_q_and_r(&div).map(|(q, _)|q).ok_or(ZeromorphError::Invalid("()".to_string())).unwrap();
+      let pi = <P::G1 as VariableBaseMSM>::msm(&pk.g1_powers[..witness_poly.len()], &witness_poly.coeffs).unwrap();
+      // this is zero so whatever
+      let eval = pi_poly.evaluate(&x_challenge);
+      (pi, eval)
+    };
+
     transcript.append_point(b"ZM: C_pi", &pi);
 
     Ok(ZeromorphProof {
@@ -436,6 +490,9 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
     let pi = pi.into_group();
     let q_k_com = q_k_com;
     let q_hat_com = q_hat_com.into_group();
+    
+    //Receive q_k commitments
+    q_k_com.iter().for_each(|c| transcript.append_point(b"ZM: C_q_hat", &c.into_group()));
 
     // Compute powers of batching challenge rho
     let rho = <Transcript as ProofTranscript<P::G1>>::challenge_scalar(transcript, b"ZM: rho");
@@ -458,6 +515,7 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
       <Transcript as ProofTranscript<P::G1>>::challenge_scalar(transcript, b"ZM: y");
 
     // Receive commitment C_{q} -> Since our transcript does not support appending and receiving data we instead store these commitments in a zeromorph proof struct
+    transcript.append_point(b"ZM: C_q_hat", &q_hat_com);
 
     // Challenge x, z
     let x_challenge =
@@ -488,7 +546,8 @@ impl<const N: usize, P: Pairing> CommitmentScheme for Zeromorph<N, P> {
 
 #[cfg(test)]
 mod test {
-  use super::*;
+
+use super::*;
   use crate::{utils::math::Math, subprotocols::zeromorph::data_structures::ZEROMORPH_SRS};
   use ark_bn254::{Bn254, Fr};
   use ark_ff::{BigInt, Zero};
@@ -554,14 +613,14 @@ mod test {
   #[test]
   fn quotient_construction() {
     // Define size params
-    const N: u64 = 16u64;
-    let log_N = (N as usize).log_2();
+    let num_vars = 4;
+    let n: u64 = 1 << num_vars;
 
     // Construct a random multilinear polynomial f, and (u,v) such that f(u) = v
     let mut rng = test_rng();
     let multilinear_f =
-      DensePolynomial::new((0..N).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
-    let u_challenge = (0..log_N)
+      DensePolynomial::new((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
+    let u_challenge = (0..num_vars)
       .into_iter()
       .map(|_| Fr::rand(&mut rng))
       .collect::<Vec<_>>();
@@ -579,13 +638,13 @@ mod test {
 
     //To demonstrate that q_k was properly constructd we show that the identity holds at a random multilinear challenge
     // i.e. 𝑓(𝑧) − 𝑣 − ∑ₖ₌₀ᵈ⁻¹ (𝑧ₖ − 𝑢ₖ)𝑞ₖ(𝑧) = 0
-    let z_challenge = (0..log_N).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
+    let z_challenge = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>();
 
     let mut res = multilinear_f.evaluate(&z_challenge);
     res -= v_evaluation;
 
     for (k, q_k_uni) in quotients.iter().enumerate() {
-      let z_partial = &z_challenge[z_challenge.len() - k..];
+      let z_partial = &z_challenge[&z_challenge.len() - k..];
       //This is a weird consequence of how things are done.. the univariate polys are of the multilinear commitment in lagrange basis. Therefore we evaluate as multilinear
       let q_k = DensePolynomial::new(q_k_uni.coeffs.clone());
       let q_k_eval = q_k.evaluate(z_partial);
@@ -687,66 +746,26 @@ mod test {
   /// 𝜁 =  ̂q - ∑ₖ₌₀ⁿ⁻¹ yᵏ Xᵐ⁻ᵈᵏ⁻¹ ̂qₖ, m = N
   #[test]
   fn partially_evaluated_quotient_zeta() {
-    const N: usize = 8;
 
-    // Define mock qₖ with deg(qₖ) = 2ᵏ⁻¹
-    let data_0 = vec![Fr::one()];
-    let data_1 = vec![Fr::from(2u64), Fr::from(3u64)];
-    let data_2 = vec![
-      Fr::from(4u64),
-      Fr::from(5u64),
-      Fr::from(6u64),
-      Fr::from(7u64),
-    ];
-    let q_0 = UniPoly::from_coeff(data_0);
-    let q_1 = UniPoly::from_coeff(data_1);
-    let q_2 = UniPoly::from_coeff(data_2);
-    let quotients = vec![q_0.clone(), q_1.clone(), q_2.clone()];
+    let num_vars = 3;
+    let n: u64 = 1 << num_vars;
 
     let mut rng = test_rng();
+    let x_challenge = Fr::rand(&mut rng);
     let y_challenge = Fr::rand(&mut rng);
 
-    //Compute batched quptient  ̂q
-    let batched_quotient =
-      compute_batched_lifted_degree_quotient::<N, Bn254>(&quotients, &y_challenge);
-    println!("batched_quotient.len() {:?}", batched_quotient.len());
-    dbg!(quotients.clone());
+    let challenges: Vec<_> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
+    let z_challenge = Fr::rand(&mut rng);
 
-    let x_challenge = Fr::rand(&mut rng);
+    let (_, (zeta_x_scalars, _)) = eval_and_quotient_scalars::<Bn254>(y_challenge, x_challenge, z_challenge, &challenges);
 
-    let zeta_x = compute_partially_evaluated_degree_check_polynomial::<N, Bn254>(
-      &batched_quotient,
-      &quotients,
-      &y_challenge,
-      &x_challenge,
-    );
-
-    // Construct 𝜁ₓ explicitly
-    let mut zeta_x_expected = UniPoly::from_coeff(vec![Fr::zero(); N as usize]);
-
-    //TODO: implement add and add_scalad
-    for i in 0..zeta_x_expected.len() {
-      zeta_x_expected[i] += batched_quotient[i];
-    }
-
+    // To verify we manually compute zeta using the computed powers and expected
     // 𝜁 =  ̂q - ∑ₖ₌₀ⁿ⁻¹ yᵏ Xᵐ⁻ᵈᵏ⁻¹ ̂qₖ, m = N
-    for i in 0..q_0.len() {
-      zeta_x_expected[i] += q_0[i] * -x_challenge.pow(BigInt::<1>::from((N - 0 - 1) as u64));
-    }
+    assert_eq!(zeta_x_scalars[0], -x_challenge.pow(BigInt::<1>::from((n - 1) as u64)));
 
-    for i in 0..q_1.len() {
-      zeta_x_expected[i] +=
-        q_1[i] * (-y_challenge * x_challenge.pow(BigInt::<1>::from((N - 1 - 1) as u64)));
-    }
+    assert_eq!(zeta_x_scalars[1], -y_challenge * x_challenge.pow(BigInt::<1>::from((n - 1 - 1) as u64)));
 
-    for i in 0..q_2.len() {
-      zeta_x_expected[i] += q_2[i]
-        * (-y_challenge * y_challenge * x_challenge.pow(BigInt::<1>::from((N - 3 - 1) as u64)));
-    }
-
-    for i in 0..zeta_x.len() {
-      assert_eq!(zeta_x[i], zeta_x_expected[i]);
-    }
+    assert_eq!(zeta_x_scalars[2], -y_challenge * y_challenge * x_challenge.pow(BigInt::<1>::from((n - 3 - 1) as u64)));
   }
 
   /// Test efficiently computing 𝛷ₖ(x) = ∑ᵢ₌₀ᵏ⁻¹xⁱ
@@ -792,79 +811,38 @@ mod test {
   /// 𝑍ₓ =  ̂𝑓 − 𝑣 ∑ₖ₌₀ⁿ⁻¹(𝑥²^ᵏ𝛷ₙ₋ₖ₋₁(𝑥ᵏ⁺¹)− 𝑢ₖ𝛷ₙ₋ₖ(𝑥²^ᵏ)) ̂qₖ
   #[test]
   fn partially_evaluated_quotient_z_x() {
-    const N: usize = 8;
-    let log_N = (N as usize).log_2();
+    let num_vars = 3;
 
     // Construct a random multilinear polynomial f, and (u,v) such that f(u) = v.
     let mut rng = test_rng();
-    let multilinear_f = (0..N)
+    let challenges: Vec<_> = (0..num_vars)
       .into_iter()
       .map(|_| Fr::rand(&mut rng))
-      .collect::<Vec<_>>();
-    let u_challenge = (0..log_N)
-      .into_iter()
-      .map(|_| Fr::rand(&mut rng))
-      .collect::<Vec<_>>();
-    let v_evaluation = DensePolynomial::new(multilinear_f.clone()).evaluate(&u_challenge);
+      .collect();
 
-    // compute batched polynomial and evaluation
-    let f_batched = UniPoly::from_coeff(multilinear_f);
-
-    let v_batched = v_evaluation;
-
-    // Define some mock q_k with deeg(q_k) = 2^k - 1
-    let q_0 = UniPoly::from_coeff(
-      (0..(1 << 0))
-        .into_iter()
-        .map(|_| Fr::rand(&mut rng))
-        .collect::<Vec<_>>(),
-    );
-    let q_1 = UniPoly::from_coeff(
-      (0..(1 << 1))
-        .into_iter()
-        .map(|_| Fr::rand(&mut rng))
-        .collect::<Vec<_>>(),
-    );
-    let q_2 = UniPoly::from_coeff(
-      (0..(1 << 2))
-        .into_iter()
-        .map(|_| Fr::rand(&mut rng))
-        .collect::<Vec<_>>(),
-    );
-    let quotients = vec![q_0.clone(), q_1.clone(), q_2.clone()];
+    let u_rev = {
+      let mut res = challenges.clone();
+      res.reverse();
+      res
+    };
 
     let x_challenge = Fr::rand(&mut rng);
+    let y_challenge = Fr::rand(&mut rng);
+    let z_challenge = Fr::rand(&mut rng);
 
-    // Construct Z_x using the prover method
-    let Z_x = compute_partially_evaluated_zeromorph_identity_polynomial::<N, Bn254>(
-      &f_batched,
-      &quotients,
-      &v_evaluation,
-      &u_challenge,
-      &x_challenge,
-    );
+    // Construct Z_x scalars
+    let (_, (_, z_x_scalars)) =
+      eval_and_quotient_scalars::<Bn254>(y_challenge, x_challenge, z_challenge, &challenges);
 
-    // Compute Z_x directly
-    let mut Z_x_expected = f_batched;
-
-    Z_x_expected[0] =
-      Z_x_expected[0] - v_batched * x_challenge * &phi::<Bn254>(&x_challenge, log_N);
-
-    for k in 0..log_N {
+    for k in 0..num_vars {
       let x_pow_2k = x_challenge.pow(BigInt::<1>::from((1 << k) as u64)); // x^{2^k}
       let x_pow_2kp1 = x_challenge.pow(BigInt::<1>::from((1 << (k + 1)) as u64)); // x^{2^{k+1}}
                                                                                   // x^{2^k} * \Phi_{n-k-1}(x^{2^{k+1}}) - u_k *  \Phi_{n-k}(x^{2^k})
-      let mut scalar = x_pow_2k * &phi::<Bn254>(&x_pow_2kp1, log_N - k - 1)
-        - u_challenge[k] * &phi::<Bn254>(&x_pow_2k, log_N - k);
-      scalar *= x_challenge;
+      let mut scalar = x_pow_2k * &phi::<Bn254>(&x_pow_2kp1, num_vars - k - 1)
+        - u_rev[k] * &phi::<Bn254>(&x_pow_2k, num_vars - k);
+      scalar *= z_challenge;
       scalar *= Fr::from(-1);
-      for i in 0..quotients[k].len() {
-        Z_x_expected[i] += quotients[k][i] * scalar;
-      }
-    }
-
-    for i in 0..Z_x.len() {
-      assert_eq!(Z_x[i], Z_x_expected[i]);
+      assert_eq!(z_x_scalars[k], scalar);
     }
   }
 

@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
-use std::ops::{Index, IndexMut};
+use std::cmp::Ordering;
+use std::ops::{Index, IndexMut, MulAssign, AddAssign, Mul};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
-use ark_ff::{PrimeField, batch_inversion};
+use ark_ff::PrimeField;
 use ark_serialize::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
@@ -35,6 +36,10 @@ impl<F: PrimeField> UniPoly<F> {
     }
   }
 
+  fn zero() -> Self {
+    Self::from_coeff(Vec::new())
+  }
+
   fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
     let n = evals.len();
     let xs: Vec<F> = (0..n).map(|x| F::from(x as u64)).collect();
@@ -53,6 +58,37 @@ impl<F: PrimeField> UniPoly<F> {
     }
 
     gaussian_elimination(&mut vandermonde)
+  }
+
+    /// Divide self by another polynomial, and returns the
+  /// quotient and remainder.
+  pub fn divide_with_q_and_r(&self, divisor: &Self) -> Option<(Self, Self)> {
+    if self.is_zero() {
+      Some((Self::zero(), Self::zero()))
+    } else if divisor.is_zero() {
+      None
+    } else if self.degree() < divisor.degree() {
+      Some((Self::zero(), self.clone()))
+    } else {
+      // Now we know that self.degree() >= divisor.degree();
+      let mut quotient = vec![F::ZERO; self.degree() - divisor.degree() + 1];
+      let mut remainder: Self = self.clone();
+      // Can unwrap here because we know self is not zero.
+      let divisor_leading_inv = divisor.leading_coefficient().unwrap().inverse().unwrap();
+      while !remainder.is_zero() && remainder.degree() >= divisor.degree() {
+        let cur_q_coeff = *remainder.leading_coefficient().unwrap() * divisor_leading_inv;
+        let cur_q_degree = remainder.degree() - divisor.degree();
+        quotient[cur_q_degree] = cur_q_coeff;
+
+        for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
+          remainder.coeffs[cur_q_degree + i] -= &(cur_q_coeff * div_coeff);
+        }
+        while let Some(true) = remainder.coeffs.last().map(|c| c == &F::ZERO) {
+          remainder.coeffs.pop();
+        }
+      }
+      Some((Self::from_coeff(quotient), remainder))
+    }
   }
 
   pub fn degree(&self) -> usize {
@@ -97,94 +133,93 @@ impl<F: PrimeField> UniPoly<F> {
     Commitments::batch_commit(&self.coeffs, blind, gens)
   }
 
-  fn factor_root(&mut self, root: &F) -> UniPoly<F> {
-    let mut coeffs = self.coeffs.clone();
-    if root.is_zero() {
-      coeffs.rotate_left(1);
-      //YUCK!!!
-      coeffs = coeffs[..coeffs.len() - 1].to_vec();
-    } else {
-      //TODO: handle this unwrap somehow
-      let root_inverse = -root.inverse().unwrap();
-      let mut temp = F::zero();
-      for coeff in &mut coeffs {
-        temp = *coeff - temp;
-        temp *= root_inverse;
-        *coeff = temp;
-      }
-    }
-    coeffs[self.coeffs.len() - 1] = F::zero();
-    UniPoly { coeffs }
+  fn is_zero(&self) -> bool {
+    self.coeffs.is_empty() || self.coeffs.iter().all(|c| c == &F::zero())
   }
 
-  pub fn factor_roots(&mut self, roots: &[F]) -> UniPoly<F> {
-    assert!(self.len() != 0);
-    if roots.len() == 1 {
-      return self.factor_root(&roots[0])
+  fn truncate_leading_zeros(&mut self) {
+    while self.coeffs.last().map_or(false, |c| c == &F::zero()) {
+      self.coeffs.pop();
     }
-    
-    let num_roots = roots.len();
-    assert!(num_roots < self.len());
+  }
 
-    let new_size = self.len() - num_roots;
-    let mut minus_root_inverses = vec![F::zero(); num_roots];
+  fn leading_coefficient(&self) -> Option<&F> {
+    self.coeffs.last()
+  }
+}
 
-    let mut num_zero_roots = 0;
-    for root in roots {
-      if root.is_zero() {
-        num_zero_roots += 1;
-      } else {
-        minus_root_inverses.push(root.neg());
-      }
+impl<F: PrimeField> AddAssign<&F> for UniPoly<F> {
+  fn add_assign(&mut self, rhs: &F) {
+    //TODO: feature gate parallel
+    self.coeffs.iter_mut().for_each(|c| *c += rhs);
+  }
+}
+
+impl<F: PrimeField> MulAssign<&F> for UniPoly<F> {
+  fn mul_assign(&mut self, rhs: &F) {
+    //TODO: feature gate parallel
+    self.coeffs.iter_mut().for_each(|c| *c *= rhs);
+  }
+}
+
+impl<F: PrimeField> Mul<F> for UniPoly<F> {
+  type Output = Self;
+
+  fn mul(self, rhs: F) -> Self {
+    //TODO: feature gate parallel
+    Self::from_coeff(self.coeffs.into_iter().map(|c| c * rhs).collect::<Vec<_>>())
+  }
+
+}
+
+impl<F: PrimeField> Mul<&F> for UniPoly<F> {
+  type Output = Self;
+
+  fn mul(self, rhs: &F) -> Self {
+    //TODO: feature gate parallel
+    Self::from_coeff(self.coeffs.into_iter().map(|c| c * rhs).collect::<Vec<_>>())
+  }
+
+}
+
+impl<F: PrimeField> AddAssign<&Self> for UniPoly<F> {
+  fn add_assign(&mut self, rhs: &Self) {
+    let ordering = self.coeffs.len().cmp(&rhs.coeffs.len());
+    #[allow(clippy::disallowed_methods)]
+    for (lhs, rhs) in self.coeffs.iter_mut().zip(&rhs.coeffs) {
+      *lhs += rhs;
     }
-
-    // If there are M zero roots, then the first M coefficients of poly must be zero
-    for i in 0..num_zero_roots {
-      assert!(self.coeffs[i].is_zero())
+    if matches!(ordering, Ordering::Less) {
+      self
+        .coeffs
+        .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
     }
-
-    let zero_factored = self.coeffs[num_zero_roots..].to_vec();
-    let num_non_zero_roots = minus_root_inverses.len();
-
-    if num_non_zero_roots > 0 {
-      batch_inversion(&mut minus_root_inverses); 
-      let mut division_cache = vec![F::zero(); num_non_zero_roots];
-
-      let mut temp = zero_factored[0];
-      for root in minus_root_inverses.clone() {
-        temp *= root;
-        division_cache.push(temp);
-      }
-
-      //Note: we know this can't be 0
-      self[0] = *division_cache.last().unwrap();
-
-      // Compute resulting coeffs one by one
-      for i in 1..(zero_factored.len() - num_non_zero_roots) {
-        temp = zero_factored[i];
-
-        // Compute the intermediate values for the coefficient and save in cache
-        for j in 0..num_non_zero_roots {
-          temp -= division_cache[j];
-          temp *= minus_root_inverses[j];
-          division_cache[j] = temp;
-        }
-        // Save the resulting coefficient
-        self[i] = temp;
-      }
-
-    } else if num_zero_roots > 0 {
-      self.coeffs.rotate_left(1);
-      //YUCK!!!
-      self.coeffs = self.coeffs[..self.coeffs.len() - 1].to_vec(); 
+    if matches!(ordering, Ordering::Equal) {
+      //TODO: truncate leading zeros
+      self;
     }
+  }
+}
 
-    // Clear last coefficient
-    for i in new_size..self.coeffs.len() {
-      self[i] = F::zero();
-    }
+impl<F: PrimeField> AsRef<Vec<F>> for UniPoly<F> {
+  fn as_ref(&self) -> &Vec<F> {
+    &self.coeffs
+  }
+}
 
-    todo!()
+impl<F: PrimeField> Index<usize> for UniPoly<F> {
+  type Output = F;
+
+  #[inline(always)]
+  fn index(&self, _index: usize) -> &F {
+    &(self.coeffs[_index])
+  }
+}
+
+impl<F: PrimeField> IndexMut<usize> for UniPoly<F> {
+  #[inline(always)]
+  fn index_mut(&mut self, index: usize) -> &mut F {
+    &mut (self.coeffs[index])
   }
 }
 
@@ -205,22 +240,6 @@ impl<F: PrimeField> CompressedUniPoly<F> {
   }
 }
 
-impl<F> Index<usize> for UniPoly<F> {
-  type Output = F;
-
-  #[inline(always)]
-  fn index(&self, _index: usize) -> &F {
-    &(self.coeffs[_index])
-  }
-}
-
-impl<F> IndexMut<usize> for UniPoly<F> {
-  #[inline(always)]
-  fn index_mut(&mut self, index: usize) -> &mut F {
-    &mut (self.coeffs[index])
-  }
-}
-
 impl<G: CurveGroup> AppendToTranscript<G> for UniPoly<G::ScalarField> {
   fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
     transcript.append_message(label, b"UniPoly_begin");
@@ -236,193 +255,6 @@ mod tests {
 
   use super::*;
   use ark_curve25519::Fr;
-  use ark_ff::{batch_inversion, BigInt, Field};
-  use ark_std::{ops::Neg, test_rng, One, UniformRand, Zero};
-
-  fn interpolate(points: &[Fr], evals: &[Fr]) -> UniPoly<Fr> {
-    let n = points.len();
-
-    let numerator_polynomial = compute_linear_polynomial_product(&evals, points.len());
-
-    let mut roots_and_denominators: Vec<Fr> = vec![Fr::zero(); 2 * n];
-    let temp_src: Vec<Fr> = points.to_vec();
-
-    for i in 0..n {
-      roots_and_denominators[i] = -evals[i];
-
-      // compute constant denominator
-      roots_and_denominators[n + i] = Fr::one();
-      for j in 0..n {
-        if j == i {
-          continue;
-        }
-        roots_and_denominators[n + i] *= evals[i] - evals[j];
-      }
-    }
-
-    batch_inversion(&mut roots_and_denominators);
-
-    let mut coeffs = vec![Fr::zero(); n];
-    let mut temp = vec![Fr::zero(); n];
-    let mut z;
-    let mut mult;
-    for i in 0..n {
-      z = roots_and_denominators[i];
-      mult = temp_src[i] * roots_and_denominators[n + i];
-      temp[0] = mult * numerator_polynomial[0];
-      temp[0] *= z;
-      coeffs[0] += temp[0];
-
-      for j in 1..n {
-        temp[j] = mult * numerator_polynomial[j] - temp[j - 1];
-        temp[j] *= z;
-        coeffs[j] += temp[j];
-      }
-    }
-
-    UniPoly::from_coeff(coeffs)
-  }
-
-  // This function computes the polynomial (x - a)(x - b)(x - c)... given n distinct roots (a, b, c, ...).
-  fn compute_linear_polynomial_product(roots: &[Fr], n: usize) -> Vec<Fr> {
-    let mut res = vec![Fr::zero(); n + 1];
-
-    let mut scratch = roots.to_vec();
-    res[n] = Fr::one();
-    res[n - 1] = roots.into_iter().sum::<Fr>().neg();
-
-    let mut temp;
-    let mut constant = Fr::one();
-    for i in 0..(n - 1) {
-      temp = Fr::zero();
-      for j in 0..(n - 1 - i) {
-        scratch[j] = roots[j] * scratch[(j + 1)..].into_iter().take(n - 1 - i - j).sum::<Fr>();
-        temp += scratch[j];
-      }
-      res[n - 2 - i] = temp * constant;
-      constant *= Fr::one().neg();
-    }
-
-    res
-  }
-
-  fn compute_linear_polynomial_product_evaluation(roots: &[Fr], z: Fr, n: usize) -> Fr {
-    let mut expected = Fr::one();
-    for i in 0..n {
-      expected *= z - roots[i];
-    }
-    expected
-  }
-
-  #[test]
-  fn linear_poly_product() {
-    let n = 64;
-    let mut roots = vec![Fr::zero(); n];
-    let mut rng = test_rng();
-
-    let z = Fr::rand(&mut rng);
-    let mut expected = Fr::one();
-    for i in 0..n {
-      roots[i] = Fr::rand(&mut rng);
-      expected *= z - roots[i];
-    }
-
-    let res = UniPoly::from_coeff(compute_linear_polynomial_product(&roots, n)).evaluate(&z);
-    assert_eq!(res, expected);
-  }
-
-  #[test]
-  fn interpolate_poly() {
-    let n = 250;
-    let mut rng = test_rng();
-
-    let poly =
-      UniPoly::from_coeff((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
-
-    let mut src = Vec::with_capacity(n);
-    let mut x = Vec::with_capacity(n);
-
-    for _ in 0..n {
-      let val = Fr::rand(&mut rng);
-      x.push(val);
-      src.push(poly.evaluate(&val));
-    }
-    let res = interpolate(&src, &x);
-    
-    for i in 0..poly.len() {
-      assert_eq!(res[i], poly[i]);
-    }
-  }
-
-  #[test]
-  fn factor_roots() {
-    let n = 32;
-    let mut rng = test_rng();
-
-    let mut test_case = |num_zero_roots: usize, num_non_zero_roots: usize| {
-      let num_roots = num_non_zero_roots + num_zero_roots;
-      let mut poly = UniPoly::from_coeff((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
-
-      let mut non_zero_roots: Vec<Fr> = Vec::with_capacity(num_non_zero_roots);
-      let mut non_zero_evaluations: Vec<Fr> = Vec::with_capacity(num_non_zero_roots);
-
-      for _ in 0..num_non_zero_roots {
-        let root = Fr::rand(&mut rng);
-        non_zero_roots.push(root);
-        let root_pow = root.pow(BigInt::<1>::from(num_zero_roots as u64));
-        non_zero_evaluations.push(poly.evaluate(&root) / root_pow);
-      }
-      let mut roots = (0..n).map(|_| Fr::zero()).collect::<Vec<_>>();
-
-      for i in 0..num_non_zero_roots {
-        roots[num_zero_roots + i] = non_zero_roots[i];
-      }
-
-      if num_non_zero_roots > 0 {
-        //create poly that interpolates given evaluations
-        let interpolated = interpolate(&non_zero_roots, &non_zero_evaluations);
-        assert_eq!(interpolated.len(), num_non_zero_roots);
-        for (k, coeff) in interpolated.coeffs.iter().enumerate() {
-          poly.coeffs[num_non_zero_roots + k] -= coeff;
-        }
-      }
-
-      // Sanity check that all roots are actually roots
-      for i in 0..num_roots {
-        assert_eq!(poly.evaluate(&roots[i]), Fr::zero());
-      }
-
-      let quotient = poly.factor_roots(&roots);
-
-      // check that (t-r)q(t) == p(t)
-      let t = Fr::rand(&mut rng);
-      let roots_eval = compute_linear_polynomial_product_evaluation(&roots, t, num_roots);
-      let q_t = quotient.evaluate(&t);
-      let p_t = poly.evaluate(&t);
-      assert_eq!(roots_eval * q_t, p_t);
-
-      for i in (n - num_roots)..n {
-        assert_eq!(quotient[i], Fr::zero());
-      }
-      
-      if num_roots == 0 {
-        assert_eq!(poly, quotient);
-      }
-
-      if num_roots == 1 {
-        let quotient_single = poly.factor_roots(&[roots[0]]);
-        assert_eq!(quotient_single, quotient);
-      }
-    };
-
-    test_case(1,0);
-    test_case(0,1);
-    test_case(1,0);
-    test_case(1,1);
-    test_case(2,0);
-    test_case(0,2);
-    test_case(3, 6);
-  }
 
   #[test]
   fn test_from_evals_quad() {
