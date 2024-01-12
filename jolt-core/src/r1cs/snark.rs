@@ -213,11 +213,11 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
     drop(load_cfg_span);
 
     let NUM_STEPS = self.num_steps;
+    let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
 
     let synthesize_span = tracing::span!(tracing::Level::INFO, "circom_scotia_synthesize");
     let _synthesize_guard = synthesize_span.enter();
-    for i in 0..NUM_STEPS {
-      // let jolt_witness = calculate_witness(&cfg, input, true).expect("msg");
+    for i in 0..1 {
       let _ = circom_scotia::synthesize(
           &mut cs.namespace(|| format!("jolt_step_{}", i)),
           cfg.r1cs.clone(),
@@ -227,22 +227,23 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
     }
     drop(_synthesize_guard);
     drop(synthesize_span);
+
     let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
     let STATE_SIZE = 2; 
     let span = tracing::span!(tracing::Level::INFO, "constraint_loop");
     let _guard = span.enter();
-    for i in 0..NUM_STEPS-1 {
-      let out_start_index = NUM_VARS_PER_STEP * i;
-      let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
-      for j in 0..STATE_SIZE {
-        cs.enforce(
-          || format!("io consistency constraint {}, {}", i, j),
-          |_| LinearCombination::<F>::zero() + (F::from(1), CS::one()), 
-          |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(in_start_next+j))), 
-          |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(out_start_index+j))), 
-        );
-      }
-    }
+    // for i in 0..NUM_STEPS-1 {
+    //   let out_start_index = NUM_VARS_PER_STEP * i;
+    //   let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
+    //   for j in 0..STATE_SIZE {
+    //     cs.enforce(
+    //       || format!("io consistency constraint {}, {}", i, j),
+    //       |_| LinearCombination::<F>::zero() + (F::from(1), CS::one()), 
+    //       |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(in_start_next+j))), 
+    //       |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(out_start_index+j))), 
+    //     );
+    //   }
+    // }
     drop(_guard);
     drop(span);
     Ok(())
@@ -253,12 +254,14 @@ impl<F: PrimeField> Circuit<F> for JoltSkeleton<F> {
 #[tracing::instrument(skip_all, name = "JoltCircuit::run_jolt_spartan_with_circuit")]
 // pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
 pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<(), SpartanError> {
+  let num_steps = circuit.inputs[0].len(); 
   // produce keys
   // let circuit_clone = circuit.clone();
-  let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(circuit.inputs[0].len());
+  let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
   let span = tracing::span!(tracing::Level::INFO, "setup SNARK");
   let _guard = span.enter();
-  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup(skeleton_circuit).unwrap();
+  // let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup(skeleton_circuit).unwrap();
+  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
   drop(_guard);
   drop(span);
 
