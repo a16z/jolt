@@ -106,13 +106,14 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     drop(_guard);
     drop(span);
 
-    let mut current_state = [F::from(0), self.pc_start_addr];
-
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
 
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
-    for i in 0..NUM_STEPS {
+
+    let full_wtns_span = tracing::span!(tracing::Level::INFO, "full_wtns_span");
+    let full_wtns_guard = full_wtns_span.enter();
+    let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       let step_inputs = inputs_chunked.iter().map(|v| v[i].clone()).collect::<Vec<_>>();
 
       let mut input: Vec<(String, Vec<F>)> = variable_names
@@ -121,11 +122,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
         .map(|(name, input)| (name.to_string(), input))
         .collect();
 
-      input.push(("input_state".to_string(), current_state.to_vec()));
-
-      let span = tracing::span!(tracing::Level::INFO, "calculate_witness");
-      let _guard = span.enter();
-
+      input.push(("input_state".to_string(), vec![F::from(i as u64), inputs_chunked[0][i][0]]));
 
       let rs_wtns_span = tracing::span!(tracing::Level::INFO, "rs_wtns");
       let rs_wtns_guard = rs_wtns_span.enter();
@@ -148,17 +145,19 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
         let bytes: [u8; 32] = x.to_le_bytes().try_into().expect("should be 256 bits");
         F::from_repr(bytes).unwrap()
       }).collect::<Vec<_>>();
-      drop(_guard);
-      drop(span);
+      jolt_witness
+    }).collect();
+    drop(full_wtns_guard);
+    drop(full_wtns_span);
 
-      current_state = [jolt_witness[1], jolt_witness[2]]; 
 
+    for i in 0..NUM_STEPS {
       let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
       let _guard = span.enter();
       let _ = circom_scotia::synthesize(
           &mut cs.namespace(|| format!("jolt_step_{}", i)),
           cfg.r1cs.clone(),
-          Some(jolt_witness),
+          Some(jolt_witnesses[i].clone()),
       )
       .unwrap();
       drop(_guard);
