@@ -58,11 +58,11 @@ pasta_curves = "0.5.1"
 bellpepper-core = "0.2.1"
 circom-scotia = "0.1.2"
 # spartan2 = { git = "https://github.com/microsoft/Spartan2.git", branch = "hyrax_pc2"}
-# spartan2 = { path = "../Spartan2" }
 spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "uniform_r1cs_shape" }
 strum = "0.25.0"
 strum_macros = "0.25.2"
 enum_dispatch = "0.3.12"
+witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 
 common = { path = "../common" }
 eyre = "0.6.9"
@@ -71,6 +71,12 @@ dhat = "0.3.2"
 
 
 compiler = { path = "../compiler" }
+ruint = "1.11.1"
+
+[build-dependencies]
+common = { path = "../common" }
+# witness = { path = "../../circom-witness-rs", features = ["build-witness"]}
+
 
 [lib]
 name = "liblasso"
