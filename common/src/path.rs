@@ -36,8 +36,8 @@ pub mod JoltPaths {
             .join(format!("{}.{}", program_name, BYTECODE_FILE_SUFFIX))
     }
 
-    pub fn circuit_template_path() -> PathBuf {
-        root().join("../jolt-core/src/r1cs/circuits/jolt.template.circom").canonicalize().unwrap()
+    pub fn circuit_path() -> PathBuf {
+        root().join("../jolt-core/src/r1cs/circuits/jolt_single_step.circom").canonicalize().unwrap()
     }
 
     pub fn circom_build_script_path() -> PathBuf {
@@ -48,15 +48,19 @@ pub mod JoltPaths {
         target_dir().join(CIRCUIT_DIR_NAME)
     }
 
-    pub fn compiled_circuit_path(program_name: &str) -> PathBuf {
-        circuit_artifacts_path().join(format!("jolt-{program_name}.circom"))
+    pub fn circuit_cpp_wnts_path() -> PathBuf {
+        circuit_artifacts_path().join("jolt_single_step_cpp/jolt_single_step.cpp")
     }
 
-    pub fn r1cs_path(program_name: &str) -> PathBuf {
-        circuit_artifacts_path().join(format!("jolt-{program_name}.r1cs"))
+    pub fn circuit_dat_path() -> PathBuf {
+        circuit_artifacts_path().join("jolt_single_step_cpp/jolt_single_step.dat")
     }
 
-    pub fn witness_generator_path(program_name: &str) -> PathBuf {
-        circuit_artifacts_path().join(format!("jolt-{program_name}_js/jolt-{program_name}.wasm"))
+    pub fn r1cs_path() -> PathBuf {
+        circuit_artifacts_path().join("jolt_single_step.r1cs")
+    }
+
+    pub fn witness_generator_path() -> PathBuf {
+        circuit_artifacts_path().join("jolt_single_step_js/jolt_single_step.wasm")
     }
 }
