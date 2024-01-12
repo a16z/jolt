@@ -1,6 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rayon::iter::{ParallelIterator, IntoParallelIterator, IntoParallelRefIterator};
 use std::any::TypeId;
 use std::path::PathBuf;
 use strum::{EnumCount, IntoEnumIterator};
@@ -243,6 +244,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] 
             = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
 
+        let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
+        let _guard = span.enter();
         let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
             instructions
             .iter()
@@ -262,9 +265,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .map(|x| x as u64)
             .map(F::from)
             .collect::<Vec<F>>();
+        drop(_guard);
+        drop(span);
 
         // TODO(sragss): Move to separate function for tracing
-        let lookup_outputs = instructions.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+        let span = tracing::span!(tracing::Level::INFO, "compute lookup outputs");
+        let _guard = span.enter();
+        let lookup_outputs = instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+        drop(_guard);
+        drop(span);
 
         // assert lengths 
         assert_eq!(prog_a_rw.len(), TRACE_LEN);
@@ -288,7 +297,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags.to_vec(),
+            circuit_flags,
         ];
 
         // TODO: move this conversion to the r1cs module 
@@ -300,13 +309,17 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
         type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
 
+        let span = tracing::span!(tracing::Level::INFO, "ff ark to spartan conversion");
+        let _guard = span.enter();
         let inputs_ff = inputs
-            .into_iter()
+            .into_par_iter()
             .map(|input| input
-                .into_iter()
+                .into_par_iter()
                 .map(|x| ark_to_ff(x))
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
+        drop(_guard); 
+        drop(span);
         
         println!("[sam]: Running spartan"); // TODO(sragss): rm
         let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff, witness_generator_path, r1cs_path);
