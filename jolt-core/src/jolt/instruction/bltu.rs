@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::{
@@ -10,6 +11,10 @@ use crate::{
 pub struct BLTUInstruction(pub u64, pub u64);
 
 impl JoltInstruction for BLTUInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         let mut sum = F::zero();
         let mut eq_prod = F::one();
@@ -31,6 +36,11 @@ impl JoltInstruction for BLTUInstruction {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

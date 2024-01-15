@@ -11,7 +11,6 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-#[derive(Debug)]
 pub struct MultiCommitGens<G> {
     pub n: usize,
     pub G: Vec<G>,
@@ -71,17 +70,25 @@ impl<G: CurveGroup> MultiCommitGens<G> {
 
 pub trait Commitments<G: CurveGroup>: Sized {
     fn commit(&self, blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G;
-    fn batch_commit(inputs: &[Self], blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G;
+    fn batch_commit(inputs: &[Self], bases: &[G::Affine]) -> G;
+    fn batch_commit_blinded(inputs: &[Self], blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G;
 }
 
 impl<G: CurveGroup> Commitments<G> for G::ScalarField {
+    #[tracing::instrument(skip_all, name = "Commitments.commit")]
     fn commit(&self, blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G {
         assert_eq!(gens_n.n, 1);
 
         gens_n.G[0] * self + gens_n.h * blind
     }
 
-    fn batch_commit(inputs: &[Self], blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G {
+    fn batch_commit(inputs: &[Self], bases: &[G::Affine]) -> G {
+        assert_eq!(bases.len(), inputs.len());
+
+        VariableBaseMSM::msm(&bases, &inputs).unwrap()
+    }
+
+    fn batch_commit_blinded(inputs: &[Self], blind: &G::ScalarField, gens_n: &MultiCommitGens<G>) -> G {
         assert_eq!(gens_n.n, inputs.len());
 
         let mut bases = CurveGroup::normalize_batch(gens_n.G.as_ref());
@@ -91,4 +98,5 @@ impl<G: CurveGroup> Commitments<G> for G::ScalarField {
 
         VariableBaseMSM::msm(bases.as_ref(), scalars.as_ref()).unwrap()
     }
+
 }

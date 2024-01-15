@@ -6,6 +6,8 @@ use ark_std::test_rng;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
+use crate::poly::dense_mlpoly::DensePolynomial;
+
 #[cfg(test)]
 pub mod test;
 
@@ -62,15 +64,49 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
     result
 }
 
+#[tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
 
-    #[cfg(feature = "multicore")]
     let dot_product = (0..a.len()).into_par_iter().map(|i| a[i] * b[i]).sum();
-    #[cfg(not(feature = "multicore"))]
-    let dot_product = (0..a.len()).map(|i| a[i] * b[i]).sum();
 
     dot_product
+}
+
+/// Compute dotproduct optimized for values being 0 / 1
+#[tracing::instrument(skip_all)]
+pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
+    assert_eq!(a.len(), b.len());
+
+    let dot_product = (0..a.len())
+        .into_par_iter()
+        .map(|i| mul_0_1_optimized(&a[i], &b[i]))
+        .sum();
+
+    dot_product
+}
+
+#[inline(always)]
+pub fn mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
+    if a.is_zero() || b.is_zero() {
+        F::zero()
+    } else if a.is_one() {
+        *b
+    } else if b.is_one() {
+        *a
+    } else {
+        // TODO(sragss): Negative 1
+        *a * b
+    }
+}
+
+#[inline(always)]
+pub fn mul_0_optimized<F: PrimeField>(likely_zero: &F, x: &F) -> F {
+    if likely_zero.is_zero() {
+        F::zero()
+    } else {
+        *likely_zero * x
+    }
 }
 
 /// Checks if `num` is a power of 2.
@@ -96,6 +132,46 @@ pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
         r_i.push(F::rand(&mut rng));
     }
     r_i
+}
+
+#[inline]
+#[tracing::instrument(skip_all, name = "split_poly_flagged")]
+pub fn split_poly_flagged<F: PrimeField>(
+    poly: &DensePolynomial<F>,
+    flags: &DensePolynomial<F>,
+) -> (Vec<F>, Vec<F>) {
+    let poly_evals: &[F] = poly.evals_ref();
+    let len = poly_evals.len();
+    let half = len / 2;
+    let mut left: Vec<F> = Vec::with_capacity(half);
+    let mut right: Vec<F> = Vec::with_capacity(half);
+
+    for i in 0..len {
+        if flags[i].is_zero() {
+            if i < half {
+                left.push(F::one());
+            } else {
+                right.push(F::one());
+            }
+        } else {
+            if i < half {
+                left.push(poly_evals[i]);
+            } else {
+                right.push(poly_evals[i]);
+            }
+        }
+    }
+    (left, right)
+}
+
+pub fn count_poly_zeros<F: PrimeField>(poly: &DensePolynomial<F>) -> usize {
+    let mut count = 0;
+    for i in 0..poly.len() {
+        if poly[i].is_zero() {
+            count += 1;
+        }
+    }
+    count
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::{
@@ -10,6 +11,10 @@ use crate::{
 pub struct SLTUInstruction(pub u64, pub u64);
 
 impl JoltInstruction for SLTUInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         let mut sum = F::zero();
         let mut eq_prod = F::one();
@@ -32,6 +37,11 @@ impl JoltInstruction for SLTUInstruction {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+    }
 }
 
 #[cfg(test)]
@@ -47,11 +57,11 @@ mod test {
     #[test]
     fn sltu_instruction_e2e() {
         let mut rng = test_rng();
-        const C: usize = 8;
+        const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let (x, y) = (rng.next_u64(), rng.next_u64());
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
             jolt_instruction_test!(SLTUInstruction(x, y), (x < y).into());
             assert_eq!(
                 SLTUInstruction(x, y).lookup_entry::<Fr>(C, M),
@@ -59,7 +69,7 @@ mod test {
             );
         }
         for _ in 0..256 {
-            let x = rng.next_u64();
+            let x = rng.next_u32() as u64;
             jolt_instruction_test!(SLTUInstruction(x, x), Fr::zero());
             assert_eq!(SLTUInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
         }

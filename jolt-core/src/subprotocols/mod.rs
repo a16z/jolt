@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments)]
 
-mod bullet;
 mod zk;
 
 pub mod combined_table_proof;

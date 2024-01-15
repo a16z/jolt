@@ -4,6 +4,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     jolt::instruction::JoltInstruction,
@@ -19,7 +20,8 @@ use crate::{
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
-        errors::ProofVerifyError, math::Math, random::RandomTape, transcript::ProofTranscript,
+        errors::ProofVerifyError, math::Math, mul_0_1_optimized, random::RandomTape,
+        transcript::ProofTranscript,
     },
 };
 
@@ -60,16 +62,26 @@ where
     type BatchedPolynomials = BatchedSurgePolynomials<F>;
     type Commitment = SurgeCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let dim_read_polys = [self.dim.as_slice(), self.read_cts.as_slice()].concat();
+        let (batched_dim_read, (batched_final, batched_E)) = rayon::join(
+            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
+            || {
+                rayon::join(
+                    || DensePolynomial::merge(&self.final_cts),
+                    || DensePolynomial::merge(&self.E_polys),
+                )
+            },
+        );
 
         Self::BatchedPolynomials {
-            batched_dim_read: DensePolynomial::merge(&dim_read_polys),
-            batched_final: DensePolynomial::merge(&self.final_cts),
-            batched_E: DensePolynomial::merge(&self.E_polys),
+            batched_dim_read,
+            batched_final,
+            batched_E,
         }
     }
 
+    #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
             .batched_dim_read
@@ -111,14 +123,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
 {
     type Openings = Vec<F>;
 
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .E_polys
-            .iter()
-            .map(|poly| poly.evaluate(opening_point))
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
@@ -178,15 +193,18 @@ where
 {
     type Openings = [Vec<F>; 3];
 
+    #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
-        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate(&opening_point) };
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         [
-            polynomials.dim.iter().map(evaluate).collect(),
-            polynomials.read_cts.iter().map(evaluate).collect(),
-            polynomials.E_polys.iter().map(evaluate).collect(),
+            polynomials.dim.par_iter().map(evaluate).collect(),
+            polynomials.read_cts.par_iter().map(evaluate).collect(),
+            polynomials.E_polys.par_iter().map(evaluate).collect(),
         ]
     }
 
+    #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
@@ -279,14 +297,17 @@ where
 {
     type Openings = Vec<F>;
 
+    #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
     fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .final_cts
-            .iter()
-            .map(|poly| poly.evaluate(opening_point))
+            .par_iter()
+            .map(|poly| poly.evaluate_at_chi(&chis))
             .collect()
     }
 
+    #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
@@ -328,8 +349,8 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
-    for Surge<F, G, Instruction, C, M>
+impl<F, G, Instruction, const C: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
+    for Surge<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -343,52 +364,57 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
-                        (
-                            polynomials.dim[dimndex][i],
-                            polynomials.E_polys[memory_index][i],
-                            polynomials.read_cts[dimndex][i],
-                        )
+                        mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
+                            + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                            + polynomials.dim[dim_index][i]
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
             .collect()
     }
+    #[tracing::instrument(skip_all, name = "Surge::write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 let leaf_fingerprints = (0..self.num_lookups)
                     .map(|i| {
-                        (
-                            polynomials.dim[dimndex][i],
-                            polynomials.E_polys[memory_index][i],
-                            polynomials.read_cts[dimndex][i] + F::one(),
-                        )
+                        mul_0_1_optimized(
+                            &(polynomials.read_cts[dim_index][i] + F::one()),
+                            &gamma_squared,
+                        ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                            + polynomials.dim[dim_index][i]
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
             .collect()
     }
+    #[tracing::instrument(skip_all, name = "Surge::init_leaves")]
     fn init_leaves(
         &self,
         _polynomials: &SurgePolys<F, G>,
@@ -396,41 +422,44 @@ where
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..M)
+                let leaf_fingerprints = (0..self.M)
                     .map(|i| {
-                        (
-                            F::from(i as u64),
-                            self.materialized_subtables[subtable_index][i],
-                            F::zero(),
-                        )
+                        // 0 * gamma^2 +
+                        mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
+                            + F::from(i as u64)
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
             .collect()
     }
+    #[tracing::instrument(skip_all, name = "Surge::final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
     ) -> Vec<DensePolynomial<F>> {
+        let gamma_squared = gamma.square();
         (0..Self::num_memories())
+            .into_par_iter()
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..M)
+                let leaf_fingerprints = (0..self.M)
                     .map(|i| {
-                        (
-                            F::from(i as u64),
-                            self.materialized_subtables[subtable_index][i],
-                            polynomials.final_cts[dimndex][i],
-                        )
+                        mul_0_1_optimized(&polynomials.final_cts[dim_index][i], &gamma_squared)
+                            + mul_0_1_optimized(
+                                &self.materialized_subtables[subtable_index][i],
+                                gamma,
+                            )
+                            + F::from(i as u64)
+                            - *tau
                     })
-                    .map(|tuple| Self::fingerprint(&tuple, gamma, tau))
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
@@ -442,8 +471,8 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, SurgePolys<F, G>> for Surge<F, G, Instruction, C, M>
+impl<F, G, Instruction, const C: usize> MemoryCheckingVerifier<F, G, SurgePolys<F, G>>
+    for Surge<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -464,11 +493,11 @@ where
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
-                    openings.dim_openings[dimndex],
+                    openings.dim_openings[dim_index],
                     openings.E_poly_openings[memory_index],
-                    openings.read_openings[dimndex],
+                    openings.read_openings[dim_index],
                 )
             })
             .collect()
@@ -476,11 +505,11 @@ where
     fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
-                    openings.dim_openings[dimndex],
+                    openings.dim_openings[dim_index],
                     openings.E_poly_openings[memory_index],
-                    openings.read_openings[dimndex] + F::one(),
+                    openings.read_openings[dim_index] + F::one(),
                 )
             })
             .collect()
@@ -505,11 +534,11 @@ where
 
         (0..Self::num_memories())
             .map(|memory_index| {
-                let dimndex = Self::memory_to_dimension_index(memory_index);
+                let dim_index = Self::memory_to_dimension_index(memory_index);
                 (
                     a_init,
                     v_init[Self::memory_to_subtable_index(memory_index)],
-                    openings.final_openings[dimndex],
+                    openings.final_openings[dim_index],
                 )
             })
             .collect()
@@ -523,7 +552,7 @@ pub struct SurgePrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     openings: PrimarySumcheckOpenings<F, G>,
 }
 
-pub struct Surge<F, G, Instruction, const C: usize, const M: usize>
+pub struct Surge<F, G, Instruction, const C: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -535,6 +564,7 @@ where
     ops: Vec<Instruction>,
     materialized_subtables: Vec<Vec<F>>,
     num_lookups: usize,
+    M: usize,
 }
 
 pub struct SurgeProof<F, G>
@@ -556,7 +586,7 @@ where
     >,
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize> Surge<F, G, Instruction, C, M>
+impl<F, G, Instruction, const C: usize> Surge<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -566,15 +596,17 @@ where
         C * Instruction::default().subtables::<F>(C).len()
     }
 
-    pub fn new(ops: Vec<Instruction>) -> Self {
+    #[tracing::instrument(skip_all, name = "Surge::new")]
+    pub fn new(ops: Vec<Instruction>, M: usize) -> Self {
         let num_lookups = ops.len().next_power_of_two();
         let instruction = Instruction::default();
 
         let num_subtables = instruction.subtables::<F>(C).len();
-        let mut materialized_subtables = Vec::with_capacity(num_subtables);
-        for subtable in instruction.subtables(C).iter() {
-            materialized_subtables.push(subtable.materialize(M));
-        }
+        let materialized_subtables = instruction
+            .subtables(C)
+            .par_iter()
+            .map(|subtable| subtable.materialize(M))
+            .collect();
 
         Self {
             _field: PhantomData,
@@ -583,6 +615,7 @@ where
             ops,
             materialized_subtables,
             num_lookups,
+            M,
         }
     }
 
@@ -600,6 +633,7 @@ where
         b"Surge"
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
@@ -618,7 +652,7 @@ where
             num_rounds,
         );
         let eq = DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
-        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
+        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq, self.M);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -631,7 +665,7 @@ where
         let combine_lookups_eq = |vals: &[F]| -> F {
             let vals_no_eq: &[F] = &vals[0..(vals.len() - 1)];
             let eq = vals[vals.len() - 1];
-            instruction.combine_lookups(vals_no_eq, C, M) * eq
+            instruction.combine_lookups(vals_no_eq, C, self.M) * eq
         };
 
         let (primary_sumcheck_proof, r_z, _) =
@@ -681,6 +715,7 @@ where
     pub fn verify(
         proof: SurgeProof<F, G>,
         transcript: &mut Transcript,
+        M: usize,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
         let instruction = Instruction::default();
@@ -727,12 +762,13 @@ where
         Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)
     }
 
+    #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
     fn construct_polys(&self) -> SurgePolys<F, G> {
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; self.num_lookups]; C];
 
         let mut read_cts = vec![vec![0usize; self.num_lookups]; C];
-        let mut final_cts = vec![vec![0usize; M]; C];
-        let log_M = ark_std::log2(M) as usize;
+        let mut final_cts = vec![vec![0usize; self.M]; C];
+        let log_M = ark_std::log2(self.M) as usize;
 
         for (op_index, op) in self.ops.iter().enumerate() {
             let access_sequence = op.to_indices(C, log_M);
@@ -740,7 +776,7 @@ where
 
             for dimension_index in 0..C {
                 let memory_address = access_sequence[dimension_index];
-                debug_assert!(memory_address < M);
+                debug_assert!(memory_address < self.M);
 
                 dim_usize[dimension_index][op_index] = memory_address;
 
@@ -806,7 +842,12 @@ where
         }
     }
 
-    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, G>, eq: &DensePolynomial<F>) -> F {
+    #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
+    fn compute_primary_sumcheck_claim(
+        polys: &SurgePolys<F, G>,
+        eq: &DensePolynomial<F>,
+        M: usize,
+    ) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -816,6 +857,7 @@ where
         let instruction = Instruction::default();
 
         (0..hypercube_size)
+            .into_par_iter()
             .map(|eval_index| {
                 let g_operands: Vec<F> = (0..Self::num_memories())
                     .map(|memory_index| g_operands[memory_index][eval_index])
@@ -846,11 +888,11 @@ mod tests {
         const M: usize = 1 << 8;
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::new(ops);
+        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C>>::new(ops, M);
         let proof = surge.prove(&mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::verify(proof, &mut transcript)
+        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript, M)
             .expect("should work");
     }
 
@@ -867,11 +909,11 @@ mod tests {
         const M: usize = 1 << 8;
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::new(ops);
+        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C>>::new(ops, M);
         let proof = surge.prove(&mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C, M>>::verify(proof, &mut transcript)
+        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript, M)
             .expect("should work");
     }
 }

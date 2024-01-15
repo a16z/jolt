@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
@@ -14,6 +15,10 @@ use crate::utils::instruction_utils::{
 pub struct JALRInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for JALRInstruction<WORD_SIZE> {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // C from IDEN, C from TruncateOverflow, C from ZeroLSB
         assert!(vals.len() == 3 * C);
@@ -54,7 +59,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for JALRInstruction<WORD_SIZE> {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
-        add_and_chunk_operands(self.0 as u128, self.1 as u128 + 4, C, log_M)
+        add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 
@@ -77,7 +87,7 @@ mod test {
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-            let z = x.overflowing_add(y.overflowing_add(4).0).0;
+            let z = x.overflowing_add(y).0;
             jolt_instruction_test!(
                 JALRInstruction::<WORD_SIZE>(x as u64, y as u64),
                 (z - z % 2).into()

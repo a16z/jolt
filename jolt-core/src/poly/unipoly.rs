@@ -92,7 +92,7 @@ impl<F: PrimeField> UniPoly<F> {
         gens: &MultiCommitGens<G>,
         blind: &F,
     ) -> G {
-        Commitments::batch_commit(&self.coeffs, blind, gens)
+        Commitments::batch_commit_blinded(&self.coeffs, blind, gens)
     }
 }
 

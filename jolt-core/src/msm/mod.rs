@@ -5,7 +5,7 @@ use ark_std::{borrow::Borrow, iterable::Iterable, vec::Vec};
 
 use ark_ec::{CurveGroup, ScalarMul};
 
-#[cfg(feature = "parallel")]
+#[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
 #[cfg(not(feature = "ark-msm"))]
@@ -117,12 +117,12 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 
     let num_bits = max_num_bits;
     let digits_count = (num_bits + c - 1) / c;
-    #[cfg(feature = "parallel")]
+    #[cfg(feature = "multicore")]
     let scalar_digits = scalars
         .into_par_iter()
         .flat_map_iter(|s| make_digits(s, c, num_bits))
         .collect::<Vec<_>>();
-    #[cfg(not(feature = "parallel"))]
+    #[cfg(not(feature = "multicore"))]
     let scalar_digits = scalars
         .iter()
         .flat_map(|s| make_digits(s, c, num_bits))
@@ -280,7 +280,7 @@ fn msm_bigint<V: VariableBaseMSM>(
 }
 
 // From: https://github.com/arkworks-rs/gemini/blob/main/src/kzg/msm/variable_base.rs#L20
-fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> Vec<i64> {
+fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> impl Iterator<Item = i64> + '_ {
     let scalar = a.as_ref();
     let radix: u64 = 1 << w;
     let window_mask: u64 = radix - 1;
@@ -292,8 +292,7 @@ fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> Vec<i64> {
         num_bits
     };
     let digits_count = (num_bits + w - 1) / w;
-    let mut digits = vec![0i64; digits_count];
-    for (i, digit) in digits.iter_mut().enumerate() {
+    (0..digits_count).into_iter().map(move |i| {
         // Construct a buffer of bits of the scalar, starting at `bit_offset`.
         let bit_offset = i * w;
         let u64_idx = bit_offset / 64;
@@ -307,18 +306,18 @@ fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> Vec<i64> {
             // Combine the current u64's bits with the bits from the next u64
             (scalar[u64_idx] >> bit_idx) | (scalar[1 + u64_idx] << (64 - bit_idx))
         };
-
         // Read the actual coefficient value from the window
         let coef = carry + (bit_buf & window_mask); // coef = [0, 2^r)
 
         // Recenter coefficients from [0,2^w) to [-2^w/2, 2^w/2)
         carry = (coef + radix / 2) >> w;
-        *digit = (coef as i64) - (carry << w) as i64;
-    }
+        let mut digit = (coef as i64) - (carry << w) as i64;
 
-    digits[digits_count - 1] += (carry << w) as i64;
-
-    digits
+        if i == digits_count - 1 {
+            digit += (carry << w) as i64;
+        }
+        digit
+    })
 }
 
 /// The result of this function is only approximately `ln(a)`

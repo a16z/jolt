@@ -1,26 +1,37 @@
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
+use common::path::JoltPaths;
 
 fn main() {
-    build_circom();
-}
+    let circuit_path = JoltPaths::circuit_path();
+    let build_script_path = JoltPaths::circom_build_script_path();
+    let circuit_artifacts_destination = JoltPaths::circuit_artifacts_path();
+    let circom_build_status = std::process::Command::new(build_script_path)
+        .arg(&circuit_path)
+        .arg(&circuit_artifacts_destination)
+        .output()
+        .expect("Failed to build circom");
+    if !circom_build_status.status.success() {
+        println!("Failed to build circom: {}", circuit_path.display());
+        std::process::exit(1);
+    }
 
-fn build_circom() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("could not find CARGO_MANIFEST_DIR"); // Absolute path to jolt-core
-    let script_path = PathBuf::from(&manifest_dir).join("src/r1cs/scripts/compile_jolt.sh");
-    let circom_path = PathBuf::from(&manifest_dir).join("src/r1cs/circuits/jolt.circom");
-    let target_dir = env::var("OUT_DIR").expect("could not find OUT_DIR");
-    let out_dir = PathBuf::from(&target_dir).join("circom");
+    // Currently it is impossible to automate the witness build because of a circular compile dependency.
+    // 1. circom-witness-rs/build.rs depends on WITNESS_CPP (actually the .circom path), compiles circom, creates artifacts in working directory
+    // 2. circom-witness-rs does a string replace on the cpp file
+    // 3. circom-witness-rs compiles cpp using cxx bridge to make a rust binary
+    // 4. circom-witness-rs::generate::build_witness() generates a graph.bin file
+    // We only need the 4th artifact. Currently this can be created by generating all the other artifacts in the circom-witness-rs working directory
+    //
+    // BUILD INSTRUCTIONS (graph.bin):
+    // 1. Uncomment the following line
+    // 2. Set jolt-core/Cargo.toml build-dependencies:
+    //     [build-dependencies]
+    //     witness = { git = "https://github.com/philsippl/circom-witness-rs", features = ["build-witness"]}
+    // 3. WITNESS_CPP=/Users/sragsdale/Documents/Code/a16z/lasso-cp-2/jolt-core/src/r1cs/circuits/jolt_single_step.circom cargo build -p jolt-core
+    // 4. mv jolt-core/graph.bin jolt-core/src/r1cs/graph.bin
+    // 5. Commit
+    // 6. Remove trash (circuit.cc / circuit.new / constants.dat)
+    // witness::generate::build_witness();
 
-    // Store in environment variable which binary can read
-    let out_dir_str = out_dir.to_str().expect("failed to convert path to string");
-    println!("cargo:rustc-env=CIRCUIT_DIR={out_dir_str}");
-
-    let status = Command::new(script_path)
-        .arg(&circom_path)
-        .arg(&out_dir)
-        .status()
-        .expect("failed to build circom");
-    assert!(status.success());
+    println!("cargo:rerun-if-changed={}", JoltPaths::circom_build_script_path().display());
+    println!("cargo:rerun-if-changed={}", JoltPaths::circuit_path().display());
 }

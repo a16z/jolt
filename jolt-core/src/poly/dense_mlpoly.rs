@@ -1,18 +1,20 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::{self, compute_dotproduct};
+use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
-use crate::subprotocols::dot_product::{DotProductProofGens, DotProductProofLog};
+use crate::subprotocols::dot_product::{DotProductProof, DotProductProofGens};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use ark_ec::AffineRepr;
 use ark_ec::CurveGroup;
+use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::Zero;
+use ark_std::{test_rng, UniformRand, Zero};
 use core::ops::Index;
 use merlin::Transcript;
 use std::ops::AddAssign;
@@ -50,7 +52,7 @@ pub struct PolyCommitmentBlinds<F> {
     blinds: Vec<F>,
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize, PartialEq)]
 pub struct PolyCommitment<G: CurveGroup> {
     C: Vec<G>,
 }
@@ -60,11 +62,18 @@ pub struct ConstPolyCommitment<G: CurveGroup> {
     C: G,
 }
 
+pub enum CommitHint {
+    Normal,
+    Flags,
+    Small,
+}
+
 impl<F: PrimeField> DensePolynomial<F> {
     pub fn new(Z: Vec<F>) -> Self {
         assert!(
             utils::is_power_of_two(Z.len()),
-            "Dense multi-linear polynomials must be made from a power of 2"
+            "Dense multi-linear polynomials must be made from a power of 2 (not {})",
+            Z.len()
         );
 
         DensePolynomial {
@@ -109,6 +118,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     #[cfg(feature = "multicore")]
+    #[tracing::instrument(skip_all, name = "DensePolynomial.commit_inner")]
     fn commit_inner<G: CurveGroup<ScalarField = F>>(
         &self,
         blinds: &[F],
@@ -117,13 +127,15 @@ impl<F: PrimeField> DensePolynomial<F> {
         let L_size = blinds.len();
         let R_size = self.Z.len() / L_size;
         assert_eq!(L_size * R_size, self.Z.len());
+
+        let gens = CurveGroup::normalize_batch(&gens.G);
+
         let C = (0..L_size)
             .into_par_iter()
             .map(|i| {
                 Commitments::batch_commit(
                     self.Z[R_size * i..R_size * (i + 1)].as_ref(),
-                    &blinds[i],
-                    gens,
+                    &gens,
                 )
             })
             .collect();
@@ -151,7 +163,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         PolyCommitment { C }
     }
 
-    #[tracing::instrument(skip_all, name = "DensePolynomial.commit")]
     pub fn commit<G>(
         &self,
         gens: &PolyCommitmentGens<G>,
@@ -182,6 +193,89 @@ impl<F: PrimeField> DensePolynomial<F> {
         (self.commit_inner(&blinds.blinds, &gens.gens.gens_n), blinds)
     }
 
+    /// Commit given the lagrange coefficients are 0 / 1
+    pub fn commit_with_hint<G>(
+        &self,
+        gens: &PolyCommitmentGens<G>,
+        hint: CommitHint,
+    ) -> PolyCommitment<G>
+    where
+        G: CurveGroup<ScalarField = F>,
+    {
+        let n = self.Z.len();
+        let ell = self.get_num_vars();
+        assert_eq!(n, ell.pow2());
+
+        let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(ell);
+        let L_size = left_num_vars.pow2();
+        let R_size = right_num_vars.pow2();
+        assert_eq!(L_size * R_size, n);
+
+        let gens: Vec<G::Affine> = CurveGroup::normalize_batch(&gens.gens.gens_n.G);
+
+        let C = (0..L_size)
+            .into_par_iter()
+            .map(|i| {
+                let scalars = self.Z[R_size * i..R_size * (i + 1)].as_ref();
+                match hint {
+                    CommitHint::Normal => Commitments::batch_commit(scalars, &gens),
+                    CommitHint::Flags => Self::flags_msm(scalars, &gens),
+                    CommitHint::Small => {
+                        let bigints: Vec<_> = scalars.iter().map(|s| s.into_bigint()).collect();
+                        Self::sm_msm(&bigints, &gens)
+                    }
+                }
+            })
+            .collect();
+        PolyCommitment { C }
+    }
+
+    /// Special MSM where all scalar values are 0 / 1 – does not verify.
+    fn flags_msm<G: CurveGroup>(scalars: &[G::ScalarField], bases: &[G::Affine]) -> G {
+        assert_eq!(scalars.len(), bases.len());
+        let result = scalars
+            .into_iter()
+            .enumerate()
+            .filter(|(_index, scalar)| !scalar.is_zero())
+            .map(|(index, scalar)| bases[index])
+            .sum();
+
+        result
+    }
+
+    pub fn sm_msm<V: VariableBaseMSM>(
+        scalars: &[<V::ScalarField as PrimeField>::BigInt],
+        bases: &[V::MulBase],
+    ) -> V {
+        assert_eq!(scalars.len(), bases.len());
+        let num_buckets: usize = 1 << 16; // TODO(sragss): This should be passed in / dependent on M = N^{1/C}
+
+        // #[cfg(test)]
+        // scalars.for_each(|scalar| {
+        //     assert!(scalar < V::ScalarField::from(num_buckets as u64).into_bigint())
+        // });
+
+        // Assign things to buckets based on the scalar
+        let mut buckets: Vec<V> = vec![V::zero(); num_buckets];
+        scalars.into_iter().enumerate().for_each(|(index, scalar)| {
+            let bucket_index: u64 = scalar.as_ref()[0];
+            buckets[bucket_index as usize] += bases[index];
+        });
+
+        let mut result = V::zero();
+        let mut running_sum = V::zero();
+        buckets
+            .into_iter()
+            .skip(1)
+            .enumerate()
+            .rev()
+            .for_each(|(index, bucket)| {
+                running_sum += bucket;
+                result += running_sum;
+            });
+        result
+    }
+
     #[tracing::instrument(skip_all, name = "DensePolynomial.bound")]
     pub fn bound(&self, L: &[F]) -> Vec<F> {
         let (left_num_vars, right_num_vars) =
@@ -189,20 +283,28 @@ impl<F: PrimeField> DensePolynomial<F> {
         let L_size = left_num_vars.pow2();
         let R_size = right_num_vars.pow2();
 
-        #[cfg(feature = "multicore")]
+        let min_inner_iter_size = 1 << 10;
         let bound_vals = (0..R_size)
             .into_par_iter()
             .map(|i| {
                 (0..L_size)
                     .into_par_iter()
-                    .map(|j| L[j] * self.Z[j * R_size + i])
+                    .with_min_len(min_inner_iter_size)
+                    .map(|j| {
+                        // TODO(sragss): Gate this logic for small dense_mlpoly
+                        if L[j].is_zero() || self.Z[j * R_size + i].is_zero() {
+                            F::zero()
+                        } else if L[j].is_one() {
+                            self.Z[j * R_size + i]
+                        } else if self.Z[j * R_size + i].is_one() {
+                            L[j]
+                        } else {
+                            L[j] * self.Z[j * R_size + i]
+                        }
+                        // L[j] * self.Z[j * R_size + i]
+                    })
                     .sum()
             })
-            .collect();
-
-        #[cfg(not(feature = "multicore"))]
-        let bound_vals = (0..R_size)
-            .map(|i| (0..L_size).map(|j| L[j] * self.Z[j * R_size + i]).sum())
             .collect();
 
         bound_vals
@@ -210,8 +312,93 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let n = self.len() / 2;
+
         for i in 0..n {
-            self.Z[i] = self.Z[i] + *r * (self.Z[i + n] - self.Z[i]);
+            // let low' = low + r * (high - low)
+            let m = self.Z[i + n] - self.Z[i];
+            self.Z[i] += *r * m;
+        }
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn new_poly_from_bound_poly_var_top(&self, r: &F) -> Self {
+        let n = self.len() / 2;
+        let mut new_evals = vec![F::zero(); n];
+
+        for i in 0..n {
+            // let low' = low + r * (high - low)
+            let low = self.Z[i];
+            let high = self.Z[i + n];
+            if !(low.is_zero() && high.is_zero()) {
+                let m = high - low;
+                new_evals[i] = low + *r * m;
+            }
+        }
+        let num_vars = self.num_vars - 1;
+        let len = n;
+
+        Self {
+            num_vars,
+            len,
+            Z: new_evals
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn new_poly_from_bound_poly_var_top_flags(&self, r: &F) -> Self {
+        let n = self.len() / 2;
+        let mut new_evals = vec![F::zero(); n];
+
+        for i in 0..n {
+            // let low' = low + r * (high - low)
+            // Special truth table here
+            //         high 0   high 1 
+            // low 0     0        r
+            // low 1   (1-r)      1
+            let low = self.Z[i];
+            let high = self.Z[i + n];
+
+            if low.is_zero() {
+                if high.is_one() {
+                    new_evals[i] = *r;
+                } else if !high.is_zero() {
+                    panic!("Shouldn't happen for a flag poly");
+                }
+            } else if low.is_one() {
+                if high.is_one() {
+                    new_evals[i] = F::one();
+                } else if high.is_zero() {
+                    new_evals[i] = F::one() - r;
+                } else {
+                    panic!("Shouldn't happen for a flag poly");
+                }
+            }
+        }
+        let num_vars = self.num_vars - 1;
+        let len = n;
+
+        Self {
+            num_vars,
+            len,
+            Z: new_evals
+        }
+    }
+
+    pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
+        let n = self.len() / 2;
+
+        for i in 0..n {
+            let low = &self.Z[i];
+            let high = &self.Z[i + n];
+            if high == low {
+                continue;
+            }
+
+            let m = *high - low;
+            let term = mul_0_1_optimized(r, &m);
+            self.Z[i] += term;
         }
         self.num_vars -= 1;
         self.len = n;
@@ -235,12 +422,24 @@ impl<F: PrimeField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
 
+    pub fn evaluate_at_chi(&self, chis: &Vec<F>) -> F {
+        compute_dotproduct(&self.Z, &chis)
+    }
+
+    pub fn evaluate_at_chi_low_optimized(&self, chis: &Vec<F>) -> F {
+        compute_dotproduct_low_optimized(&self.Z, &chis)
+    }
+
     fn vec(&self) -> &Vec<F> {
         &self.Z
     }
 
     pub fn evals(&self) -> Vec<F> {
         self.Z.clone()
+    }
+
+    pub fn evals_ref(&self) -> &[F] {
+        self.Z.as_ref()
     }
 
     pub fn extend(&mut self, other: &DensePolynomial<F>) {
@@ -253,17 +452,38 @@ impl<F: PrimeField> DensePolynomial<F> {
         assert_eq!(self.Z.len(), self.len);
     }
 
-    pub fn merge<T>(polys: &Vec<T>) -> DensePolynomial<F>
+    #[tracing::instrument(skip_all, name = "DensePoly.merge")]
+    pub fn merge<T>(polys: &[T]) -> DensePolynomial<F>
     where
         T: AsRef<DensePolynomial<F>>,
     {
-        let mut Z: Vec<F> = Vec::new();
-        for poly in polys.iter() {
-            Z.extend(poly.as_ref().vec().iter());
+        let total_len: usize = polys.iter().map(|poly| poly.as_ref().vec().len()).sum();
+        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
+        for poly in polys {
+            Z.extend_from_slice(poly.as_ref().vec());
         }
 
         // pad the polynomial with zero polynomial at the end
-        Z.resize(Z.len().next_power_of_two(), F::zero());
+        Z.resize(Z.capacity(), F::zero());
+
+        DensePolynomial::new(Z)
+    }
+
+    #[tracing::instrument(skip_all, name = "DensePoly.merge_dual")]
+    pub fn merge_dual<T>(polys_a: &[T], polys_b: &[T]) -> DensePolynomial<F>
+    where
+        T: AsRef<DensePolynomial<F>>,
+    {
+        let total_len_a: usize = polys_a.iter().map(|poly| poly.as_ref().len()).sum();
+        let total_len_b: usize = polys_b.iter().map(|poly| poly.as_ref().len()).sum();
+        let total_len = total_len_a + total_len_b;
+
+        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
+        polys_a.iter().for_each(|poly| Z.extend_from_slice(poly.as_ref().vec()));
+        polys_b.iter().for_each(|poly| Z.extend_from_slice(poly.as_ref().vec()));
+
+        // pad the polynomial with zero polynomial at the end
+        Z.resize(Z.capacity(), F::zero());
 
         DensePolynomial::new(Z)
     }
@@ -277,6 +497,18 @@ impl<F: PrimeField> DensePolynomial<F> {
     {
         let generators = PolyCommitmentGens::new(self.num_vars, label);
         let (joint_commitment, _) = self.commit(&generators, None);
+        (generators, CombinedTableCommitment::new(joint_commitment))
+    }
+
+    pub fn combined_commit_with_hint<G>(
+        &self,
+        label: &'static [u8],
+    ) -> (PolyCommitmentGens<G>, CombinedTableCommitment<G>)
+    where
+        G: CurveGroup<ScalarField = F>,
+    {
+        let generators = PolyCommitmentGens::new(self.num_vars, label);
+        let joint_commitment = self.commit_with_hint(&generators, CommitHint::Normal);
         (generators, CombinedTableCommitment::new(joint_commitment))
     }
 
@@ -324,7 +556,7 @@ impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PolyEvalProof<G: CurveGroup> {
-    proof: DotProductProofLog<G>,
+    proof: DotProductProof<G>,
 }
 
 impl<G: CurveGroup> PolyEvalProof<G> {
@@ -378,8 +610,9 @@ impl<G: CurveGroup> PolyEvalProof<G> {
         let LZ_blind: G::ScalarField = (0..L.len()).map(|i| blinds.blinds[i] * L[i]).sum();
 
         // a dot product proof of size R_size
-        let (proof, _C_LR, C_Zr_prime) = DotProductProofLog::prove(
-            &gens.gens,
+        let (proof, _C_LR, C_Zr_prime) = DotProductProof::prove(
+            &gens.gens.gens_1,
+            &gens.gens.gens_n,
             transcript,
             random_tape,
             &LZ,
@@ -414,8 +647,14 @@ impl<G: CurveGroup> PolyEvalProof<G> {
 
         let C_LZ = VariableBaseMSM::msm(C_affine.as_ref(), L.as_ref()).unwrap();
 
-        self.proof
-            .verify(R.len(), &gens.gens, transcript, &R, &C_LZ, C_Zr)
+        self.proof.verify(
+            &gens.gens.gens_1,
+            &gens.gens.gens_n,
+            transcript,
+            &R,
+            &C_LZ,
+            C_Zr,
+        )
     }
 
     pub fn verify_plain(
@@ -450,7 +689,8 @@ impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
 pub mod bench {
     use super::*;
     use crate::utils::gen_random_point;
-    use ark_curve25519::Fr;
+    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_std::{rand::Rng, test_rng, One, Zero};
     use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
 
     pub fn dense_ml_poly_bench(group: &mut BenchmarkGroup<'_, WallTime>) {
@@ -462,9 +702,75 @@ pub mod bench {
         group.bench_function("evaluate", |b| {
             b.iter(|| {
                 let result = black_box(poly.evaluate(&r));
-                criterion::black_box(result);
+                black_box(result);
             })
         });
+
+        let log_sizes = [10, 16];
+        for &log_size in &log_sizes {
+            group.bench_function(format!("commit {}", log_size), |b| {
+                b.iter_with_setup(
+                    || init_commit_bench(log_size),
+                    |(gens, poly)| {
+                        black_box(run_commit_bench(gens, poly));
+                    },
+                )
+            });
+        }
+    }
+
+    pub fn init_commit_bench(
+        log_size: usize,
+    ) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
+        let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
+        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
+        let poly = DensePolynomial::new(evals.clone());
+        (gens, poly)
+    }
+
+    /// Gets a commitment benchmark for evaluations that are not random field elements but rather 0/1
+    pub fn init_commit_bench_ones(
+        log_size: usize,
+        pct_ones: f64,
+    ) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
+        let mut evals: Vec<Fr> = Vec::with_capacity(1 << log_size);
+        let mut rng = test_rng();
+        for _ in 0..(1 << log_size) {
+            let val = if rng.gen::<f64>() < pct_ones {
+                Fr::one()
+            } else {
+                Fr::zero()
+            };
+            evals.push(val);
+        }
+
+        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
+        let poly = DensePolynomial::new(evals.clone());
+        (gens, poly)
+    }
+
+    pub fn init_commit_small(
+        log_size: usize,
+        max_size: usize,
+    ) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
+        let mut evals: Vec<Fr> = Vec::with_capacity(1 << log_size);
+        let mut rng = test_rng();
+        for _ in 0..(1 << log_size) {
+            let val = Fr::from(rng.gen::<u64>() % (max_size as u64));
+            evals.push(val);
+        }
+
+        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
+        let poly = DensePolynomial::new(evals.clone());
+        (gens, poly)
+    }
+
+    pub fn run_commit_bench(
+        gens: PolyCommitmentGens<EdwardsProjective>,
+        poly: DensePolynomial<Fr>,
+    ) {
+        let result = black_box(poly.commit::<EdwardsProjective>(&gens, None));
+        black_box(result);
     }
 }
 
@@ -475,9 +781,9 @@ mod tests {
     use crate::subprotocols::dot_product::DotProductProof;
     use ark_curve25519::EdwardsProjective as G1Projective;
     use ark_curve25519::Fr;
-    use ark_std::test_rng;
     use ark_std::One;
     use ark_std::UniformRand;
+    use ark_std::{rand::Rng, test_rng};
 
     fn evaluate_with_LR<G: CurveGroup>(
         Z: &[G::ScalarField],
@@ -716,5 +1022,54 @@ mod tests {
             dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
             Fr::from(8)
         );
+    }
+
+    #[test]
+    fn sm_msm_parity() {
+        use ark_curve25519::{EdwardsAffine as G1Affine, EdwardsProjective as G1Projective, Fr};
+        let mut rng = test_rng();
+        let bases = vec![
+            G1Affine::rand(&mut rng),
+            G1Affine::rand(&mut rng),
+            G1Affine::rand(&mut rng),
+        ];
+        let scalars = vec![Fr::from(3), Fr::from(2), Fr::from(1)];
+        let expected_result = bases[0] + bases[0] + bases[0] + bases[1] + bases[1] + bases[2];
+        assert_eq!(bases[0] + bases[0] + bases[0], bases[0] * scalars[0]);
+        let expected_result_b =
+            bases[0] * scalars[0] + bases[1] * scalars[1] + bases[2] * scalars[2];
+        assert_eq!(expected_result, expected_result_b);
+
+        let calc_result_a: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        assert_eq!(calc_result_a, expected_result);
+
+        let scalars_bigint: Vec<_> = scalars
+            .into_iter()
+            .map(|scalar| scalar.into_bigint())
+            .collect();
+        let calc_result_b: G1Projective = DensePolynomial::<Fr>::sm_msm(&scalars_bigint, &bases);
+        assert_eq!(calc_result_b, expected_result);
+    }
+
+    #[test]
+    fn commit_with_hint_parity() {
+        let log_size = 6;
+        let max_size = 1 << 4;
+
+        let mut evals: Vec<Fr> = Vec::with_capacity(1 << log_size);
+        let mut rng = test_rng();
+        for _ in 0..(1 << log_size) {
+            let val = Fr::from(rng.gen::<u64>() % (max_size as u64));
+            evals.push(val);
+        }
+
+        let gens: PolyCommitmentGens<G1Projective> =
+            PolyCommitmentGens::new(log_size, b"test_gens");
+        let poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+        let a = poly.commit_with_hint(&gens, CommitHint::Normal);
+        let b = poly.commit_with_hint(&gens, CommitHint::Small);
+
+        assert_eq!(a, b);
     }
 }

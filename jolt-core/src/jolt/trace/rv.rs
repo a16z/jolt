@@ -31,7 +31,7 @@ const C: usize = 4;
 const M: usize = 1 << 16;
 
 #[derive(Debug, Clone, PartialEq)]
-struct RVTraceRow {
+pub struct RVTraceRow {
     pc: u64,
     opcode: RV32IM,
 
@@ -51,7 +51,7 @@ struct RVTraceRow {
 }
 
 impl RVTraceRow {
-    fn new(
+    pub fn new(
         pc: u64,
         opcode: RV32IM,
         rd: Option<u64>,
@@ -83,7 +83,7 @@ impl RVTraceRow {
     }
 
     // TODO(sragss): Hack. Move to common format and rm this conversion.
-    fn from_common(common: common::RVTraceRow) -> Self {
+    pub fn from_common(common: common::RVTraceRow) -> Self {
         let mut memory_bytes_before = None;
         let mut memory_bytes_after = None;
         let trunc = |value: u64, position: usize| (value >> (position * 8)) as u8;
@@ -643,7 +643,8 @@ impl RVTraceRow {
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
 
             // UJ-type instructions point to address offsets: even numbers.
-            RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 1u64,
+            // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent. 
+            RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 0u64,
             _ => unimplemented!(),
         }
     }
@@ -686,9 +687,11 @@ impl JoltProvableTrace for RVTraceRow {
       RV32IM::BGE  => vec![BGEInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::BGEU => vec![BGEUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
 
-      RV32IM::JAL  => vec![JALInstruction(self.pc, self.imm_u64()).into()],
-      RV32IM::JALR => vec![JALRInstruction(self.rs1_val.unwrap(), self.imm_u64()).into()],
+    //   RV32IM::JAL  => vec![JALInstruction(self.pc, self.imm_u64()).into()],
+    //   RV32IM::JALR => vec![JALRInstruction(self.rs1_val.unwrap(), self.imm_u64()).into()],
 
+      RV32IM::JAL  => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
+      RV32IM::JALR => vec![ADDInstruction::<32>(self.rs1_val.unwrap(), self.imm_u64()).into()],
       RV32IM::AUIPC => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
 
       _ => vec![]
@@ -828,7 +831,6 @@ impl JoltProvableTrace for RVTraceRow {
         MemoryOp::no_op(),
         MemoryOp::no_op(),
         MemoryOp::no_op(),
-        MemoryOp::no_op(),
       ],
       RV32InstructionFormat::SB => vec![
         rs1_read(),
@@ -870,12 +872,15 @@ impl JoltProvableTrace for RVTraceRow {
         // 11: Instruction asserts lookup output as false
         // 12: Instruction asserts lookup output as true
         // 13: Sign-bit of imm
-        // 14: Instruction is lui
+        // 14: Is concat (Note: used to be is_lui)
+        // Arasu: Extra to get things working
+        // 15: is lui or auipc
+        // 16: is jal
 
-        let mut flags = vec![false; 15];
+        let mut flags = vec![false; 18];
 
         flags[0] = match self.opcode {
-            RV32IM::JAL | RV32IM::JALR | RV32IM::LUI | RV32IM::AUIPC => true,
+            RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
             _ => false,
         };
 
@@ -888,7 +893,10 @@ impl JoltProvableTrace for RVTraceRow {
             | RV32IM::SRLI
             | RV32IM::SRAI
             | RV32IM::SLTI
-            | RV32IM::SLTIU => true,
+            | RV32IM::SLTIU
+            | RV32IM::AUIPC 
+            | RV32IM::JAL 
+            | RV32IM::JALR => true,
             _ => false,
         };
 
@@ -930,14 +938,19 @@ impl JoltProvableTrace for RVTraceRow {
             | RV32IM::BGE
             | RV32IM::BLTU
             | RV32IM::BGEU
-            | RV32IM::JAL
+            | RV32IM::JAL 
             | RV32IM::JALR
             | RV32IM::LUI => false,
             _ => true,
         };
 
         flags[7] = match self.opcode {
-            RV32IM::ADD | RV32IM::ADDI | RV32IM::JAL | RV32IM::JALR | RV32IM::AUIPC => true,
+            RV32IM::ADD 
+            | RV32IM::ADDI 
+            // TODO(arasuarun): don't count these here. 
+            // | RV32IM::JAL 
+            // | RV32IM::JALR 
+            | RV32IM::AUIPC => true,
             _ => false,
         };
 
@@ -951,17 +964,17 @@ impl JoltProvableTrace for RVTraceRow {
             _ => false,
         };
 
-        // not incorporating advice instructions yet
+        // TODO(JOLT-29): Used in the 'M' extension
         flags[10] = match self.opcode {
             _ => false,
         };
 
-        // not incorporating assert true instructions yet
+        // TODO(JOLT-29): Used in the 'M' extension
         flags[11] = match self.opcode {
             _ => false,
         };
 
-        // not incorporating assert false instructions yet
+        // TODO(JOLT-29): Used in the 'M' extension
         flags[12] = match self.opcode {
             _ => false,
         };
@@ -973,7 +986,27 @@ impl JoltProvableTrace for RVTraceRow {
         };
 
         flags[14] = match self.opcode {
-            RV32IM::LUI => true,
+            RV32IM::XOR | RV32IM::XORI | RV32IM::OR | RV32IM::ORI | RV32IM::AND | RV32IM::ANDI | 
+            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI |
+            RV32IM::SLT | RV32IM::SLTU | RV32IM::SLTI | RV32IM::SLTIU | 
+            RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | 
+            RV32IM::BLTU | RV32IM::BGEU 
+            => true, 
+            _ => false,
+        };
+
+        flags[15] = match self.opcode {
+            RV32IM::LUI | RV32IM::AUIPC => true,
+            _ => false,
+        };
+
+        flags[16] = match self.opcode {
+            RV32IM::JAL => true,
+            _ => false,
+        };
+
+        flags[17] = match self.opcode {
+            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI => true,
             _ => false,
         };
 
@@ -1094,87 +1127,6 @@ mod tests {
         let instructions = Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
         let _: Vec<ELFRow> = instructions.iter().map(|x| ELFRow::from(x)).collect();
-    }
-
-    #[test]
-    fn fib_e2e() {
-        use crate::jolt::vm::rv32i_vm::RV32I;
-        use crate::lasso::memory_checking::MemoryCheckingProver;
-        use common::path::JoltPaths;
-        use common::serializable::Serializable;
-
-        let trace_location = JoltPaths::trace_path("fibonacci");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let loaded_bytecode =
-            Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
-                .expect("deserialization failed");
-
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
-
-        let mut num_errors = 0;
-        for row in &converted_trace {
-            if let Err(e) = row.validate() {
-                println!("Validation error: {} \n{:#?}\n\n", e, row);
-                num_errors += 1;
-            }
-        }
-        println!("Total errors: {num_errors}");
-
-        // Prove lookups
-        let lookup_ops: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
-        let mut prover_transcript = Transcript::new(b"example");
-        let mut random_tape = RandomTape::new(b"test_tape");
-
-        let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_instruction_lookups(
-                lookup_ops,
-                &mut prover_transcript,
-                &mut random_tape,
-            );
-        let mut verifier_transcript = Transcript::new(b"example");
-        assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());
-
-        // Prove memory
-
-        // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // something about Linux boot requiring it...
-        let mut memory_ops: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        memory_ops.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
-
-        let next_power_of_two = memory_ops.len().next_power_of_two();
-        memory_ops.resize(next_power_of_two, MemoryOp::no_op());
-
-        let mut prover_transcript = Transcript::new(b"example");
-        let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(loaded_bytecode, memory_ops, &mut prover_transcript);
-        let batched_polys = rw_memory.batch();
-        let commitments = ReadWriteMemory::commit(&batched_polys);
-
-        let proof = rw_memory.prove_memory_checking(
-            &rw_memory,
-            &batched_polys,
-            &commitments,
-            &mut prover_transcript,
-            &mut random_tape,
-        );
-
-        let mut verifier_transcript = Transcript::new(b"example");
-        ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut verifier_transcript)
-            .expect("proof should verify");
-
-        // Prove bytecode
-
-        // Prove R1CS
     }
 }
 

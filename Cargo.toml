@@ -23,8 +23,10 @@ members = [
     "jolt-core",
     "tracer",
     "common",
+    "compiler",
     "examples/fibonacci",
-    "examples/hash"
+    "examples/hash",
+    "integration-tests"
 ]
 
 [profile.release]

@@ -8,7 +8,7 @@ pub struct RVTraceRow {
     pub memory_state: Option<MemoryState>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ELFInstruction {
     pub address: u64,
     pub opcode: RV32IM,
@@ -185,6 +185,10 @@ impl RV32IM {
         RV32IM::ECALL | RV32IM::EBREAK | RV32IM::UNIMPL => unimplemented!(),
       }
     }
+}
+
+pub fn to_ram_address(index: usize) -> usize {
+    index * constants::BYTES_PER_INSTRUCTION + constants::RAM_START_ADDRESS as usize
 }
 
 pub mod constants;

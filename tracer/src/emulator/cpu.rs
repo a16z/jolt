@@ -1754,6 +1754,7 @@ fn parse_format_u(word: u32) -> FormatU {
 }
 
 fn dump_format_u(cpu: &mut Cpu, word: u32, _address: u64, evaluate: bool) -> String {
+    println!("f format: {:x}", word);
     let f = parse_format_u(word);
     let mut s = String::new();
     s += &format!("{}", get_register_name(f.rd));
@@ -1818,11 +1819,18 @@ fn normalize_is_imm(value: i64) -> u32 {
 }
 
 fn normalize_b_imm(value: u64) -> u32 {
-    ((value as i32) >> 1) as u32
+    // TODO(JOLT-89): Hack – value should be unnormalized in the tracer
+    (value as i32) as u32
+    // ((value as i32) >> 1) as u32
 }
 
-fn normalize_uj_imm(value: u64) -> u32 {
+fn normalize_u_imm(value: u64) -> u32 {
     ((value as i32) >> 12) as u32
+}
+
+fn normalize_j_imm(value: u64) -> u32 {
+    // TODO(JOLT-89): Hack – value should be unnormalized in the tracer 
+    value as u32
 }
 
 fn normalize_register(value: usize) -> u64 {
@@ -1887,20 +1895,21 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
-        imm: Some(normalize_uj_imm(f.imm)),
+        imm: Some(normalize_u_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
     }
 }
 
+// (UJ)
 fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
     let f = parse_format_j(word);
     common::ELFInstruction {
         opcode: common::RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
-        imm: Some(normalize_uj_imm(f.imm)),
+        imm: Some(normalize_j_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),

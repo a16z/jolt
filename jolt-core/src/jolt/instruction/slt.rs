@@ -1,4 +1,5 @@
 use ark_ff::PrimeField;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::{
@@ -13,6 +14,10 @@ use crate::{
 pub struct SLTInstruction(pub u64, pub u64);
 
 impl JoltInstruction for SLTInstruction {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         debug_assert!(vals.len() % C == 0);
         let mut vals_by_subtable = vals.chunks_exact(C);
@@ -54,6 +59,11 @@ impl JoltInstruction for SLTInstruction {
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

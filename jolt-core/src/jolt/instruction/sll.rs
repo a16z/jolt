@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
@@ -11,6 +12,10 @@ use crate::utils::instruction_utils::{
 pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         assert!(C <= 10);
         assert!(vals.len() == C * C);
@@ -50,6 +55,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         assert_valid_parameters(WORD_SIZE, C, log_M);
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

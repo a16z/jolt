@@ -3,6 +3,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
+use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -20,12 +21,19 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         inp_left: &DensePolynomial<F>,
         inp_right: &DensePolynomial<F>,
     ) -> (DensePolynomial<F>, DensePolynomial<F>) {
+        // TODO(sragss): Write a cache checker for how many cache hits I'd have for a cacher.
         let len = inp_left.len() + inp_right.len();
         let outp_left = (0..len / 4)
-            .map(|i| inp_left[i] * inp_right[i])
+            .map(|i| 
+                // inp_left[i] * inp_right[i]
+                mul_0_1_optimized(&inp_left[i], &inp_right[i])
+            )
             .collect::<Vec<F>>();
         let outp_right = (len / 4..len / 2)
-            .map(|i| inp_left[i] * inp_right[i])
+            .map(|i| 
+                // inp_left[i] * inp_right[i]
+                mul_0_1_optimized(&inp_left[i], &inp_right[i])
+            )
             .collect::<Vec<F>>();
 
         (
@@ -57,11 +65,44 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         }
     }
 
+    pub fn new_split(left_leaves: DensePolynomial<F>, right_leaves: DensePolynomial<F>) -> Self {
+        let num_layers = left_leaves.len().log_2() + 1; 
+        let mut left_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
+        let mut right_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
+
+        left_vec.push(left_leaves);
+        right_vec.push(right_leaves);
+
+        for i in 0..num_layers - 1 {
+            let (outp_left, outp_right) =
+                GrandProductCircuit::compute_layer(&left_vec[i], &right_vec[i]);
+            left_vec.push(outp_left);
+            right_vec.push(outp_right);
+        }
+
+        GrandProductCircuit {
+            left_vec,
+            right_vec,
+        }
+    }
+
     pub fn evaluate(&self) -> F {
         let len = self.left_vec.len();
         assert_eq!(self.left_vec[len - 1].get_num_vars(), 0);
         assert_eq!(self.right_vec[len - 1].get_num_vars(), 0);
         self.left_vec[len - 1][0] * self.right_vec[len - 1][0]
+    }
+
+    pub fn take_layer(&mut self, layer_id: usize) -> (DensePolynomial<F>, DensePolynomial<F>) {
+        let left = std::mem::replace(
+            &mut self.left_vec[layer_id],
+            DensePolynomial::new(vec![F::zero()]),
+        );
+        let right = std::mem::replace(
+            &mut self.right_vec[layer_id],
+            DensePolynomial::new(vec![F::zero()]),
+        );
+        (left, right)
     }
 }
 
@@ -94,6 +135,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
 pub struct BatchedGrandProductCircuit<F: PrimeField> {
     pub circuits: Vec<GrandProductCircuit<F>>,
 
+    flags_present: bool,
     flags: Option<Vec<DensePolynomial<F>>>,
     flag_map: Option<Vec<usize>>,
     fingerprint_polys: Option<Vec<DensePolynomial<F>>>,
@@ -103,6 +145,8 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
     pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
         Self {
             circuits,
+
+            flags_present: false,
             flags: None,
             flag_map: None,
             fingerprint_polys: None,
@@ -121,6 +165,8 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
         Self {
             circuits,
+
+            flags_present: true,
             flags: Some(flags),
             flag_map: Some(flag_map),
             fingerprint_polys: Some(fingerprint_polys),
@@ -137,32 +183,26 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GrandProduct.sumcheck_layer_params")]
     fn sumcheck_layer_params(
-        &self,
+        &mut self,
         layer_id: usize,
         eq: DensePolynomial<F>,
     ) -> CubicSumcheckParams<F> {
-        if self.flags.is_some() && layer_id == 0 {
+        if self.flags_present && layer_id == 0 {
             let flags = self.flags.as_ref().unwrap();
             debug_assert_eq!(flags[0].len(), eq.len());
 
             let num_rounds = eq.get_num_vars();
-            // TODO(sragss): Handle .as_ref().unwrap().clone() without cloning.
-            CubicSumcheckParams::new_flags(
-                self.fingerprint_polys
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .map(|poly| poly.clone())
-                    .collect(),
-                self.flags.as_ref().unwrap().clone(),
-                eq,
-                self.flag_map.as_ref().unwrap().clone(),
-                num_rounds,
-            )
+
+            // Each of these is needed exactly once, transfer ownership rather than clone.
+            let fingerprint_polys = self.fingerprint_polys.take().unwrap();
+            let flags = self.flags.take().unwrap();
+            let flag_map = self.flag_map.take().unwrap();
+            CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, flag_map, num_rounds)
         } else {
             // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
-            let layer_id = if self.flags.is_some() {
+            let layer_id = if self.flags_present {
                 layer_id - 1
             } else {
                 layer_id
@@ -170,19 +210,16 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
             let num_rounds = self.circuits[0].left_vec[layer_id].get_num_vars();
 
-            // TODO(sragss): rm clone – use remove / take
-            CubicSumcheckParams::new_prod(
-                self.circuits
-                    .iter()
-                    .map(|circuit| circuit.left_vec[layer_id].clone())
-                    .collect(),
-                self.circuits
-                    .iter()
-                    .map(|circuit| circuit.right_vec[layer_id].clone())
-                    .collect(),
-                eq,
-                num_rounds,
-            )
+            let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = self
+                .circuits
+                .iter_mut()
+                .map(|circuit| circuit.take_layer(layer_id))
+                .unzip();
+            if self.flags_present {
+                CubicSumcheckParams::new_prod_ones(lefts, rights, eq, num_rounds)
+            } else {
+                CubicSumcheckParams::new_prod(lefts, rights, eq, num_rounds)
+            }
         }
     }
 }
@@ -195,7 +232,7 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
     pub fn prove<G>(
-        batch: BatchedGrandProductCircuit<F>,
+        mut batch: BatchedGrandProductCircuit<F>,
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>)
     where
@@ -208,6 +245,9 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
         let mut rand = Vec::new();
         for layer_id in (0..batch.num_layers()).rev() {
+            let span = tracing::span!(tracing::Level::TRACE, "grand_product_layer", layer_id);
+            let _enter = span.enter();
+
             // produce a fresh set of coeffs and a joint claim
             let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(
                 transcript,
@@ -222,7 +262,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
             let (proof, rand_prod, claims_prod) =
-                SumcheckInstanceProof::prove_cubic_batched_special::<G>(
+                SumcheckInstanceProof::prove_cubic_batched::<G>(
                     &claim, params, &coeff_vec, transcript,
                 );
 
@@ -241,7 +281,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 );
             }
 
-            if sumcheck_type == CubicSumcheckType::Prod {
+            if sumcheck_type == CubicSumcheckType::Prod || sumcheck_type == CubicSumcheckType::ProdOnes {
                 // Prod layers must generate an additional random coefficient. The sumcheck randomness indexes into the current layer,
                 // but the resulting randomness and claims are about the next layer. The next layer is indexed by an additional variable
                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
@@ -279,6 +319,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                     combine_prod: false,
                 });
             }
+            drop(_enter);
         }
 
         (

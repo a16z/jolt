@@ -1,6 +1,6 @@
-// use core::slice::SlicePattern;
 use ark_ff::PrimeField;
 use ark_std::log2;
+use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::jolt::subtable::{
@@ -14,6 +14,10 @@ use crate::utils::instruction_utils::{
 pub struct SUBInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
+    fn operands(&self) -> [u64; 2] {
+        [self.0, self.1]
+    }
+
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // The first C are from Identity and the last C are from TruncateOverflow
         assert!(vals.len() == 2 * C);
@@ -56,6 +60,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
             C,
             log_M,
         )
+    }
+
+    fn random(&self, rng: &mut StdRng) -> Self {
+        use rand_core::RngCore;
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 

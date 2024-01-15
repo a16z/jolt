@@ -12,5 +12,14 @@ Cargo.lock
 *.txt
 .DS_Store
 
+# flamegraphs, probably
 **/*.svg
-flamegraph.svg
+
+# tracing-flame output
+**.folded
+
+# tracing-chrome output
+trace-**.json
+
+# dhat output
+dhat-heap.json

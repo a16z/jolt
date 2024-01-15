@@ -1,9 +1,14 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rand::rngs::StdRng;
+use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use common::ELFInstruction;
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::{to_ram_address, ELFInstruction};
+use common::RV32IM;
+use crate::jolt::trace::{JoltProvableTrace, rv::RVTraceRow};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -15,8 +20,6 @@ use crate::{
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
 };
-
-const ADDRESS_INCREMENT: usize = 1;
 
 pub struct BytecodeProof<F, G>
 where
@@ -70,6 +73,67 @@ impl ELFRow {
             imm: 0,
         }
     }
+
+    pub fn random(index: usize, rng: &mut StdRng) -> Self {
+        Self {
+            address: to_ram_address(index),
+            opcode: rng.next_u64() % 64, // Roughly how many opcodes there are
+            rd: rng.next_u64() % REGISTER_COUNT,
+            rs1: rng.next_u64() % REGISTER_COUNT,
+            rs2: rng.next_u64() % REGISTER_COUNT,
+            imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
+        }
+    }
+
+    fn circuit_flags_packed<F: PrimeField>(&self) -> F {
+        let circuit_flags: Vec<F> = RVTraceRow::new(
+            0,
+            RV32IM::from_repr(self.opcode as u8).unwrap(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ).to_circuit_flags();
+
+        let circuit_flags_bits: Vec<bool> = circuit_flags.iter().map(|x| 
+            if x.is_zero() { false } else { true } 
+        ).collect();
+
+        println!("opcode as u8: {:?}", (self.opcode as u8));
+        println!("opcode: {:?}", RV32IM::from_repr(self.opcode as u8).unwrap());
+        println!("bits: {:?}", circuit_flags_bits);
+
+        let mut bytes = [0u8; 2];
+        for (idx, bit) in circuit_flags_bits.into_iter().enumerate() {
+            let byte = idx / 8;
+            let shift = idx % 8;
+            bytes[byte] |= (bit as u8) << shift;
+        }
+
+        println!("bytes: {:?}", bytes);
+
+        F::from_le_bytes_mod_order(
+            &bytes
+        )
+    }
+}
+
+pub fn random_bytecode_trace(
+    bytecode: &Vec<ELFRow>,
+    num_ops: usize,
+    rng: &mut StdRng,
+) -> Vec<ELFRow> {
+    let mut trace: Vec<ELFRow> = Vec::with_capacity(num_ops);
+    for _ in 0..num_ops {
+        trace.push(bytecode[rng.next_u64() as usize % bytecode.len()].clone());
+    }
+    trace
 }
 
 // TODO(JOLT-74): Consolidate ELFInstruction and ELFRow
@@ -102,6 +166,7 @@ pub struct FiveTuplePoly<F: PrimeField> {
 }
 
 impl<F: PrimeField> FiveTuplePoly<F> {
+    #[tracing::instrument(skip_all, name = "FiveTuplePoly::from_elf")]
     fn from_elf(elf: &Vec<ELFRow>) -> Self {
         let len = elf.len().next_power_of_two();
         let mut opcodes = Vec::with_capacity(len);
@@ -140,6 +205,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "FiveTuplePoly::evaluate")]
     fn evaluate(&self, r: &[F]) -> Vec<F> {
         vec![
             self.opcode.evaluate(r),
@@ -148,6 +214,36 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             self.rs2.evaluate(r),
             self.imm.evaluate(r),
         ]
+    }
+
+    fn from_elf_r1cs(elf: &Vec<ELFRow>) -> Vec<F> {
+        let len = elf.len();
+
+        let mut opcodes = Vec::with_capacity(len);
+        let mut rds = Vec::with_capacity(len);
+        let mut rs1s = Vec::with_capacity(len);
+        let mut rs2s = Vec::with_capacity(len);
+        let mut imms = Vec::with_capacity(len);
+        // TODO(arasuarun): handle circuit flags here and not in prove_r1cs()
+        // let mut circuit_flags = Vec::with_capacity(len * 15);
+
+        for row in elf {
+            opcodes.push(F::from(row.opcode));
+            rds.push(F::from(row.rd));
+            rs1s.push(F::from(row.rs1));
+            rs2s.push(F::from(row.rs2));
+            imms.push(F::from(row.imm));
+            // circuit_flags.push(row.circuit_flags_packed::<F>());
+        }
+
+        [
+            opcodes,
+            rs1s,
+            rs2s,
+            rds,
+            imms,
+            // circuit_flags, 
+        ].concat()
     }
 }
 
@@ -171,18 +267,19 @@ pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn new(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> Self {
         Self::validate_bytecode(&bytecode, &trace);
         Self::preprocess(&mut bytecode, &mut trace);
+        let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
 
         // Preprocessing should deal with padding.
         assert!(is_power_of_two(bytecode.len()));
         assert!(is_power_of_two(trace.len()));
 
         let num_ops = trace.len().next_power_of_two();
-        let code_size = bytecode.len().next_power_of_two();
-
-        println!("BytecodePolynomials::new num_ops {num_ops} code_size {code_size}");
+        // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
+        let code_size = (max_bytecode_address + 1).next_power_of_two();
 
         let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
         let mut read_cts: Vec<usize> = vec![0; num_ops];
@@ -214,17 +311,58 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
+    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> [Vec<F>; 3] {
+        // As R1CS isn't padded, measure length here before padding is applied. 
+        let num_ops: usize = trace.len();
+
+        Self::validate_bytecode(&bytecode, &trace);
+        Self::preprocess(&mut bytecode, &mut trace);
+
+        // ignore the padding 
+        let trace = trace.drain(0..num_ops).collect::<Vec<ELFRow>>();
+
+        let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
+
+        // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
+        let code_size = (max_bytecode_address + 1).next_power_of_two();
+
+        let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
+        let mut read_cts: Vec<usize> = vec![0; num_ops];
+        let mut final_cts: Vec<usize> = vec![0; code_size];
+
+        for (trace_index, trace) in trace.iter().take(num_ops).enumerate() {
+            let address = trace.address * 4 + RAM_START_ADDRESS as usize;
+            // debug_assert!(address < code_size);
+            a_read_write_usize[trace_index] = address;
+            let counter = final_cts[trace.address];
+            read_cts[trace_index] = counter;
+            final_cts[trace.address] = counter + 1;
+        }
+
+        // create a closure to convert usize to F vector 
+        let to_f_vec = |vec: &Vec<usize>| -> Vec<F> {
+            vec.iter().map(|x| F::from(*x as u64)).collect()
+        };
+
+        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
+
+        [
+            to_f_vec(&a_read_write_usize),
+            v_read_write, 
+            to_f_vec(&read_cts),
+        ]
+    }
+
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
     fn validate_bytecode(bytecode: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
         let mut pc = bytecode[0].address;
-        assert!(pc < 10_000);
-
         let mut bytecode_map: HashMap<usize, &ELFRow> = HashMap::new();
 
-        for bytecode_row in bytecode.iter().skip(1) {
+        for bytecode_row in bytecode.iter() {
+            assert_eq!(bytecode_row.address, pc);
             bytecode_map.insert(bytecode_row.address, bytecode_row);
-            assert_eq!(bytecode_row.address, pc + ADDRESS_INCREMENT);
-
-            pc = bytecode_row.address;
+            pc += BYTES_PER_INSTRUCTION;
         }
 
         for trace_row in trace {
@@ -237,9 +375,23 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::preprocess")]
     fn preprocess(bytecode: &mut Vec<ELFRow>, trace: &mut Vec<ELFRow>) {
+        for instruction in bytecode.iter_mut() {
+            assert!(instruction.address >= RAM_START_ADDRESS as usize);
+            assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
+            instruction.address -= RAM_START_ADDRESS as usize;
+            instruction.address /= BYTES_PER_INSTRUCTION;
+        }
+        for instruction in trace.iter_mut() {
+            assert!(instruction.address >= RAM_START_ADDRESS as usize);
+            assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
+            instruction.address -= RAM_START_ADDRESS as usize;
+            instruction.address /= BYTES_PER_INSTRUCTION;
+        }
+
         // Bytecode: Add single no_op instruction at adddress | ELF + 1 |
-        let no_op_address = bytecode.last().unwrap().address + ADDRESS_INCREMENT;
+        let no_op_address = bytecode.last().unwrap().address + 1;
         bytecode.push(ELFRow::no_op(no_op_address));
 
         // Bytecode: Pad to nearest power of 2
@@ -289,6 +441,7 @@ where
     type BatchedPolynomials = BatchedBytecodePolynomials<F>;
     type Commitment = BytecodeCommitment<G>;
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let combined_read_write = DensePolynomial::merge(&vec![
             &self.a_read_write,
@@ -314,6 +467,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
         let (gens_read_write, read_write_commitments) = batched_polys
             .combined_read_write
@@ -356,6 +510,7 @@ where
         result - tau
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::read_leaves")]
     fn read_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -382,6 +537,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::write_leaves")]
     fn write_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -408,6 +564,7 @@ where
             .collect();
         vec![DensePolynomial::new(read_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::init_leaves")]
     fn init_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -434,6 +591,7 @@ where
             .collect();
         vec![DensePolynomial::new(init_fingerprints)]
     }
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::final_leaves")]
     fn final_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
@@ -545,6 +703,7 @@ where
 {
     type Openings = (F, Vec<F>, F);
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.a_read_write.evaluate(&opening_point),
@@ -553,6 +712,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
@@ -631,6 +791,7 @@ where
 {
     type Openings = (Vec<F>, F);
 
+    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
         (
             polynomials.v_init_final.evaluate(&opening_point),
@@ -638,6 +799,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
@@ -696,10 +858,10 @@ mod tests {
     #[test]
     fn five_tuple_poly() {
         let program = vec![
-            ELFRow::new(0, 2u64, 3u64, 4u64, 5u64, 6u64),
-            ELFRow::new(1, 7u64, 8u64, 9u64, 10u64, 11u64),
-            ELFRow::new(2, 12u64, 13u64, 14u64, 15u64, 16u64),
-            ELFRow::new(3, 17u64, 18u64, 19u64, 20u64, 21u64),
+            ELFRow::new(to_ram_address(0), 2u64, 3u64, 4u64, 5u64, 6u64),
+            ELFRow::new(to_ram_address(1), 7u64, 8u64, 9u64, 10u64, 11u64),
+            ELFRow::new(to_ram_address(2), 12u64, 13u64, 14u64, 15u64, 16u64),
+            ELFRow::new(to_ram_address(3), 17u64, 18u64, 19u64, 20u64, 21u64),
         ];
         let tuple: FiveTuplePoly<Fr> = FiveTuplePoly::from_elf(&program);
         let expected_opcode: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![2, 7, 12, 17]);
@@ -721,16 +883,16 @@ mod tests {
     }
 
     #[test]
-    fn pc_poly_leaf_construction() {
+    fn bytecode_poly_leaf_construction() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
@@ -755,14 +917,14 @@ mod tests {
     #[test]
     fn e2e_memchecking() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
@@ -788,16 +950,16 @@ mod tests {
     #[test]
     fn e2e_mem_checking_non_pow_2() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
@@ -823,18 +985,18 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn pc_validation_fake_trace() {
+    fn bytecode_validation_fake_trace() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(4, 32u64, 32u64, 32u64, 32u64, 32u64),
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(5, 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
         let _polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
@@ -842,16 +1004,16 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn pc_validation_bad_prog_increment() {
+    fn bytecode_validation_bad_prog_increment() {
         let program = vec![
-            ELFRow::new(0, 2u64, 2u64, 2u64, 2u64, 2u64),
-            ELFRow::new(1, 4u64, 4u64, 4u64, 4u64, 4u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
-            ELFRow::new(4, 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
+            ELFRow::new(to_ram_address(0), 2u64, 2u64, 2u64, 2u64, 2u64),
+            ELFRow::new(to_ram_address(1), 4u64, 4u64, 4u64, 4u64, 4u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(4), 16u64, 16u64, 16u64, 16u64, 16u64), // Increment by 2
         ];
         let trace = vec![
-            ELFRow::new(3, 16u64, 16u64, 16u64, 16u64, 16u64),
-            ELFRow::new(2, 8u64, 8u64, 8u64, 8u64, 8u64),
+            ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
+            ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let _polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);

@@ -1,13 +1,16 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use enum_dispatch::enum_dispatch;
+use rand::prelude::StdRng;
 use std::marker::Sync;
 
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::index_to_field_bitvector;
+use crate::utils::instruction_utils::chunk_operand;
 
 #[enum_dispatch]
 pub trait JoltInstruction: Sync {
+    fn operands(&self) -> [u64; 2];
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
     /// output of the instruction. This function can also be thought of as the low-degree extension
@@ -48,6 +51,16 @@ pub trait JoltInstruction: Sync {
 
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
+    fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
+        assert!(log_M % 2 == 0, "log_M must be even for operand_chunks to work");
+        self.operands()
+            .iter()
+            .map(|&operand| chunk_operand(operand, C, log_M/2))
+            .collect::<Vec<Vec<u64>>>()
+            .try_into()
+            .unwrap()
+    }
+    fn random(&self, rng: &mut StdRng) -> Self;
 }
 
 pub trait Opcode {
