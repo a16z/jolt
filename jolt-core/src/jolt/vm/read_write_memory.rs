@@ -158,7 +158,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         transcript: &mut Transcript,
     ) -> (Self, Vec<u64>) {
         let m = memory_trace.len();
-        println!("ReadWriteMemory::new m: {m}");
         assert!(m.is_power_of_two());
 
         let remap_address = |a: u64| {
@@ -199,7 +198,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             }
         }
 
-        println!("Initializing stuff, m: {m}, memory_size: {memory_size}");
         let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
         let mut v_read: Vec<u64> = Vec::with_capacity(m);
         let mut v_write: Vec<u64> = Vec::with_capacity(m);
@@ -216,7 +214,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 match memory_access {
                     MemoryOp::Read(a, v) => {
                         let remapped_a = remap_address(*a);
-                        // debug_assert_eq!(*v, v_final[remapped_a as usize]);
+                        debug_assert_eq!(*v, v_final[remapped_a as usize]);
                         a_read_write.push(remapped_a);
                         v_read.push(*v);
                         v_write.push(*v);
@@ -259,7 +257,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         )
     }
 
-    // TODO(sragss): This is seriously slow and duplicated work from above.
+    // TODO(arasuarun): This is seriously slow and duplicated work from above.
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_r1cs_polys")]
     pub fn get_r1cs_polys(
         bytecode: Vec<ELFInstruction>,
@@ -267,14 +265,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         transcript: &mut Transcript,
     ) -> [Vec<F>; 4] {
         let m = memory_trace.len();
-        println!("ReadWriteMemory::get_r1cs_polys m: {m}");
-        // assert!(m.is_power_of_two());
 
         let remap_address = |a: u64| {
             assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
             if a >= RAM_START_ADDRESS {
                 a - RAM_START_ADDRESS + REGISTER_COUNT
-                // // Arasu: for r1cs, do not substract RAM_START_ADDRESS
+                // TODO(arasuarun): for r1cs, do not substract RAM_START_ADDRESS
                 // a
             } else {
                 // If a < REGISTER_COUNT, it is one of the registers and doesn't
@@ -348,7 +344,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 MemoryOp::Read(a, v) => {
                     let remapped_a = remap_address(a);
                     // TODO(arasuarun): This is a hack to get the memory parts of the hash example to work
-                    // debug_assert_eq!(v, v_final[remapped_a as usize]);
+                    debug_assert_eq!(v, v_final[remapped_a as usize]);
                     a_read_write.push(remapped_a);
                     v_read.push(v);
                     v_write.push(v);

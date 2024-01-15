@@ -346,6 +346,7 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .flat_map(|row| row.to_jolt_instructions())
             .collect();
 
+        // TODO(JOLT-89): Encapsulate this logic elsewhere.
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // something about Linux boot requiring it...
         let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
@@ -482,6 +483,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .flat_map(|row| row.to_jolt_instructions())
             .collect();
 
+        // TODO(JOLT-89): Encapsulate this logic elsewhere.
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // something about Linux boot requiring it...
         let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
