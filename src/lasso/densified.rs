@@ -74,6 +74,7 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
     }
   }
 
+  //TODO: make this a commitment generic over
   #[tracing::instrument(skip_all, name = "DensifiedRepresentation.commit")]
   pub fn commit<G: CurveGroup<ScalarField = F>>(
     &self,

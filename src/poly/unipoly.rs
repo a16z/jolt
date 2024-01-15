@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::cmp::Ordering;
-use std::ops::{Index, IndexMut, MulAssign, AddAssign, Mul};
+use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
 
 use super::commitments::{Commitments, MultiCommitGens};
 use crate::utils::gaussian_elimination::gaussian_elimination;
@@ -60,7 +60,7 @@ impl<F: PrimeField> UniPoly<F> {
     gaussian_elimination(&mut vandermonde)
   }
 
-    /// Divide self by another polynomial, and returns the
+  /// Divide self by another polynomial, and returns the
   /// quotient and remainder.
   pub fn divide_with_q_and_r(&self, divisor: &Self) -> Option<(Self, Self)> {
     if self.is_zero() {
@@ -169,7 +169,6 @@ impl<F: PrimeField> Mul<F> for UniPoly<F> {
     //TODO: feature gate parallel
     Self::from_coeff(self.coeffs.into_iter().map(|c| c * rhs).collect::<Vec<_>>())
   }
-
 }
 
 impl<F: PrimeField> Mul<&F> for UniPoly<F> {
@@ -179,7 +178,6 @@ impl<F: PrimeField> Mul<&F> for UniPoly<F> {
     //TODO: feature gate parallel
     Self::from_coeff(self.coeffs.into_iter().map(|c| c * rhs).collect::<Vec<_>>())
   }
-
 }
 
 impl<F: PrimeField> AddAssign<&Self> for UniPoly<F> {

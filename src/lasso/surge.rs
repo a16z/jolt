@@ -22,6 +22,7 @@ use ark_std::log2;
 use merlin::Transcript;
 use std::marker::Sync;
 
+// Public Params
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
   pub gens_combined_log_m_variate: PolyCommitmentGens<G>,
@@ -89,6 +90,8 @@ struct PrimarySumcheck<G: CurveGroup, const ALPHA: usize> {
   proof_derefs: CombinedTableEvalProof<G, ALPHA>,
 }
 
+// TODO Implement trait interface for this:
+// DensifiedRepresentation ->
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparsePolynomialEvaluationProof<
   G: CurveGroup,
