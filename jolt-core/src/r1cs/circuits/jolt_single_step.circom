@@ -5,7 +5,7 @@ function NUM_STEPS() {return 182;} // NOTE: Fibonacci ignores first 3
 function W() {return 32;}
 function C() {return 4;}
 function PROG_START_ADDR() {return 2147483664;}
-function N_FLAGS() {return 17;}
+function N_FLAGS() {return 18;}
 function LOG_M() { return 16; }
 /* End of Compiler Variables */
 
@@ -111,13 +111,15 @@ template JoltStep() {
 
     /* Per-step inputs. See JoltMain() for information.
     */
-    signal input read_pc;
-    signal input opcode;
-    signal input rs1;
-    signal input rs2;
-    signal input rd;
-    signal input immediate_before_processing;
-    signal input op_flags_packed;
+    signal input prog_a_rw;
+
+    signal input prog_v_rw[6]; 
+    signal opcode <== prog_v_rw[0];
+    signal rs1 <== prog_v_rw[1];
+    signal rs2 <== prog_v_rw[2];
+    signal rd <== prog_v_rw[3];
+    signal immediate_before_processing <== prog_v_rw[4];
+    signal op_flags_packed <== prog_v_rw[5];
 
     signal input memreg_a_rw[MOPS()];
     signal input memreg_v_reads[MOPS()];
@@ -131,8 +133,8 @@ template JoltStep() {
 
     signal input op_flags[N_FLAGS()];
 
-    /* Enforce that read_pc === input_state.pc */
-    read_pc === input_state[PC_IDX()];
+    /* Enforce that prog_a_rw === input_state.pc */
+    prog_a_rw === input_state[PC_IDX()];
         
     /* Constraints for op_flags: 
         1. Verify they combine to form op_flags_packed
@@ -156,10 +158,12 @@ template JoltStep() {
     signal is_concat <== op_flags[14];
     signal is_lui_auipc <== op_flags[15];
     signal is_jal <== op_flags[16];
+    signal is_shift <== op_flags[17];
 
     // Pre-processing the imm 
-    signal _immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
-    signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
+    signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
+    // TODO(arasuarun): Do you still need this?
+    // signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
 
     /*******  Register Reading Constraints: 
     Of the 7 (or 11) memory reads, the first 3 are reads from rs1, rs2, rd. 
@@ -178,7 +182,7 @@ template JoltStep() {
     rd === memreg_a_rw[2]; // the correctness of the write value will be handled later
 
     /******* Assigning operands x and y */
-    signal x <== if_else()([op_flags[0], rs1_val, read_pc]); // TODO: change this for virtual instructions
+    signal x <== if_else()([op_flags[0], rs1_val, prog_a_rw]); // TODO: change this for virtual instructions
 
     signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
     signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
@@ -206,7 +210,7 @@ template JoltStep() {
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts are index 3
-        memreg_a_rw[3+i] === memreg_a_rw[3] + i * is_load_store_instr; 
+        (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
     /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
@@ -259,8 +263,10 @@ template JoltStep() {
 
     // the concat checks: 
     // the most significant chunk has a shorter length!
+    signal chunk_y_used[C()]; 
     for (var i=0; i<C(); i++) {
-      (chunks_query[i] - (chunks_y[i] + chunks_x[i] * 2**(L_CHUNK()))) * is_concat === 0;
+        chunk_y_used[i] <== if_else()([is_shift, chunks_y[i], chunks_y[C()-1]]);
+        (chunks_query[i] - (chunk_y_used[i] + chunks_x[i] * 2**L_CHUNK())) * is_concat === 0;
     } 
 
     // TODO: handle case when C() doesn't divide W() 
@@ -279,7 +285,7 @@ template JoltStep() {
     signal rd_val <== memreg_v_writes[2]; 
     is_load_instr * (rd_val - load_or_store_value) === 0;
     signal _rd_val_test1 <== prodZeroTest(3)([rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]);
-    signal _rd_val_test2 <== prodZeroTest(3)([rd, is_jump_instr, (rd_val - (read_pc+4))]);
+    signal _rd_val_test2 <== prodZeroTest(3)([rd, is_jump_instr, (rd_val - (prog_a_rw+4))]);
     // TODO: LUI - add another flag for lui (again)
     // is_lui * (rd_val - immediate) === 0;
 
@@ -334,96 +340,17 @@ The N_FLAGS op_flags involved in each step
 
 */
 
-template JoltMain(N) {
-    // The 3 program vectors are ordered by element. 
-    // The address/value/timestamp of: 
-    // [opcode for step 1, opcode for step 2, ... || rs1,... || rs2, ... || op_flags_packed, ...]
-    signal input prog_a_rw[N]; 
-    signal input prog_v_rw[N * 6];
-
-    // The combined registers and memory a/v/t vectors. 
-    // These are ordered chronologically in terms of reads. 
-    /* Each step has 11 mem ops: 
-            1-3. Reading the two source and one destination register. 
-            4-7 (or 11). The 4 (or 8) bytes of memory read/written.
-    */
-    signal input memreg_a_rw[N * MOPS()];
-    signal input memreg_v_reads[N * MOPS()];
-    signal input memreg_v_writes[N * MOPS()];
-
-    // These are the chunks of the two operands and the 'query'.
-    // Here, query could be the z = x+y or z=x*y or,
-    // in the case of concatenation, the chunks are [x_i || y_i]
-    signal input chunks_x[N * C()];
-    signal input chunks_y[N * C()];
-    signal input chunks_query[N * C()];
-
-    // The 'a' vector from Lasso containing the table entries looked up.
-    signal input lookup_outputs[N]; 
-
-    // The individual op_flags that guide the circuit. 
-    // Unpacked from op_flags_packed, which is read from code.
-    signal input op_flags[N * N_FLAGS()];
-
-    // The final [step number, program counter]
-    signal output out[2]; 
-
-    /* Parse the program v vectors by element. 
-    NOTE: for a, t, only one value per step is provided.
-    */
-    signal opcode_v_rw[N]         <== subarray(0, N, N*6)((prog_v_rw));
-    signal rs1_v_rw[N]            <== subarray(N, N, N*6)((prog_v_rw));
-    signal rs2_v_rw[N]            <== subarray(2*N, N, N*6)((prog_v_rw));
-    signal rd_v_rw[N]             <== subarray(3*N, N, N*6)((prog_v_rw));
-    signal immediate_v_rw[N]      <== subarray(4*N, N, N*6)((prog_v_rw));
-    signal opflags_packed_v_rw[N] <== subarray(5*N, N, N*6)((prog_v_rw));
-
-    component jolt_steps[N];
-
-    for (var i=0; i<N; i++) {
-        jolt_steps[i] = JoltStep();
-
-        if (i==0) {
-            jolt_steps[i].input_state <== [0, PROG_START_ADDR()]; 
-        } else {
-            jolt_steps[i].input_state <== jolt_steps[i-1].output_state;
-        }
-
-        jolt_steps[i].read_pc <== prog_a_rw[i];
-
-        jolt_steps[i].opcode <== opcode_v_rw[i];
-        jolt_steps[i].rs1 <== rs1_v_rw[i];
-        jolt_steps[i].rs2 <== rs2_v_rw[i];
-        jolt_steps[i].rd <== rd_v_rw[i];
-        jolt_steps[i].immediate_before_processing <== immediate_v_rw[i];
-        jolt_steps[i].op_flags_packed <== opflags_packed_v_rw[i];
-
-        jolt_steps[i].memreg_a_rw <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_a_rw);
-        jolt_steps[i].memreg_v_reads <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_v_reads);
-        jolt_steps[i].memreg_v_writes <== subarray(i*MOPS(), MOPS(), N*MOPS())(memreg_v_writes);
-
-        jolt_steps[i].chunks_x <== subarray(i*C(), C(), N*C())(chunks_x);
-        jolt_steps[i].chunks_y <== subarray(i*C(), C(), N*C())(chunks_y);
-        jolt_steps[i].chunks_query <== subarray(i*C(), C(), N*C())(chunks_query);
-
-        jolt_steps[i].lookup_output <== lookup_outputs[i];
-
-        jolt_steps[i].op_flags <== subarray(i*N_FLAGS(), N_FLAGS(), N*N_FLAGS())(op_flags);
-    }
-
-    out <== jolt_steps[N-1].output_state;
-}
-
 component main {public [
-        prog_a_rw, 
-        prog_v_rw, 
+        input_state,
+        prog_a_rw,
+        prog_v_rw,
         memreg_a_rw, 
         memreg_v_reads, 
         memreg_v_writes, 
         chunks_x, 
         chunks_y, 
         chunks_query, 
-        lookup_outputs, 
+        lookup_output, 
         op_flags
         ]} 
-    = JoltMain(NUM_STEPS());
+    = JoltStep();

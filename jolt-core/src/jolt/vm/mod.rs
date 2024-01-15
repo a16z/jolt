@@ -1,13 +1,14 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
+use rayon::iter::{ParallelIterator, IntoParallelIterator, IntoParallelRefIterator};
 use std::any::TypeId;
 use std::path::PathBuf;
 use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
 use textplots::{Chart, Plot, Shape};
 
-use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit, prove_jolt_circuit, verify_jolt_circuit};
+use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit};
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
@@ -191,29 +192,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
     fn prove_r1cs(
         instructions: Vec<Self::InstructionSet>,
-        mut bytecode_rows: Vec<ELFRow>,
-        mut trace: Vec<ELFRow>,
+        bytecode_rows: Vec<ELFRow>,
+        trace: Vec<ELFRow>,
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-        witness_generator_path: PathBuf,
-        r1cs_path: PathBuf
+        random_tape: &mut RandomTape<G>
     ) {
-        let N_SKIP = 3;  // the instructions at the beginning of the trace to be skipped 
-        let N_FLAGS = 17;
-        let TRACE_LEN = trace.len()-N_SKIP;
+        let N_FLAGS = 18;
+        let TRACE_LEN = trace.len();
 
         let log_M = log2(M) as usize;
 
-        let instructions = &instructions[N_SKIP..];
-        let circuit_flags = &circuit_flags[N_FLAGS * N_SKIP..];
+        let [prog_a_rw, mut prog_v_rw, _] = 
+            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
-        let [mut prog_a_rw, mut prog_v_rw, prog_t_reads] = 
-            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace, N_SKIP);
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order. 
         prog_v_rw.extend(circuit_flags
             .chunks(N_FLAGS)
@@ -226,12 +223,26 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             })
         );
 
-        let [mut memreg_a_rw, mut memreg_v_reads, mut memreg_v_writes, _] 
-            = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
-        memreg_a_rw.drain(..N_SKIP * 7);
-        memreg_v_reads.drain(..N_SKIP * 7);
-        memreg_v_writes.drain(..N_SKIP * 7);
+        /* Transformation for single-step version */
+        let prog_v_components = prog_v_rw.chunks(TRACE_LEN).collect::<Vec<_>>();
+        let mut new_prog_v_rw = Vec::with_capacity(prog_v_rw.len());
 
+        for i in 0..TRACE_LEN {
+            for component in &prog_v_components {
+                if let Some(value) = component.get(i) {
+                    new_prog_v_rw.push(value.clone());
+                }
+            }
+        }
+
+        prog_v_rw = new_prog_v_rw;
+        /* End of transformation for single-step version */
+
+        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] 
+            = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
+
+        let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
+        let _guard = span.enter();
         let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
             instructions
             .iter()
@@ -246,30 +257,36 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let chunks_query = instructions.iter()
             .flat_map(|op| {
-                let mut chunks = op.to_indices(C, log_M);
-                chunks 
+                op.to_indices(C, log_M)
             })
             .map(|x| x as u64)
             .map(F::from)
             .collect::<Vec<F>>();
+        drop(_guard);
+        drop(span);
 
-        let lookup_outputs = instructions.iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+        // TODO(sragss): Move to separate function for tracing
+        let span = tracing::span!(tracing::Level::INFO, "compute lookup outputs");
+        let _guard = span.enter();
+        let lookup_outputs = instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
+        drop(_guard);
+        drop(span);
 
         // assert lengths 
-        assert_eq!(prog_a_rw.len(), TRACE_LEN);
-        assert_eq!(prog_v_rw.len(), TRACE_LEN * 6); 
-        assert_eq!(memreg_a_rw.len(), TRACE_LEN * 7);
-        assert_eq!(memreg_v_reads.len(), TRACE_LEN * 7);
+        assert_eq!(prog_a_rw.len(),       TRACE_LEN);
+        assert_eq!(prog_v_rw.len(),       TRACE_LEN * 6); 
+        assert_eq!(memreg_a_rw.len(),     TRACE_LEN * 7);
+        assert_eq!(memreg_v_reads.len(),  TRACE_LEN * 7);
         assert_eq!(memreg_v_writes.len(), TRACE_LEN * 7);
-        assert_eq!(chunks_x.len(), TRACE_LEN * C);
-        assert_eq!(chunks_y.len(), TRACE_LEN * C);
-        assert_eq!(chunks_query.len(), TRACE_LEN * C);
-        assert_eq!(lookup_outputs.len(), TRACE_LEN);
-        assert_eq!(circuit_flags.len(), TRACE_LEN * N_FLAGS);
+        assert_eq!(chunks_x.len(),        TRACE_LEN * C);
+        assert_eq!(chunks_y.len(),        TRACE_LEN * C);
+        assert_eq!(chunks_query.len(),    TRACE_LEN * C);
+        assert_eq!(lookup_outputs.len(),  TRACE_LEN);
+        assert_eq!(circuit_flags.len(),   TRACE_LEN * N_FLAGS);
 
         let inputs = vec![
-            prog_a_rw.clone(),
-            prog_v_rw.clone(),
+            prog_a_rw,
+            prog_v_rw,
             memreg_a_rw,
             memreg_v_reads, 
             memreg_v_writes,
@@ -277,29 +294,38 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags.to_vec(),
+            circuit_flags,
         ];
 
-        // TODO: move this conversion to the r1cs module 
+        // TODO(arasuarun): move this conversion to the r1cs module – add tracing instrumentation.
         use common::field_conversion::ark_to_ff; 
         // Exact instantiations of the field used
         use spartan2::provider::bn256_grumpkin::bn256;
         use bn256::Scalar as Spartan2Fr;
         type G1 = bn256::Point;
-        type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
+        type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
         type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
 
+        let span = tracing::span!(tracing::Level::INFO, "ff ark to spartan conversion");
+        let _guard = span.enter();
         let inputs_ff = inputs
-            .into_iter()
+            .into_par_iter()
             .map(|input| input
-                .into_iter()
+                .into_par_iter()
                 .map(|x| ark_to_ff(x))
                 .collect::<Vec<Spartan2Fr>>()
             ).collect::<Vec<Vec<Spartan2Fr>>>();
+        drop(_guard); 
+        drop(span);
+        
+        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
+        let result_verify = run_jolt_spartan_with_circuit::<G1, S, Spartan2Fr>(jolt_circuit);
+        assert!(result_verify.is_ok(), "{:?}", result_verify.err().unwrap());
+    }
 
-        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, inputs_ff, witness_generator_path, r1cs_path);
-        let result_verify = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-        assert!(result_verify.is_ok());
+    #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
+    fn compute_lookup_outputs(instructions: &Vec<Self::InstructionSet>) -> Vec<F> {
+        instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect()
     }
 }
 

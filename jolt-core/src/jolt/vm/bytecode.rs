@@ -216,10 +216,7 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         ]
     }
 
-    // A prefix of N_SKIP trace rows preceding the actual program. 
-    // This happens in Fibonacci when the program gets into an infinite loop at the start. 
-    // TODO(arasuarun): See if this can be done before calling prove_r1cs. 
-    fn from_elf_r1cs(elf: &Vec<ELFRow>, N_SKIP: usize) -> Vec<F> {
+    fn from_elf_r1cs(elf: &Vec<ELFRow>) -> Vec<F> {
         let len = elf.len();
 
         let mut opcodes = Vec::with_capacity(len);
@@ -238,13 +235,6 @@ impl<F: PrimeField> FiveTuplePoly<F> {
             imms.push(F::from(row.imm));
             // circuit_flags.push(row.circuit_flags_packed::<F>());
         }
-
-        // skip the first N_SKIP elements of each vector 
-        let opcodes = opcodes.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
-        let rds = rds.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
-        let rs1s = rs1s.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
-        let rs2s = rs2s.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
-        let imms = imms.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
 
         [
             opcodes,
@@ -322,7 +312,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
-    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>, N_SKIP: usize) -> [Vec<F>; 3] {
+    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> [Vec<F>; 3] {
         // As R1CS isn't padded, measure length here before padding is applied. 
         let num_ops: usize = trace.len();
 
@@ -355,14 +345,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             vec.iter().map(|x| F::from(*x as u64)).collect()
         };
 
-        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace, N_SKIP);
+        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
 
-        let a_read_write_usize_skipped = a_read_write_usize.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
-        let read_cts_skipped = read_cts.iter().skip(N_SKIP).cloned().collect::<Vec<_>>();
         [
-            to_f_vec(&a_read_write_usize_skipped),
+            to_f_vec(&a_read_write_usize),
             v_read_write, 
-            to_f_vec(&read_cts_skipped),
+            to_f_vec(&read_cts),
         ]
     }
 

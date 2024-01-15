@@ -643,7 +643,8 @@ impl RVTraceRow {
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
 
             // UJ-type instructions point to address offsets: even numbers.
-            RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 1u64,
+            // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent. 
+            RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 0u64,
             _ => unimplemented!(),
         }
     }
@@ -876,7 +877,7 @@ impl JoltProvableTrace for RVTraceRow {
         // 15: is lui or auipc
         // 16: is jal
 
-        let mut flags = vec![false; 17];
+        let mut flags = vec![false; 18];
 
         flags[0] = match self.opcode {
             RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
@@ -946,7 +947,7 @@ impl JoltProvableTrace for RVTraceRow {
         flags[7] = match self.opcode {
             RV32IM::ADD 
             | RV32IM::ADDI 
-            // Arasu: don't count these here. 
+            // TODO(arasuarun): don't count these here. 
             // | RV32IM::JAL 
             // | RV32IM::JALR 
             | RV32IM::AUIPC => true,
@@ -963,17 +964,17 @@ impl JoltProvableTrace for RVTraceRow {
             _ => false,
         };
 
-        // not incorporating advice instructions yet
+        // TODO(JOLT-29): Used in the 'M' extension
         flags[10] = match self.opcode {
             _ => false,
         };
 
-        // not incorporating assert true instructions yet
+        // TODO(JOLT-29): Used in the 'M' extension
         flags[11] = match self.opcode {
             _ => false,
         };
 
-        // not incorporating assert false instructions yet
+        // TODO(JOLT-29): Used in the 'M' extension
         flags[12] = match self.opcode {
             _ => false,
         };
@@ -983,11 +984,6 @@ impl JoltProvableTrace for RVTraceRow {
             Some(imm) if imm & mask == mask => true,
             _ => false,
         };
-
-        // flags[14] = match self.opcode {
-        //     RV32IM::LUI => true,
-        //     _ => false,
-        // };
 
         flags[14] = match self.opcode {
             RV32IM::XOR | RV32IM::XORI | RV32IM::OR | RV32IM::ORI | RV32IM::AND | RV32IM::ANDI | 
@@ -1006,6 +1002,11 @@ impl JoltProvableTrace for RVTraceRow {
 
         flags[16] = match self.opcode {
             RV32IM::JAL => true,
+            _ => false,
+        };
+
+        flags[17] = match self.opcode {
+            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI => true,
             _ => false,
         };
 

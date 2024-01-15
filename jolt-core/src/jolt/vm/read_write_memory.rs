@@ -207,6 +207,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let mut t_final: Vec<u64> = vec![0; memory_size];
 
         let mut timestamp: u64 = 0;
+        let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
+        let _enter = span.enter();
         for step in memory_trace.chunks(MEMORY_OPS_PER_INSTRUCTION) {
             for memory_access in step {
                 match memory_access {
@@ -235,6 +237,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             }
             timestamp += 1;
         }
+        drop(_enter);
+        drop(span);
 
         (
             Self {
@@ -253,21 +257,21 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         )
     }
 
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
+    // TODO(arasuarun): This is seriously slow and duplicated work from above.
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_r1cs_polys")]
     pub fn get_r1cs_polys(
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         transcript: &mut Transcript,
     ) -> [Vec<F>; 4] {
         let m = memory_trace.len();
-        // assert!(m.is_power_of_two());
 
         let remap_address = |a: u64| {
             assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
             if a >= RAM_START_ADDRESS {
-                // a - RAM_START_ADDRESS + REGISTER_COUNT
-                // Arasu: for r1cs, do not substract RAM_START_ADDRESS
-                a
+                a - RAM_START_ADDRESS + REGISTER_COUNT
+                // TODO(arasuarun): for r1cs, do not substract RAM_START_ADDRESS
+                // a
             } else {
                 // If a < REGISTER_COUNT, it is one of the registers and doesn't
                 // need to be remapped
@@ -275,6 +279,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             }
         };
 
+        let span = tracing::span!(tracing::Level::DEBUG, "memory_size_calculation");
+        let _enter = span.enter();
         let max_memory_address = memory_trace
             .iter()
             .map(|op| match op {
@@ -291,7 +297,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
         let memory_size =
             max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
+        drop(_enter);
+        drop(span);
 
+        let span = tracing::span!(tracing::Level::DEBUG, "initialize_memory");
+        let _enter = span.enter();
         let mut v_init: Vec<u64> = vec![0; memory_size];
         for instr in bytecode {
             let address = remap_address(instr.address);
@@ -301,20 +311,38 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
             }
         }
+        drop(_enter);
+        drop(span);
 
+        let span = tracing::span!(tracing::Level::DEBUG, "initialize_vectors");
+        let _enter = span.enter();
         let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
         let mut v_read: Vec<u64> = Vec::with_capacity(m);
         let mut v_write: Vec<u64> = Vec::with_capacity(m);
+
+        let span_clone = tracing::span!(tracing::Level::DEBUG, "clone_avoidance");
+        let _enter_clone = span_clone.enter();
         let mut v_final: Vec<u64> = v_init.clone(); // TODO(moodlezoup): avoid clone
+        drop(_enter_clone);
+        drop(span_clone);
+
         let mut t_read: Vec<u64> = Vec::with_capacity(m);
         let mut t_write: Vec<u64> = Vec::with_capacity(m);
+
+        let span = tracing::span!(tracing::Level::DEBUG, "initialize_t_final");
+        let _enter = span.enter();
         let mut t_final: Vec<u64> = vec![0; memory_size];
+        drop(_enter);
+        drop(span);
 
         let mut timestamp: u64 = 0;
+        let span = tracing::span!(tracing::Level::DEBUG, "memory_access_processing");
+        let _enter = span.enter();
         for memory_access in memory_trace {
             match memory_access {
                 MemoryOp::Read(a, v) => {
                     let remapped_a = remap_address(a);
+                    // TODO(arasuarun): This is a hack to get the memory parts of the hash example to work
                     debug_assert_eq!(v, v_final[remapped_a as usize]);
                     a_read_write.push(remapped_a);
                     v_read.push(v);
@@ -337,13 +365,27 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             }
             timestamp += 1;
         }
+        drop(_enter);
+        drop(span);
 
         // create a closure to convert u64 to F vector
         let to_f_vec =
             |v: &Vec<u64>| -> Vec<F> { v.iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
 
+        let un_remap_address = |a: &Vec<u64>| {
+            a.iter()
+                .map(|addr| {
+                    if *addr >= REGISTER_COUNT {
+                        addr + RAM_START_ADDRESS - REGISTER_COUNT
+                    } else {
+                        *addr
+                    }
+                })
+                .collect::<Vec<u64>>()
+        };
+
         [
-            to_f_vec(&a_read_write),
+            to_f_vec(&un_remap_address(&a_read_write)),
             to_f_vec(&v_read),
             to_f_vec(&v_write),
             to_f_vec(&t_read),
