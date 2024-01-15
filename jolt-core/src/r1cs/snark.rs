@@ -104,6 +104,11 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let _compute_witness_guard = compute_witness_span.enter();
 
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
+    let mut variable_inputs: HashMap<String, Vec<U256>> = HashMap::new();
+    for name in &variable_names {
+        variable_inputs.insert(name.to_string(), vec![]);
+    }
+    let input_mapping = witness::get_input_mapping(variable_inputs, &graph);
 
     let full_wtns_span = tracing::span!(tracing::Level::INFO, "full_wtns_span");
     let full_wtns_guard = full_wtns_span.enter();
@@ -131,7 +136,15 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
             }).collect())
           })
           .collect();
-      let uint_jolt_witness = witness::calculate_witness(input_converted, &graph).unwrap();
+
+      // TODO(sragss): Old
+      // let uint_jolt_witness = witness::calculate_witness(input_converted, &graph).unwrap();
+
+      // TODO(sragss): New
+    let mut inputs_buffer = witness::generate_inputs_buffer(&graph);
+      witness::populate_inputs(&input_converted, &input_mapping, &mut inputs_buffer);
+      let uint_jolt_witness = witness::graph::evaluate(&graph.nodes, &inputs_buffer, &graph.signals);
+
       drop(rs_wtns_guard);
       drop(rs_wtns_span);
 
