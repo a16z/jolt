@@ -162,6 +162,7 @@ template JoltStep() {
 
     // Pre-processing the imm 
     signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
+    // TODO(arasuarun): Do you still need this?
     // signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
 
     /*******  Register Reading Constraints: 

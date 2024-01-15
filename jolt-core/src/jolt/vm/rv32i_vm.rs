@@ -303,11 +303,7 @@ mod tests {
 
         let circuit_flags = converted_trace.clone()
             .iter()
-            .flat_map(|row| {
-                let mut flags: Vec<Fr> = row.to_circuit_flags();
-                // flags.reverse();
-                flags.into_iter() 
-            })
+            .flat_map(|row| row.to_circuit_flags())
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
@@ -321,9 +317,7 @@ mod tests {
             memory_trace_r1cs, 
             circuit_flags,
             &mut transcript,
-            &mut random_tape,
-            JoltPaths::witness_generator_path("fibonacci"),
-            JoltPaths::r1cs_path("fibonacci")
+            &mut random_tape
         );
     }
 
@@ -419,12 +413,6 @@ mod tests {
             .map(|row| row.to_bytecode_trace())
             .collect();
 
-        let instructions: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
-
         let instructions_r1cs: Vec<RV32I> = converted_trace
             .clone()
             .into_iter()
@@ -442,11 +430,7 @@ mod tests {
 
         let circuit_flags = converted_trace.clone()
             .iter()
-            .flat_map(|row| {
-                let mut flags: Vec<Fr> = row.to_circuit_flags();
-                // flags.reverse();
-                flags.into_iter() 
-            })
+            .flat_map(|row| row.to_circuit_flags())
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
@@ -461,8 +445,6 @@ mod tests {
             circuit_flags,
             &mut transcript,
             &mut random_tape,
-            JoltPaths::witness_generator_path("hash"),
-            JoltPaths::r1cs_path("hash")
         );
     }
 

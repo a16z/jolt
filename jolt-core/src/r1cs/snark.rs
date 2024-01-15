@@ -35,7 +35,6 @@ pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
 
 impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
   pub fn new_from_inputs(W: usize, c: usize, num_steps: usize, PC_START_ADDR: F, inputs: Vec<Vec<F>>) -> Self {
-    // TODO(sragss): What is W?
     JoltCircuit{
       width: W,
       c: c,
@@ -72,11 +71,9 @@ impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
 impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
   #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-    // TODO(sragss): These paths should not be hardcoded.
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
-    // let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
     let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
 
     let variable_names = [
@@ -215,12 +212,10 @@ impl<F: PrimeField<Repr = [u8; 32]>> JoltSkeleton<F> {
 impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
   #[tracing::instrument(skip_all, name = "JoltSkeleton::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-    // TODO(sragss): These paths should not be hardcoded.
     let circuit_dir = JoltPaths::circuit_artifacts_path();
-    let r1cs_path = circuit_dir.join("jolt_single_step.r1cs");
-    let wtns_path = circuit_dir.join("jolt_single_step_js/jolt_single_step.wasm");
+    let r1cs_path = JoltPaths::r1cs_path();
+    let wtns_path = JoltPaths::witness_generator_path();
 
-    // let cfg = CircomConfig::new(self.witness_generator_path.clone(), self.r1cs_path.clone()).unwrap();
     let load_cfg_span = tracing::span!(tracing::Level::INFO, "load_cfg");
     let _load_cfg_guard = load_cfg_span.enter();
     let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
@@ -230,44 +225,19 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
     let NUM_STEPS = self.num_steps;
     let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
 
-    let synthesize_span = tracing::span!(tracing::Level::INFO, "circom_scotia_synthesize");
-    let _synthesize_guard = synthesize_span.enter();
-    for i in 0..1 {
-      let _ = circom_scotia::synthesize(
-          &mut cs.namespace(|| format!("jolt_step_{}", i)),
-          cfg.r1cs.clone(),
-          None,
-      )
-      .unwrap();
-    }
-    drop(_synthesize_guard);
-    drop(synthesize_span);
+    let _ = circom_scotia::synthesize(
+        &mut cs.namespace(|| "jolt_step_0"),
+        cfg.r1cs.clone(),
+        None,
+    )
+    .unwrap();
 
-    let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
-    let STATE_SIZE = 2; 
-    let span = tracing::span!(tracing::Level::INFO, "constraint_loop");
-    let _guard = span.enter();
-    // for i in 0..NUM_STEPS-1 {
-    //   let out_start_index = NUM_VARS_PER_STEP * i;
-    //   let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
-    //   for j in 0..STATE_SIZE {
-    //     cs.enforce(
-    //       || format!("io consistency constraint {}, {}", i, j),
-    //       |_| LinearCombination::<F>::zero() + (F::from(1), CS::one()), 
-    //       |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(in_start_next+j))), 
-    //       |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(out_start_index+j))), 
-    //     );
-    //   }
-    // }
-    drop(_guard);
-    drop(span);
     Ok(())
   }
 }
 
 
-#[tracing::instrument(skip_all, name = "JoltCircuit::run_jolt_spartan_with_circuit")]
-// pub fn run_jolt_spartan_with_circuit<G: Group, S: RelaxedR1CSSNARKTrait<G>>(circuit: JoltCircuit<<G as Group>::Scalar>) -> Result<Vec<<G as Group>::Scalar>, SpartanError> {
+#[tracing::instrument(skip_all, name = "JoltSkeleton::run_jolt_spartan_with_circuit")]
 pub fn run_jolt_spartan_with_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
   let num_steps = circuit.inputs[0].len(); 
   // produce keys
@@ -275,7 +245,6 @@ pub fn run_jolt_spartan_with_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTr
   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
   let span = tracing::span!(tracing::Level::INFO, "setup SNARK");
   let _guard = span.enter();
-  // let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup(skeleton_circuit).unwrap();
   let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
   drop(_guard);
   drop(span);

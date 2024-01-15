@@ -16,9 +16,11 @@ use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::JoltInstruction;
 use crate::jolt::trace::rv::RVTraceRow;
 use crate::jolt::trace::JoltProvableTrace;
-use crate::jolt::vm::bytecode::{random_bytecode_trace, ELFRow, BytecodeProof};
+use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodeProof, ELFRow};
 use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
-use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction, MemoryOp, ReadWriteMemoryProof};
+use crate::jolt::vm::read_write_memory::{
+    random_memory_trace, MemoryOp, RandomInstruction, ReadWriteMemoryProof,
+};
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
@@ -317,7 +319,6 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             &mut random_tape,
         );
 
-
         // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
         compiler::cached_compile_example("hash");
 
@@ -368,20 +369,12 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let instruction_lookups: InstructionLookupsProof<_, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
-        // let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
-        //     instruction_lookups,
-        //     read_write_memory: memory_proof,
-        //     bytecode: bytecode_proof,
-        // };
-
-        // let mut transcript = Transcript::new(b"Jolt transcript");
-        // assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_instruction_lookups(
-        //     jolt_proof.instruction_lookups,
-        //     &mut transcript
-        // )
-        // .is_ok());
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        assert!(RV32IJoltVM::verify_bytecode(bytecode_proof, &mut transcript).is_ok());
+        assert!(RV32IJoltVM::verify_memory(memory_proof, &mut transcript).is_ok());
+        assert!(
+            RV32IJoltVM::verify_instruction_lookups(instruction_lookups, &mut transcript).is_ok()
+        );
     };
     tasks.push((
         tracing::info_span!("HashR1CS"),
@@ -422,21 +415,26 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .flat_map(|row| {
                 let instructions = row.to_jolt_instructions();
                 if instructions.is_empty() {
-                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()] 
+                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
                 } else {
                     instructions
                 }
             })
             .collect();
-    
-        let memory_trace_r1cs = converted_trace.clone().into_iter().flat_map(|row| row.to_ram_ops()).collect_vec();
 
-        let circuit_flags = converted_trace.clone()
+        let memory_trace_r1cs = converted_trace
+            .clone()
+            .into_iter()
+            .flat_map(|row| row.to_ram_ops())
+            .collect_vec();
+
+        let circuit_flags = converted_trace
+            .clone()
             .iter()
             .flat_map(|row| {
                 let mut flags: Vec<Fr> = row.to_circuit_flags();
                 // flags.reverse();
-                flags.into_iter() 
+                flags.into_iter()
             })
             .collect::<Vec<_>>();
 
@@ -444,16 +442,15 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
         RV32IJoltVM::prove_r1cs(
-            instructions_r1cs, 
+            instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
-            bytecode, 
-            memory_trace_r1cs, 
+            bytecode,
+            memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
             &mut random_tape,
         );
-
 
         // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
         compiler::cached_compile_example("fibonacci");
@@ -505,20 +502,12 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let instruction_lookups: InstructionLookupsProof<_, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
-        // let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
-        //     instruction_lookups,
-        //     read_write_memory: memory_proof,
-        //     bytecode: bytecode_proof,
-        // };
-
-        // let mut transcript = Transcript::new(b"Jolt transcript");
-        // assert!(RV32IJoltVM::verify_bytecode(jolt_proof.bytecode, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_memory(jolt_proof.read_write_memory, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_instruction_lookups(
-        //     jolt_proof.instruction_lookups,
-        //     &mut transcript
-        // )
-        // .is_ok());
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        assert!(RV32IJoltVM::verify_bytecode(bytecode_proof, &mut transcript).is_ok());
+        assert!(RV32IJoltVM::verify_memory(memory_proof, &mut transcript).is_ok());
+        assert!(
+            RV32IJoltVM::verify_instruction_lookups(instruction_lookups, &mut transcript).is_ok()
+        );
     };
     tasks.push((
         tracing::info_span!("FibonacciR1CS"),
