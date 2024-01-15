@@ -3,7 +3,6 @@ use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
-use crate::utils::split_bits;
 
 #[derive(Default)]
 pub struct EqAbsSubtable<F: PrimeField> {
@@ -20,21 +19,24 @@ impl<F: PrimeField> EqAbsSubtable<F> {
 
 impl<F: PrimeField> LassoSubtable<F> for EqAbsSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        let mut entries: Vec<F> = Vec::with_capacity(M);
+        let mut entries: Vec<F> = vec![F::zero(); M];
         let bits_per_operand = (log2(M) / 2) as usize;
-        // 0b01111...11
-        let lower_bits_mask = (1 << (bits_per_operand - 1)) - 1;
 
         // Materialize table entries in order where (x | y) ranges 0..M
-        for idx in 0..M {
-            let (x, y) = split_bits(idx, bits_per_operand);
-            let row = if (x & lower_bits_mask) == (y & lower_bits_mask) {
-                F::one()
-            } else {
-                F::zero()
-            };
-            entries.push(row);
+        // Below is the optimized loop for the condition:
+        // lower_bits_mask = 0b01111...11
+        // table[x | y] == (x & lower_bits_mask) == (y & lower_bits_mask)
+        for idx in 0..(1 << (bits_per_operand)) {
+            // we set the bit in the table where x == y
+            // e.g. 01010011 | 01010011 = 1
+            let concat_index_1 = idx | (idx << bits_per_operand);
+            // we also set the bit where x == y except for their leading bit
+            // e.g. 11010011 | 01010011 = 0
+            let concat_index_2 = idx | ((idx ^ (1 << bits_per_operand - 1)) << bits_per_operand);
+            entries[concat_index_1] = F::one();
+            entries[concat_index_2] = F::one();
         }
+
         entries
     }
 

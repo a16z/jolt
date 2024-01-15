@@ -523,6 +523,7 @@ where
                 let gamma_square = &gamma.square();
 
                 let leaf_fingerprints = (0..self.num_lookups)
+                    .into_par_iter()
                     .map(|i| {
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];

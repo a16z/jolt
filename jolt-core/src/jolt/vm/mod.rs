@@ -32,6 +32,7 @@ use self::read_write_memory::{
     MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
     ReadWriteMemoryProof,
 };
+
 struct JoltProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     instruction_lookups: InstructionLookupsProof<F, G>,
     read_write_memory: ReadWriteMemoryProof<F, G>,

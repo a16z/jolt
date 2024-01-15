@@ -267,7 +267,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             if a >= RAM_START_ADDRESS {
                 // a - RAM_START_ADDRESS + REGISTER_COUNT
                 // Arasu: for r1cs, do not substract RAM_START_ADDRESS
-                a 
+                a
             } else {
                 // If a < REGISTER_COUNT, it is one of the registers and doesn't
                 // need to be remapped
@@ -338,16 +338,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             timestamp += 1;
         }
 
-        // create a closure to convert u64 to F vector 
-        let to_f_vec = |v: &Vec<u64>| -> Vec<F> {
-            v.iter().map(|i| F::from(*i)).collect::<Vec<F>>()
-        };
+        // create a closure to convert u64 to F vector
+        let to_f_vec =
+            |v: &Vec<u64>| -> Vec<F> { v.iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
 
         [
-            to_f_vec(&a_read_write), 
-            to_f_vec(&v_read), 
-            to_f_vec(&v_write), 
-            to_f_vec(&t_read), 
+            to_f_vec(&a_read_write),
+            to_f_vec(&v_read),
+            to_f_vec(&v_write),
+            to_f_vec(&t_read),
         ]
     }
 }
