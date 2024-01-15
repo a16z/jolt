@@ -321,7 +321,8 @@ mod test {
       op_flags,
     ];
 
-    unimplemented!("Need to commit a src/r1cs/test-artifacts/ <witness generator> / <r1cs>");
+    // TODO(arasuarun): Need to switch to single step.
+    unimplemented!("Test needs to be ported to jolt_single_step.circom");
     // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
     // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
     // assert!(res_verifier.is_ok());
@@ -390,7 +391,8 @@ mod test {
       op_flags,
     ];
 
-    unimplemented!("Need to commit a src/r1cs/test-artifacts/ <witness generator> / <r1cs>");
+    // TODO(arasuarun): Need to switch to single step.
+    unimplemented!("Test needs to be ported to jolt_single_step.circom");
     // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
     // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
     // assert!(res_verifier.is_ok());
@@ -457,7 +459,8 @@ mod test {
       op_flags,
     ];
 
-    unimplemented!("Need to commit a src/r1cs/test-artifacts/ <witness generator> / <r1cs>");
+    // TODO(arasuarun): Need to switch to single step.
+    unimplemented!("Test needs to be ported to jolt_single_step.circom");
     // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
     // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
     // assert!(res_verifier.is_err());
