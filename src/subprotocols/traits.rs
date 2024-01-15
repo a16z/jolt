@@ -1,12 +1,13 @@
 use std::borrow::Borrow;
 
+use ark_ff::Field;
 use merlin::Transcript;
 
-pub trait PCS {
+use crate::poly::dense_mlpoly::DensePolynomial;
+
+pub trait PCS<F: Field> {
   type Commitment;
   type Evaluation;
-  type Polynomial;
-  type CommitPolynomial;
   type Challenge;
   type Proof;
   type Error;
@@ -16,12 +17,12 @@ pub trait PCS {
 
   //TODO: convert to impl IntoIterator<Item = Self::Polynomial>
   fn commit(
-    polys: &[Self::CommitPolynomial],
+    polys: &[DensePolynomial<F>],
     ck: &Self::ProverKey,
   ) -> Result<Vec<Self::Commitment>, Self::Error>;
 
   fn prove(
-    polys: &[Self::Polynomial],
+    polys: &[DensePolynomial<F>],
     evals: &[Self::Evaluation],
     challenges: &[Self::Challenge],
     pk: impl Borrow<Self::ProverKey>,
@@ -29,7 +30,7 @@ pub trait PCS {
   ) -> Result<Self::Proof, Self::Error>;
 
   fn open(
-    polys: &[Self::Polynomial],
+    polys: &[DensePolynomial<F>],
     evals: &[Self::Evaluation],
     challenges: &[Self::Challenge],
     pk: impl Borrow<Self::ProverKey>,
