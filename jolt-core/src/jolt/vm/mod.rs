@@ -195,15 +195,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
     fn prove_r1cs(
         instructions: Vec<Self::InstructionSet>,
-        mut bytecode_rows: Vec<ELFRow>,
-        mut trace: Vec<ELFRow>,
+        bytecode_rows: Vec<ELFRow>,
+        trace: Vec<ELFRow>,
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>
     ) {
-        println!("[sam]: prove_r1cs"); // TODO(sragss): rm
         let N_FLAGS = 18;
         let TRACE_LEN = trace.len();
 
@@ -298,7 +297,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             circuit_flags,
         ];
 
-        // TODO: move this conversion to the r1cs module 
+        // TODO(arasuarun): move this conversion to the r1cs module – add tracing instrumentation.
         use common::field_conversion::ark_to_ff; 
         // Exact instantiations of the field used
         use spartan2::provider::bn256_grumpkin::bn256;
@@ -319,10 +318,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(_guard); 
         drop(span);
         
-        println!("[sam]: Running spartan"); // TODO(sragss): rm
         let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
         let result_verify = run_jolt_spartan_with_circuit::<G1, S, Spartan2Fr>(jolt_circuit);
         assert!(result_verify.is_ok(), "{:?}", result_verify.err().unwrap());
+    }
+
+    #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
+    fn compute_lookup_outputs(instructions: &Vec<Self::InstructionSet>) -> Vec<F> {
+        instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect()
     }
 }
 
