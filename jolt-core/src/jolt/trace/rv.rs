@@ -9,8 +9,6 @@ use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::blt::BLTInstruction;
 use crate::jolt::instruction::bltu::BLTUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
-use crate::jolt::instruction::jal::JALInstruction;
-use crate::jolt::instruction::jalr::JALRInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::slt::SLTInstruction;
@@ -686,9 +684,6 @@ impl JoltProvableTrace for RVTraceRow {
       RV32IM::BLTU => vec![BLTUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::BGE  => vec![BGEInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::BGEU => vec![BGEUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
-
-    //   RV32IM::JAL  => vec![JALInstruction(self.pc, self.imm_u64()).into()],
-    //   RV32IM::JALR => vec![JALRInstruction(self.rs1_val.unwrap(), self.imm_u64()).into()],
 
       RV32IM::JAL  => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
       RV32IM::JALR => vec![ADDInstruction::<32>(self.rs1_val.unwrap(), self.imm_u64()).into()],
