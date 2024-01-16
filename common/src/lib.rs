@@ -40,6 +40,25 @@ pub enum MemoryState {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Section {
+    Text {
+        instructions: Vec<ELFInstruction>,
+        address: u64,
+        size: u64,
+    },
+    Data {
+        data: Vec<u8>,
+        address: u64,
+        size: u64,
+    },
+    RoData {
+        data: Vec<u8>,
+        address: u64,
+        size: u64,
+    }
+}
+
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize)]
 #[repr(u8)]

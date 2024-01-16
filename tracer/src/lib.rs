@@ -2,7 +2,7 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use common::{self, serializable::Serializable};
+use common::{self, serializable::Serializable, Section};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
@@ -29,7 +29,7 @@ use crate::decode::decode_raw;
 ///
 /// # Returns
 ///
-/// * A `Result` containing a tuple of the num trace rows and instructions if successful, or an error if not.
+/// * A `Result` containing a tuple of the num trace rows and sections if successful, or an error if not.
 pub fn run_tracer_with_paths(
     elf_location: PathBuf,
     trace_destination: PathBuf,
@@ -47,14 +47,14 @@ pub fn run_tracer_with_paths(
         trace_destination.display()
     );
 
-    let instructions = decode(&elf_location);
-    instructions.serialize_to_file(&bytecode_destination)?;
+    let sections = decode(&elf_location);
+    sections.serialize_to_file(&bytecode_destination)?;
     println!(
-        "Wrote {} instructions to {}.",
-        instructions.len(),
+        "Wrote {} sections to {}.",
+        sections.len(),
         bytecode_destination.display()
     );
-    Ok((rows.len(), instructions.len()))
+    Ok((rows.len(), sections.len()))
 }
 
 pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
@@ -91,22 +91,41 @@ pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     output
 }
 
-pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
+pub fn decode(elf: &PathBuf) -> Vec<Section> {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();
     elf_file.read_to_end(&mut elf_contents).unwrap();
 
     let obj = object::File::parse(&*elf_contents).unwrap();
 
-    let text_sections = obj
+    obj.sections().for_each(|section| {
+        let name = section.name();
+        let kind = section.kind();
+        println!("{:?} {:?}", name, kind);
+    });
+
+    let mut data = obj
+        .sections()
+        .filter(|s| s.kind() == SectionKind::Data)
+        .map(|s| Section::Data { data: s.data().unwrap().to_vec(), address: s.address(), size: s.size() })
+        .collect::<Vec<_>>();
+
+    let mut rodata = obj
+        .sections()
+        .filter(|s| s.kind() == SectionKind::ReadOnlyData)
+        .map(|s| Section::RoData { data: s.data().unwrap().to_vec(), address: s.address(), size: s.size() })
+        .collect::<Vec<_>>();
+
+    let text_sections_raw = obj
         .sections()
         .filter(|s| s.kind() == SectionKind::Text)
         .collect::<Vec<_>>();
 
-    let mut instructions = Vec::new();
-    for section in text_sections {
+    let mut text = Vec::new();
+    for section in text_sections_raw {
         let data = section.data().unwrap();
 
+        let mut instructions = Vec::new();
         for (chunk, word) in data.chunks(4).enumerate() {
             let word = u32::from_le_bytes(word.try_into().unwrap());
             let address = chunk as u64 * 4 + section.address();
@@ -127,9 +146,16 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
                 });
             }
         }
+
+        text.push(Section::Text { instructions, address: section.address(), size: section.size() });
     }
 
-    instructions
+    let mut sections = Vec::new();
+    sections.append(&mut text);
+    sections.append(&mut data);
+    sections.append(&mut rodata);
+
+    sections
 }
 
 fn get_xlen() -> Xlen {
