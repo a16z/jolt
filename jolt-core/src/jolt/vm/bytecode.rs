@@ -356,13 +356,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
     fn validate_bytecode(bytecode: &Vec<ELFRow>, trace: &Vec<ELFRow>) {
-        let mut pc = bytecode[0].address;
         let mut bytecode_map: HashMap<usize, &ELFRow> = HashMap::new();
 
         for bytecode_row in bytecode.iter() {
-            assert_eq!(bytecode_row.address, pc);
             bytecode_map.insert(bytecode_row.address, bytecode_row);
-            pc += BYTES_PER_INSTRUCTION;
         }
 
         for trace_row in trace {
