@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use common::path::JoltPaths;
 use spartan2::{
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
-  SNARK, errors::SpartanError,
+  SNARK, errors::SpartanError, 
 };
 use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index};
 use ff::PrimeField;
@@ -10,14 +10,17 @@ use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
+use ark_ff::PrimeField as arkPrimeField;
+use common::field_conversion::ark_to_ff; 
+// Exact instantiation of the field used
+use spartan2::provider::bn256_grumpkin::bn256;
+use bn256::Scalar as Spartan2Fr;
+
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
 #[derive(Clone, Debug, Default)]
 pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
-  width: usize,
-  c: usize,
   num_steps: usize,
-  pc_start_addr: F,
   inputs: Vec<Vec<F>>,
   // prog_a_rw: Vec<F>, 
   // prog_v_rw: Vec<F>, 
@@ -36,20 +39,14 @@ pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
 impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
   pub fn new_from_inputs(W: usize, c: usize, num_steps: usize, PC_START_ADDR: F, inputs: Vec<Vec<F>>) -> Self {
     JoltCircuit{
-      width: W,
-      c: c,
       num_steps: num_steps,
-      pc_start_addr: PC_START_ADDR,
       inputs: inputs,
     }
   }
 
   pub fn all_zeros(W: usize, c: usize, N: usize) -> Self {
     JoltCircuit{
-      width: W,
-      c: c,
       num_steps: N,
-      pc_start_addr: 0.into(),
       inputs: vec![
         vec![F::ZERO; N * 6], // TODO: change this to just N * 1 as prog code address is de-duplicated
         vec![F::ZERO; N * 6],
@@ -193,7 +190,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
   }
 }
 
-
 #[derive(Clone, Debug, Default)]
 pub struct JoltSkeleton<F: PrimeField<Repr = [u8; 32]>> {
   num_steps: usize,
@@ -237,34 +233,43 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 }
 
 
-#[tracing::instrument(skip_all, name = "JoltSkeleton::run_jolt_spartan_with_circuit")]
-pub fn run_jolt_spartan_with_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
+#[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
+pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
   let num_steps = circuit.inputs[0].len(); 
-  // produce keys
-  // let circuit_clone = circuit.clone();
   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
-  let span = tracing::span!(tracing::Level::INFO, "setup SNARK");
-  let _guard = span.enter();
+
   let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
-  drop(_guard);
-  drop(span);
 
   // produce a SNARK
-  let span = tracing::span!(tracing::Level::INFO, "produce a SNARK");
-  let _guard = span.enter();
   let res = SNARK::prove(&pk, circuit);
   assert!(res.is_ok());
   let snark = res.unwrap();
-  drop(_guard);
-  drop(span);
 
   // verify the SNARK
-  let span = tracing::span!(tracing::Level::INFO, "verify the SNARK");
-  let _guard = span.enter();
-  let res = snark.verify(&vk, &[]);
-  drop(_guard);
-  drop(span);
-  res 
+  snark.verify(&vk, &[])
+}
+
+pub fn prove_r1cs<ArkF: arkPrimeField>(
+  W: usize, 
+  C: usize, 
+  TRACE_LEN: usize, 
+  inputs: Vec<Vec<ArkF>>) -> Result<(), SpartanError> {
+
+
+  type G1 = bn256::Point;
+  type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
+  type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+
+  let inputs_ff = inputs
+    .into_par_iter()
+    .map(|input| input
+        .into_par_iter()
+        .map(|x| ark_to_ff(x))
+        .collect::<Vec<Spartan2Fr>>()
+    ).collect::<Vec<Vec<Spartan2Fr>>>();
+
+  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
+  prove_jolt_circuit::<G1, S, Spartan2Fr>(jolt_circuit)
 }
 
 
@@ -274,7 +279,6 @@ mod test {
     traits::Group,
     SNARK,
   };
-  use super::{JoltCircuit, run_jolt_spartan_with_circuit};
 
   // #[test]
   // fn test_jolt_snark() {

@@ -8,7 +8,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use ark_std::log2;
 use textplots::{Chart, Plot, Shape};
 
-use crate::r1cs::snark::{JoltCircuit, run_jolt_spartan_with_circuit};
+use crate::r1cs::snark::prove_r1cs;
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
@@ -265,12 +265,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(_guard);
         drop(span);
 
-        // TODO(sragss): Move to separate function for tracing
-        let span = tracing::span!(tracing::Level::INFO, "compute lookup outputs");
-        let _guard = span.enter();
-        let lookup_outputs = instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
-        drop(_guard);
-        drop(span);
+        let lookup_outputs = Self::compute_lookup_outputs(&instructions);
 
         // assert lengths 
         assert_eq!(prog_a_rw.len(),       TRACE_LEN);
@@ -297,30 +292,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             circuit_flags,
         ];
 
-        // TODO(arasuarun): move this conversion to the r1cs module – add tracing instrumentation.
-        use common::field_conversion::ark_to_ff; 
-        // Exact instantiations of the field used
-        use spartan2::provider::bn256_grumpkin::bn256;
-        use bn256::Scalar as Spartan2Fr;
-        type G1 = bn256::Point;
-        type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-        type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-
-        let span = tracing::span!(tracing::Level::INFO, "ff ark to spartan conversion");
-        let _guard = span.enter();
-        let inputs_ff = inputs
-            .into_par_iter()
-            .map(|input| input
-                .into_par_iter()
-                .map(|x| ark_to_ff(x))
-                .collect::<Vec<Spartan2Fr>>()
-            ).collect::<Vec<Vec<Spartan2Fr>>>();
-        drop(_guard); 
-        drop(span);
-        
-        let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(32, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
-        let result_verify = run_jolt_spartan_with_circuit::<G1, S, Spartan2Fr>(jolt_circuit);
-        assert!(result_verify.is_ok(), "{:?}", result_verify.err().unwrap());
+        let res = prove_r1cs(32, C, TRACE_LEN, inputs); 
+        assert!(res.is_ok());
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
