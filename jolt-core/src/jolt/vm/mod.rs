@@ -265,12 +265,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(_guard);
         drop(span);
 
-        // TODO(sragss): Move to separate function for tracing
-        let span = tracing::span!(tracing::Level::INFO, "compute lookup outputs");
-        let _guard = span.enter();
-        let lookup_outputs = instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect::<Vec<F>>();
-        drop(_guard);
-        drop(span);
+        let lookup_outputs = Self::compute_lookup_outputs(&instructions);
 
         // assert lengths 
         assert_eq!(prog_a_rw.len(),       TRACE_LEN);
