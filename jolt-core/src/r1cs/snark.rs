@@ -4,7 +4,7 @@ use spartan2::{
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
   SNARK, errors::SpartanError,
 };
-use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index};
+use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum};
 use ff::PrimeField;
 use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
@@ -74,7 +74,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
-    let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
+    let cfg: CircomConfig<F> = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
 
     let variable_names = [
       "prog_a_rw", 
@@ -151,12 +151,13 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     for i in 0..NUM_STEPS {
       let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
       let _guard = span.enter();
-      let _ = circom_scotia::synthesize(
-          &mut cs.namespace(|| format!("jolt_step_{}", i)),
-          cfg.r1cs.clone(),
-          Some(jolt_witnesses[i].clone()),
-      )
-      .unwrap();
+      {
+        let witness = &jolt_witnesses[i];
+        (1..cfg.r1cs.num_inputs).chain(cfg.r1cs.num_inputs..cfg.r1cs.num_inputs + cfg.r1cs.num_aux).for_each(|i| {
+            let f = witness[i];
+            let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
+        });
+      }
       drop(_guard);
       drop(span);
     }
