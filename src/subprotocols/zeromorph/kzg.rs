@@ -1,3 +1,4 @@
+use ark_bn254::g1;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use std::{borrow::Borrow, marker::PhantomData};
 
@@ -9,6 +10,16 @@ use ark_std::One;
 use ark_std::UniformRand;
 use rand_chacha::rand_core::RngCore;
 use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum KZGError {
+  #[error("Length Error: SRS Length: {0}, Key Length: {0}")]
+  KeyLengthError(usize, usize),
+  #[error("Length Error: Commitment Key Length: {0}, Polynomial Degree {0}")]
+  CommitLengthError(usize, usize),
+  #[error("Failed to compute quotient polynomial due to polynomial division")]
+  PolyDivisionError,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct UniversalKzgSrs<P: Pairing> {
@@ -32,12 +43,7 @@ pub struct KZGVerifierKey<P: Pairing> {
 }
 
 impl<P: Pairing> UniversalKzgSrs<P> {
-  // TODO: add logic to have seed/toxic waste
-  pub fn setup<R: RngCore>(
-    toxic_waste: Option<&[u8]>,
-    max_degree: usize,
-    mut rng: &mut R,
-  ) -> UniversalKzgSrs<P> {
+  pub fn setup<R: RngCore>(max_degree: usize, rng: &mut R) -> UniversalKzgSrs<P> {
     let tau = P::ScalarField::rand(rng);
     let g1 = P::G1::rand(rng);
     let g2 = P::G2::rand(rng);
@@ -67,28 +73,29 @@ impl<P: Pairing> UniversalKzgSrs<P> {
     }
   }
 
-  pub fn extract_prover_key(&self, supported_size: usize) -> Vec<P::G1Affine> {
-    self.g1_powers[..=supported_size].to_vec()
+  pub fn get_prover_key(&self, key_size: usize) -> Result<Vec<P::G1Affine>, KZGError> {
+    if self.g1_powers.len() < key_size {
+      return Err(KZGError::KeyLengthError(self.g1_powers.len(), key_size));
+    }
+    Ok(self.g1_powers[..=key_size].to_vec())
   }
 
-  /// Returns the verifier parameters
-  ///
-  /// # Panics
-  /// If self.prover_params is empty.
-  pub fn extract_verifier_key(&self, supported_size: usize) -> KZGVerifierKey<P> {
-    assert!(
-      self.g1_powers.len() >= supported_size,
-      "supported_size is greater than self.max_degree()"
-    );
-    KZGVerifierKey {
+  pub fn get_verifier_key(&self, key_size: usize) -> Result<KZGVerifierKey<P>, KZGError> {
+    if self.g1_powers.len() < key_size {
+      return Err(KZGError::KeyLengthError(self.g1_powers.len(), key_size));
+    }
+    Ok(KZGVerifierKey {
       g1: self.g1_powers[0],
       g2: self.g2_powers[0],
       tau_2: self.g2_powers[1],
-    }
+    })
   }
 
-  pub fn trim(&self, supported_size: usize) -> (Vec<P::G1Affine>, KZGVerifierKey<P>) {
-    let g1_powers = self.g1_powers[..=supported_size].to_vec();
+  pub fn trim(&self, key_size: usize) -> Result<(Vec<P::G1Affine>, KZGVerifierKey<P>), KZGError> {
+    if self.g1_powers.len() < key_size {
+      return Err(KZGError::KeyLengthError(self.g1_powers.len(), key_size));
+    }
+    let g1_powers = self.g1_powers[..=key_size].to_vec();
 
     let pk = g1_powers;
     let vk = KZGVerifierKey {
@@ -96,73 +103,59 @@ impl<P: Pairing> UniversalKzgSrs<P> {
       g2: self.g2_powers[0],
       tau_2: self.g2_powers[1],
     };
-    (pk, vk)
+    Ok((pk, vk))
   }
 }
 
-/// Commitments
-
-/// Polynomial Evaluation
-
-#[derive(Error, Debug)]
-pub enum KZGError {
-  #[error("length error")]
-  LengthError,
-  #[error("Failed to compute quotient polynomial due to polynomial division")]
-  PolyDivisionError,
-}
-
-/// KZG Polynomial Commitment Scheme on univariate polynomial.
-/// Note: this is non-hiding, which is why we will implement traits on this token struct,
-/// as we expect to have several impls for the trait pegged on the same instance of a pairing::Engine.
-pub struct UVKZGPCS<P> {
+pub struct UnivariateKZG<P> {
   phantom: PhantomData<P>,
 }
 
-impl<P: Pairing> UVKZGPCS<P> {
+impl<P: Pairing> UnivariateKZG<P> {
   pub fn commit_offset(
-    prover_param: impl Borrow<Vec<P::G1Affine>>,
+    g1_powers: impl Borrow<Vec<P::G1Affine>>,
     poly: &UniPoly<P::ScalarField>,
     offset: usize,
   ) -> Result<P::G1Affine, KZGError> {
-    let prover_param = prover_param.borrow();
+    let g1_powers = g1_powers.borrow();
 
-    if poly.degree() > prover_param.len() {
-      return Err(KZGError::LengthError);
+    if poly.degree() > g1_powers.len() {
+      return Err(KZGError::CommitLengthError(poly.degree(), g1_powers.len()));
     }
 
     let scalars = poly.coeffs.as_slice();
-    let bases = prover_param.as_slice();
+    let bases = g1_powers.as_slice();
 
-    let c = <P::G1 as VariableBaseMSM>::msm(&bases[offset..scalars.len()], &poly.coeffs[offset..])
-      .unwrap();
+    let com =
+      <P::G1 as VariableBaseMSM>::msm(&bases[offset..scalars.len()], &poly.coeffs[offset..])
+        .unwrap();
 
-    Ok(c.into_affine())
+    Ok(com.into_affine())
   }
 
   pub fn commit(
-    prover_param: impl Borrow<Vec<P::G1Affine>>,
+    g1_powers: impl Borrow<Vec<P::G1Affine>>,
     poly: &UniPoly<P::ScalarField>,
   ) -> Result<P::G1Affine, KZGError> {
-    let prover_param = prover_param.borrow();
+    let g1_powers = g1_powers.borrow();
 
-    if poly.degree() > prover_param.len() {
-      return Err(KZGError::LengthError);
+    if poly.degree() > g1_powers.len() {
+      return Err(KZGError::CommitLengthError(poly.degree(), g1_powers.len()));
     }
-    let c = <P::G1 as VariableBaseMSM>::msm(
-      &prover_param.as_slice()[..poly.coeffs.len()],
+    let com = <P::G1 as VariableBaseMSM>::msm(
+      &g1_powers.as_slice()[..poly.coeffs.len()],
       poly.coeffs.as_slice(),
     )
     .unwrap();
-    Ok(c.into_affine())
+    Ok(com.into_affine())
   }
 
   pub fn open(
-    prover_param: impl Borrow<Vec<P::G1Affine>>,
+    g1_powers: impl Borrow<Vec<P::G1Affine>>,
     polynomial: &UniPoly<P::ScalarField>,
     point: &P::ScalarField,
   ) -> Result<(P::G1Affine, P::ScalarField), KZGError> {
-    let prover_param = prover_param.borrow();
+    let g1_powers = g1_powers.borrow();
     let divisor = UniPoly {
       coeffs: vec![-*point, P::ScalarField::one()],
     };
@@ -171,7 +164,7 @@ impl<P: Pairing> UVKZGPCS<P> {
       .map(|(q, _r)| q)
       .ok_or(KZGError::PolyDivisionError)?;
     let proof = <P::G1 as VariableBaseMSM>::msm(
-      &prover_param.as_slice()[..witness_polynomial.coeffs.len()],
+      &g1_powers.as_slice()[..witness_polynomial.coeffs.len()],
       witness_polynomial.coeffs.as_slice(),
     )
     .unwrap();
@@ -202,7 +195,7 @@ impl<P: Pairing> UVKZGPCS<P> {
 mod tests {
   use super::*;
   use crate::poly::unipoly::UniPoly;
-  use ark_bn254::Bn254;
+  use ark_bn254::{Bn254, Fr};
 
   use ark_std::{
     rand::{Rng, SeedableRng},
@@ -217,30 +210,26 @@ mod tests {
     UniPoly::from_coeff(coeffs)
   }
 
-  fn end_to_end_test_template<P: Pairing>() -> Result<(), KZGError> {
+  #[test]
+  fn commit_prove_verify() -> Result<(), KZGError> {
     let seed = b"11111111111111111111111111111111";
     for _ in 0..100 {
       let mut rng = &mut ChaCha20Rng::from_seed(*seed);
       let degree = rng.gen_range(2..20);
 
-      let pp = UniversalKzgSrs::<P>::setup(None, degree, &mut rng);
-      let (ck, vk) = pp.trim(degree);
-      let p = random::<P, ChaCha20Rng>(degree, rng);
-      let comm = UVKZGPCS::<P>::commit(&ck, &p)?;
-      let point = P::ScalarField::rand(rng);
-      let (proof, value) = UVKZGPCS::<P>::open(&ck, &p, &point)?;
+      let pp = UniversalKzgSrs::<Bn254>::setup(degree, &mut rng);
+      let (ck, vk) = pp.trim(degree).unwrap();
+      let p = random::<Bn254, ChaCha20Rng>(degree, rng);
+      let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
+      let point = Fr::rand(rng);
+      let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
       assert!(
-        UVKZGPCS::<P>::verify(&vk, &comm, &point, &proof, &value)?,
+        UnivariateKZG::<Bn254>::verify(&vk, &comm, &point, &proof, &value)?,
         "proof was incorrect for max_degree = {}, polynomial_degree = {}",
         degree,
         p.degree(),
       );
     }
     Ok(())
-  }
-
-  #[test]
-  fn end_to_end_test() {
-    end_to_end_test_template::<Bn254>().expect("test failed for Bn256");
   }
 }

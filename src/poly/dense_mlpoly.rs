@@ -13,8 +13,9 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::Zero;
 use core::ops::Index;
+use std::cmp::Ordering;
 use merlin::Transcript;
-use std::ops::IndexMut;
+use std::ops::{AddAssign, IndexMut, Mul};
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -406,6 +407,43 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     let C_Zr = Zr.commit(&G::ScalarField::zero(), &gens.gens.gens_1);
 
     self.verify(gens, transcript, r, &C_Zr, comm)
+  }
+}
+
+impl<F: PrimeField> AddAssign<Self> for DensePolynomial<F> {
+  fn add_assign(&mut self, rhs: Self) {
+    let ordering = self.Z.len().cmp(&rhs.Z.len());
+    #[allow(clippy::disallowed_methods)]
+    for (lhs, rhs) in self.Z.iter_mut().zip(&rhs.Z) {
+      *lhs += rhs;
+    }
+    if matches!(ordering, Ordering::Less) {
+      self
+        .Z
+        .extend(rhs.Z[self.Z.len()..].iter().cloned());
+    }
+  }
+}
+
+impl<F: PrimeField> AddAssign<&F> for DensePolynomial<F> {
+  fn add_assign(&mut self, rhs: &F) {
+    #[cfg(feature = "multicore")]
+    let iter = self.Z.par_iter_mut();
+    #[cfg(not(feature = "multicore"))]
+    let iter = self.Z.iter_mut();
+    iter.for_each(|c| *c += rhs);
+  }
+}
+
+impl<F: PrimeField> Mul<F> for DensePolynomial<F> {
+  type Output = Self;
+
+  fn mul(self, rhs: F) -> Self {
+    #[cfg(feature = "multicore")]
+    let iter = self.Z.into_par_iter();
+    #[cfg(not(feature = "multicore"))]
+    let iter = self.Z.iter();
+    Self::new(iter.map(|c| c * rhs).collect::<Vec<_>>())
   }
 }
 

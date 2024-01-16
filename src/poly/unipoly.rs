@@ -9,6 +9,7 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator, IntoParallelIterator};
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -150,15 +151,21 @@ impl<F: PrimeField> UniPoly<F> {
 
 impl<F: PrimeField> AddAssign<&F> for UniPoly<F> {
   fn add_assign(&mut self, rhs: &F) {
-    //TODO: feature gate parallel
-    self.coeffs.iter_mut().for_each(|c| *c += rhs);
+    #[cfg(feature = "multicore")]
+    let iter = self.coeffs.par_iter_mut();
+    #[cfg(not(feature = "multicore"))]
+    let iter = self.coeffs.iter_mut();
+    iter.for_each(|c| *c += rhs);
   }
 }
 
 impl<F: PrimeField> MulAssign<&F> for UniPoly<F> {
   fn mul_assign(&mut self, rhs: &F) {
-    //TODO: feature gate parallel
-    self.coeffs.iter_mut().for_each(|c| *c *= rhs);
+    #[cfg(feature = "multicore")]
+    let iter = self.coeffs.par_iter_mut();
+    #[cfg(not(feature = "multicore"))]
+    let iter = self.coeffs.iter_mut();
+    iter.for_each(|c| *c *= rhs);
   }
 }
 
@@ -166,8 +173,11 @@ impl<F: PrimeField> Mul<F> for UniPoly<F> {
   type Output = Self;
 
   fn mul(self, rhs: F) -> Self {
-    //TODO: feature gate parallel
-    Self::from_coeff(self.coeffs.into_iter().map(|c| c * rhs).collect::<Vec<_>>())
+    #[cfg(feature = "multicore")]
+    let iter = self.coeffs.into_par_iter();
+    #[cfg(not(feature = "multicore"))]
+    let iter = self.coeffs.iter();
+    Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
   }
 }
 
@@ -175,8 +185,11 @@ impl<F: PrimeField> Mul<&F> for UniPoly<F> {
   type Output = Self;
 
   fn mul(self, rhs: &F) -> Self {
-    //TODO: feature gate parallel
-    Self::from_coeff(self.coeffs.into_iter().map(|c| c * rhs).collect::<Vec<_>>())
+    #[cfg(feature = "multicore")]
+    let iter = self.coeffs.into_par_iter();
+    #[cfg(not(feature = "multicore"))]
+    let iter = self.coeffs.iter();
+    Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
   }
 }
 
@@ -191,10 +204,6 @@ impl<F: PrimeField> AddAssign<&Self> for UniPoly<F> {
       self
         .coeffs
         .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
-    }
-    if matches!(ordering, Ordering::Equal) {
-      //TODO: truncate leading zeros
-      self;
     }
   }
 }

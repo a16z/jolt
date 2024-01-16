@@ -25,14 +25,7 @@ pub trait PCS<F: Field> {
     polys: &[DensePolynomial<F>],
     evals: &[Self::Evaluation],
     challenges: &[Self::Challenge],
-    pk: impl Borrow<Self::ProverKey>,
-    transcript: &mut Transcript,
-  ) -> Result<Self::Proof, Self::Error>;
-
-  fn open(
-    polys: &[DensePolynomial<F>],
-    evals: &[Self::Evaluation],
-    challenges: &[Self::Challenge],
+    commitments: &[Self::Commitment],
     pk: impl Borrow<Self::ProverKey>,
     transcript: &mut Transcript,
   ) -> Result<Self::Proof, Self::Error>;
