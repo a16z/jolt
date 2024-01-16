@@ -5,7 +5,7 @@ function NUM_STEPS() {return 182;} // NOTE: Fibonacci ignores first 3
 function W() {return 32;}
 function C() {return 4;}
 function PROG_START_ADDR() {return 2147483664;}
-function N_FLAGS() {return 18;}
+function N_FLAGS() {return 17;}
 function LOG_M() { return 16; }
 /* End of Compiler Variables */
 
@@ -157,13 +157,10 @@ template JoltStep() {
     signal sign_imm_flag <== op_flags[13];
     signal is_concat <== op_flags[14];
     signal is_lui_auipc <== op_flags[15];
-    signal is_jal <== op_flags[16];
-    signal is_shift <== op_flags[17];
+    signal is_shift <== op_flags[16];
 
     // Pre-processing the imm 
     signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
-    // TODO(arasuarun): Do you still need this?
-    // signal immediate <== if_else()([is_jal, _immediate, immediate_before_processing * 2]);
 
     /*******  Register Reading Constraints: 
     Of the 7 (or 11) memory reads, the first 3 are reads from rs1, rs2, rd. 
@@ -235,13 +232,11 @@ template JoltStep() {
     // Store the right query format into z
     signal z_concat <== x * (2**W()) + y;
     signal z_add <== x + y;
-    signal z_jump <== z_add; // This is superfluous. TODO: change 
     signal z_sub <== x + (ALL_ONES() - y + 1);
     signal z_mul <== x * y;
 
-    signal z__5 <== is_concat * z_concat;
-    signal z__4 <== z__5 + is_add_instr * z_add;
-    signal z__3 <== z__4 + is_jump_instr * z_jump;
+    signal z__4 <== is_concat * z_concat;
+    signal z__3 <== z__4 + is_add_instr * z_add;
     signal z__2 <== z__3 + is_sub_instr * z_sub;
     signal z__1 <== z__2 + is_mul_instr * z_mul;
     signal z <== z__1;
