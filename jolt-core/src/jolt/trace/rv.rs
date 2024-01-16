@@ -1124,8 +1124,20 @@ mod tests {
         use common::serializable::Serializable;
 
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let instructions = Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
+        let sections = Vec::<common::Section>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
+
+        let instructions_section = sections
+            .iter()
+            .find(|s| matches!(s, common::Section::Text { .. }))
+            .unwrap();
+
+        let instructs = match instructions_section {
+            common::Section::Text { instructions, .. } => instructions,
+            _ => panic!("unreachable"),
+        };
+
+
         let _: Vec<ELFRow> = instructions.iter().map(|x| ELFRow::from(x)).collect();
     }
 }
