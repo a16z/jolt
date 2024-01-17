@@ -6,11 +6,11 @@ pub fn cached_compile_example(example_name: &str) {
     let trace_destination = JoltPaths::trace_path(example_name);
     let bytecode_destination = JoltPaths::bytecode_path(example_name);
 
-    if elf_location.exists() && trace_destination.exists() && bytecode_destination.exists() {
-        println!("{example_name} circuit cached");
-    } else {
+    // if elf_location.exists() && trace_destination.exists() && bytecode_destination.exists() {
+    //     println!("{example_name} circuit cached");
+    // } else {
         compile_example(example_name);
-    }
+    // }
 }
 
 pub fn compile_example(example_name: &str) {
