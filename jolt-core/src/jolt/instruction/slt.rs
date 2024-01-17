@@ -43,7 +43,7 @@ impl JoltInstruction for SLTInstruction {
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
-        C
+        C + 1
     }
 
     fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
