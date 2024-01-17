@@ -12,6 +12,7 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::One;
 use merlin::Transcript;
+use rayon::prelude::*;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -19,8 +20,6 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-#[cfg(feature = "multicore")]
-use rayon::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CubicSumcheckType {
@@ -256,13 +255,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             let mle_half = polys[0].len() / 2;
 
-            #[cfg(feature = "multicore")]
-            let iterator = (0..mle_half).into_par_iter();
-
-            #[cfg(not(feature = "multicore"))]
-            let iterator = 0..mle_half;
-
-            let accum: Vec<Vec<F>> = iterator
+            let accum: Vec<Vec<F>> = (0..mle_half).into_par_iter()
                 .map(|poly_term_i| {
                     let mut accum = vec![F::zero(); combined_degree + 1];
                     // Evaluate P({0, ..., |g(r)|})
@@ -307,7 +300,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 })
                 .collect();
 
-            #[cfg(feature = "multicore")]
             eval_points
                 .par_iter_mut()
                 .enumerate()
@@ -318,13 +310,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                         .map(|mle| mle[poly_i])
                         .sum::<F>();
                 });
-
-            #[cfg(not(feature = "multicore"))]
-            for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
-                for mle in accum.iter().take(mle_half) {
-                    *eval_point += mle[poly_i];
-                }
-            }
 
             let round_uni_poly = UniPoly::from_evals(&eval_points);
 
@@ -338,9 +323,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            for poly in polys.iter_mut() {
-                poly.bound_poly_var_top(&r_j);
-            }
+            polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
             compressed_polys.push(round_uni_poly.compress());
         }
 
@@ -403,10 +386,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // - Optimize for 1s! 
             // - Compute 'r' bindings from 'm_a' / 'm_b
 
-            let is_one = |f: &F| -> bool {
-                f.is_one()
-            };
-
             let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
             let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len()).into_par_iter()
@@ -416,12 +395,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                     let len = poly_A.len() / 2;
 
                     // In the case of a flagged tree, the majority of the leaves will be 1s, optimize for this case.
-                    let (eval_point_0, eval_point_2, eval_point_3) = (0..len).into_iter()
+                    let (eval_point_0, eval_point_2, eval_point_3) = (0..len).into_par_iter()
                         .map(|mle_index| {
                             let low = mle_index;
                             let high = len + mle_index;
-
-                            let eval_point_0: F = eq_evals[low].0 * poly_A[low] * poly_B[low];
 
                             let m_a = poly_A[high] - poly_A[low];
                             let m_b = poly_B[high] - poly_B[low];
@@ -432,19 +409,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             let point_2_B = poly_B[high] + m_b;
                             let point_3_B = point_2_B + m_b;
 
+                            let eval_point_0 = eq_evals[low].0 * poly_A[low] * poly_B[low];
                             let eval_point_2 = eq_evals[low].1 * point_2_A * point_2_B;
                             let eval_point_3 = eq_evals[low].2 * point_3_A * point_3_B;
 
                             (eval_point_0, eval_point_2, eval_point_3)
                         })
                         // For parallel
-                        // .reduce(
-                        //     || (F::zero(), F::zero(), F::zero()),
-                        //     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        // );
-                        // For normal
-                        .fold(
-                            (F::zero(), F::zero(), F::zero()),
+                        .reduce(
+                            || (F::zero(), F::zero(), F::zero()),
                             |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
                         );
 
@@ -480,13 +453,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = tracing::span!(tracing::Level::TRACE, "binding");
             let _enter = _span.enter();
 
-            // params.apply_bound_poly_var_top(&r_j);
             let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
                 .chain(params.poly_Bs.iter_mut())
                 .collect();
 
-            poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
-            params.poly_eq.bound_poly_var_top(&r_j);
+            rayon::join(
+                || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j)),
+                || params.poly_eq.bound_poly_var_top(&r_j)
+            );
 
             drop(_enter);
             drop(_span);
@@ -660,8 +634,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 .chain(params.poly_Bs.iter_mut())
                 .collect();
 
-            poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
-            params.poly_eq.bound_poly_var_top(&r_j);
+            rayon::join(
+                || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j)),
+                || params.poly_eq.bound_poly_var_top(&r_j)
+            );
 
             drop(_enter);
             drop(_span);

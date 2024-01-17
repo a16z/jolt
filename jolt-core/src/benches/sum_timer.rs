@@ -35,7 +35,14 @@ impl FlushGuard {
                 let mut padding = if name.len() > 28 { 0 } else { 28 - name.len() };
                 let left_padding = padding / 2;
                 let right_padding = padding - left_padding;
-                println!("||{:>padding_left$}{}{:>padding_right$}||", "", name, "", padding_left=left_padding, padding_right=right_padding);
+                println!(
+                    "||{:>padding_left$}{}{:>padding_right$}||",
+                    "",
+                    name,
+                    "",
+                    padding_left = left_padding,
+                    padding_right = right_padding
+                );
             }
             println!("===============================");
         }
@@ -48,14 +55,21 @@ impl Drop for FlushGuard {
         let durations = self.span_durations.lock().unwrap();
         match &self.filter {
             Some(filter) => {
+                let mut entries = Vec::new();
                 for name in filter {
                     if let Some(duration) = durations.get(name) {
-                        println!("'{}': {:?} ms", name, duration / 1_000_000);
+                        entries.push((name, duration));
                     }
+                }
+                entries.sort_by(|a, b| a.1.cmp(b.1));
+                for (name, duration) in entries {
+                    println!("'{}': {:?} ms", name, duration / 1_000_000);
                 }
             }
             None => {
-                for (name, duration) in durations.iter() {
+                let mut entries: Vec<(&String, &u128)> = durations.iter().collect();
+                entries.sort_by(|a, b| a.1.cmp(b.1));
+                for (name, duration) in entries {
                     println!("'{}': {:?} ms", name, duration / 1_000_000);
                 }
             }
@@ -72,7 +86,7 @@ impl CumulativeTimingLayer {
             span_durations: Arc::clone(&span_durations),
         };
         let guard = FlushGuard {
-            span_durations: span_durations,
+            span_durations,
             filter,
         };
         (layer, guard)
