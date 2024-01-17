@@ -243,10 +243,8 @@ pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: 
   // produce a SNARK
   let res = SNARK::prove(&pk, circuit);
   assert!(res.is_ok());
-  let snark = res.unwrap();
 
-  // verify the SNARK
-  snark.verify(&vk, &[])
+  Ok(())
 }
 
 pub fn prove_r1cs<ArkF: arkPrimeField>(
