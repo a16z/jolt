@@ -151,13 +151,12 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     for i in 0..NUM_STEPS {
       let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
       let _guard = span.enter();
-      {
-        let witness = &jolt_witnesses[i];
-        (1..cfg.r1cs.num_inputs).chain(cfg.r1cs.num_inputs..cfg.r1cs.num_inputs + cfg.r1cs.num_aux).for_each(|i| {
-            let f = witness[i];
-            let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
-        });
-      }
+      let witness = &jolt_witnesses[i];
+      let total_vars = cfg.r1cs.num_inputs + cfg.r1cs.num_aux;
+      (1..total_vars).for_each(|i| {
+          let f = witness[i];
+          let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
+      });
       drop(_guard);
       drop(span);
     }
