@@ -6,8 +6,6 @@ use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::blt::BLTInstruction;
 use crate::jolt::instruction::bltu::BLTUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
-use crate::jolt::instruction::jal::JALInstruction;
-use crate::jolt::instruction::jalr::JALRInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::sra::SRAInstruction;
