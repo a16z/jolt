@@ -10,10 +10,9 @@ use super::Jolt;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
     and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction, bgeu::BGEUInstruction,
-    blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, jal::JALInstruction,
-    jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
-    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
-    xor::XORInstruction, JoltInstruction, Opcode,
+    blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, or::ORInstruction, 
+    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, 
+    srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -90,8 +89,6 @@ instruction_set!(
   BLT: BLTInstruction,
   BLTU: BLTUInstruction,
   BNE: BNEInstruction,
-  JAL: JALInstruction<WORD_SIZE>,
-  JALR: JALRInstruction<WORD_SIZE>,
   OR: ORInstruction,
   SLL: SLLInstruction<WORD_SIZE>,
   SLT: SLTInstruction,
@@ -161,9 +158,9 @@ mod tests {
     use crate::jolt::instruction::{
         add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
         bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
-        jal::JALInstruction, jalr::JALRInstruction, or::ORInstruction, sll::SLLInstruction,
-        slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-        sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+        or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, 
+        sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, 
+        JoltInstruction, Opcode,
     };
     use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
     use crate::jolt::vm::bytecode::{BytecodeProof, ELFRow};

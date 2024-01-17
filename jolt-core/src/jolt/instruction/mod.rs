@@ -78,8 +78,6 @@ pub mod bgeu;
 pub mod blt;
 pub mod bltu;
 pub mod bne;
-pub mod jal;
-pub mod jalr;
 pub mod or;
 pub mod sll;
 pub mod slt;

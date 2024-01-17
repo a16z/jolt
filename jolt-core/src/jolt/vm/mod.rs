@@ -203,7 +203,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>
     ) {
-        let N_FLAGS = 18;
+        let N_FLAGS = 17;
         let TRACE_LEN = trace.len();
 
         let log_M = log2(M) as usize;

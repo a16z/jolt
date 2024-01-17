@@ -9,8 +9,6 @@ use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::blt::BLTInstruction;
 use crate::jolt::instruction::bltu::BLTUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
-use crate::jolt::instruction::jal::JALInstruction;
-use crate::jolt::instruction::jalr::JALRInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
 use crate::jolt::instruction::slt::SLTInstruction;
@@ -687,9 +685,6 @@ impl JoltProvableTrace for RVTraceRow {
       RV32IM::BGE  => vec![BGEInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
       RV32IM::BGEU => vec![BGEUInstruction(self.rs1_val.unwrap(), self.rs2_val.unwrap()).into()],
 
-    //   RV32IM::JAL  => vec![JALInstruction(self.pc, self.imm_u64()).into()],
-    //   RV32IM::JALR => vec![JALRInstruction(self.rs1_val.unwrap(), self.imm_u64()).into()],
-
       RV32IM::JAL  => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
       RV32IM::JALR => vec![ADDInstruction::<32>(self.rs1_val.unwrap(), self.imm_u64()).into()],
       RV32IM::AUIPC => vec![ADDInstruction::<32>(self.pc, self.imm_u64()).into()],
@@ -877,7 +872,7 @@ impl JoltProvableTrace for RVTraceRow {
         // 15: is lui or auipc
         // 16: is jal
 
-        let mut flags = vec![false; 18];
+        let mut flags = vec![false; 17];
 
         flags[0] = match self.opcode {
             RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
@@ -947,9 +942,8 @@ impl JoltProvableTrace for RVTraceRow {
         flags[7] = match self.opcode {
             RV32IM::ADD 
             | RV32IM::ADDI 
-            // TODO(arasuarun): don't count these here. 
-            // | RV32IM::JAL 
-            // | RV32IM::JALR 
+            | RV32IM::JAL 
+            | RV32IM::JALR 
             | RV32IM::AUIPC => true,
             _ => false,
         };
@@ -1001,11 +995,6 @@ impl JoltProvableTrace for RVTraceRow {
         };
 
         flags[16] = match self.opcode {
-            RV32IM::JAL => true,
-            _ => false,
-        };
-
-        flags[17] = match self.opcode {
             RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI => true,
             _ => false,
         };
