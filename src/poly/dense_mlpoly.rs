@@ -2,8 +2,7 @@
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct};
 
-use super::commitments::{Commitments, MultiCommitGens};
-use crate::subprotocols::dot_product::{DotProductProofGens, DotProductProofLog};
+use crate::subprotocols::dot_product::DotProductProofLog;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::random::RandomTape;
@@ -13,8 +12,8 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::Zero;
 use core::ops::Index;
-use std::cmp::Ordering;
 use merlin::Transcript;
+use std::cmp::Ordering;
 use std::ops::{AddAssign, IndexMut, Mul};
 
 #[cfg(feature = "ark-msm")]
@@ -34,6 +33,7 @@ pub struct DensePolynomial<F> {
   pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 
+/*
 pub struct PolyCommitmentGens<G> {
   pub gens: DotProductProofGens<G>,
 }
@@ -60,7 +60,7 @@ pub struct PolyCommitment<G: CurveGroup> {
 pub struct ConstPolyCommitment<G: CurveGroup> {
   C: G,
 }
-
+*/
 impl<F: PrimeField> DensePolynomial<F> {
   pub fn new(Z: Vec<F>) -> Self {
     assert!(
@@ -109,6 +109,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     )
   }
 
+  /*
   #[cfg(feature = "multicore")]
   fn commit_inner<G: CurveGroup<ScalarField = F>>(
     &self,
@@ -182,6 +183,7 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     (self.commit_inner(&blinds.blinds, &gens.gens.gens_n), blinds)
   }
+  */
 
   #[tracing::instrument(skip_all, name = "DensePolynomial.bound")]
   pub fn bound(&self, L: &[F]) -> Vec<F> {
@@ -288,6 +290,7 @@ impl<F> IndexMut<usize> for DensePolynomial<F> {
   }
 }
 
+/*
 impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
   fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
     transcript.append_message(label, b"poly_commitment_begin");
@@ -409,6 +412,7 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     self.verify(gens, transcript, r, &C_Zr, comm)
   }
 }
+*/
 
 impl<F: PrimeField> AddAssign<Self> for DensePolynomial<F> {
   fn add_assign(&mut self, rhs: Self) {
@@ -418,9 +422,7 @@ impl<F: PrimeField> AddAssign<Self> for DensePolynomial<F> {
       *lhs += rhs;
     }
     if matches!(ordering, Ordering::Less) {
-      self
-        .Z
-        .extend(rhs.Z[self.Z.len()..].iter().cloned());
+      self.Z.extend(rhs.Z[self.Z.len()..].iter().cloned());
     }
   }
 }
@@ -452,6 +454,9 @@ mod tests {
 
   use super::*;
   use crate::subprotocols::dot_product::DotProductProof;
+  use crate::subprotocols::hyrax::Hyrax;
+  use crate::subprotocols::hyrax::PolyCommitmentGens;
+  use crate::subprotocols::traits::PolynomialCommitmentScheme;
   use ark_curve25519::EdwardsProjective as G1Projective;
   use ark_curve25519::Fr;
   use ark_std::test_rng;
@@ -649,26 +654,30 @@ mod tests {
     assert_eq!(eval, G::ScalarField::from(28u64));
 
     let gens = PolyCommitmentGens::<G>::new(poly.get_num_vars(), b"test-two");
-    let (poly_commitment, blinds) = poly.commit(&gens, None);
+    let (poly_commitment, blinds) = Hyrax::commit(poly, &(gens, None)).unwrap();
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
-    let (proof, C_Zr) = PolyEvalProof::prove(
-      &poly,
-      Some(&blinds),
-      &r,
-      &eval,
-      None,
-      &gens,
+    let (proof, C_Zr) = Hyrax::prove(
+      poly,
+      Some(eval),
+      r,
+      (Some(blinds), None, gens, random_tape),
       &mut prover_transcript,
-      &mut random_tape,
-    );
+    )
+    .unwrap();
 
     let mut verifier_transcript = Transcript::new(b"example");
 
-    assert!(proof
-      .verify(&gens, &mut verifier_transcript, &r, &C_Zr, &poly_commitment)
-      .is_ok());
+    assert!(Hyrax::verify(
+      (poly_commitment, blinds),
+      None,
+      r,
+      &gens,
+      &mut verifier_transcript,
+      (proof, C_Zr)
+    )
+    .is_ok());
   }
 
   #[test]

@@ -1,11 +1,9 @@
+use merlin::Transcript;
 use std::borrow::Borrow;
 
-use ark_ff::Field;
-use merlin::Transcript;
-
-use crate::poly::dense_mlpoly::DensePolynomial;
-
-pub trait PCS<F: Field> {
+pub trait PolynomialCommitmentScheme {
+  // Abstracting over Polynomial allows us to have batched and non-batched PCS
+  type Polynomial;
   type Commitment;
   type Evaluation;
   type Challenge;
@@ -13,29 +11,29 @@ pub trait PCS<F: Field> {
   type Error;
 
   type ProverKey;
+  type CommitmentKey;
   type VerifierKey;
 
   //TODO: convert to impl IntoIterator<Item = Self::Polynomial>
   fn commit(
-    polys: &[DensePolynomial<F>],
-    ck: &Self::ProverKey,
-  ) -> Result<Vec<Self::Commitment>, Self::Error>;
+    poly: Self::Polynomial,
+    ck: impl Borrow<Self::CommitmentKey>,
+  ) -> Result<Self::Commitment, Self::Error>;
 
   fn prove(
-    polys: &[DensePolynomial<F>],
-    evals: &[Self::Evaluation],
-    challenges: &[Self::Challenge],
-    commitments: &[Self::Commitment],
+    poly: Self::Polynomial,
+    evals: Self::Evaluation,
+    challenges: Self::Challenge,
     pk: impl Borrow<Self::ProverKey>,
     transcript: &mut Transcript,
   ) -> Result<Self::Proof, Self::Error>;
 
   fn verify(
-    commitments: &[Self::Commitment],
-    evals: &[Self::Evaluation],
-    challenges: &[Self::Challenge],
+    commitments: Self::Commitment,
+    evals: Self::Evaluation,
+    challenges: Self::Challenge,
     vk: impl Borrow<Self::VerifierKey>,
     transcript: &mut Transcript,
     proof: Self::Proof,
-  ) -> Result<bool, Self::Error>;
+  ) -> Result<(), Self::Error>;
 }

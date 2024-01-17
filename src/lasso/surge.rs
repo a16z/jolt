@@ -4,9 +4,12 @@
 
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::memory_checking::MemoryCheckingProof;
-use crate::poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::{
+  hyrax::{PolyCommitment, PolyCommitmentGens},
+  sumcheck::SumcheckInstanceProof,
+};
 use crate::subtables::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
@@ -23,6 +26,7 @@ use merlin::Transcript;
 use std::marker::Sync;
 
 // Public Params
+#[derive(Clone)]
 pub struct SparsePolyCommitmentGens<G> {
   pub gens_combined_l_variate: PolyCommitmentGens<G>,
   pub gens_combined_log_m_variate: PolyCommitmentGens<G>,

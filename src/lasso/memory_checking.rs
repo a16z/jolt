@@ -2,9 +2,14 @@
 #![allow(clippy::type_complexity)]
 use crate::lasso::densified::DensifiedRepresentation;
 use crate::lasso::surge::{SparsePolyCommitmentGens, SparsePolynomialCommitment};
-use crate::poly::dense_mlpoly::{DensePolynomial, PolyEvalProof};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::identity_poly::IdentityPolynomial;
-use crate::subprotocols::grand_product::{BatchedGrandProductArgument, GrandProductCircuit};
+use crate::subprotocols::hyrax::Hyrax;
+use crate::subprotocols::traits::PolynomialCommitmentScheme;
+use crate::subprotocols::{
+  grand_product::{BatchedGrandProductArgument, GrandProductCircuit},
+  hyrax::PolyEvalProof,
+};
 use crate::subtables::{
   CombinedTableCommitment, CombinedTableEvalProof, SubtableStrategy, Subtables,
 };
@@ -406,16 +411,14 @@ where
       &joint_claim_eval_ops,
     );
 
-    let (proof_ops, _) = PolyEvalProof::prove(
-      &dense.combined_l_variate_polys,
-      None,
-      &r_joint_ops,
-      &joint_claim_eval_ops,
-      None,
-      &gens.gens_combined_l_variate,
+    let (proof_ops, _) = Hyrax::prove(
+      dense.combined_l_variate_polys,
+      Some(joint_claim_eval_ops),
+      r_joint_ops,
+      (None, None, gens.gens_combined_l_variate, *random_tape),
       transcript,
-      random_tape,
-    );
+    )
+    .unwrap();
 
     <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claim_evals_mem", &eval_final);
     let challenges_mem = <Transcript as ProofTranscript<G>>::challenge_vector(
@@ -444,16 +447,14 @@ where
       &joint_claim_eval_mem,
     );
 
-    let (proof_mem, _) = PolyEvalProof::prove(
-      &dense.combined_log_m_variate_polys,
-      None,
-      &r_joint_mem,
-      &joint_claim_eval_mem,
-      None,
-      &gens.gens_combined_log_m_variate,
+    let (proof_mem, _) = Hyrax::prove(
+      dense.combined_log_m_variate_polys,
+      Some(joint_claim_eval_mem),
+      r_joint_mem,
+      (None, None, gens.gens_combined_log_m_variate, *random_tape),
       transcript,
-      random_tape,
-    );
+    )
+    .unwrap();
 
     HashLayerProof {
       eval_dim,
