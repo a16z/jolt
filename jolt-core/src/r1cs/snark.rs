@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use common::path::JoltPaths;
+use common::{path::JoltPaths, field_conversion::{ff_to_ruints, ruint_to_ff, ff_to_ruint}};
 use spartan2::{
   traits::{snark::RelaxedR1CSSNARKTrait, Group},
   SNARK, errors::SpartanError, 
@@ -73,18 +73,18 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
 
     let cfg: CircomConfig<F> = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
 
-    let variable_names = [
-      "prog_a_rw", 
-      "prog_v_rw", 
-      "memreg_a_rw", 
-      "memreg_v_reads", 
-      "memreg_v_writes", 
-      "chunks_x", 
-      "chunks_y", 
-      "chunks_query", 
-      "lookup_output", 
-      "op_flags",
-      "input_state"
+    let variable_names: Vec<String> = vec![
+      "prog_a_rw".to_string(), 
+      "prog_v_rw".to_string(), 
+      "memreg_a_rw".to_string(), 
+      "memreg_v_reads".to_string(), 
+      "memreg_v_writes".to_string(), 
+      "chunks_x".to_string(), 
+      "chunks_y".to_string(), 
+      "chunks_query".to_string(), 
+      "lookup_output".to_string(), 
+      "op_flags".to_string(),
+      "input_state".to_string()
     ];
 
     assert_eq!(self.num_steps, self.inputs[0].len()); 
@@ -92,60 +92,35 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let NUM_STEPS = TRACE_LEN;
 
     // for variable [v], step_inputs[v][j] is the variable input for step j
-    let span = tracing::span!(tracing::Level::INFO, "inner_vec_mapping");
-    let _guard = span.enter();
     let inputs_chunked : Vec<Vec<_>> = self.inputs
       .into_par_iter()
       .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
       .collect();
-    drop(_guard);
-    drop(span);
-
-    // TODO(sragss): Clean up these dogshit conversions.
 
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
 
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
     let wtns_buffer_size = witness::get_inputs_size(&graph);
-    let input_list = variable_names.iter().map(|&s| s.to_string()).collect();
-    let wtns_mapping = witness::get_input_mapping(&input_list, &graph);
+    let wtns_mapping = witness::get_input_mapping(&variable_names, &graph);
 
-    let full_wtns_span = tracing::span!(tracing::Level::INFO, "full_wtns_span");
+    let full_wtns_span = tracing::span!(tracing::Level::INFO, "witness_computation");
     let full_wtns_guard = full_wtns_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
-      let mut step_inputs = inputs_chunked.iter().map(|v| v[i].clone()).collect::<Vec<_>>();
-      step_inputs.push(vec![F::from(i as u64), inputs_chunked[0][i][0]]);
+      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().map(|v| ff_to_ruint(v.clone())).collect()).collect::<Vec<_>>();
+      step_inputs.push(vec![U256::from(i as u64), ff_to_ruint(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
 
-      let rs_wtns_span = tracing::span!(tracing::Level::INFO, "rs_wtns");
-      let rs_wtns_guard = rs_wtns_span.enter();
-      let input_converted: HashMap<String, Vec<U256>> = variable_names
+      let input_map: HashMap<String, Vec<U256>> = variable_names
         .iter()
         .zip(step_inputs.into_iter())
-        .map(|(name, input)| {
-          let name = name.to_string();
-          let input = input.into_iter().map(|x| {
-            let bytes  = x.to_repr();
-            let bytes: &[u8] = bytes.as_ref();
-            let bi: [u8; 32] = bytes.try_into().unwrap();
-            U256::from_le_bytes(bi)
-          }).collect();
-          (name, input)
-        })
+        .map(|(name, input)| (name.to_owned(), input))
         .collect();
 
       let mut inputs_buffer = witness::get_inputs_buffer(wtns_buffer_size);
-      witness::populate_inputs(&input_converted, &wtns_mapping, &mut inputs_buffer);
+      witness::populate_inputs(&input_map, &wtns_mapping, &mut inputs_buffer);
       let uint_jolt_witness = witness::graph::evaluate(&graph.nodes, &inputs_buffer, &graph.signals);
 
-      drop(rs_wtns_guard);
-      drop(rs_wtns_span);
-
-      let jolt_witness: Vec<F> = uint_jolt_witness.into_iter().map(|x| {
-        let bytes: [u8; 32] = x.to_le_bytes().try_into().expect("should be 256 bits");
-        F::from_repr(bytes).unwrap()
-      }).collect::<Vec<_>>();
-      jolt_witness
+      uint_jolt_witness.into_iter().map(|x| ruint_to_ff(x)).collect::<Vec<_>>()
     }).collect();
     drop(full_wtns_guard);
     drop(full_wtns_span);

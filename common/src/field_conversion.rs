@@ -32,6 +32,23 @@ pub fn ff_to_ark<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ff: 
     AF::from_le_bytes_mod_order(&bytes)
 }
 
+pub fn ff_to_ruint<FF: GenericPrimeField<Repr = [u8; 32]>>(ff: FF) -> ruint::aliases::U256 {
+    let bytes  = ff.to_repr();
+    let bytes = bytes.as_ref();
+    let bi: [u8; 32] = bytes.try_into().unwrap();
+    ruint::aliases::U256::from_le_bytes(bi)
+}
+
+pub fn ruint_to_ff<FF: GenericPrimeField<Repr = [u8; 32]>>(ruint: ruint::aliases::U256) -> FF {
+    let bytes: [u8; 32] = ruint.to_le_bytes().try_into().expect("should be 256 bits");
+    FF::from_repr(bytes).unwrap()
+}
+
+pub fn ff_to_ruints<FF: GenericPrimeField<Repr = [u8; 32]>>(ff: Vec<FF>) -> Vec<ruint::aliases::U256> {
+    ff.into_iter().map(|f| ff_to_ruint(f)).collect()
+}
+
+
 #[cfg(test)]
 mod tests {
     use ark_std::rand;
