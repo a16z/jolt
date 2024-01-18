@@ -296,20 +296,17 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let circuit_flags = converted_trace
             .iter()
-            .flat_map(|row| {
-                let mut flags: Vec<Fr> = row.to_circuit_flags();
-                // flags.reverse();
-                flags.into_iter()
-            })
+            .flat_map(|row| row.to_circuit_flags())
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
+        // TODO(sragss): Swap this to &Vec<Instructions> to avoid clone
         RV32IJoltVM::prove_r1cs(
-            instructions_r1cs,
+            instructions_r1cs.clone(),
             bytecode_rows,
-            bytecode_trace,
+            bytecode_trace.clone(),
             bytecode,
             memory_trace_r1cs,
             circuit_flags,
@@ -317,33 +314,10 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             &mut random_tape,
         );
 
-        // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        compiler::cached_compile_example("hash");
-
-        let trace_location = JoltPaths::trace_path("hash");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
         let bytecode_location = JoltPaths::bytecode_path("hash");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
         let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
-
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
-
-        let bytecode_trace: Vec<ELFRow> = converted_trace
-            .iter()
-            .map(|row| row.to_bytecode_trace())
-            .collect();
-
-        let instructions: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
 
         // TODO(JOLT-89): Encapsulate this logic elsewhere.
         // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
@@ -365,7 +339,7 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups: InstructionLookupsProof<_, _> =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_instruction_lookups(instructions_r1cs, &mut transcript, &mut random_tape);
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         assert!(RV32IJoltVM::verify_bytecode(bytecode_proof, &mut transcript).is_ok());
