@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct RVTraceRow {
     pub instruction: ELFInstruction,
     pub register_state: RegisterState,
@@ -27,7 +27,7 @@ pub struct RegisterState {
     pub rd_post_val: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum MemoryState {
     Read {
         address: u64,

@@ -33,6 +33,8 @@ use crate::utils::random::RandomTape;
 use crate::{jolt::instruction::xor::XORInstruction, utils::gen_random_point};
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::test_rng;
+use common::Section;
+use common::constants::BYTES_PER_INSTRUCTION;
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
 use criterion::black_box;
 use itertools::Itertools;
@@ -90,6 +92,8 @@ fn prove_e2e_except_r1cs(
     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
+    let program_sections = bytecode_to_program(&bytecode);
+
     // 7 memory ops per instruction, rounded up to still be a power of 2
     let memory_trace = random_memory_trace(&bytecode, memory_size, 8 * num_cycles, &mut rng);
     let bytecode_rows: Vec<ELFRow> = (0..bytecode_size)
@@ -107,7 +111,7 @@ fn prove_e2e_except_r1cs(
             &mut random_tape,
         );
         let _ =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory(program_sections, memory_trace, &mut transcript, &mut random_tape);
         let _: InstructionLookupsProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
     });
@@ -161,6 +165,7 @@ fn prove_memory(
     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
+    let program_sections = bytecode_to_program(&bytecode);
     let memory_trace = random_memory_trace(
         &bytecode,
         memory_size,
@@ -172,7 +177,7 @@ fn prove_memory(
         let mut transcript = Transcript::new(b"example");
         let mut random_tape: RandomTape<EdwardsProjective> = RandomTape::new(b"test_tape");
         let _ =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory(program_sections, memory_trace, &mut transcript, &mut random_tape);
     });
     vec![(tracing::info_span!("prove_memory"), work)]
 }
@@ -265,11 +270,22 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
         let bytecode_location = JoltPaths::bytecode_path("hash");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+        let program_sections = Vec::<Section>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
+
+
+        let bytecode = program_sections.iter().find_map(|section| {
+            match section {
+                Section::Text { instructions, .. } => Some(instructions),
+                _ => None,
+            }
+        })
+        .unwrap();
+
         let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
+            .clone()
             .into_iter()
             .map(|common| RVTraceRow::from_common(common))
             .collect();
@@ -310,9 +326,9 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             RandomTape::new(b"Jolt prover randomness");
         RV32IJoltVM::prove_r1cs(
             instructions_r1cs,
-            bytecode_rows,
+            bytecode_rows.clone(),
             bytecode_trace,
-            bytecode,
+            program_sections.clone(),
             memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
@@ -322,14 +338,14 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
         compiler::cached_compile_example("hash");
 
-        let trace_location = JoltPaths::trace_path("hash");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("hash");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        // let trace_location = JoltPaths::trace_path("hash");
+        // let loaded_trace: Vec<common::RVTraceRow> =
+        //     Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
+        //         .expect("deserialization failed");
+        // let bytecode_location = JoltPaths::bytecode_path("hash");
+        // let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+        //     .expect("deserialization failed");
+        // let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -365,7 +381,7 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             &mut random_tape,
         );
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory(program_sections, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups: InstructionLookupsProof<_, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
@@ -395,11 +411,21 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+        let program_sections = Vec::<Section>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
+
+        let bytecode = program_sections.iter().find_map(|section| {
+            match section {
+                Section::Text { instructions, .. } => Some(instructions),
+                _ => None,
+            }
+        })
+        .unwrap();
+
         let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
+            .clone()
             .into_iter()
             .map(|common| RVTraceRow::from_common(common))
             .collect();
@@ -443,9 +469,9 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             RandomTape::new(b"Jolt prover randomness");
         RV32IJoltVM::prove_r1cs(
             instructions_r1cs,
-            bytecode_rows,
+            bytecode_rows.clone(),
             bytecode_trace,
-            bytecode,
+            program_sections.clone(),
             memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
@@ -455,14 +481,14 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
         compiler::cached_compile_example("fibonacci");
 
-        let trace_location = JoltPaths::trace_path("fibonacci");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        // let trace_location = JoltPaths::trace_path("fibonacci");
+        // let loaded_trace: Vec<common::RVTraceRow> =
+        //     Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
+        //         .expect("deserialization failed");
+        // let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        // let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+        //     .expect("deserialization failed");
+        // let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -498,7 +524,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             &mut random_tape,
         );
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory(program_sections, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups: InstructionLookupsProof<_, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
@@ -515,4 +541,12 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     ));
 
     tasks
+}
+
+fn bytecode_to_program(bytecode: &Vec<ELFInstruction>) -> Vec<Section> {
+    vec![Section::Text { 
+        address: bytecode[0].address,
+        size: (bytecode[0].address as usize + bytecode.len() + BYTES_PER_INSTRUCTION) as u64,
+        instructions: bytecode.clone(), 
+    }]
 }

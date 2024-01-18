@@ -150,6 +150,7 @@ mod tests {
     use ark_ec::CurveGroup;
     use ark_ff::PrimeField;
     use ark_std::{log2, test_rng, One, Zero};
+    use common::Section;
     use enum_dispatch::enum_dispatch;
     use itertools::Itertools;
     use merlin::Transcript;
@@ -198,7 +199,7 @@ mod tests {
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+        let bytecode = Vec::<Section>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
         let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 

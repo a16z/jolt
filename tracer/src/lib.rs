@@ -110,16 +110,20 @@ pub fn decode(elf: &PathBuf) -> Vec<Section> {
         .map(|s| Section::RoData { data: s.data().unwrap().to_vec(), address: s.address(), size: s.size() })
         .collect::<Vec<_>>();
 
-    let text_sections_raw = obj
+    let mut text_sections_raw = obj
         .sections()
         .filter(|s| s.kind() == SectionKind::Text)
         .collect::<Vec<_>>();
 
-    let mut text = Vec::new();
+    text_sections_raw.sort_by(|a, b| a.address().cmp(&b.address()));
+
+    let starting_address = text_sections_raw[0].address();
+    let mut size = 0;
+    let mut instructions = Vec::new();
     for section in text_sections_raw {
+        size += section.size();
         let data = section.data().unwrap();
 
-        let mut instructions = Vec::new();
         for (chunk, word) in data.chunks(4).enumerate() {
             let word = u32::from_le_bytes(word.try_into().unwrap());
             let address = chunk as u64 * 4 + section.address();
@@ -140,9 +144,9 @@ pub fn decode(elf: &PathBuf) -> Vec<Section> {
                 });
             }
         }
-
-        text.push(Section::Text { instructions, address: section.address(), size: section.size() });
     }
+
+    let mut text = vec![Section::Text { instructions, address: starting_address, size }];
 
     let mut sections = Vec::new();
     sections.append(&mut text);

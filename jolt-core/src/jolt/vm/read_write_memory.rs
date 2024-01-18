@@ -20,9 +20,9 @@ use crate::{
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, mul_0_optimized, random::RandomTape},
 };
-use common::constants::{
+use common::{constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
-};
+}, Section};
 use common::{to_ram_address, ELFInstruction};
 
 pub trait RandomInstruction {
@@ -153,7 +153,7 @@ where
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
-        bytecode: Vec<ELFInstruction>,
+        program_sections: Vec<Section>,
         memory_trace: Vec<MemoryOp>,
         transcript: &mut Transcript,
     ) -> (Self, Vec<u64>) {
@@ -179,24 +179,52 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             })
             .max()
             .unwrap_or(0);
-        let max_bytecode_address = bytecode
+
+        let max_bytecode_address = program_sections
             .iter()
-            .map(|instr| remap_address(instr.address))
+            .map(|section| {
+                let end_address = match section {
+                    Section::Text { address, size, .. } => address + size,
+                    Section::Data { address, size, .. } => address + size,
+                    Section::RoData { address, size, .. } => address + size,
+                };
+
+                remap_address(end_address)
+            })
             .max()
-            .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+            .unwrap_or(0);
+
         let memory_size =
             max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
 
         let mut v_init: Vec<u64> = vec![0; memory_size];
-        for instr in bytecode {
-            let address = remap_address(instr.address);
-            let raw = instr.raw;
-            for i in 0..(BYTES_PER_INSTRUCTION as u64) {
-                // Write one byte of raw to v_init
-                v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+        for section in program_sections {
+            match section {
+                Section::Text { instructions, .. } => {
+                    for instr in instructions {
+                        let address = remap_address(instr.address);
+                        let raw = instr.raw;
+                        for i in 0..(BYTES_PER_INSTRUCTION as u64) {
+                            // Write one byte of raw to v_init
+                            v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+                        }
+                    }
+                },
+                Section::Data { data, address, .. } => {
+                    for (i, byte) in data.iter().enumerate() {
+                        let address = remap_address(address + i as u64);
+                        v_init[address as usize] = *byte as u64;
+                    }
+                }
+                Section::RoData { data, address, .. } => {
+                    for (i, byte) in data.iter().enumerate() {
+                        let address = remap_address(address + i as u64);
+                        v_init[address as usize] = *byte as u64;
+                    }
+                }
             }
         }
+
 
         let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
         let mut v_read: Vec<u64> = Vec::with_capacity(m);
@@ -260,7 +288,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     // TODO(arasuarun): This is seriously slow and duplicated work from above.
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_r1cs_polys")]
     pub fn get_r1cs_polys(
-        bytecode: Vec<ELFInstruction>,
+        program_sections: Vec<Section>,
         memory_trace: Vec<MemoryOp>,
         transcript: &mut Transcript,
     ) -> [Vec<F>; 4] {
@@ -289,12 +317,20 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             })
             .max()
             .unwrap_or(0);
-        let max_bytecode_address = bytecode
+        let max_bytecode_address = program_sections
             .iter()
-            .map(|instr| remap_address(instr.address))
+            .map(|section| {
+                let end_address = match section {
+                    Section::Text { address, size, .. } => address + size,
+                    Section::Data { address, size, .. } => address + size,
+                    Section::RoData { address, size, .. } => address + size,
+                };
+
+                remap_address(end_address)
+            })
             .max()
-            .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
+            .unwrap_or(0);
+
         let memory_size =
             max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
         drop(_enter);
@@ -303,12 +339,30 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let span = tracing::span!(tracing::Level::DEBUG, "initialize_memory");
         let _enter = span.enter();
         let mut v_init: Vec<u64> = vec![0; memory_size];
-        for instr in bytecode {
-            let address = remap_address(instr.address);
-            let raw = instr.raw;
-            for i in 0..(BYTES_PER_INSTRUCTION as u64) {
-                // Write one byte of raw to v_init
-                v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+        for section in program_sections {
+            match section {
+                Section::Text { instructions, .. } => {
+                    for instr in instructions {
+                        let address = remap_address(instr.address);
+                        let raw = instr.raw;
+                        for i in 0..(BYTES_PER_INSTRUCTION as u64) {
+                            // Write one byte of raw to v_init
+                            v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
+                        }
+                    }
+                },
+                Section::Data { data, address, .. } => {
+                    for (i, byte) in data.iter().enumerate() {
+                        let address = remap_address(address + i as u64);
+                        v_init[address as usize] = *byte as u64;
+                    }
+                }
+                Section::RoData { data, address, .. } => {
+                    for (i, byte) in data.iter().enumerate() {
+                        let address = remap_address(address + i as u64);
+                        v_init[address as usize] = *byte as u64;
+                    }
+                }
             }
         }
         drop(_enter);

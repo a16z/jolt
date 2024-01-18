@@ -1,5 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use common::Section;
 use merlin::Transcript;
 use rayon::iter::{ParallelIterator, IntoParallelIterator, IntoParallelRefIterator};
 use std::any::TypeId;
@@ -46,13 +47,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
     fn prove(
-        bytecode: Vec<ELFInstruction>,
+        program_sections: Vec<Section>,
         mut bytecode_trace: Vec<ELFRow>,
         memory_trace: Vec<MemoryOp>,
         instructions: Vec<Self::InstructionSet>,
     ) -> JoltProof<F, G> {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape = RandomTape::new(b"Jolt prover randomness");
+
+        // Finds bytecode from first text section. Assumes there is only a single text section. 
+        // TODO: check if this assumption is reasonable
+        let bytecode = program_sections.iter().filter_map(|section| {
+            match section {
+                Section::Text { instructions, .. } => Some(instructions),
+                _ => None,
+            }
+        })
+        .next()
+        .unwrap();
+
         let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
         let bytecode_proof = Self::prove_bytecode(
             bytecode_rows,
@@ -61,7 +74,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut random_tape,
         );
         let memory_proof =
-            Self::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            Self::prove_memory(program_sections, memory_trace, &mut transcript, &mut random_tape);
         let instruction_lookups =
             Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
         todo!("rics");
@@ -137,13 +150,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
-        bytecode: Vec<ELFInstruction>,
+        program_sections: Vec<Section>,
         memory_trace: Vec<MemoryOp>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> ReadWriteMemoryProof<F, G> {
         let memory_trace_size = memory_trace.len();
-        let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
+        let (memory, read_timestamps) = ReadWriteMemory::new(program_sections, memory_trace, transcript);
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 
@@ -197,7 +210,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         instructions: Vec<Self::InstructionSet>,
         bytecode_rows: Vec<ELFRow>,
         trace: Vec<ELFRow>,
-        bytecode: Vec<ELFInstruction>,
+        program_sections: Vec<Section>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
@@ -239,7 +252,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         /* End of transformation for single-step version */
 
         let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] 
-            = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
+            = ReadWriteMemory::<F, G>::get_r1cs_polys(program_sections, memory_trace, transcript);
 
         let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
         let _guard = span.enter();
