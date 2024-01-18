@@ -98,12 +98,6 @@ pub fn decode(elf: &PathBuf) -> Vec<Section> {
 
     let obj = object::File::parse(&*elf_contents).unwrap();
 
-    obj.sections().for_each(|section| {
-        let name = section.name();
-        let kind = section.kind();
-        println!("{:?} {:?}", name, kind);
-    });
-
     let mut data = obj
         .sections()
         .filter(|s| s.kind() == SectionKind::Data)

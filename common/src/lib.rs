@@ -48,11 +48,13 @@ pub enum Section {
         size: u64,
     },
     Data {
+        #[serde(with = "hex")]
         data: Vec<u8>,
         address: u64,
         size: u64,
     },
     RoData {
+        #[serde(with = "hex")]
         data: Vec<u8>,
         address: u64,
         size: u64,
