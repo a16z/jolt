@@ -125,7 +125,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     drop(full_wtns_guard);
     drop(full_wtns_span);
 
-
     for i in 0..NUM_STEPS {
       let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
       let _guard = span.enter();
@@ -225,6 +224,8 @@ pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: 
   let res = SNARK::prove(&pk, circuit);
   assert!(res.is_ok());
 
+  SNARK::verify(&res.unwrap(), &vk, &[]); 
+
   Ok(())
 }
 
@@ -237,7 +238,8 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
 
   type G1 = bn256::Point;
   type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-  type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+  // type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+  type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
 
   let inputs_ff = inputs
     .into_par_iter()
@@ -258,6 +260,8 @@ mod test {
     traits::Group,
     SNARK,
   };
+
+  use super::{JoltCircuit, prove_jolt_circuit}; 
 
   // #[test]
   // fn test_jolt_snark() {
@@ -448,4 +452,5 @@ mod test {
     // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
     // assert!(res_verifier.is_err());
   }
+
 }
