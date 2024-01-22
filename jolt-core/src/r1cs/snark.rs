@@ -20,22 +20,23 @@ const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
 const NUM_CHUNKS: usize = 4;
 const NUM_FLAGS: usize = 17;
-const SEGMENT_LENS: [usize; 10] = [4, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
+const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
 
-fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, segment_lens: Vec<usize>) -> Vec<F> {
-  let mut result = vec![F::from(1)]; // start with [1]
+fn reassemble_by_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>, segment_lens: Vec<usize>) -> Vec<F> {
+  let mut result: Vec<Vec<F>> = vec![Vec::new(); segment_lens.len() + 2];
+  result[0] = vec![F::from(1)]; // start with [1]
 
-  for mut witness in jolt_witnesses {
-      witness.remove(0); // remove the first element
-      for &len in &segment_lens {
-          let segment: Vec<_> = witness.drain(..len).collect();
-          result.extend(segment);
-      }
-      // handle leftover elements
-      result.extend(witness);
+  for witness in &mut jolt_witnesses {
+    witness.remove(0); 
+    for (i, &len) in segment_lens.iter().enumerate() {
+        let segment = witness.drain(0..len);
+        result[i + 1].extend(segment);
+    }
+    // handle leftover elements
+    result.last_mut().unwrap().extend_from_slice(&witness);
   }
 
-  result // this is the final result
+  result.into_iter().flatten().collect()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -123,67 +124,16 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     drop(full_wtns_guard);
     drop(full_wtns_span);
 
-    // each jolt_Witnesses has variables from [1, out_state, in_state, input_variables..., aux...]
-
-    let jolt_witness_copy = jolt_witnesses[0].clone();
-
+    // Each w in jolt_Witnesses has variables from [1, out_state, in_state, input_variables..., aux...]
+    // These are reassembled into a segment-wise witness 
     let witness = reassemble_by_segments(jolt_witnesses, SEGMENT_LENS.to_vec()); 
 
-    let differing_index = jolt_witness_copy
-    .iter()
-    .zip(witness.iter())
-    .position(|(&x, &y)| x != y);
-
-    // for i in 0..NUM_STEPS {
-    //   let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
-    //   let _guard = span.enter();
-    //   let witness = &jolt_witnesses[i];
-    //   let total_vars = cfg.r1cs.num_inputs + cfg.r1cs.num_aux;
-    //   (1..total_vars).for_each(|i| {
-    //       let f = witness[i];
-    //       let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
-    //   });
-    //   drop(_guard);
-    //   drop(span);
-    // }
-
-    let total_vars = cfg.r1cs.num_inputs + cfg.r1cs.num_aux;
-    // (1..total_vars).for_each(|i| {
-    //     let f = witness[i];
-    //     let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
-    // });
     for (i, &f) in witness.iter().skip(1).enumerate() {
       let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i + 1 < cfg.r1cs.num_inputs { "public" } else { "aux" }, i + 1)), || Ok(f)).unwrap();
     }
     drop(_compute_witness_guard);
     drop(compute_witness_span);
 
-    // /* Consistency constraints between steps: 
-    // - Note that all steps use the same CS::one() variable as the constant 
-    // - The only task then is to ensure that the input of each step is the output of the previous step  
-
-    // Every variable is allocated into Aux and is in the following order: 
-    // Aux: [out0, in0, aux0, ..., out_i, in_i, aux_i ...]
-    //  */
-
-    // let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
-    // let STATE_SIZE = 2; 
-    // let span = tracing::span!(tracing::Level::INFO, "constraint_system::enforce_io_consistency");
-    // let _guard = span.enter();
-    // for i in 0..NUM_STEPS-1 {
-    //   let out_start_index = NUM_VARS_PER_STEP * i;
-    //   let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
-    //   for j in 0..STATE_SIZE {
-    //     cs.enforce(
-    //       || format!("io consistency constraint {}, {}", i, j),
-    //       |_| LinearCombination::<F>::zero() + (F::from(1), CS::one()), 
-    //       |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(in_start_next+j))), 
-    //       |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(out_start_index+j))), 
-    //     );
-    //   }
-    // }
-    // drop(_guard);
-    // drop(span);
     Ok(())
   }
 }
@@ -226,7 +176,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 
 #[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
 pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
-  let num_steps = 1; // circuit.inputs[0].len(); 
+  let num_steps = circuit.num_steps; 
   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
 
   let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
@@ -249,8 +199,8 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
 
   type G1 = bn256::Point;
   type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-  // type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-  type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+  type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+  // type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
 
   let inputs_ff = inputs
     .into_par_iter()
@@ -260,7 +210,7 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
         .collect::<Vec<Spartan2Fr>>()
     ).collect::<Vec<Vec<Spartan2Fr>>>();
 
-  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, 1, inputs_ff[0][0], inputs_ff);
+  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
   prove_jolt_circuit::<G1, S, Spartan2Fr>(jolt_circuit)
 }
 
