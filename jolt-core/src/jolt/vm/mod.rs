@@ -1,11 +1,11 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_std::log2;
 use merlin::Transcript;
-use rayon::iter::{ParallelIterator, IntoParallelIterator, IntoParallelRefIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::any::TypeId;
 use std::path::PathBuf;
 use strum::{EnumCount, IntoEnumIterator};
-use ark_std::log2;
 use textplots::{Chart, Plot, Shape};
 
 use crate::r1cs::snark::prove_r1cs;
@@ -14,6 +14,7 @@ use crate::jolt::{
     subtable::LassoSubtable,
 };
 use crate::poly::structured_poly::BatchablePolynomials;
+use crate::r1cs::snark::{run_jolt_spartan_with_circuit, JoltCircuit};
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 use crate::{
     lasso::{
@@ -160,9 +161,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .enumerate()
             .map(|(i, &ts)| SLTUInstruction(ts, (i / MEMORY_OPS_PER_INSTRUCTION) as u64 + 1))
             .collect();
-        let surge_M = 2 * memory_trace_size
+        let mut surge_M = memory_trace_size
             .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
             .next_power_of_two();
+        if log2(surge_M) % 2 != 0 {
+            surge_M *= 2;
+        }
         let timestamp_validity_proof =
             <Surge<F, G, SLTUInstruction, 2>>::new(timestamp_validity_lookups, surge_M)
                 .prove(transcript);
@@ -184,7 +188,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &proof.commitment,
             transcript,
         )?;
-        let surge_M = 2 * proof.memory_trace_size.next_power_of_two();
+        let mut surge_M = proof
+            .memory_trace_size
+            .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
+            .next_power_of_two();
+        if log2(surge_M) % 2 != 0 {
+            surge_M *= 2;
+        }
         <Surge<F, G, SLTUInstruction, 2>>::verify(
             proof.timestamp_validity_proof,
             transcript,
@@ -201,27 +211,22 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>
+        random_tape: &mut RandomTape<G>,
     ) {
         let N_FLAGS = 17;
         let TRACE_LEN = trace.len();
 
         let log_M = log2(M) as usize;
 
-        let [prog_a_rw, mut prog_v_rw, _] = 
+        let [prog_a_rw, mut prog_v_rw, _] =
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
-        // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order. 
-        prog_v_rw.extend(circuit_flags
-            .chunks(N_FLAGS)
-            .map(|x| {
-                x.iter()
-                 .enumerate()
-                 .fold(F::zero(), |packed, (i, flag)| {
-                     packed + *flag * F::from(2u64.pow((N_FLAGS-1-i) as u32))
-                 })
+        // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
+        prog_v_rw.extend(circuit_flags.chunks(N_FLAGS).map(|x| {
+            x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
+                packed + *flag * F::from(2u64.pow((N_FLAGS - 1 - i) as u32))
             })
-        );
+        }));
 
         /* Transformation for single-step version */
         let prog_v_components = prog_v_rw.chunks(TRACE_LEN).collect::<Vec<_>>();
@@ -238,13 +243,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         prog_v_rw = new_prog_v_rw;
         /* End of transformation for single-step version */
 
-        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] 
-            = ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
+        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] =
+            ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
 
         let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
         let _guard = span.enter();
-        let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = 
-            instructions
+        let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = instructions
             .iter()
             .flat_map(|op| {
                 let chunks_xy = op.operand_chunks(C, log_M);
@@ -255,10 +259,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
             .unzip();
 
-        let chunks_query = instructions.iter()
-            .flat_map(|op| {
-                op.to_indices(C, log_M)
-            })
+        let chunks_query = instructions
+            .iter()
+            .flat_map(|op| op.to_indices(C, log_M))
             .map(|x| x as u64)
             .map(F::from)
             .collect::<Vec<F>>();
@@ -267,25 +270,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let lookup_outputs = Self::compute_lookup_outputs(&instructions);
 
-        // assert lengths 
-        assert_eq!(prog_a_rw.len(),       TRACE_LEN);
-        assert_eq!(prog_v_rw.len(),       TRACE_LEN * 6); 
-        assert_eq!(memreg_a_rw.len(),     TRACE_LEN * 7);
-        assert_eq!(memreg_v_reads.len(),  TRACE_LEN * 7);
+        // assert lengths
+        assert_eq!(prog_a_rw.len(), TRACE_LEN);
+        assert_eq!(prog_v_rw.len(), TRACE_LEN * 6);
+        assert_eq!(memreg_a_rw.len(), TRACE_LEN * 7);
+        assert_eq!(memreg_v_reads.len(), TRACE_LEN * 7);
         assert_eq!(memreg_v_writes.len(), TRACE_LEN * 7);
-        assert_eq!(chunks_x.len(),        TRACE_LEN * C);
-        assert_eq!(chunks_y.len(),        TRACE_LEN * C);
-        assert_eq!(chunks_query.len(),    TRACE_LEN * C);
-        assert_eq!(lookup_outputs.len(),  TRACE_LEN);
-        assert_eq!(circuit_flags.len(),   TRACE_LEN * N_FLAGS);
+        assert_eq!(chunks_x.len(), TRACE_LEN * C);
+        assert_eq!(chunks_y.len(), TRACE_LEN * C);
+        assert_eq!(chunks_query.len(), TRACE_LEN * C);
+        assert_eq!(lookup_outputs.len(), TRACE_LEN);
+        assert_eq!(circuit_flags.len(), TRACE_LEN * N_FLAGS);
 
         let inputs = vec![
             prog_a_rw,
             prog_v_rw,
             memreg_a_rw,
-            memreg_v_reads, 
+            memreg_v_reads,
             memreg_v_writes,
-            chunks_x, 
+            chunks_x,
             chunks_y,
             chunks_query,
             lookup_outputs,
@@ -298,7 +301,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
     fn compute_lookup_outputs(instructions: &Vec<Self::InstructionSet>) -> Vec<F> {
-        instructions.par_iter().map(|op| op.lookup_entry::<F>(C, M)).collect()
+        instructions
+            .par_iter()
+            .map(|op| op.lookup_entry::<F>(C, M))
+            .collect()
     }
 }
 

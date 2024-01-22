@@ -2,7 +2,7 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use common::{self, serializable::Serializable};
+use common::{self, constants::RAM_START_ADDRESS, serializable::Serializable};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
@@ -98,34 +98,36 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
 
     let obj = object::File::parse(&*elf_contents).unwrap();
 
-    let text_sections = obj
+    let sections = obj
         .sections()
-        .filter(|s| s.kind() == SectionKind::Text)
+        .filter(|s| s.address() >= RAM_START_ADDRESS)
         .collect::<Vec<_>>();
 
     let mut instructions = Vec::new();
-    for section in text_sections {
+    for section in sections {
         let data = section.data().unwrap();
 
         for (chunk, word) in data.chunks(4).enumerate() {
             let word = u32::from_le_bytes(word.try_into().unwrap());
             let address = chunk as u64 * 4 + section.address();
-            let inst = decode_raw(word).unwrap();
 
-            if let Some(trace) = inst.trace {
-                let inst = trace(&inst, &get_xlen(), word, address);
-                instructions.push(inst);
-            } else {
-                instructions.push(ELFInstruction {
-                    address,
-                    opcode: common::RV32IM::from_str("UNIMPL"),
-                    raw: word,
-                    rs1: None,
-                    rs2: None,
-                    rd: None,
-                    imm: None,
-                });
+            if let Ok(inst) = decode_raw(word) {
+                if let Some(trace) = inst.trace {
+                    let inst = trace(&inst, &get_xlen(), word, address);
+                    instructions.push(inst);
+                    continue;
+                }
             }
+            // Unrecognized instruction, or from a ReadOnlyData section
+            instructions.push(ELFInstruction {
+                address,
+                opcode: common::RV32IM::from_str("UNIMPL"),
+                raw: word,
+                rs1: None,
+                rs2: None,
+                rd: None,
+                imm: None,
+            });
         }
     }
 
