@@ -221,10 +221,11 @@ pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: 
   let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
 
   // produce a SNARK
-  let res = SNARK::prove(&pk, circuit);
-  assert!(res.is_ok());
+  let proof = SNARK::prove(&pk, circuit);
+  assert!(proof.is_ok());
 
-  SNARK::verify(&res.unwrap(), &vk, &[]); 
+  let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
+  assert!(res.is_ok()); 
 
   Ok(())
 }
