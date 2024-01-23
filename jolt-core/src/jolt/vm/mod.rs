@@ -8,13 +8,13 @@ use std::path::PathBuf;
 use strum::{EnumCount, IntoEnumIterator};
 use textplots::{Chart, Plot, Shape};
 
-use crate::r1cs::snark::prove_r1cs;
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
 };
 use crate::poly::structured_poly::BatchablePolynomials;
-use crate::r1cs::snark::{run_jolt_spartan_with_circuit, JoltCircuit};
+use crate::r1cs::snark::prove_r1cs;
+use crate::r1cs::snark::JoltCircuit;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 use crate::{
     lasso::{
@@ -295,7 +295,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             circuit_flags,
         ];
 
-        let res = prove_r1cs(32, C, TRACE_LEN, inputs); 
+        let res = prove_r1cs(32, C, TRACE_LEN, inputs);
         assert!(res.is_ok());
     }
 
