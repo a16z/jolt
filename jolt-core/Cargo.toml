@@ -66,8 +66,7 @@ compiler = { path = "../compiler" }
 
 witness = { git = "https://github.com/philsippl/circom-witness-rs", branch = "separate-witgen" }
 ruint = "1.11.1"
-# spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "non-relaxed-snark" }
-spartan2 = { path = "../Spartan2" }
+spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "non-relaxed-snark" }
 
 [build-dependencies]
 common = { path = "../common" }
