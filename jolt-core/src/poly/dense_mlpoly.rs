@@ -469,25 +469,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         DensePolynomial::new(Z)
     }
 
-    #[tracing::instrument(skip_all, name = "DensePoly.merge_dual")]
-    pub fn merge_dual<T>(polys_a: &[T], polys_b: &[T]) -> DensePolynomial<F>
-    where
-        T: AsRef<DensePolynomial<F>>,
-    {
-        let total_len_a: usize = polys_a.iter().map(|poly| poly.as_ref().len()).sum();
-        let total_len_b: usize = polys_b.iter().map(|poly| poly.as_ref().len()).sum();
-        let total_len = total_len_a + total_len_b;
-
-        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
-        polys_a.iter().for_each(|poly| Z.extend_from_slice(poly.as_ref().vec()));
-        polys_b.iter().for_each(|poly| Z.extend_from_slice(poly.as_ref().vec()));
-
-        // pad the polynomial with zero polynomial at the end
-        Z.resize(Z.capacity(), F::zero());
-
-        DensePolynomial::new(Z)
-    }
-
     pub fn combined_commit<G>(
         &self,
         label: &'static [u8],
