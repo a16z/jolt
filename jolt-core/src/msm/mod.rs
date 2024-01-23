@@ -328,3 +328,86 @@ fn ln_without_floats(a: usize) -> usize {
     // log2(a) * ln(2)
     (ark_std::log2(a) * 69 / 100) as usize
 }
+
+/// Special MSM where all scalar values are 0 / 1 – does not verify.
+pub(crate) fn flags_msm<G: CurveGroup>(scalars: &[G::ScalarField], bases: &[G::Affine]) -> G {
+    assert_eq!(scalars.len(), bases.len());
+    let result = scalars
+        .into_iter()
+        .enumerate()
+        .filter(|(_index, scalar)| !scalar.is_zero())
+        .map(|(index, scalar)| bases[index])
+        .sum();
+
+    result
+}
+
+pub(crate) fn sm_msm<V: VariableBaseMSM>(
+    scalars: &[<V::ScalarField as PrimeField>::BigInt],
+    bases: &[V::MulBase],
+) -> V {
+    assert_eq!(scalars.len(), bases.len());
+    let num_buckets: usize = 1 << 16; // TODO(sragss): This should be passed in / dependent on M = N^{1/C}
+
+    // #[cfg(test)]
+    // scalars.for_each(|scalar| {
+    //     assert!(scalar < V::ScalarField::from(num_buckets as u64).into_bigint())
+    // });
+
+    // Assign things to buckets based on the scalar
+    let mut buckets: Vec<V> = vec![V::zero(); num_buckets];
+    scalars.into_iter().enumerate().for_each(|(index, scalar)| {
+        let bucket_index: u64 = scalar.as_ref()[0];
+        buckets[bucket_index as usize] += bases[index];
+    });
+
+    let mut result = V::zero();
+    let mut running_sum = V::zero();
+    buckets
+        .into_iter()
+        .skip(1)
+        .enumerate()
+        .rev()
+        .for_each(|(index, bucket)| {
+            running_sum += bucket;
+            result += running_sum;
+        });
+    result
+}
+
+#[cfg(test)]
+mod tests {
+
+    use ark_std::test_rng;
+
+    use crate::poly::dense_mlpoly::DensePolynomial;
+
+    use super::*;
+
+    #[test]
+    fn sm_msm_parity() {
+        use ark_curve25519::{EdwardsAffine as G1Affine, EdwardsProjective as G1Projective, Fr};
+        let mut rng = test_rng();
+        let bases = vec![
+            G1Affine::rand(&mut rng),
+            G1Affine::rand(&mut rng),
+            G1Affine::rand(&mut rng),
+        ];
+        let scalars = vec![Fr::from(3), Fr::from(2), Fr::from(1)];
+        let expected_result = bases[0] + bases[0] + bases[0] + bases[1] + bases[1] + bases[2];
+        assert_eq!(bases[0] + bases[0] + bases[0], bases[0] * scalars[0]);
+        let expected_result_b =
+            bases[0] * scalars[0] + bases[1] * scalars[1] + bases[2] * scalars[2];
+        assert_eq!(expected_result, expected_result_b);
+
+        let calc_result_a: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        assert_eq!(calc_result_a, expected_result);
+
+        let scalars_bigint: Vec<_> = scalars
+            .into_iter()
+            .map(|scalar| scalar.into_bigint())
+            .collect();
+        let calc_result_b: G1Projective = sm_msm(&scalars_bigint, &bases);
+        assert_eq!(calc_result_b, expected_result);
+    }
+}
