@@ -27,16 +27,81 @@ pub struct SparsePoly<F> {
     upper_index: usize 
 }
 
+pub struct SparsePolyIter<'a, F> {
+    poly: &'a SparsePoly<F>,
+    low_sparse_index: usize,
+    high_sparse_index: usize,
+}
+
+impl<'a, F: PrimeField> SparsePolyIter<'a, F> {
+    fn new(poly: &'a SparsePoly<F>) -> Self {
+        SparsePolyIter {
+            poly,
+            low_sparse_index: 0,
+            high_sparse_index: poly.upper_index
+        }
+    }
+
+    fn has_next(&self) -> bool {
+        self.low_sparse_index < self.poly.upper_index || self.high_sparse_index < self.poly.entries.len()
+    }
+
+    fn next_unchecked(&mut self) -> (Option<&SparseEntry<F>>, Option<&SparseEntry<F>>) {
+        let index_half = self.index_half();
+        let low_sparse_index = self.low_sparse_index;
+        let high_sparse_index = self.high_sparse_index;
+
+        // Base cases, one half is exhausted.
+        if low_sparse_index >= self.poly.upper_index {
+            let result = (None, Some(&self.poly.entries[high_sparse_index]));
+            self.high_sparse_index += 1;
+            return result;
+        } else if high_sparse_index >= self.poly.entries.len() {
+            let result = (Some(&self.poly.entries[low_sparse_index]), None);
+            self.low_sparse_index += 1;
+            return result;
+        }
+
+        let low_index = self.poly.entries[low_sparse_index].index;
+        let high_index = self.poly.entries[high_sparse_index].index;
+
+        if low_index == (high_index - index_half) {
+            let result = (Some(&self.poly.entries[low_sparse_index]), Some(&self.poly.entries[high_sparse_index]));
+            self.low_sparse_index += 1;
+            self.high_sparse_index += 1;
+            return result;
+        } else if low_index < (high_index - index_half) {
+            let result = (Some(&self.poly.entries[low_sparse_index]), None);
+            self.low_sparse_index += 1;
+            return result;
+        } else if (high_index - index_half) < low_index {
+            let result = (None, Some(&self.poly.entries[low_sparse_index]));
+            self.high_sparse_index += 1;
+            return result;
+        } else {
+            unreachable!("plz")
+        }
+    }
+
+    fn index_half(&self) -> usize {
+        (1 << self.poly.num_vars) / 2
+    }
+}
+
 impl<F: PrimeField> SparsePoly<F> {
     pub fn new(entries: Vec<SparseEntry<F>>, num_vars: usize, upper_index: usize) -> Self {
         Self { entries, num_vars, upper_index }
     }
     pub fn bound_poly_var_top(&mut self, r: &F) {
+        // `sparse_index` vars are [0, ... 2^num_vars]
+        // `index` vars are [0, ... 2^entries.len()]
         let mut low_sparse_index: usize = 0;
         let mut high_sparse_index: usize = self.upper_index;
-        let index_half: usize = 1 << self.num_vars / 2;
+
+        let index_half: usize = (1 << self.num_vars) / 2;
+        let new_index_half = index_half / 2;
         let mut new_entries = Vec::with_capacity(self.entries.len()); // May overshoot by a factor of 2
-        let mut upper_index: Option<usize> = None;
+        let mut new_upper_sparse_index: Option<usize> = None;
 
         // TODO(sragss): Figure out how to swap in place. Queue system?
         // TODO(sragss): upper_index compute doesn't work.
@@ -47,7 +112,7 @@ impl<F: PrimeField> SparsePoly<F> {
             let high_index = self.entries[high_sparse_index].index;
 
             if low_index == (high_index - index_half) {
-                println!("compute");
+                // If indices match, the parent has a non-sparse low and high
                 let m = self.entries[high_sparse_index].value - self.entries[low_sparse_index].value;
                 let value: F = self.entries[low_sparse_index].value + *r * m;
                 let entry = SparseEntry::new(value, low_index);
@@ -55,26 +120,24 @@ impl<F: PrimeField> SparsePoly<F> {
                 low_sparse_index += 1;
                 high_sparse_index += 1;
 
-                if upper_index.is_none() && low_index >= index_half {
-                    upper_index = Some(new_entries.len() - 1);
+                if new_upper_sparse_index.is_none() && low_index >= new_index_half {
+                    new_upper_sparse_index = Some(new_entries.len() - 1);
                 }
             } else if low_index < (high_index - index_half) {
-                println!("clone low");
                 new_entries.push(self.entries[low_sparse_index].clone()); 
                 low_sparse_index += 1;
 
-                if upper_index.is_none() && low_index >= index_half {
-                    upper_index = Some(new_entries.len() - 1);
+                if new_upper_sparse_index.is_none() && low_index >= new_index_half {
+                    new_upper_sparse_index = Some(new_entries.len() - 1);
                 }
-            } else if (high_index - index_half) < low_index {
-                println!("clone high");
+            } else if (high_index - index_half) < low_index { // TODO(sragss): Do by default and gate on low_sparse_index < self.upper_index
                 let mut entry = self.entries[high_sparse_index].clone();
                 entry.index = high_index / 2;
                 new_entries.push(entry);
                 high_sparse_index += 1;
 
-                if upper_index.is_none() && high_index >= index_half {
-                    upper_index = Some(new_entries.len() - 1);
+                if new_upper_sparse_index.is_none() && high_index >= new_index_half {
+                    new_upper_sparse_index = Some(new_entries.len() - 1);
                 }
             } else {
                 unreachable!();
@@ -82,7 +145,46 @@ impl<F: PrimeField> SparsePoly<F> {
         }
         self.entries = new_entries;
         self.num_vars -= 1;
-        self.upper_index = upper_index.unwrap();
+        self.upper_index = new_upper_sparse_index.unwrap_or(self.entries.len() - 1);
+    }
+
+    pub fn bound_poly_var_top_iter(&mut self, r: &F) {
+        let mut iter = SparsePolyIter::new(&self);
+
+        let mut new_entries = Vec::with_capacity(self.entries.len()); // may overshoot by factor 2
+        let mut new_upper_sparse_index: Option<usize> = None;
+
+        while iter.has_next() {
+            let (low, high) = iter.next_unchecked();
+
+            match (low, high) {
+                (Some(low_entry), Some(high_entry)) => {
+                    let m = high_entry.value - low_entry.value;
+                    let value: F = low_entry.value + *r * m;
+                    let entry = SparseEntry::new(value, low_entry.index);
+                    new_entries.push(entry);
+                },
+                (Some(low_entry), None) => {
+                    let m = F::one() - low_entry.value;
+                    let value: F = low_entry.value + *r * m;
+                    let entry = SparseEntry::new(value, low_entry.index);
+                    new_entries.push(entry); 
+                },
+                (None, Some(high_entry)) => {
+                    let m = high_entry.value - F::one();
+                    let value: F = F::one() + *r * m;
+                    let index = high_entry.index - iter.index_half();
+                    let entry = SparseEntry::new(value, index);
+                    new_entries.push(entry);
+                },
+                _ => {
+                    unreachable!("plz");
+                }
+            }
+        }
+        self.entries = new_entries;
+        self.num_vars -= 1;
+        self.upper_index = new_upper_sparse_index.unwrap_or(self.entries.len() - 1);
     }
 
     pub fn len(&self) -> usize {
@@ -102,7 +204,7 @@ impl<F: PrimeField> SparsePoly<F> {
             dense_evals.push(entry.value);
             curr_index = entry.index + 1;
         }
-        for i in (self.entries.last().unwrap().index + 1)..n {
+        for i in curr_index..n {
             dense_evals.push(F::one());
         }
 
@@ -247,9 +349,57 @@ mod tests {
         assert_eq!(dense, sparse.clone().to_dense());
         let r = Fr::from(12);
         dense.bound_poly_var_top(&r);
-        sparse.bound_poly_var_top(&r);
-        assert_eq!(dense.evals_ref()[0..1], sparse.clone().to_dense().evals_ref()[0..1]);
-        assert_eq!(dense, sparse.to_dense());
+        sparse.bound_poly_var_top_iter(&r);
+        assert_eq!(dense.evals_ref()[0..2], sparse.clone().to_dense().evals_ref()[0..2]);
+    }
 
+    #[test]
+    fn bound_poly_var_top_sparse_left() {
+        let mut dense = DensePolynomial::new(vec![Fr::from(1), Fr::from(1), Fr::from(6), Fr::from(7)]);
+        let mut sparse = SparsePoly::new(
+            vec![
+                SparseEntry::new(Fr::from(6), 2),
+                SparseEntry::new(Fr::from(7), 3),
+            ], 2, 0);
+        assert_eq!(dense, sparse.clone().to_dense());
+        let r = Fr::from(12);
+        dense.bound_poly_var_top(&r);
+        sparse.bound_poly_var_top_iter(&r);
+        assert_eq!(dense.evals_ref()[0..2], sparse.clone().to_dense().evals_ref()[0..2]);
+    }
+
+    #[test]
+    fn bound_poly_var_top_sparse_right() {
+        let mut dense = DensePolynomial::new(vec![Fr::from(4), Fr::from(5), Fr::from(1), Fr::from(1)]);
+        let mut sparse = SparsePoly::new(
+            vec![
+                SparseEntry::new(Fr::from(4), 0),
+                SparseEntry::new(Fr::from(5), 1),
+            ], 2, 2);
+        assert_eq!(dense, sparse.clone().to_dense());
+        let r = Fr::from(12);
+        dense.bound_poly_var_top(&r);
+        sparse.bound_poly_var_top_iter(&r);
+        assert_eq!(dense.evals_ref()[0..2], sparse.clone().to_dense().evals_ref()[0..2]);
+    }
+}
+
+pub mod bench {
+    use super::*;
+    use ark_std::UniformRand;
+    use ark_std::{test_rng, rand::Rng};
+
+    pub fn init_bind_bench<F: PrimeField>(log_size: usize, pct_ones: f64) -> SparsePoly<F> {
+        let mut rng = test_rng();
+
+        let size = 1 << log_size;
+        let mut entries = Vec::new();
+        for i in 0..size {
+            if rng.gen::<f64>() > pct_ones {
+                entries.push(SparseEntry::new(F::rand(&mut rng), i));
+            }
+        }
+        let max_index = entries.len() - 1;
+        SparsePoly::new(entries, log_size, (max_index as f64 * 0.5) as usize)
     }
 }

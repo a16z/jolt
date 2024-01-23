@@ -9,9 +9,11 @@ use crate::jolt::vm::read_write_memory::{
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
+use crate::subprotocols::sparse;
+use crate::utils::math::Math;
 use ark_curve25519::{EdwardsProjective, Fr};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::ELFInstruction;
+use ark_std::{test_rng, UniformRand};
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
 use criterion::black_box;
 use itertools::Itertools;
 use merlin::Transcript;
@@ -20,6 +22,7 @@ use rand_core::SeedableRng;
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
     Poly,
+    SparsePolyBind,
     EverythingExceptR1CS,
     Bytecode,
     ReadWriteMemory,
@@ -37,6 +40,7 @@ pub fn benchmarks(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
         BenchType::Poly => dense_ml_poly(),
+        BenchType::SparsePolyBind => sparse_ml_poly_bind(),
         BenchType::EverythingExceptR1CS => {
             prove_e2e_except_r1cs(num_cycles, memory_size, bytecode_size)
         }
@@ -429,6 +433,36 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     };
     tasks.push((
         tracing::info_span!("FibonacciR1CS"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn sparse_ml_poly_bind() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut tasks = Vec::new();
+
+    let log_size = 24;
+    let mut sparse_poly = crate::subprotocols::sparse::bench::init_bind_bench::<Fr>(log_size, 0.93);
+    let mut dense_poly = sparse_poly.clone().to_dense();
+
+    let mut rng = test_rng();
+    let r = Fr::rand(&mut rng);
+    let task = move || {
+        sparse_poly.bound_poly_var_top_iter(&r);
+    };
+
+    tasks.push((
+        tracing::info_span!("SparsePoly::bound_poly_var_top(24)"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    let task = move || {
+        dense_poly.bound_poly_var_top_many_ones(&r);
+    };
+
+    tasks.push((
+        tracing::info_span!("DensePoly::bound_poly_var_top_many_ones(24)"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
