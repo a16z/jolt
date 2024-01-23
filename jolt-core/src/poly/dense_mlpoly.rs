@@ -442,16 +442,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         self.Z.as_ref()
     }
 
-    pub fn extend(&mut self, other: &DensePolynomial<F>) {
-        assert_eq!(self.Z.len(), self.len);
-        let other_vec = other.vec();
-        assert_eq!(other_vec.len(), self.len);
-        self.Z.extend(other_vec);
-        self.num_vars += 1;
-        self.len *= 2;
-        assert_eq!(self.Z.len(), self.len);
-    }
-
     #[tracing::instrument(skip_all, name = "DensePoly.merge")]
     pub fn merge<T>(polys: &[T]) -> DensePolynomial<F>
     where
