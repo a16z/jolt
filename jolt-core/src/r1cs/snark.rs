@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use common::{path::JoltPaths, field_conversion::{ff_to_ruints, ruint_to_ff, ff_to_ruint}};
 use spartan2::{
-  traits::{snark::RelaxedR1CSSNARKTrait, Group},
+  traits::{snark::RelaxedR1CSSNARKTrait, Group, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}},
   SNARK, errors::SpartanError, 
 };
 use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum};
@@ -175,11 +175,11 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 
 
 #[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
-pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
+pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
   let num_steps = circuit.num_steps; 
   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
 
-  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
+  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
 
   // produce a SNARK
   let proof = SNARK::prove(&pk, circuit);
@@ -199,8 +199,10 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
 
   type G1 = bn256::Point;
   type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-  type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-  // type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+  // type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+  type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+
+  let NUM_STEPS = TRACE_LEN; 
 
   let inputs_ff = inputs
     .into_par_iter()
@@ -210,7 +212,7 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
         .collect::<Vec<Spartan2Fr>>()
     ).collect::<Vec<Vec<Spartan2Fr>>>();
 
-  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
+  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
   prove_jolt_circuit::<G1, S, Spartan2Fr>(jolt_circuit)
 }
 
