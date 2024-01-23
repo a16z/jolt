@@ -65,7 +65,7 @@ where
     #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
         let (batched_dim_read, (batched_final, batched_E)) = rayon::join(
-            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
+            || DensePolynomial::merge(&[self.dim.as_slice(), self.read_cts.as_slice()].concat()),
             || {
                 rayon::join(
                     || DensePolynomial::merge(&self.final_cts),
