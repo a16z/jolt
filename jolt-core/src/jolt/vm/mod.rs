@@ -35,8 +35,13 @@ use self::read_write_memory::{
     ReadWriteMemoryProof,
 };
 
-struct JoltProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    instruction_lookups: InstructionLookupsProof<F, G>,
+struct JoltProof<F, G, Subtables>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
+{
+    instruction_lookups: InstructionLookupsProof<F, G, Subtables>,
     read_write_memory: ReadWriteMemoryProof<F, G>,
     bytecode: BytecodeProof<F, G>,
     // TODO: r1cs
@@ -51,7 +56,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         mut bytecode_trace: Vec<ELFRow>,
         memory_trace: Vec<MemoryOp>,
         instructions: Vec<Self::InstructionSet>,
-    ) -> JoltProof<F, G> {
+    ) -> JoltProof<F, G, Self::Subtables> {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape = RandomTape::new(b"Jolt prover randomness");
         let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
@@ -73,7 +78,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         }
     }
 
-    fn verify(proof: JoltProof<F, G>) -> Result<(), ProofVerifyError> {
+    fn verify(proof: JoltProof<F, G, Self::Subtables>) -> Result<(), ProofVerifyError> {
         let mut transcript = Transcript::new(b"Jolt transcript");
         Self::verify_bytecode(proof.bytecode, &mut transcript)?;
         Self::verify_memory(proof.read_write_memory, &mut transcript)?;
@@ -86,14 +91,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         ops: Vec<Self::InstructionSet>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> InstructionLookupsProof<F, G> {
+    ) -> InstructionLookupsProof<F, G, Self::Subtables> {
         let instruction_lookups =
             InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
         instruction_lookups.prove_lookups(transcript, random_tape)
     }
 
     fn verify_instruction_lookups(
-        proof: InstructionLookupsProof<F, G>,
+        proof: InstructionLookupsProof<F, G, Self::Subtables>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
@@ -156,25 +161,26 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             random_tape,
         );
 
-        let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
-            .iter()
-            .enumerate()
-            .map(|(i, &ts)| SLTUInstruction(ts, (i / MEMORY_OPS_PER_INSTRUCTION) as u64 + 1))
-            .collect();
-        let mut surge_M = memory_trace_size
-            .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
-            .next_power_of_two();
-        if log2(surge_M) % 2 != 0 {
-            surge_M *= 2;
-        }
-        let timestamp_validity_proof =
-            <Surge<F, G, SLTUInstruction, 2>>::new(timestamp_validity_lookups, surge_M)
-                .prove(transcript);
+        todo!();
+        // let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
+        //     .iter()
+        //     .enumerate()
+        //     .map(|(i, &ts)| SLTUInstruction(ts, (i / MEMORY_OPS_PER_INSTRUCTION) as u64 + 1))
+        //     .collect();
+        // let mut surge_M = memory_trace_size
+        //     .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
+        //     .next_power_of_two();
+        // if log2(surge_M) % 2 != 0 {
+        //     surge_M *= 2;
+        // }
+        // let timestamp_validity_proof =
+        //     <Surge<F, G, SLTUInstruction, 2>>::new(timestamp_validity_lookups, surge_M)
+        //         .prove(transcript);
 
         ReadWriteMemoryProof {
             memory_checking_proof,
             commitment,
-            timestamp_validity_proof,
+            // timestamp_validity_proof,
             memory_trace_size,
         }
     }
@@ -188,18 +194,19 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &proof.commitment,
             transcript,
         )?;
-        let mut surge_M = proof
-            .memory_trace_size
-            .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
-            .next_power_of_two();
-        if log2(surge_M) % 2 != 0 {
-            surge_M *= 2;
-        }
-        <Surge<F, G, SLTUInstruction, 2>>::verify(
-            proof.timestamp_validity_proof,
-            transcript,
-            surge_M,
-        )
+        todo!();
+        // let mut surge_M = proof
+        //     .memory_trace_size
+        //     .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
+        //     .next_power_of_two();
+        // if log2(surge_M) % 2 != 0 {
+        //     surge_M *= 2;
+        // }
+        // <Surge<F, G, SLTUInstruction, 2>>::verify(
+        //     proof.timestamp_validity_proof,
+        //     transcript,
+        //     surge_M,
+        // )
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
@@ -312,3 +319,4 @@ pub mod bytecode;
 pub mod instruction_lookups;
 pub mod read_write_memory;
 pub mod rv32i_vm;
+pub mod timestamp_range_check;

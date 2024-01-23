@@ -387,7 +387,8 @@ where
             .init_final_openings
             .verify_openings(commitments, &r_init_final, transcript)?;
 
-        Self::compute_verifier_openings(&mut proof.init_final_openings, &r_init_final);
+        proof.read_write_openings.compute_verifier_openings(&r_read_write);
+        proof.init_final_openings.compute_verifier_openings(&r_init_final);
 
         assert_eq!(claims_read_write.len(), claims_init_final.len());
         assert!(claims_read_write.len() % 2 == 0);
@@ -411,10 +412,6 @@ where
         Ok(())
     }
 
-    /// Often some of the fields in `InitFinalOpenings` do not require an opening proof provided by
-    /// the prover, and instead can be efficiently computed by the verifier by itself. This function
-    /// populates any such fields in `openings`.
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>);
     /// Computes "read" memory tuples (one per memory) from the given `openings`.
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple>;
     /// Computes "write" memory tuples (one per memory) from the given `openings`.

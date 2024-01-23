@@ -279,21 +279,25 @@ where
     }
 }
 
-pub struct SurgeFinalOpenings<F, G>
+pub struct SurgeFinalOpenings<F, G, Instruction, const C: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Instruction: JoltInstruction + Default,
 {
+    _instruction: PhantomData<Instruction>,
     final_openings: Vec<F>, // C-sized
     final_opening_proof: CombinedTableEvalProof<G>,
     a_init_final: Option<F>,      // Computed by verifier
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
-impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeFinalOpenings<F, G>
+impl<F, G, Instruction, const C: usize> StructuredOpeningProof<F, G, SurgePolys<F, G>>
+    for SurgeFinalOpenings<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Instruction: JoltInstruction + Default,
 {
     type Openings = Vec<F>;
 
@@ -326,11 +330,24 @@ where
         );
 
         Self {
+            _instruction: PhantomData,
             final_openings: openings,
             final_opening_proof,
             a_init_final: None, // Computed by verifier
             v_init_final: None, // Computed by verifier
         }
+    }
+
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+        self.v_init_final = Some(
+            Instruction::default()
+                .subtables(C)
+                .iter()
+                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .collect(),
+        );
     }
 
     fn verify_openings(
@@ -357,7 +374,7 @@ where
     Instruction: JoltInstruction + Default + Sync,
 {
     type ReadWriteOpenings = SurgeReadWriteOpenings<F, G>;
-    type InitFinalOpenings = SurgeFinalOpenings<F, G>;
+    type InitFinalOpenings = SurgeFinalOpenings<F, G, Instruction, C>;
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
@@ -478,18 +495,6 @@ where
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        openings.v_init_final = Some(
-            Instruction::default()
-                .subtables(C)
-                .iter()
-                .map(|subtable| subtable.evaluate_mle(opening_point))
-                .collect(),
-        );
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
@@ -567,10 +572,11 @@ where
     M: usize,
 }
 
-pub struct SurgeProof<F, G>
+pub struct SurgeProof<F, G, Instruction, const C: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Instruction: JoltInstruction + Default,
 {
     /// Commitments to all polynomials
     commitment: SurgeCommitment<G>,
@@ -582,7 +588,7 @@ where
         G,
         SurgePolys<F, G>,
         SurgeReadWriteOpenings<F, G>,
-        SurgeFinalOpenings<F, G>,
+        SurgeFinalOpenings<F, G, Instruction, C>,
     >,
 }
 
@@ -634,7 +640,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::prove")]
-    pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G> {
+    pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G, Instruction, C> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = self.construct_polys();
@@ -713,7 +719,7 @@ where
     }
 
     pub fn verify(
-        proof: SurgeProof<F, G>,
+        proof: SurgeProof<F, G, Instruction, C>,
         transcript: &mut Transcript,
         M: usize,
     ) -> Result<(), ProofVerifyError> {

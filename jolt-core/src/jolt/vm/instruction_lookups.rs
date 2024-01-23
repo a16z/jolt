@@ -412,11 +412,13 @@ where
     }
 }
 
-pub struct InstructionFinalOpenings<F, G>
+pub struct InstructionFinalOpenings<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
+    _subtables: PhantomData<Subtables>,
     /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     final_openings: Vec<F>,
     final_opening_proof: CombinedTableEvalProof<G>,
@@ -426,11 +428,12 @@ where
     v_init_final: Option<Vec<F>>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for InstructionFinalOpenings<F, G>
+impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+    for InstructionFinalOpenings<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     type Openings = Vec<F>;
 
@@ -464,11 +467,22 @@ where
         );
 
         Self {
+            _subtables: PhantomData,
             final_openings: openings,
             final_opening_proof,
             a_init_final: None,
             v_init_final: None,
         }
+    }
+
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+        self.v_init_final = Some(
+            Subtables::iter()
+                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .collect(),
+        );
     }
 
     fn verify_openings(
@@ -497,7 +511,7 @@ where
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
     type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
-    type InitFinalOpenings = InstructionFinalOpenings<F, G>;
+    type InitFinalOpenings = InstructionFinalOpenings<F, G, Subtables>;
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
@@ -704,16 +718,6 @@ where
     InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        openings.v_init_final = Some(
-            Subtables::iter()
-                .map(|subtable| subtable.evaluate_mle(opening_point))
-                .collect(),
-        );
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         let subtable_flags = Self::subtable_flags(&openings.flag_openings);
         (0..Self::NUM_MEMORIES)
@@ -768,10 +772,11 @@ where
 }
 
 /// Proof of instruction lookups for a single Jolt program execution.
-pub struct InstructionLookupsProof<F, G>
+pub struct InstructionLookupsProof<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     /// Commitments to all polynomials
     commitment: InstructionCommitment<G>,
@@ -784,7 +789,7 @@ where
         G,
         InstructionPolynomials<F, G>,
         InstructionReadWriteOpenings<F, G>,
-        InstructionFinalOpenings<F, G>,
+        InstructionFinalOpenings<F, G, Subtables>,
     >,
 }
 
@@ -845,7 +850,7 @@ where
         &self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> InstructionLookupsProof<F, G> {
+    ) -> InstructionLookupsProof<F, G, Subtables> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = self.polynomialize();
@@ -920,7 +925,7 @@ where
     }
 
     pub fn verify(
-        proof: InstructionLookupsProof<F, G>,
+        proof: InstructionLookupsProof<F, G, Subtables>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());

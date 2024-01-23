@@ -46,6 +46,11 @@ where
         random_tape: &mut RandomTape<G>,
     ) -> Self;
 
+    /// Often some of the openings do not require an opening proof provided by the prover, and 
+    /// instead can be efficiently computed by the verifier by itself. This function populates 
+    /// any such fields in `self`.
+    fn compute_verifier_openings(&mut self, _opening_point: &Vec<F>) {}
+
     /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
     fn verify_openings(
         &self,

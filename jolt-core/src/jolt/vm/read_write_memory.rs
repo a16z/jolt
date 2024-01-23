@@ -107,7 +107,7 @@ where
         MemoryInitFinalOpenings<F, G>,
     >,
     pub commitment: MemoryCommitment<G>,
-    pub timestamp_validity_proof: SurgeProof<F, G>,
+    // pub timestamp_validity_proof: SurgeProof<F, G>,
     pub memory_trace_size: usize,
 }
 
@@ -132,22 +132,22 @@ where
     /// Size of entire address space (i.e. RAM + registers for RISC-V)
     memory_size: usize,
     /// MLE of initial memory values. RAM is initialized to contain the program bytecode.
-    v_init: DensePolynomial<F>,
+    pub v_init: DensePolynomial<F>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
     /// and vice versa, so the read addresses and write addresses are the same.
-    a_read_write: DensePolynomial<F>,
+    pub a_read_write: DensePolynomial<F>,
     /// MLE of the read values.
-    v_read: DensePolynomial<F>,
+    pub v_read: DensePolynomial<F>,
     /// MLE of the write values.
-    v_write: DensePolynomial<F>,
+    pub v_write: DensePolynomial<F>,
     /// MLE of the final memory state.
-    v_final: DensePolynomial<F>,
+    pub v_final: DensePolynomial<F>,
     /// MLE of the read timestamps.
-    t_read: DensePolynomial<F>,
+    pub t_read: DensePolynomial<F>,
     /// MLE of the write timestamps.
-    t_write: DensePolynomial<F>,
+    pub t_write: DensePolynomial<F>,
     /// MLE of the final timestamps.
-    t_final: DensePolynomial<F>,
+    pub t_final: DensePolynomial<F>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
@@ -403,7 +403,7 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
 }
 
 pub struct MemoryCommitment<G: CurveGroup> {
-    generators: MemoryCommitmentGenerators<G>,
+    pub generators: MemoryCommitmentGenerators<G>,
     /// Commitments for:
     /// a_read_write, v_read, v_write, t_read, t_write
     pub read_write_commitments: CombinedTableCommitment<G>,
@@ -478,7 +478,7 @@ where
     /// Evaluation of the v_write polynomial at the opening point.
     v_write_opening: F,
     /// Evaluation of the t_read polynomial at the opening point.
-    t_read_opening: F,
+    pub t_read_opening: F,
     /// Evaluation of the t_write polynomial at the opening point.
     t_write_opening: F,
     read_write_opening_proof: CombinedTableEvalProof<G>,
@@ -626,6 +626,11 @@ where
         }
     }
 
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+    }
+
     fn verify_openings(
         &self,
         commitment: &MemoryCommitment<G>,
@@ -721,11 +726,6 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_read_write_opening,
