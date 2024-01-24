@@ -427,6 +427,202 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
 
+    // #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_sparse_prod")]
+    // pub fn prove_cubic_batched_sparse_prod<G>(
+    //     claim: &F,
+    //     eq: &DensePolynomial<F>,
+    //     left: &SparsePoly<F>,
+    //     right: &SparsePoly<F>,
+    //     // coeffs: &[F],
+    //     num_rounds: usize,
+    //     transcript: &mut Transcript,
+    // ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
+    // where
+    //     G: CurveGroup<ScalarField = F>,
+    // {
+    //     let mut e = *claim;
+    //     let mut r: Vec<F> = Vec::new();
+    //     let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+    //     for _j in 0..num_rounds {
+    //         let len = eq.len() / 2;
+    //         let eq_evals: Vec<(F, F, F)> = (0..len)
+    //             .into_par_iter()
+    //             .map(|i| {
+    //                 let low = i;
+    //                 let high = len + i;
+
+    //                 let eval_point_0 = eq[low];
+    //                 let m_eq = eq[high] - eq[low];
+    //                 let eval_point_2 = eq[high] + m_eq;
+    //                 let eval_point_3 = eval_point_2 + m_eq;
+    //                 (eval_point_0, eval_point_2, eval_point_3)
+    //             })
+    //             .collect();
+
+    //         // TODO(sragss): OPTIMIZATION IDEAS
+    //         // - Optimize for 1s! 
+    //         // - Compute 'r' bindings from 'm_a' / 'm_b
+
+    //         let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
+    //         let _enter = _span.enter();
+
+    //         // TODO(sragss): Need to jointly iterate over all 4 –– what if I just directly ask for an index? Do nothing if not present, otherwise (Option, Option, Option, Option)
+    //         let dual_iter = DualSparsePolyIter::new(SparsePolyIter::new(left), SparsePolyIter::new(right));
+
+    //         while dual_iter.has_next() {
+    //             let ((left_low, left_high), (right_low, right_high)) = dual_iter.next();
+
+    //             match (left_low, left_high, right_low, right_high) {
+    //                 (Some(left_low_val), Some(left_high_val), Some(right_low_val), Some(right_high_val)) => { // 0.07^4
+    //                     let left_0 = left_low_val.value;
+    //                     let right_0 = right_low_val.value;
+
+    //                     let left_m = left_high_val.value - left_low_val.value;
+    //                     let right_m = right_high_val.value - right_low_val.value;
+
+    //                     let left_2 = left_high_val.value + left_m;
+    //                     let right_2 = right_high_val.value + right_m;
+
+    //                     let left_3 = left_2 + left_m;
+    //                     let right_3 = right_2 + right_m;
+
+    //                     let eval_0 = left_0 * right_0;
+    //                     let eval_2 = left_2 * right_2;
+    //                     let eval_3 = left_3 * right_3;
+
+    //                     (eval_0, eval_2, eval_3)
+    //                 },
+    //                 (Some(left_low_val), Some(left_high_val), Some(right_low_val), None) => {
+    //                     // Handle case where right_high is None
+    //                 },
+    //                 (Some(left_low_val), Some(left_high_val), None, Some(right_high_val)) => {
+    //                     // Handle case where right_low is None
+    //                 },
+    //                 (Some(left_low_val), None, Some(right_low_val), Some(right_high_val)) => {
+    //                     // Handle case where left_high is None
+    //                 },
+    //                 (None, Some(left_high_val), Some(right_low_val), Some(right_high_val)) => {
+    //                     // Handle case where left_low is None
+    //                 },
+    //                 (Some(left_low_val), None, None, Some(right_high_val)) => {
+    //                     // Handle case where left_high and right_low are None
+    //                 },
+    //                 (None, Some(left_high_val), None, Some(right_high_val)) => {
+    //                     // Handle case where left_low and right_low are None
+    //                 },
+    //                 (None, None, Some(right_low_val), Some(right_high_val)) => {
+    //                     // Handle case where left_low and left_high are None
+    //                 },
+    //                 (Some(left_low_val), Some(left_high_val), None, None) => {
+    //                     // Handle case where right_low and right_high are None
+    //                 },
+    //                 (None, Some(left_high_val), Some(right_low_val), None) => {
+    //                     // Handle case where left_low and right_high are None
+    //                 },
+    //                 (Some(left_low_val), None, None, None) => {
+    //                     // Handle case where left_high, right_low and right_high are None
+    //                 },
+    //                 (None, None, None, Some(right_high_val)) => {
+    //                     // Handle case where left_low, left_high and right_low are None
+    //                 },
+    //                 (None, None, Some(right_low_val), None) => {
+    //                     // Handle case where left_low, left_high and right_high are None
+    //                 },
+    //                 (None, Some(left_high_val), None, None) => { // 0.93^3 * 0.07
+    //                     // Handle case where left_low, right_low and right_high are None
+    //                 },
+    //                 (None, None, None, None) => { // 0.93^4
+    //                 },
+    //             }
+
+    //         }
+    //         let evals: Vec<(F, F, F)> = (0..params.poly_As.len()).into_par_iter()
+    //             .map(|batch_index| {
+    //                 let poly_A = &params.poly_As[batch_index];
+    //                 let poly_B = &params.poly_Bs[batch_index];
+    //                 let len = poly_A.len() / 2;
+
+    //                 // In the case of a flagged tree, the majority of the leaves will be 1s, optimize for this case.
+    //                 let (eval_point_0, eval_point_2, eval_point_3) = (0..len).into_par_iter()
+    //                     .map(|mle_index| {
+    //                         let low = mle_index;
+    //                         let high = len + mle_index;
+
+    //                         let m_a = poly_A[high] - poly_A[low];
+    //                         let m_b = poly_B[high] - poly_B[low];
+
+    //                         let point_2_A = poly_A[high] + m_a;
+    //                         let point_3_A = point_2_A + m_a;
+
+    //                         let point_2_B = poly_B[high] + m_b;
+    //                         let point_3_B = point_2_B + m_b;
+
+    //                         let eval_point_0 = eq_evals[low].0 * poly_A[low] * poly_B[low];
+    //                         let eval_point_2 = eq_evals[low].1 * point_2_A * point_2_B;
+    //                         let eval_point_3 = eq_evals[low].2 * point_3_A * point_3_B;
+
+    //                         (eval_point_0, eval_point_2, eval_point_3)
+    //                     })
+    //                     // For parallel
+    //                     .reduce(
+    //                         || (F::zero(), F::zero(), F::zero()),
+    //                         |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+    //                     );
+
+    //                 (eval_point_0, eval_point_2, eval_point_3)
+    //             })
+    //             .collect();
+    //         drop(_enter);
+    //         drop(_span);
+
+    //         let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
+    //         let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
+    //         let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
+
+    //         let evals = vec![
+    //             evals_combined_0,
+    //             e - evals_combined_0,
+    //             evals_combined_2,
+    //             evals_combined_3,
+    //         ];
+    //         let poly = UniPoly::from_evals(&evals);
+
+    //         // append the prover's message to the transcript
+    //         <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+
+    //         //derive the verifier's challenge for the next round
+    //         let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
+    //             transcript,
+    //             b"challenge_nextround",
+    //         );
+    //         r.push(r_j);
+
+    //         // bound all tables to the verifier's challenege
+    //         let _span = tracing::span!(tracing::Level::TRACE, "binding");
+    //         let _enter = _span.enter();
+
+    //         let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
+    //             .chain(params.poly_Bs.iter_mut())
+    //             .collect();
+
+    //         rayon::join(
+    //             || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j)),
+    //             || params.poly_eq.bound_poly_var_top(&r_j)
+    //         );
+
+    //         drop(_enter);
+    //         drop(_span);
+
+    //         e = poly.evaluate(&r_j);
+    //         cubic_polys.push(poly.compress());
+    //     }
+
+    //     let claims_prod = params.get_final_evals();
+
+    //     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
+    // }
+
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_batched_prod_ones")]
     pub fn prove_cubic_batched_prod_ones<G>(
         claim: &F,
@@ -1013,6 +1209,8 @@ pub mod bench {
                 );
             })
         });
+
+        // TODO(sragss): Add the sparse sumcheck here.
     }
 }
 
@@ -1203,4 +1401,9 @@ mod test {
         let fingerprint_oracle_query = flag_eval * h_eval + Fr::one() - flag_eval;
         assert_eq!(prove_fingerprint_eval, fingerprint_oracle_query);
     }
+
+    // #[test]
+    // fn sparse() {
+    //     todo!("sragss");
+    // }
 }

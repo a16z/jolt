@@ -449,7 +449,7 @@ fn sparse_ml_poly_bind() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = test_rng();
     let r = Fr::rand(&mut rng);
     let task = move || {
-        sparse_poly.bound_poly_var_top_iter(&r);
+        sparse_poly.bound_poly_var_top(&r);
     };
 
     tasks.push((
