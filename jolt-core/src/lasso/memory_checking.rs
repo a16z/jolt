@@ -22,13 +22,13 @@ use std::marker::PhantomData;
 
 pub struct MultisetHashes<F: PrimeField> {
     /// Multiset hash of "init" tuple(s)
-    hash_init: F,
+    pub hash_init: F,
     /// Multiset hash of "final" tuple(s)
-    hash_final: F,
+    pub hash_final: F,
     /// Multiset hash of "read" tuple(s)
-    hash_read: F,
+    pub hash_read: F,
     /// Multiset hash of "write" tuple(s)
-    hash_write: F,
+    pub hash_write: F,
 }
 
 impl<F: PrimeField> MultisetHashes<F> {
@@ -66,19 +66,19 @@ where
     ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
     InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
-    _polys: PhantomData<Polynomials>,
+    pub _polys: PhantomData<Polynomials>,
     /// Multiset hashes (init, read, write, final) for each memory.
-    multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
+    pub multiset_hashes: Vec<MultisetHashes<G::ScalarField>>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    read_write_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+    pub read_write_grand_product: BatchedGrandProductArgument<G::ScalarField>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+    pub init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
     /// The opening proofs associated with the read/write grand product.
-    read_write_openings: ReadWriteOpenings,
+    pub read_write_openings: ReadWriteOpenings,
     /// The opening proofs associated with the init/final grand product.
-    init_final_openings: InitFinalOpenings,
+    pub init_final_openings: InitFinalOpenings,
 }
 
 pub trait MemoryCheckingProver<F, G, Polynomials>

@@ -11,6 +11,7 @@ use textplots::{Chart, Plot, Shape};
 use crate::jolt::{
     instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
     subtable::LassoSubtable,
+    vm::timestamp_range_check::{RangeCheckPolynomials, TimestampValidityProof},
 };
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::prove_r1cs;
@@ -47,7 +48,7 @@ where
     // TODO: r1cs
 }
 
-pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
+pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
@@ -161,32 +162,25 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             random_tape,
         );
 
-        todo!();
-        // let timestamp_validity_lookups: Vec<SLTUInstruction> = read_timestamps
-        //     .iter()
-        //     .enumerate()
-        //     .map(|(i, &ts)| SLTUInstruction(ts, (i / MEMORY_OPS_PER_INSTRUCTION) as u64 + 1))
-        //     .collect();
-        // let mut surge_M = memory_trace_size
-        //     .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
-        //     .next_power_of_two();
-        // if log2(surge_M) % 2 != 0 {
-        //     surge_M *= 2;
-        // }
-        // let timestamp_validity_proof =
-        //     <Surge<F, G, SLTUInstruction, 2>>::new(timestamp_validity_lookups, surge_M)
-        //         .prove(transcript);
+        let timestamp_validity_proof = TimestampValidityProof::prove(
+            read_timestamps,
+            &memory,
+            &batched_polys,
+            &commitment,
+            transcript,
+            random_tape,
+        );
 
         ReadWriteMemoryProof {
             memory_checking_proof,
             commitment,
-            // timestamp_validity_proof,
             memory_trace_size,
+            timestamp_validity_proof,
         }
     }
 
     fn verify_memory(
-        proof: ReadWriteMemoryProof<F, G>,
+        mut proof: ReadWriteMemoryProof<F, G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemory::verify_memory_checking(
@@ -194,19 +188,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &proof.commitment,
             transcript,
         )?;
-        todo!();
-        // let mut surge_M = proof
-        //     .memory_trace_size
-        //     .div_ceil(MEMORY_OPS_PER_INSTRUCTION)
-        //     .next_power_of_two();
-        // if log2(surge_M) % 2 != 0 {
-        //     surge_M *= 2;
-        // }
-        // <Surge<F, G, SLTUInstruction, 2>>::verify(
-        //     proof.timestamp_validity_proof,
-        //     transcript,
-        //     surge_M,
-        // )
+        TimestampValidityProof::verify(
+            &mut proof.timestamp_validity_proof,
+            &proof.commitment,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
