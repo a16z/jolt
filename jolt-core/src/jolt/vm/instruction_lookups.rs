@@ -122,7 +122,7 @@ where
     fn batch(&self) -> Self::BatchedPolynomials {
         use rayon::prelude::*;
         let (batched_dim_read, (batched_final, batched_E, batched_flag)) = rayon::join(
-            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
+            || DensePolynomial::merge(self.dim.iter().chain(&self.read_cts)),
             || {
                 let batched_final = DensePolynomial::merge(&self.final_cts);
                 let (batched_E, batched_flag) = rayon::join(
