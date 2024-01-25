@@ -4,7 +4,7 @@ use crate::{poly::dense_mlpoly::DensePolynomial, utils::math::Math};
 
 #[derive(Debug, Clone)]
 pub struct SparsePoly<F> {
-    pub entries: Vec<F>,
+    entries: Vec<F>,
     indices: Vec<Option<u32>>,
 
     num_vars: usize,
@@ -13,13 +13,6 @@ pub struct SparsePoly<F> {
 
 impl<F: PrimeField> SparsePoly<F> {
     pub fn new(entries: Vec<F>, indices: Vec<Option<u32>>, num_vars: usize) -> Self {
-        let mut interleaved_indices = vec![None; indices.len()];
-        let (first_half, second_half) = indices.split_at(indices.len() / 2);
-        for (i, (first, second)) in first_half.iter().zip(second_half.iter()).enumerate() {
-            interleaved_indices[2 * i] = *first;
-            interleaved_indices[2 * i + 1] = *second;
-        }
-        let indices = interleaved_indices;
         assert_eq!(indices.len(), 1 << num_vars);
         let mid = if num_vars > 0 { 1 << (num_vars - 1) } else { 0 };
         Self { entries, indices, num_vars, mid }
@@ -38,19 +31,19 @@ impl<F: PrimeField> SparsePoly<F> {
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let mut entry_index = 0;
         let mut new_entries = Vec::with_capacity(self.entries.len());
-        let mut new_indices = vec![None; self.mid];
+        let mut new_indices = Vec::with_capacity(self.mid);
 
         let span = tracing::span!(tracing::Level::TRACE, "inner_loop");
         let _enter = span.enter();
         for i in 0..self.mid {
-            let (low_i, high_i) = (self.indices[2*i], self.indices[2*i + 1]);
+            let (low_i, high_i) = (self.indices[i], self.indices[i + self.mid]);
 
             let new_entry = match (low_i, high_i) {
                 (None, None) => continue,
                 (Some(low_i), None) => {
                     let low = &self.entries[low_i as usize];
                     let m = F::one() - low;
-                    *low + m * r
+                    m * r
                 },
                 (None, Some(high_i)) => {
                     let high = &self.entries[high_i as usize];
@@ -65,15 +58,8 @@ impl<F: PrimeField> SparsePoly<F> {
                 },
             };
 
-            if i >= self.mid / 2  {
-                let dense_index = 2*i + 1 - self.mid;
-                new_indices[dense_index] = Some(entry_index);
-            } else {
-                let dense_index = 2*i;
-                new_indices[dense_index] = Some(entry_index);
-            }
-
             new_entries.push(new_entry);
+            new_indices.push(Some(entry_index));
             entry_index += 1;
         }
 
@@ -92,29 +78,16 @@ impl<F: PrimeField> SparsePoly<F> {
 
     pub fn to_dense(self) -> DensePolynomial<F> {
         let n = self.len();
-        let half = n/2;
 
-        let mut dense_low: Vec<F> = Vec::with_capacity(half);
-        let mut dense_high: Vec<F> = Vec::with_capacity(half);
-        for index in 0..half {
-            let opt_low_sparse_index = self.indices[2*index];
-            let opt_high_sparse_index = self.indices[2*index + 1];
-
-            if let Some(low_sparse_index) = opt_low_sparse_index {
-                dense_low.push(self.entries[low_sparse_index as usize]);
+        let mut dense_evals: Vec<F> = Vec::with_capacity(n);
+        for index in 0..n {
+            let opt_sparse_index = self.indices[index];
+            if let Some(sparse_index) = opt_sparse_index {
+                dense_evals.push(self.entries[sparse_index as usize]);
             } else {
-                dense_low.push(F::one());
-            }
-
-            if let Some(high_sparse_index) = opt_high_sparse_index {
-                dense_high.push(self.entries[high_sparse_index as usize]);
-            } else {
-                dense_high.push(F::one());
+                dense_evals.push(F::one());
             }
         }
-
-        let mut dense_evals = dense_low;
-        dense_evals.extend(dense_high);
 
         DensePolynomial::new(dense_evals)
     }
