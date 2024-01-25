@@ -5,17 +5,24 @@ use crate::{poly::dense_mlpoly::DensePolynomial, utils::math::Math};
 #[derive(Debug, Clone)]
 pub struct SparsePoly<F> {
     entries: Vec<F>,
-    indices: Vec<Option<u32>>,
+    indices: Vec<Option<usize>>,
 
     num_vars: usize,
     mid: usize
 }
 
 impl<F: PrimeField> SparsePoly<F> {
-    pub fn new(entries: Vec<F>, indices: Vec<Option<u32>>, num_vars: usize) -> Self {
+    pub fn new(entries: Vec<F>, indices: Vec<Option<usize>>, num_vars: usize) -> Self {
         assert_eq!(indices.len(), 1 << num_vars);
         let mid = if num_vars > 0 { 1 << (num_vars - 1) } else { 0 };
         Self { entries, indices, num_vars, mid }
+    }
+
+    pub fn final_eval(&self) -> F {
+        assert_eq!(self.entries.len(), 1);
+        assert_eq!(self.num_vars, 0);
+        assert!(self.indices[0].is_some());
+        self.entries[0]
     }
 
     pub fn low_high_iter(&self, index: usize) -> (Option<&F>, Option<&F>) {
@@ -23,15 +30,15 @@ impl<F: PrimeField> SparsePoly<F> {
         let low_i = index;
         let high_i = index + self.mid;
 
-        let low = self.indices[low_i].and_then(|index| Some(&self.entries[index as usize]));
-        let high = self.indices[high_i].and_then(|index| Some(&self.entries[index as usize]));
+        let low = self.indices[low_i].and_then(|index| Some(&self.entries[index]));
+        let high = self.indices[high_i].and_then(|index| Some(&self.entries[index]));
         (low, high)
     }
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let mut entry_index = 0;
         let mut new_entries = Vec::with_capacity(self.entries.len());
-        let mut new_indices = Vec::with_capacity(self.mid);
+        let mut new_indices = vec![None; self.mid];
 
         let span = tracing::span!(tracing::Level::TRACE, "inner_loop");
         let _enter = span.enter();
@@ -41,25 +48,25 @@ impl<F: PrimeField> SparsePoly<F> {
             let new_entry = match (low_i, high_i) {
                 (None, None) => continue,
                 (Some(low_i), None) => {
-                    let low = &self.entries[low_i as usize];
+                    let low = &self.entries[low_i];
                     let m = F::one() - low;
-                    m * r
+                    *low + m * r
                 },
                 (None, Some(high_i)) => {
-                    let high = &self.entries[high_i as usize];
+                    let high = &self.entries[high_i];
                     let m = *high - F::one();
                     F::one() + m * r
                 },
                 (Some(low_i), Some(high_i)) => {
-                    let low = &self.entries[low_i as usize];
-                    let high = &self.entries[high_i as usize];
+                    let low = &self.entries[low_i];
+                    let high = &self.entries[high_i];
                     let m = *high - low;
                     *low + m * r
                 },
             };
 
             new_entries.push(new_entry);
-            new_indices.push(Some(entry_index));
+            new_indices[i] = Some(entry_index);
             entry_index += 1;
         }
 
@@ -68,7 +75,7 @@ impl<F: PrimeField> SparsePoly<F> {
 
         self.entries = new_entries;
         self.indices = new_indices;
-        self.num_vars -= 2;
+        self.num_vars -= 1;
         self.mid /= 2;
     }
 
@@ -188,9 +195,9 @@ impl<F: PrimeField> SparsePoly<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{*, bench::init_bind_bench};
     use ark_curve25519::Fr;
-    use ark_std::One;
+    use ark_std::{One, test_rng};
 
     #[test]
     fn sparse_conversion() {
@@ -284,6 +291,53 @@ mod tests {
         sparse.bound_poly_var_top(&r);
         assert_eq!(dense.evals_ref()[0..2], sparse.clone().to_dense().evals_ref()[0..2]);
     }
+
+    #[test]
+    fn random() {
+        use ark_std::UniformRand;
+        use ark_std::{test_rng, rand::Rng};
+
+        let log_size = 8;
+        let size = 1 << log_size;
+        let mut sparse = init_bind_bench(log_size, 0.93);
+        let mut dense = sparse.clone().to_dense();
+
+        let mut rng = test_rng();
+        let r_1 = Fr::rand(&mut rng);
+        let r_2 = Fr::rand(&mut rng);
+
+        sparse.bound_poly_var_top(&r_1);
+        sparse.bound_poly_var_top(&r_2);
+        dense.bound_poly_var_top(&r_1);
+        dense.bound_poly_var_top(&r_2);
+
+        assert_eq!(dense.evals_ref()[0..(size/4)], sparse.to_dense().evals_ref()[0..(size/4)]);
+    }
+
+    #[test]
+    fn full_bind() {
+        use ark_std::UniformRand;
+        use ark_std::{test_rng, rand::Rng};
+
+        let log_size = 3;
+        let size = 1 << log_size;
+        let mut sparse = init_bind_bench(log_size, 0.93);
+        let mut dense = sparse.clone().to_dense();
+
+        let mut rng = test_rng();
+        let r_1 = Fr::rand(&mut rng);
+        let r_2 = Fr::rand(&mut rng);
+        let r_3 = Fr::rand(&mut rng);
+
+        sparse.bound_poly_var_top(&r_1);
+        sparse.bound_poly_var_top(&r_2);
+        sparse.bound_poly_var_top(&r_3);
+        dense.bound_poly_var_top(&r_1);
+        dense.bound_poly_var_top(&r_2);
+        dense.bound_poly_var_top(&r_3);
+
+        assert_eq!(dense[0], sparse.final_eval());
+    }
 }
 
 pub mod bench {
@@ -296,15 +350,13 @@ pub mod bench {
 
         let size = 1 << log_size;
         let mut entries = Vec::new();
-        let mut indices = Vec::new();
+        let mut indices = vec![None; size];
         let mut sparse_index = 0;
-        for _ in 0..size {
+        for i in 0..size {
             if rng.gen::<f64>() > pct_ones {
                 entries.push(F::rand(&mut rng));
-                indices.push(Some(sparse_index));
+                indices[i] = Some(sparse_index);
                 sparse_index += 1;
-            } else {
-                indices.push(None);
             }
         }
         SparsePoly::new(entries, indices, log_size)
