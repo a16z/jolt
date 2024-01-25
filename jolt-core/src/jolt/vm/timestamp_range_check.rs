@@ -1,7 +1,9 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use std::marker::PhantomData;
 
 use crate::{
@@ -14,7 +16,12 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
-    subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+    subprotocols::{
+        combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+        grand_product::{
+            BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
+        },
+    },
     utils::{
         errors::ProofVerifyError, mul_0_1_optimized, random::RandomTape,
         transcript::ProofTranscript,
@@ -549,12 +556,11 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    pub memory_checking_proof: MemoryCheckingProof<
-        G,
-        RangeCheckPolynomials<F, G>,
-        RangeCheckReadWriteOpenings<F, G>,
-        RangeCheckFinalOpenings<F, G>,
-    >,
+    read_timestamp_multiset_hashes: MultisetHashes<F>,
+    global_minus_read_multiset_hashes: MultisetHashes<F>,
+    read_write_openings: RangeCheckReadWriteOpenings<F, G>,
+    init_final_openings: RangeCheckFinalOpenings<F, G>,
+    batched_grand_product: BatchedGrandProductArgument<F>,
     pub commitment: RangeCheckCommitment<G>,
 }
 
@@ -577,51 +583,163 @@ where
         let batched_range_check_polys = range_check_polys.batch();
         let range_check_commitment = RangeCheckPolynomials::commit(&batched_range_check_polys);
         let (
-            read_write_grand_product,
-            init_final_grand_product,
-            multiset_hashes,
-            r_read_write,
-            r_init_final,
-        ) = range_check_polys.prove_grand_products(&range_check_polys, transcript);
+            batched_grand_product,
+            read_timestamp_multiset_hashes,
+            global_minus_read_multiset_hashes,
+            r_grand_product,
+        ) = TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
+        let chis = EqPolynomial::new(r_grand_product.to_vec()).evals();
+        let openings: Vec<F> = [
+            &range_check_polys.read_cts_read_timestamp,
+            &range_check_polys.read_cts_global_minus_read,
+            &range_check_polys.final_cts_read_timestamp,
+            &range_check_polys.final_cts_global_minus_read,
+            &memory_polynomials.a_read_write,
+            &memory_polynomials.v_read,
+            &memory_polynomials.v_write,
+            &memory_polynomials.t_read,
+            &memory_polynomials.t_write,
+        ]
+        .par_iter()
+        .map(|poly| poly.evaluate_at_chi(&chis))
+        .collect();
+
+        // TODO(moodlezoup): parallelize openings
         let mut read_write_openings = RangeCheckReadWriteOpenings::prove_openings(
             &batched_range_check_polys,
             &range_check_commitment,
-            &r_read_write,
-            RangeCheckReadWriteOpenings::open(&range_check_polys, &r_read_write),
+            &r_grand_product,
+            [openings[0], openings[1]],
             transcript,
             random_tape,
         );
         read_write_openings.memory_poly_openings = Some(MemoryReadWriteOpenings::prove_openings(
             batched_memory_polynomials,
             memory_commitment,
-            &r_read_write,
-            MemoryReadWriteOpenings::open(memory_polynomials, &r_read_write),
+            &r_grand_product,
+            [
+                openings[4],
+                openings[5],
+                openings[6],
+                openings[7],
+                openings[8],
+            ],
             transcript,
             random_tape,
         ));
         let init_final_openings = RangeCheckFinalOpenings::prove_openings(
             &batched_range_check_polys,
             &range_check_commitment,
-            &r_init_final,
-            RangeCheckFinalOpenings::open(&range_check_polys, &r_init_final),
+            &r_grand_product,
+            [openings[2], openings[3]],
             transcript,
             random_tape,
         );
 
-        let memory_checking_proof = MemoryCheckingProof {
-            _polys: PhantomData,
-            multiset_hashes,
-            read_write_grand_product,
-            init_final_grand_product,
+        Self {
+            read_timestamp_multiset_hashes,
+            global_minus_read_multiset_hashes,
             read_write_openings,
             init_final_openings,
-        };
-
-        Self {
-            memory_checking_proof,
+            batched_grand_product,
             commitment: range_check_commitment,
         }
+    }
+
+    fn prove_grand_products(
+        polynomials: &RangeCheckPolynomials<F, G>,
+        transcript: &mut Transcript,
+    ) -> (
+        BatchedGrandProductArgument<F>,
+        MultisetHashes<F>,
+        MultisetHashes<F>,
+        Vec<F>,
+    ) {
+        // Fiat-Shamir randomness for multiset hashes
+        let gamma: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
+            transcript,
+            b"Memory checking gamma",
+        );
+        let tau: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
+            transcript,
+            b"Memory checking tau",
+        );
+
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+        // fka "ProductLayerProof"
+        let ((read_leaves, write_leaves), (init_leaves, final_leaves)) = rayon::join(
+            || {
+                rayon::join(
+                    || polynomials.read_leaves(polynomials, &gamma, &tau),
+                    || polynomials.write_leaves(polynomials, &gamma, &tau),
+                )
+            },
+            || {
+                rayon::join(
+                    || polynomials.init_leaves(polynomials, &gamma, &tau),
+                    || polynomials.final_leaves(polynomials, &gamma, &tau),
+                )
+            },
+        );
+
+        let leaves = vec![
+            &read_leaves[0],
+            &write_leaves[0],
+            &init_leaves[0],
+            &final_leaves[0],
+            &read_leaves[1],
+            &write_leaves[1],
+            &init_leaves[1],
+            &final_leaves[1],
+        ];
+
+        let circuits: Vec<GrandProductCircuit<F>> = leaves
+            .into_par_iter()
+            .map(|leaves_poly| GrandProductCircuit::new(leaves_poly))
+            .collect();
+
+        let hashes: Vec<F> = circuits
+            .par_iter()
+            .map(|circuit| circuit.evaluate())
+            .collect();
+
+        let read_timestamp_hashes = MultisetHashes {
+            hash_read: hashes[0],
+            hash_write: hashes[1],
+            hash_init: hashes[2],
+            hash_final: hashes[3],
+        };
+        debug_assert_eq!(
+            read_timestamp_hashes.hash_init * read_timestamp_hashes.hash_write,
+            read_timestamp_hashes.hash_final * read_timestamp_hashes.hash_read,
+            "Multiset hashes don't match"
+        );
+        read_timestamp_hashes.append_to_transcript::<G>(transcript);
+
+        let global_minus_read_hashes = MultisetHashes {
+            hash_read: hashes[4],
+            hash_write: hashes[5],
+            hash_init: hashes[6],
+            hash_final: hashes[7],
+        };
+        debug_assert_eq!(
+            global_minus_read_hashes.hash_init * global_minus_read_hashes.hash_write,
+            global_minus_read_hashes.hash_final * global_minus_read_hashes.hash_read,
+            "Multiset hashes don't match"
+        );
+        global_minus_read_hashes.append_to_transcript::<G>(transcript);
+        let batched_circuit = BatchedGrandProductCircuit::new_batch(circuits);
+
+        let (batched_grand_product, r_grand_product) =
+            BatchedGrandProductArgument::prove::<G>(batched_circuit, transcript);
+        (
+            batched_grand_product,
+            read_timestamp_hashes,
+            global_minus_read_hashes,
+            r_grand_product,
+        )
     }
 
     pub fn verify(
@@ -641,72 +759,74 @@ where
 
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        for hash in &self.memory_checking_proof.multiset_hashes {
-            // Multiset equality check
-            assert_eq!(
-                hash.hash_init * hash.hash_write,
-                hash.hash_read * hash.hash_final
-            );
-            hash.append_to_transcript::<G>(transcript);
-        }
+        // Multiset equality checks
+        assert_eq!(
+            self.read_timestamp_multiset_hashes.hash_init
+                * self.read_timestamp_multiset_hashes.hash_write,
+            self.read_timestamp_multiset_hashes.hash_read
+                * self.read_timestamp_multiset_hashes.hash_final
+        );
+        self.read_timestamp_multiset_hashes
+            .append_to_transcript::<G>(transcript);
 
-        let interleaved_read_write_hashes = self
-            .memory_checking_proof
-            .multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_read, hash.hash_write])
-            .collect();
-        let interleaved_init_final_hashes = self
-            .memory_checking_proof
-            .multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_init, hash.hash_final])
-            .collect();
+        assert_eq!(
+            self.global_minus_read_multiset_hashes.hash_init
+                * self.global_minus_read_multiset_hashes.hash_write,
+            self.global_minus_read_multiset_hashes.hash_read
+                * self.global_minus_read_multiset_hashes.hash_final
+        );
+        self.global_minus_read_multiset_hashes
+            .append_to_transcript::<G>(transcript);
 
-        let (claims_read_write, r_read_write) = self
-            .memory_checking_proof
-            .read_write_grand_product
-            .verify::<G, Transcript>(&interleaved_read_write_hashes, transcript);
-        let (claims_init_final, r_init_final) = self
-            .memory_checking_proof
-            .init_final_grand_product
-            .verify::<G, Transcript>(&interleaved_init_final_hashes, transcript);
+        let interleaved_hashes = vec![
+            self.read_timestamp_multiset_hashes.hash_read,
+            self.read_timestamp_multiset_hashes.hash_write,
+            self.read_timestamp_multiset_hashes.hash_init,
+            self.read_timestamp_multiset_hashes.hash_final,
+            self.global_minus_read_multiset_hashes.hash_read,
+            self.global_minus_read_multiset_hashes.hash_write,
+            self.global_minus_read_multiset_hashes.hash_init,
+            self.global_minus_read_multiset_hashes.hash_final,
+        ];
 
-        self.memory_checking_proof
-            .read_write_openings
-            .verify_openings(&self.commitment, &r_read_write, transcript)?;
-        self.memory_checking_proof
-            .read_write_openings
+        let (grand_product_claims, r_grand_product) = self
+            .batched_grand_product
+            .verify::<G, Transcript>(&interleaved_hashes, transcript);
+
+        self.read_write_openings
+            .verify_openings(&self.commitment, &r_grand_product, transcript)?;
+        self.read_write_openings
             .memory_poly_openings
             .as_ref()
             .unwrap()
-            .verify_openings(memory_commitment, &r_read_write, transcript)?;
-        self.memory_checking_proof
-            .init_final_openings
-            .verify_openings(&self.commitment, &r_init_final, transcript)?;
+            .verify_openings(memory_commitment, &r_grand_product, transcript)?;
+        self.init_final_openings
+            .verify_openings(&self.commitment, &r_grand_product, transcript)?;
 
-        self.memory_checking_proof
-            .read_write_openings
-            .compute_verifier_openings(&r_read_write);
-        self.memory_checking_proof
-            .init_final_openings
-            .compute_verifier_openings(&r_init_final);
+        self.read_write_openings
+            .compute_verifier_openings(&r_grand_product);
+        self.init_final_openings
+            .compute_verifier_openings(&r_grand_product);
 
-        assert_eq!(claims_read_write.len(), claims_init_final.len());
-        assert!(claims_read_write.len() % 2 == 0);
-        let num_memories = claims_read_write.len() / 2;
-        let grand_product_claims: Vec<MultisetHashes<F>> = (0..num_memories)
-            .map(|i| MultisetHashes {
-                hash_read: claims_read_write[2 * i],
-                hash_write: claims_read_write[2 * i + 1],
-                hash_init: claims_init_final[2 * i],
-                hash_final: claims_init_final[2 * i + 1],
-            })
-            .collect();
+        debug_assert_eq!(grand_product_claims.len(), 8);
+        let grand_product_claims: Vec<MultisetHashes<F>> = vec![
+            MultisetHashes {
+                hash_read: grand_product_claims[0],
+                hash_write: grand_product_claims[1],
+                hash_init: grand_product_claims[2],
+                hash_final: grand_product_claims[3],
+            },
+            MultisetHashes {
+                hash_read: grand_product_claims[4],
+                hash_write: grand_product_claims[5],
+                hash_init: grand_product_claims[6],
+                hash_final: grand_product_claims[7],
+            },
+        ];
         RangeCheckPolynomials::check_fingerprints(
             grand_product_claims,
-            &self.memory_checking_proof.read_write_openings,
-            &self.memory_checking_proof.init_final_openings,
+            &self.read_write_openings,
+            &self.init_final_openings,
             &gamma,
             &tau,
         );
