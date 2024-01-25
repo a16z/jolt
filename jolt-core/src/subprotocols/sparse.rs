@@ -25,6 +25,7 @@ impl<F: PrimeField> SparsePoly<F> {
         self.entries[0]
     }
 
+    #[inline]
     pub fn low_high_iter(&self, index: usize) -> (Option<&F>, Option<&F>) {
         assert!(index < self.mid);
         let low_i = index;
@@ -36,30 +37,30 @@ impl<F: PrimeField> SparsePoly<F> {
     }
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
-        let mut entry_index = 0;
-        let mut new_entries = Vec::with_capacity(self.entries.len());
-        let mut new_indices = vec![None; self.mid];
+        let span_alloc = tracing::span!(tracing::Level::TRACE, "bound::allocation");
+        let _enter_alloc = span_alloc.enter();
 
-        let span = tracing::span!(tracing::Level::TRACE, "inner_loop");
+        let mut new_indices: Vec<Option<usize>> = vec![None; self.mid];
+        let mut new_entries: Vec<F> = Vec::with_capacity(self.entries.len());
+        drop(_enter_alloc);
+        drop(span_alloc);
+
+
+        let span = tracing::span!(tracing::Level::TRACE, "bound::inner_loop");
         let _enter = span.enter();
+        let mut entry_index = 0;
         for i in 0..self.mid {
-            let (low_i, high_i) = (self.indices[i], self.indices[i + self.mid]);
-
-            let new_entry = match (low_i, high_i) {
+            let new_entry = match self.low_high_iter(i){
                 (None, None) => continue,
-                (Some(low_i), None) => {
-                    let low = &self.entries[low_i];
+                (Some(low), None) => {
                     let m = F::one() - low;
                     *low + m * r
                 },
-                (None, Some(high_i)) => {
-                    let high = &self.entries[high_i];
+                (None, Some(high)) => {
                     let m = *high - F::one();
                     F::one() + m * r
                 },
-                (Some(low_i), Some(high_i)) => {
-                    let low = &self.entries[low_i];
-                    let high = &self.entries[high_i];
+                (Some(low), Some(high)) => {
                     let m = *high - low;
                     *low + m * r
                 },

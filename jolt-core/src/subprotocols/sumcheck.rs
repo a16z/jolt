@@ -4,6 +4,7 @@
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -476,7 +477,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 let _inner_span = tracing::span!(tracing::Level::TRACE, "inner_eval_loop");
                 let _inner_enter = _inner_span.enter();
 
-                let poly_evals: Vec<(F, F, F)> = (0..len).into_iter().map(|i| {
+                let poly_evals: (F, F, F) = (0..len).into_iter().map(|i| {
                     let left = left.low_high_iter(i);
                     let right = right.low_high_iter(i);
 
@@ -484,7 +485,38 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                         ((None, None), (None, None)) => {
                             eq_evals[i]
                         },
-                        // TODO(sragss): special single cases
+                        ((Some(low_left), None), (None, None)) => {
+                            // 2: high + (high - low) = 1 + (1 - low) = 2 - low
+                            // 3: high + (high - low) + (high - low) = 1 + (1 - low) + (1 - low) = 3 - low - low
+                            let eval_0 = *low_left * eq_evals[i].0;
+                            let eval_2 = (F::from(2u64) - low_left) * eq_evals[i].1;
+                            let eval_3 = (F::from(3u64) - low_left - low_left) * eq_evals[i].2;
+
+                            (eval_0, eval_2, eval_3)
+                        },
+                        ((None, Some(high_left)), (None, None)) => {
+                            let eval_0 = eq_evals[i].0;
+                            let m = *high_left - F::one();
+                            let eval_2 = (*high_left + m) * eq_evals[i].1;
+                            let eval_3 = (eval_2 + m) * eq_evals[i].2;
+
+                            (eval_0, eval_2, eval_3)
+                        },
+                        ((None, None), (Some(low_right), None)) => {
+                            let eval_0 = *low_right * eq_evals[i].0;
+                            let eval_2 = (F::from(2u64) - low_right) * eq_evals[i].1;
+                            let eval_3 = (F::from(3u64) - low_right - low_right) * eq_evals[i].2;
+
+                            (eval_0, eval_2, eval_3)
+                        },
+                        ((None, None), (None, Some(high_right))) => {
+                            let eval_0 = eq_evals[i].0;
+                            let m = *high_right - F::one();
+                            let eval_2 = (*high_right + m) * eq_evals[i].1;
+                            let eval_3 = (eval_2 + m) * eq_evals[i].2;
+
+                            (eval_0, eval_2, eval_3)
+                        },
                         _ => {
                             let (left_low, left_high) = left;
                             let left_low = *left_low.unwrap_or(&F::one());
@@ -503,22 +535,25 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             let right_2 = right_high + right_m;
                             let right_3 = right_2 + right_m;
 
-                            let eval_0 = left_low * right_low * eq_evals[i].0;
-                            let eval_2 = left_2 * right_2 * eq_evals[i].1;
-                            let eval_3 = left_3 * right_3 * eq_evals[i].2;
+                            let eval_0 = mul_0_1_optimized(&left_low, &right_low) * eq_evals[i].0;
+                            let eval_2 = mul_0_1_optimized(&left_2, &right_2) * eq_evals[i].1;
+                            let eval_3 = mul_0_1_optimized(&left_3, &right_3) * eq_evals[i].2;
 
                             (eval_0, eval_2, eval_3)
                         }
                     }
-                }).collect();
-
-                let _other_span = tracing::span!(tracing::Level::TRACE, "summing_loop");
-                let _other_enter = _other_span.enter();
-                // TODO(sragss): Split for now for benchmarking -- may save RAM / alloc time to combine
-                let poly_evals = poly_evals.into_iter().fold(
+                }).fold(
                     (F::zero(), F::zero(), F::zero()),
                     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
                 );
+
+                // let _other_span = tracing::span!(tracing::Level::TRACE, "summing_loop");
+                // let _other_enter = _other_span.enter();
+                // // TODO(sragss): Split for now for benchmarking -- may save RAM / alloc time to combine
+                // let poly_evals = poly_evals.into_iter().fold(
+                //     (F::zero(), F::zero(), F::zero()),
+                //     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+                // );
 
                 poly_evals
             }).collect();
@@ -1246,8 +1281,8 @@ pub mod bench {
         use ark_std::UniformRand;
         use ark_std::{test_rng, rand::Rng};
 
-        let log_size = 12;
-        let batch_size = 10;
+        let log_size = 18;
+        let batch_size = 80;
         let size = 1 << log_size;
         let mut poly_a_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
         let mut poly_b_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
@@ -1261,18 +1296,19 @@ pub mod bench {
 
         let coeffs: Vec<Fr> = (0..batch_size).map(|_| Fr::rand(&mut rng)).collect();
 
-        let mut joint_claim = Fr::zero();
-        for batch_i in 0..batch_size {
-            let mut claim = Fr::zero();
-            for i in 0..size {
-                use crate::utils::index_to_field_bitvector;
+        let joint_claim = Fr::from(12); // Wrong, but computation below is slow
+        // let mut joint_claim = Fr::zero();
+        // for batch_i in 0..batch_size {
+        //     let mut claim = Fr::zero();
+        //     for i in 0..size {
+        //         use crate::utils::index_to_field_bitvector;
 
-                claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
-                    * poly_a_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size))
-                    * poly_b_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size));
-            }
-            joint_claim += coeffs[batch_i] * claim;
-        }
+        //         claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
+        //             * poly_a_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size))
+        //             * poly_b_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size));
+        //     }
+        //     joint_claim += coeffs[batch_i] * claim;
+        // }
 
         let mut transcript  = Transcript::new(b"test_transcript");
         let params = CubicSumcheckParams::new_prod_ones(
@@ -1280,14 +1316,14 @@ pub mod bench {
             poly_b_dense.clone(), 
             poly_eq.clone(), 
             log_size);
-        let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<EdwardsProjective>(
+        let (_proof, prove_randomness, final_poly_evals) = black_box(SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<EdwardsProjective>(
             &joint_claim, 
             params, 
             &coeffs, 
-            &mut transcript);
+            &mut transcript));
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) =
+        let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) = black_box(
             SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<EdwardsProjective>(
                 &joint_claim, 
                 poly_eq.clone(), 
@@ -1296,7 +1332,8 @@ pub mod bench {
                 &coeffs, 
                 log_size, 
                 &mut transcript
-            );
+            )
+        );
     }
 }
 
