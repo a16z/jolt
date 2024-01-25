@@ -433,9 +433,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     pub fn prove_cubic_batched_sparse_prod<G>(
         claim: &F,
         mut eq: DensePolynomial<F>,
-        mut left: SparsePoly<F>,
-        mut right: SparsePoly<F>,
-        // coeffs: &[F], // TODO(sragss): for batched
+        mut lefts: Vec<SparsePoly<F>>,
+        mut rights: Vec<SparsePoly<F>>,
+        coeffs: &[F],
         num_rounds: usize,
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
@@ -469,68 +469,74 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
             let _enter = _span.enter();
 
-            let poly_evals: Vec<(F, F, F)> = (0..len).into_iter().map(|i| {
-                let left = left.low_high_iter(i);
-                let right = right.low_high_iter(i);
+            
+            let batched_poly_evals: Vec<(F,F,F)> = lefts.par_iter()
+                .zip(rights.par_iter())
+                .map(|(left, right)| {
+                let _inner_span = tracing::span!(tracing::Level::TRACE, "inner_eval_loop");
+                let _inner_enter = _inner_span.enter();
 
-                match (left, right) {
-                    ((None, None), (None, None)) => {
-                        eq_evals[i]
-                    },
-                    // TODO(sragss): special single cases
-                    _ => {
-                        let (left_low, left_high) = left;
-                        let left_low = *left_low.unwrap_or(&F::one());
-                        let left_high = *left_high.unwrap_or(&F::one());
+                let poly_evals: Vec<(F, F, F)> = (0..len).into_iter().map(|i| {
+                    let left = left.low_high_iter(i);
+                    let right = right.low_high_iter(i);
 
-                        let (right_low, right_high) = right;
-                        let right_low = *right_low.unwrap_or(&F::one());
-                        let right_high = *right_high.unwrap_or(&F::one());
+                    match (left, right) {
+                        ((None, None), (None, None)) => {
+                            eq_evals[i]
+                        },
+                        // TODO(sragss): special single cases
+                        _ => {
+                            let (left_low, left_high) = left;
+                            let left_low = *left_low.unwrap_or(&F::one());
+                            let left_high = *left_high.unwrap_or(&F::one());
 
-                        let left_m = left_high - left_low;
-                        let right_m = right_high - right_low;
+                            let (right_low, right_high) = right;
+                            let right_low = *right_low.unwrap_or(&F::one());
+                            let right_high = *right_high.unwrap_or(&F::one());
 
-                        let left_2 = left_high + left_m;
-                        let left_3 = left_2 + left_m;
+                            let left_m = left_high - left_low;
+                            let right_m = right_high - right_low;
 
-                        let right_2 = right_high + right_m;
-                        let right_3 = right_2 + right_m;
+                            let left_2 = left_high + left_m;
+                            let left_3 = left_2 + left_m;
 
-                        let eval_0 = left_low * right_low * eq_evals[i].0;
-                        let eval_2 = left_2 * right_2 * eq_evals[i].1;
-                        let eval_3 = left_3 * right_3 * eq_evals[i].2;
+                            let right_2 = right_high + right_m;
+                            let right_3 = right_2 + right_m;
 
-                        (eval_0, eval_2, eval_3)
+                            let eval_0 = left_low * right_low * eq_evals[i].0;
+                            let eval_2 = left_2 * right_2 * eq_evals[i].1;
+                            let eval_3 = left_3 * right_3 * eq_evals[i].2;
+
+                            (eval_0, eval_2, eval_3)
+                        }
                     }
-                }
+                }).collect();
+
+                let _other_span = tracing::span!(tracing::Level::TRACE, "summing_loop");
+                let _other_enter = _other_span.enter();
+                // TODO(sragss): Split for now for benchmarking -- may save RAM / alloc time to combine
+                let poly_evals = poly_evals.into_iter().fold(
+                    (F::zero(), F::zero(), F::zero()),
+                    |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+                );
+
+                poly_evals
             }).collect();
 
-            // TODO(sragss): Split for now for benchmarking
 
-            let poly_evals = poly_evals.into_iter().fold(
-                (F::zero(), F::zero(), F::zero()),
-                |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-            );
 
             drop(_enter);
             drop(_span);
 
-            // let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
-            // let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
-            // let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
-
-            // let evals = vec![
-            //     evals_combined_0,
-            //     e - evals_combined_0,
-            //     evals_combined_2,
-            //     evals_combined_3,
-            // ];
+            let evals_combined_0 = (0..batched_poly_evals.len()).map(|i| batched_poly_evals[i].0 * coeffs[i]).sum();
+            let evals_combined_2 = (0..batched_poly_evals.len()).map(|i| batched_poly_evals[i].1 * coeffs[i]).sum();
+            let evals_combined_3 = (0..batched_poly_evals.len()).map(|i| batched_poly_evals[i].2 * coeffs[i]).sum();
 
             let evals = vec![
-                poly_evals.0,
-                e - poly_evals.0,
-                poly_evals.1,
-                poly_evals.2,
+                evals_combined_0,
+                e - evals_combined_0,
+                evals_combined_2,
+                evals_combined_3,
             ];
             let poly = UniPoly::from_evals(&evals);
 
@@ -548,16 +554,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = tracing::span!(tracing::Level::TRACE, "binding");
             let _enter = _span.enter();
 
+            let mut poly_iter: Vec<&mut SparsePoly<F>> = lefts.iter_mut()
+                .chain(rights.iter_mut())
+                .collect();
 
-            // TODO(sragss): Parallelize.
+
             rayon::join(
                 || eq.bound_poly_var_top(&r_j),
-                || {
-                    rayon::join(
-                        || left.bound_poly_var_top(&r_j),
-                        || right.bound_poly_var_top(&r_j)
-                    )
-                }
+                || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j))
             );
 
             // let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
@@ -576,11 +580,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             cubic_polys.push(poly.compress());
         }
 
+        let left_final_evals = lefts.iter().map(|left| left.final_eval()).collect();
+        let right_final_evals = rights.iter().map(|right| right.final_eval()).collect();
+
         assert_eq!(eq.len(), 1);
-        assert_eq!(left.len(), 1);
-        assert_eq!(right.len(), 1);
-        let claims_prod = (vec![left.final_eval()], vec![right.final_eval()], eq[0]);
-        // let claims_prod = params.get_final_evals();
+        let claims_prod = (left_final_evals, right_final_evals, eq[0]);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -1178,44 +1182,46 @@ pub mod bench {
         use ark_std::{test_rng, rand::Rng};
 
         let log_size = 12;
+        let batch_size = 10;
         let size = 1 << log_size;
-        let mut poly_a_sparse: SparsePoly<Fr> = init_bind_bench(log_size, 0.93);
-        let mut poly_b_sparse: SparsePoly<Fr> = init_bind_bench(log_size, 0.93);
+        let mut poly_a_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
+        let mut poly_b_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
 
         let mut rng = ark_std::test_rng();
         let r: Vec<Fr> = (0..log_size).map(|_| Fr::rand(&mut rng)).collect();
         let poly_eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
 
-        let mut poly_a_dense = poly_a_sparse.clone().to_dense();
-        let mut poly_b_dense = poly_b_sparse.clone().to_dense();
+        let mut poly_a_dense: Vec<DensePolynomial<Fr>> = poly_a_sparse.iter().map(|poly| poly.clone().to_dense()).collect();
+        let mut poly_b_dense: Vec<DensePolynomial<Fr>> = poly_b_sparse.iter().map(|poly| poly.clone().to_dense()).collect();
 
-        let comb_func_prod = |polys: &[Fr] | -> Fr {
-            debug_assert_eq!(polys.len(), 3);
-            polys[0] * mul_0_1_optimized(&polys[1], &polys[2])
-        };
-        
-        let mut claim = Fr::zero();
-        for i in 0..size {
-            use crate::utils::index_to_field_bitvector;
+        let coeffs: Vec<Fr> = (0..batch_size).map(|_| Fr::rand(&mut rng)).collect();
 
-            claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
-                * poly_a_dense.evaluate(&index_to_field_bitvector(i, log_size))
-                * poly_b_dense.evaluate(&index_to_field_bitvector(i, log_size));
+        let mut joint_claim = Fr::zero();
+        for batch_i in 0..batch_size {
+            let mut claim = Fr::zero();
+            for i in 0..size {
+                use crate::utils::index_to_field_bitvector;
+
+                claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
+                    * poly_a_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size))
+                    * poly_b_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size));
+            }
+            joint_claim += coeffs[batch_i] * claim;
         }
 
-        group.bench_function("prove_arbitrary (sparse)", |b| {
+        group.bench_function("prove_cubic_batched_prod_ones", |b| {
             b.iter(|| {
                 let mut transcript  = Transcript::new(b"test_transcript");
-                let mut dense_polys = vec![poly_eq.clone(), poly_a_dense.clone(), poly_b_dense.clone()];
-                let (_proof, prove_randomness, final_poly_evals) =
-                    SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, EdwardsProjective, _>(
-                        &claim,
-                        log_size,
-                        &mut dense_polys,
-                        comb_func_prod,
-                        3,
-                        &mut transcript,
-                    );
+                let params = CubicSumcheckParams::new_prod_ones(
+                    poly_a_dense.clone(), 
+                    poly_b_dense.clone(), 
+                    poly_eq.clone(), 
+                    log_size);
+                let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<EdwardsProjective>(
+                    &joint_claim, 
+                    params, 
+                    &coeffs, 
+                    &mut transcript);
             })
         });
 
@@ -1224,19 +1230,73 @@ pub mod bench {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) =
                     SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<EdwardsProjective>(
-                        &claim, 
+                        &joint_claim, 
                         poly_eq.clone(), 
                         poly_a_sparse.clone(), 
-                        poly_b_sparse.clone(), 
+                        poly_b_sparse.clone(),
+                        &coeffs, 
                         log_size, 
                         &mut transcript
                     );
             })
         });
-        // assert_eq!(prove_randomness, sparse_prove_randomness);
-        // assert_eq!(final_poly_evals[0], sparse_final_poly_evals.2);
-        // assert_eq!(final_poly_evals[1], sparse_final_poly_evals.0[0]);
-        // assert_eq!(final_poly_evals[2], sparse_final_poly_evals.1[0]);
+    }
+
+    pub fn run_sparse() {
+        use ark_std::UniformRand;
+        use ark_std::{test_rng, rand::Rng};
+
+        let log_size = 12;
+        let batch_size = 10;
+        let size = 1 << log_size;
+        let mut poly_a_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
+        let mut poly_b_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
+
+        let mut rng = ark_std::test_rng();
+        let r: Vec<Fr> = (0..log_size).map(|_| Fr::rand(&mut rng)).collect();
+        let poly_eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
+
+        let mut poly_a_dense: Vec<DensePolynomial<Fr>> = poly_a_sparse.iter().map(|poly| poly.clone().to_dense()).collect();
+        let mut poly_b_dense: Vec<DensePolynomial<Fr>> = poly_b_sparse.iter().map(|poly| poly.clone().to_dense()).collect();
+
+        let coeffs: Vec<Fr> = (0..batch_size).map(|_| Fr::rand(&mut rng)).collect();
+
+        let mut joint_claim = Fr::zero();
+        for batch_i in 0..batch_size {
+            let mut claim = Fr::zero();
+            for i in 0..size {
+                use crate::utils::index_to_field_bitvector;
+
+                claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
+                    * poly_a_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size))
+                    * poly_b_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size));
+            }
+            joint_claim += coeffs[batch_i] * claim;
+        }
+
+        let mut transcript  = Transcript::new(b"test_transcript");
+        let params = CubicSumcheckParams::new_prod_ones(
+            poly_a_dense.clone(), 
+            poly_b_dense.clone(), 
+            poly_eq.clone(), 
+            log_size);
+        let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<EdwardsProjective>(
+            &joint_claim, 
+            params, 
+            &coeffs, 
+            &mut transcript);
+
+        let mut transcript = Transcript::new(b"test_transcript");
+        let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) =
+            SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<EdwardsProjective>(
+                &joint_claim, 
+                poly_eq.clone(), 
+                poly_a_sparse.clone(), 
+                poly_b_sparse.clone(),
+                &coeffs, 
+                log_size, 
+                &mut transcript
+            );
     }
 }
 
@@ -1436,54 +1496,57 @@ mod test {
         use ark_std::{test_rng, rand::Rng};
 
         let log_size = 3;
+        let batch_size = 3;
         let size = 1 << log_size;
-        let mut poly_a_sparse: SparsePoly<Fr> = init_bind_bench(log_size, 0.93);
-        let mut poly_b_sparse: SparsePoly<Fr> = init_bind_bench(log_size, 0.93);
+        let mut poly_a_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
+        let mut poly_b_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
 
         let mut rng = ark_std::test_rng();
         let r: Vec<Fr> = (0..log_size).map(|_| Fr::rand(&mut rng)).collect();
         let poly_eq = DensePolynomial::new(EqPolynomial::new(r.clone()).evals());
 
-        let mut poly_a_dense = poly_a_sparse.clone().to_dense();
-        let mut poly_b_dense = poly_b_sparse.clone().to_dense();
+        let mut poly_a_dense: Vec<DensePolynomial<Fr>> = poly_a_sparse.iter().map(|poly| poly.clone().to_dense()).collect();
+        let mut poly_b_dense: Vec<DensePolynomial<Fr>> = poly_b_sparse.iter().map(|poly| poly.clone().to_dense()).collect();
 
-        let comb_func_prod =
-            |polys: &[Fr]| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
-        
-        let mut claim = Fr::zero();
-        for i in 0..size {
-            use crate::utils::index_to_field_bitvector;
+        let coeffs: Vec<Fr> = (0..batch_size).map(|_| Fr::rand(&mut rng)).collect();
 
-            claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
-                * poly_a_dense.evaluate(&index_to_field_bitvector(i, log_size))
-                * poly_b_dense.evaluate(&index_to_field_bitvector(i, log_size));
+        let mut joint_claim = Fr::zero();
+        for batch_i in 0..batch_size {
+            let mut claim = Fr::zero();
+            for i in 0..size {
+                use crate::utils::index_to_field_bitvector;
+
+                claim += poly_eq.evaluate(&index_to_field_bitvector(i, log_size))
+                    * poly_a_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size))
+                    * poly_b_dense[batch_i].evaluate(&index_to_field_bitvector(i, log_size));
+            }
+            joint_claim += coeffs[batch_i] * claim;
         }
 
         let mut transcript  = Transcript::new(b"test_transcript");
-        let mut dense_polys = vec![poly_eq.clone(), poly_a_dense.clone(), poly_b_dense.clone()];
-        let (_proof, prove_randomness, final_poly_evals) =
-            SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _>(
-                &claim,
-                log_size,
-                &mut dense_polys,
-                comb_func_prod,
-                3,
-                &mut transcript,
-            );
+        let params = CubicSumcheckParams::new_prod_ones(
+            poly_a_dense.clone(), 
+            poly_b_dense.clone(), 
+            poly_eq.clone(), 
+            log_size);
+        let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<G1Projective>(
+            &joint_claim, 
+            params, 
+            &coeffs, 
+            &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) =
             SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<G1Projective>(
-                &claim, 
+                &joint_claim, 
                 poly_eq.clone(), 
                 poly_a_sparse.clone(), 
-                poly_b_sparse.clone(), 
+                poly_b_sparse.clone(),
+                &coeffs, 
                 log_size, 
                 &mut transcript
             );
         assert_eq!(prove_randomness, sparse_prove_randomness);
-        assert_eq!(final_poly_evals[0], sparse_final_poly_evals.2);
-        assert_eq!(final_poly_evals[1], sparse_final_poly_evals.0[0]);
-        assert_eq!(final_poly_evals[2], sparse_final_poly_evals.1[0]);
+        assert_eq!(final_poly_evals, sparse_final_poly_evals);
     }
 }

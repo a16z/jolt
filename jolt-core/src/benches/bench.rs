@@ -10,6 +10,7 @@ use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use crate::subprotocols::sparse;
+use crate::subprotocols::sumcheck::bench::run_sparse;
 use crate::utils::math::Math;
 use ark_curve25519::{EdwardsProjective, Fr};
 use ark_std::{test_rng, UniformRand};
@@ -23,6 +24,7 @@ use rand_core::SeedableRng;
 pub enum BenchType {
     Poly,
     SparsePolyBind,
+    SparseSumcheck,
     EverythingExceptR1CS,
     Bytecode,
     ReadWriteMemory,
@@ -41,6 +43,7 @@ pub fn benchmarks(
     match bench_type {
         BenchType::Poly => dense_ml_poly(),
         BenchType::SparsePolyBind => sparse_ml_poly_bind(),
+        BenchType::SparseSumcheck => sparse_sumcheck(),
         BenchType::EverythingExceptR1CS => {
             prove_e2e_except_r1cs(num_cycles, memory_size, bytecode_size)
         }
@@ -467,4 +470,8 @@ fn sparse_ml_poly_bind() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     ));
 
     tasks
+}
+
+fn sparse_sumcheck() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    vec![(tracing::info_span!("BigSpan"), Box::new(move || run_sparse()))]
 }
