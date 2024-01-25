@@ -239,7 +239,6 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
 
   type G1 = bn256::Point;
   type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-  // type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
   type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
 
   let inputs_ff = inputs
