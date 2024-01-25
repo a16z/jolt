@@ -75,7 +75,7 @@ Finally, we merge all $log(s)$-variate polynomials ($`\text{dim}_i, E_i, \text{r
 
 Now we can commit these 2 merged multilinear polynomials via any (dense) multilinear polynomial commitment scheme. This code is handled by `SparsePolynomialCommitment` -> `SparsePolyCommitmentGens` -> `PolyEvalProof` -> `DotProductProofLog` -> .... Initially we use Hyrax from [Spartan](https://github.com/microsoft/Spartan) as the dense PCS, but this could be swapped down the road for different performance characteristics.
 
-After inital commitment, `SparsePolynomialEvaluationProof::<_, _, _, SubtableStrategy>::prove(dense, ...)` is called. `SubtableStrategy` describes which table collation function `g` will be used and which set of subtables `T_i` to materialize.
+After initial commitment, `SparsePolynomialEvaluationProof::<_, _, _, SubtableStrategy>::prove(dense, ...)` is called. `SubtableStrategy` describes which table collation function `g` will be used and which set of subtables `T_i` to materialize.
 
 `Subtables::new()`: First we materialize the subtables and read the entries at their respective lookup indices. These entries determine (via Lagrange interpolation) the $E_i$ polynomials. We encode each multilinear $E_i$ polynomial and concatenate them into a single dense multilinear polynomial before committing as in Step 1.
 
@@ -93,7 +93,7 @@ Run a generic `SumcheckInstanceProof::prove_arbitrary` assuming the lookup polyn
 
 The valid formation of $E_i$ is checked using memory checking techniques described in Section 5 of Lasso or Section 7.2 of Spartan.
 
-This step gets a bit messy becuase we combine each dimension of the memory checking sumcheck into a single sumcheck via a random linear combination of the input polynomials.
+This step gets a bit messy because we combine each dimension of the memory checking sumcheck into a single sumcheck via a random linear combination of the input polynomials.
 
 Idea is to use homomorphic multiset hashes to ensure set equality.
 
