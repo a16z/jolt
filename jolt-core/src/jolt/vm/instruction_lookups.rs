@@ -649,8 +649,6 @@ where
         let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .flat_map(|i| {
-                let half = read_fingerprints[i].len() / 2;
-
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i);
                 let flag = &polynomials.subtable_flag_polys[subtable_index];

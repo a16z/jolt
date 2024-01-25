@@ -1,9 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
-};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::PhantomData;
 
 use crate::{
@@ -38,7 +36,6 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     _group: PhantomData<G>,
-    M: usize,
     pub read_timestamps: Vec<u64>,
     pub read_cts_read_timestamp: DensePolynomial<F>,
     pub read_cts_global_minus_read: DensePolynomial<F>,
@@ -68,7 +65,6 @@ where
 
         Self {
             _group: PhantomData,
-            M,
             read_timestamps,
             read_cts_read_timestamp: DensePolynomial::from_usize(&read_cts_read_timestamp),
             read_cts_global_minus_read: DensePolynomial::from_usize(&read_cts_global_minus_read),
@@ -80,21 +76,13 @@ where
 
 pub struct RangeCheckCommitment<G: CurveGroup> {
     generators: RangeCheckCommitmentGenerators<G>,
-    pub read_cts_commitment: CombinedTableCommitment<G>,
-    pub final_cts_commitment: CombinedTableCommitment<G>,
+    pub commitment: CombinedTableCommitment<G>,
 }
 
 /// Container for generators for polynomial commitments. These preallocate memory
 /// and allow commitments to `DensePolynomials`.
-pub struct RangeCheckCommitmentGenerators<G: CurveGroup> {
-    pub read_commitment_gens: PolyCommitmentGens<G>,
-    pub final_commitment_gens: PolyCommitmentGens<G>,
-}
-
-pub struct BatchedRangeCheckPolynomials<F: PrimeField> {
-    pub batched_read_cts: DensePolynomial<F>,
-    pub batched_final_cts: DensePolynomial<F>,
-}
+pub type RangeCheckCommitmentGenerators<G> = PolyCommitmentGens<G>;
+pub type BatchedRangeCheckPolynomials<F> = DensePolynomial<F>;
 
 impl<F, G> BatchablePolynomials for RangeCheckPolynomials<F, G>
 where
@@ -106,66 +94,43 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let (batched_read_cts, batched_final_cts) = rayon::join(
-            || {
-                DensePolynomial::merge(&vec![
-                    &self.read_cts_read_timestamp,
-                    &self.read_cts_global_minus_read,
-                ])
-            },
-            || {
-                DensePolynomial::merge(&vec![
-                    &self.final_cts_read_timestamp,
-                    &self.final_cts_global_minus_read,
-                ])
-            },
-        );
-        BatchedRangeCheckPolynomials {
-            batched_read_cts,
-            batched_final_cts,
-        }
+        DensePolynomial::merge(&vec![
+            &self.read_cts_read_timestamp,
+            &self.read_cts_global_minus_read,
+            &self.final_cts_read_timestamp,
+            &self.final_cts_global_minus_read,
+        ])
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (read_commitment_gens, read_cts_commitment) = batched_polys
-            .batched_read_cts
-            .combined_commit(b"BatchedRangeCheckPolynomials.batched_read_cts");
-        let (final_commitment_gens, final_cts_commitment) = batched_polys
-            .batched_final_cts
-            .combined_commit(b"BatchedRangeCheckPolynomials.batched_final_cts");
-
-        let generators = RangeCheckCommitmentGenerators {
-            read_commitment_gens,
-            final_commitment_gens,
-        };
+        let (generators, commitment) =
+            batched_polys.combined_commit(b"BatchedRangeCheckPolynomials");
 
         Self::Commitment {
             generators,
-            read_cts_commitment,
-            final_cts_commitment,
+            commitment,
         }
     }
 }
 
-pub struct RangeCheckReadWriteOpenings<F, G>
+pub struct RangeCheckOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    read_cts_openings: [F; 2],
-    read_cts_opening_proof: CombinedTableEvalProof<G>,
+    openings: [F; 4],
+    opening_proof: CombinedTableEvalProof<G>,
     memory_poly_openings: Option<MemoryReadWriteOpenings<F, G>>,
     identity_poly_opening: Option<F>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>>
-    for RangeCheckReadWriteOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>> for RangeCheckOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = [F; 2];
+    type Openings = [F; 4];
 
     #[tracing::instrument(skip_all, name = "RangeCheckReadWriteOpenings::open")]
     fn open(polynomials: &RangeCheckPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
@@ -173,6 +138,8 @@ where
         [
             &polynomials.read_cts_read_timestamp,
             &polynomials.read_cts_global_minus_read,
+            &polynomials.final_cts_read_timestamp,
+            &polynomials.final_cts_global_minus_read,
         ]
         .par_iter()
         .map(|poly| poly.evaluate_at_chi(&chis))
@@ -186,22 +153,22 @@ where
         polynomials: &BatchedRangeCheckPolynomials<F>,
         commitment: &RangeCheckCommitment<G>,
         opening_point: &Vec<F>,
-        openings: [F; 2],
+        openings: [F; 4],
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let read_cts_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_read_cts,
+        let opening_proof = CombinedTableEvalProof::prove(
+            &polynomials,
             &openings,
             opening_point,
-            &commitment.generators.read_commitment_gens,
+            &commitment.generators,
             transcript,
             random_tape,
         );
 
         Self {
-            read_cts_openings: [openings[0], openings[1]],
-            read_cts_opening_proof,
+            openings,
+            opening_proof,
             memory_poly_openings: None,
             identity_poly_opening: None,
         }
@@ -218,89 +185,11 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.read_cts_opening_proof.verify(
+        self.opening_proof.verify(
             opening_point,
-            &self.read_cts_openings,
-            &commitment.generators.read_commitment_gens,
-            &commitment.read_cts_commitment,
-            transcript,
-        )
-    }
-}
-
-pub struct RangeCheckFinalOpenings<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    identity_poly_opening: Option<F>,
-    final_cts_openings: [F; 2],
-    final_cts_opening_proof: CombinedTableEvalProof<G>,
-}
-
-impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>>
-    for RangeCheckFinalOpenings<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    type Openings = [F; 2];
-
-    #[tracing::instrument(skip_all, name = "RangeCheckFinalOpenings::open")]
-    fn open(polynomials: &RangeCheckPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-        [
-            &polynomials.final_cts_read_timestamp,
-            &polynomials.final_cts_global_minus_read,
-        ]
-        .par_iter()
-        .map(|poly| poly.evaluate_at_chi(&chis))
-        .collect::<Vec<F>>()
-        .try_into()
-        .unwrap()
-    }
-
-    #[tracing::instrument(skip_all, name = "RangeCheckFinalOpenings::prove_openings")]
-    fn prove_openings(
-        polynomials: &BatchedRangeCheckPolynomials<F>,
-        commitment: &RangeCheckCommitment<G>,
-        opening_point: &Vec<F>,
-        final_cts_openings: [F; 2],
-        transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let final_cts_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_final_cts,
-            &final_cts_openings,
-            opening_point,
-            &commitment.generators.final_commitment_gens,
-            transcript,
-            random_tape,
-        );
-
-        Self {
-            identity_poly_opening: None,
-            final_cts_openings,
-            final_cts_opening_proof,
-        }
-    }
-
-    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
-        self.identity_poly_opening =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-    }
-
-    fn verify_openings(
-        &self,
-        commitment: &RangeCheckCommitment<G>,
-        opening_point: &Vec<F>,
-        transcript: &mut Transcript,
-    ) -> Result<(), ProofVerifyError> {
-        self.final_cts_opening_proof.verify(
-            opening_point,
-            &self.final_cts_openings,
-            &commitment.generators.final_commitment_gens,
-            &commitment.final_cts_commitment,
+            &self.openings,
+            &commitment.generators,
+            &commitment.commitment,
             transcript,
         )
     }
@@ -311,8 +200,8 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type ReadWriteOpenings = RangeCheckReadWriteOpenings<F, G>;
-    type InitFinalOpenings = RangeCheckFinalOpenings<F, G>;
+    type ReadWriteOpenings = RangeCheckOpenings<F, G>;
+    type InitFinalOpenings = RangeCheckOpenings<F, G>;
 
     fn prove_memory_checking(
         &self,
@@ -338,123 +227,41 @@ where
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::read_leaves")]
     fn read_leaves(
         &self,
-        polynomials: &RangeCheckPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
+        _polynomials: &RangeCheckPolynomials<F, G>,
+        _gamma: &F,
+        _tau: &F,
     ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        let leaf_fingerprints = (
-            (0..self.M)
-                .into_par_iter()
-                .map(|i| {
-                    polynomials.read_cts_read_timestamp[i] * gamma_squared
-                        + F::from(self.read_timestamps[i]) * gamma
-                        + F::from(self.read_timestamps[i])
-                        - *tau
-                })
-                .collect(),
-            (0..self.M)
-                .into_par_iter()
-                .map(|i| {
-                    polynomials.read_cts_global_minus_read[i] * gamma_squared
-                        + (F::from(i as u64 - self.read_timestamps[i])) * gamma
-                        + (F::from(i as u64 - self.read_timestamps[i]))
-                        - *tau
-                })
-                .collect(),
-        );
-        vec![
-            DensePolynomial::new(leaf_fingerprints.0),
-            DensePolynomial::new(leaf_fingerprints.1),
-        ]
+        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::write_leaves")]
     fn write_leaves(
         &self,
-        polynomials: &RangeCheckPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
+        _polynomials: &RangeCheckPolynomials<F, G>,
+        _gamma: &F,
+        _tau: &F,
     ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        let leaf_fingerprints = (
-            (0..self.M)
-                .into_par_iter()
-                .map(|i| {
-                    (polynomials.read_cts_read_timestamp[i] + F::one()) * gamma_squared
-                        + F::from(self.read_timestamps[i]) * gamma
-                        + F::from(self.read_timestamps[i])
-                        - *tau
-                })
-                .collect(),
-            (0..self.M)
-                .into_par_iter()
-                .map(|i| {
-                    (polynomials.read_cts_global_minus_read[i] + F::one()) * gamma_squared
-                        + (F::from(i as u64 - self.read_timestamps[i])) * gamma
-                        + (F::from(i as u64 - self.read_timestamps[i]))
-                        - *tau
-                })
-                .collect(),
-        );
-        vec![
-            DensePolynomial::new(leaf_fingerprints.0),
-            DensePolynomial::new(leaf_fingerprints.1),
-        ]
+        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::init_leaves")]
     fn init_leaves(
         &self,
         _polynomials: &RangeCheckPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
+        _gamma: &F,
+        _tau: &F,
     ) -> Vec<DensePolynomial<F>> {
-        let leaf_fingerprints: Vec<_> = (0..self.M)
-            .into_par_iter()
-            .map(|i| {
-                // 0 * gamma^2 +
-                F::from(i as u64) * gamma + F::from(i as u64) - *tau
-            })
-            .collect();
-        vec![
-            DensePolynomial::new(leaf_fingerprints.clone()),
-            DensePolynomial::new(leaf_fingerprints),
-        ]
+        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::final_leaves")]
     fn final_leaves(
         &self,
-        polynomials: &RangeCheckPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
+        _polynomials: &RangeCheckPolynomials<F, G>,
+        _gamma: &F,
+        _tau: &F,
     ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        let leaf_fingerprints = (
-            (0..self.M)
-                .into_par_iter()
-                .map(|i| {
-                    mul_0_1_optimized(&polynomials.final_cts_read_timestamp[i], &gamma_squared)
-                        + F::from(i as u64) * gamma
-                        + F::from(i as u64)
-                        - *tau
-                })
-                .collect(),
-            (0..self.M)
-                .into_par_iter()
-                .map(|i| {
-                    mul_0_1_optimized(&polynomials.final_cts_global_minus_read[i], &gamma_squared)
-                        + F::from(i as u64) * gamma
-                        + F::from(i as u64)
-                        - *tau
-                })
-                .collect(),
-        );
-        vec![
-            DensePolynomial::new(leaf_fingerprints.0),
-            DensePolynomial::new(leaf_fingerprints.1),
-        ]
+        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -490,12 +297,12 @@ where
             (
                 t_read_opening,
                 t_read_opening,
-                openings.read_cts_openings[0],
+                openings.openings[0],
             ),
             (
                 openings.identity_poly_opening.unwrap() - t_read_opening,
                 openings.identity_poly_opening.unwrap() - t_read_opening,
-                openings.read_cts_openings[1],
+                openings.openings[1],
             ),
         ]
     }
@@ -510,12 +317,12 @@ where
             (
                 t_read_opening,
                 t_read_opening,
-                openings.read_cts_openings[0] + F::one(),
+                openings.openings[0] + F::one(),
             ),
             (
                 openings.identity_poly_opening.unwrap() - t_read_opening,
                 openings.identity_poly_opening.unwrap() - t_read_opening,
-                openings.read_cts_openings[1] + F::one(),
+                openings.openings[1] + F::one(),
             ),
         ]
     }
@@ -540,12 +347,12 @@ where
             (
                 openings.identity_poly_opening.unwrap(),
                 openings.identity_poly_opening.unwrap(),
-                openings.final_cts_openings[0],
+                openings.openings[2],
             ),
             (
                 openings.identity_poly_opening.unwrap(),
                 openings.identity_poly_opening.unwrap(),
-                openings.final_cts_openings[1],
+                openings.openings[3],
             ),
         ]
     }
@@ -558,8 +365,7 @@ where
 {
     read_timestamp_multiset_hashes: MultisetHashes<F>,
     global_minus_read_multiset_hashes: MultisetHashes<F>,
-    read_write_openings: RangeCheckReadWriteOpenings<F, G>,
-    init_final_openings: RangeCheckFinalOpenings<F, G>,
+    opening_proof: RangeCheckOpenings<F, G>,
     batched_grand_product: BatchedGrandProductArgument<F>,
     pub commitment: RangeCheckCommitment<G>,
 }
@@ -605,16 +411,15 @@ where
         .map(|poly| poly.evaluate_at_chi(&chis))
         .collect();
 
-        // TODO(moodlezoup): parallelize openings
-        let mut read_write_openings = RangeCheckReadWriteOpenings::prove_openings(
+        let mut opening_proof = RangeCheckOpenings::prove_openings(
             &batched_range_check_polys,
             &range_check_commitment,
             &r_grand_product,
-            [openings[0], openings[1]],
+            [openings[0], openings[1], openings[2], openings[3]],
             transcript,
             random_tape,
         );
-        read_write_openings.memory_poly_openings = Some(MemoryReadWriteOpenings::prove_openings(
+        opening_proof.memory_poly_openings = Some(MemoryReadWriteOpenings::prove_openings(
             batched_memory_polynomials,
             memory_commitment,
             &r_grand_product,
@@ -628,20 +433,11 @@ where
             transcript,
             random_tape,
         ));
-        let init_final_openings = RangeCheckFinalOpenings::prove_openings(
-            &batched_range_check_polys,
-            &range_check_commitment,
-            &r_grand_product,
-            [openings[2], openings[3]],
-            transcript,
-            random_tape,
-        );
 
         Self {
             read_timestamp_multiset_hashes,
             global_minus_read_multiset_hashes,
-            read_write_openings,
-            init_final_openings,
+            opening_proof,
             batched_grand_product,
             commitment: range_check_commitment,
         }
@@ -669,36 +465,136 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // fka "ProductLayerProof"
-        let ((read_leaves, write_leaves), (init_leaves, final_leaves)) = rayon::join(
+        let _span = tracing::span!(
+            tracing::Level::TRACE,
+            "TimestampValiditProof: compute leaves"
+        );
+        let _enter = _span.enter();
+
+        let M = polynomials.read_timestamps.len();
+
+        let gamma_squared = gamma.square();
+
+        let (init_leaves, read_leaves) = rayon::join(
             || {
-                rayon::join(
-                    || polynomials.read_leaves(polynomials, &gamma, &tau),
-                    || polynomials.write_leaves(polynomials, &gamma, &tau),
-                )
+                let init_fingerprints: Vec<F> = (0..M)
+                    .into_par_iter()
+                    .map(|i| {
+                        // 0 * gamma^2 +
+                        F::from(i as u64) * gamma + F::from(i as u64) - tau
+                    })
+                    .collect();
+                DensePolynomial::new(init_fingerprints)
             },
             || {
-                rayon::join(
-                    || polynomials.init_leaves(polynomials, &gamma, &tau),
-                    || polynomials.final_leaves(polynomials, &gamma, &tau),
-                )
+                let read_fingerprints = rayon::join(
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                polynomials.read_cts_read_timestamp[i] * gamma_squared
+                                    + F::from(polynomials.read_timestamps[i]) * gamma
+                                    + F::from(polynomials.read_timestamps[i])
+                                    - tau
+                            })
+                            .collect()
+                    },
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                polynomials.read_cts_global_minus_read[i] * gamma_squared
+                                    + (F::from(i as u64 - polynomials.read_timestamps[i])) * gamma
+                                    + (F::from(i as u64 - polynomials.read_timestamps[i]))
+                                    - tau
+                            })
+                            .collect()
+                    },
+                );
+                vec![
+                    DensePolynomial::new(read_fingerprints.0),
+                    DensePolynomial::new(read_fingerprints.1),
+                ]
             },
         );
+        let (final_leaves, write_leaves) = rayon::join(
+            || {
+                let final_fingerprints = rayon::join(
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.final_cts_read_timestamp[i],
+                                    &gamma_squared,
+                                ) + init_leaves[i]
+                            })
+                            .collect()
+                    },
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.final_cts_global_minus_read[i],
+                                    &gamma_squared,
+                                ) + init_leaves[i]
+                            })
+                            .collect()
+                    },
+                );
+                vec![
+                    DensePolynomial::new(final_fingerprints.0),
+                    DensePolynomial::new(final_fingerprints.1),
+                ]
+            },
+            || {
+                let write_fingerprints = rayon::join(
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| read_leaves[0].evals_ref()[i] + gamma_squared)
+                            .collect()
+                    },
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| read_leaves[1].evals_ref()[i] + gamma_squared)
+                            .collect()
+                    },
+                );
+                vec![
+                    DensePolynomial::new(write_fingerprints.0),
+                    DensePolynomial::new(write_fingerprints.1),
+                ]
+            },
+        );
+        drop(_enter);
+        drop(_span);
 
-        let leaves = vec![
+        let leaves = [
+            &init_leaves,
             &read_leaves[0],
             &write_leaves[0],
-            &init_leaves[0],
             &final_leaves[0],
             &read_leaves[1],
             &write_leaves[1],
-            &init_leaves[1],
             &final_leaves[1],
         ];
+
+        let _span = tracing::span!(
+            tracing::Level::TRACE,
+            "TimestampValiditProof: construct grand product circuits"
+        );
+        let _enter = _span.enter();
 
         let circuits: Vec<GrandProductCircuit<F>> = leaves
             .into_par_iter()
             .map(|leaves_poly| GrandProductCircuit::new(leaves_poly))
             .collect();
+
+        drop(_enter);
+        drop(_span);
 
         let hashes: Vec<F> = circuits
             .par_iter()
@@ -706,9 +602,9 @@ where
             .collect();
 
         let read_timestamp_hashes = MultisetHashes {
-            hash_read: hashes[0],
-            hash_write: hashes[1],
-            hash_init: hashes[2],
+            hash_init: hashes[0],
+            hash_read: hashes[1],
+            hash_write: hashes[2],
             hash_final: hashes[3],
         };
         debug_assert_eq!(
@@ -719,10 +615,10 @@ where
         read_timestamp_hashes.append_to_transcript::<G>(transcript);
 
         let global_minus_read_hashes = MultisetHashes {
+            hash_init: hashes[0],
             hash_read: hashes[4],
             hash_write: hashes[5],
-            hash_init: hashes[6],
-            hash_final: hashes[7],
+            hash_final: hashes[6],
         };
         debug_assert_eq!(
             global_minus_read_hashes.hash_init * global_minus_read_hashes.hash_write,
@@ -730,10 +626,19 @@ where
             "Multiset hashes don't match"
         );
         global_minus_read_hashes.append_to_transcript::<G>(transcript);
+
         let batched_circuit = BatchedGrandProductCircuit::new_batch(circuits);
 
+        let _span = tracing::span!(
+            tracing::Level::TRACE,
+            "TimestampValiditProof: prove grand products"
+        );
+        let _enter = _span.enter();
         let (batched_grand_product, r_grand_product) =
             BatchedGrandProductArgument::prove::<G>(batched_circuit, transcript);
+        drop(_enter);
+        drop(_span);
+
         (
             batched_grand_product,
             read_timestamp_hashes,
@@ -778,14 +683,18 @@ where
         self.global_minus_read_multiset_hashes
             .append_to_transcript::<G>(transcript);
 
+        assert_eq!(
+            self.read_timestamp_multiset_hashes.hash_init,
+            self.global_minus_read_multiset_hashes.hash_init
+        );
+
         let interleaved_hashes = vec![
+            self.read_timestamp_multiset_hashes.hash_init,
             self.read_timestamp_multiset_hashes.hash_read,
             self.read_timestamp_multiset_hashes.hash_write,
-            self.read_timestamp_multiset_hashes.hash_init,
             self.read_timestamp_multiset_hashes.hash_final,
             self.global_minus_read_multiset_hashes.hash_read,
             self.global_minus_read_multiset_hashes.hash_write,
-            self.global_minus_read_multiset_hashes.hash_init,
             self.global_minus_read_multiset_hashes.hash_final,
         ];
 
@@ -793,40 +702,36 @@ where
             .batched_grand_product
             .verify::<G, Transcript>(&interleaved_hashes, transcript);
 
-        self.read_write_openings
+        self.opening_proof
             .verify_openings(&self.commitment, &r_grand_product, transcript)?;
-        self.read_write_openings
+        self.opening_proof
             .memory_poly_openings
             .as_ref()
             .unwrap()
             .verify_openings(memory_commitment, &r_grand_product, transcript)?;
-        self.init_final_openings
-            .verify_openings(&self.commitment, &r_grand_product, transcript)?;
 
-        self.read_write_openings
-            .compute_verifier_openings(&r_grand_product);
-        self.init_final_openings
+        self.opening_proof
             .compute_verifier_openings(&r_grand_product);
 
-        debug_assert_eq!(grand_product_claims.len(), 8);
+        debug_assert_eq!(grand_product_claims.len(), 7);
         let grand_product_claims: Vec<MultisetHashes<F>> = vec![
             MultisetHashes {
-                hash_read: grand_product_claims[0],
-                hash_write: grand_product_claims[1],
-                hash_init: grand_product_claims[2],
+                hash_init: grand_product_claims[0],
+                hash_read: grand_product_claims[1],
+                hash_write: grand_product_claims[2],
                 hash_final: grand_product_claims[3],
             },
             MultisetHashes {
+                hash_init: grand_product_claims[0],
                 hash_read: grand_product_claims[4],
                 hash_write: grand_product_claims[5],
-                hash_init: grand_product_claims[6],
-                hash_final: grand_product_claims[7],
+                hash_final: grand_product_claims[6],
             },
         ];
         RangeCheckPolynomials::check_fingerprints(
             grand_product_claims,
-            &self.read_write_openings,
-            &self.init_final_openings,
+            &self.opening_proof,
+            &self.opening_proof,
             &gamma,
             &tau,
         );
