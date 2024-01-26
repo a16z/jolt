@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use common::{path::JoltPaths, field_conversion::{ff_to_ruints, ruint_to_ff, ff_to_ruint}};
 use spartan2::{
-  traits::{snark::RelaxedR1CSSNARKTrait, Group},
+  traits::{snark::RelaxedR1CSSNARKTrait, Group, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}},
   SNARK, errors::SpartanError, 
 };
 use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum};
@@ -18,17 +18,19 @@ use bn256::Scalar as Spartan2Fr;
 
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
+const NUM_CHUNKS: usize = 4;
+const NUM_FLAGS: usize = 17;
+const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
+
 #[derive(Clone, Debug, Default)]
 pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
   num_steps: usize,
   inputs: Vec<Vec<F>>,
   // prog_a_rw: Vec<F>, 
   // prog_v_rw: Vec<F>, 
-  // prog_t_reads: Vec<F>, 
   // memreg_a_rw: Vec<F>, 
   // memreg_v_reads: Vec<F>, 
   // memreg_v_writes: Vec<F>, 
-  // memreg_t_reads: Vec<F>,
   // chunks_x: Vec<F>, 
   // chunks_y: Vec<F>, 
   // chunks_query: Vec<F>, 
@@ -41,26 +43,6 @@ impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     JoltCircuit{
       num_steps: num_steps,
       inputs: inputs,
-    }
-  }
-
-  pub fn all_zeros(W: usize, c: usize, N: usize) -> Self {
-    JoltCircuit{
-      num_steps: N,
-      inputs: vec![
-        vec![F::ZERO; N * 6], // TODO: change this to just N * 1 as prog code address is de-duplicated
-        vec![F::ZERO; N * 6],
-        vec![F::ZERO; N * 6], // same for t_reads
-        vec![F::ZERO; N * 3+(W/8)], 
-        vec![F::ZERO; N * 3+(W/8)],
-        vec![F::ZERO; N * 3+(W/8)],
-        vec![F::ZERO; N * 3+(W/8)],
-        vec![F::ZERO; N * c],
-        vec![F::ZERO; N * c],
-        vec![F::ZERO; N * c],
-        vec![F::ZERO; N],
-        vec![F::ZERO; N * 15],
-      ],
     }
   }
 }
@@ -87,9 +69,8 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
       "input_state".to_string()
     ];
 
-    assert_eq!(self.num_steps, self.inputs[0].len()); 
     let TRACE_LEN = self.inputs[0].len();
-    let NUM_STEPS = TRACE_LEN;
+    let NUM_STEPS = self.num_steps;
 
     // for variable [v], step_inputs[v][j] is the variable input for step j
     let inputs_chunked : Vec<Vec<_>> = self.inputs
@@ -125,7 +106,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     drop(full_wtns_guard);
     drop(full_wtns_span);
 
-
     for i in 0..NUM_STEPS {
       let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
       let _guard = span.enter();
@@ -141,32 +121,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     drop(_compute_witness_guard);
     drop(compute_witness_span);
 
-    /* Consistency constraints between steps: 
-    - Note that all steps use the same CS::one() variable as the constant 
-    - The only task then is to ensure that the input of each step is the output of the previous step  
-
-    Every variable is allocated into Aux and is in the following order: 
-    Aux: [out0, in0, aux0, ..., out_i, in_i, aux_i ...]
-     */
-
-    let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
-    let STATE_SIZE = 2; 
-    let span = tracing::span!(tracing::Level::INFO, "constraint_system::enforce_io_consistency");
-    let _guard = span.enter();
-    for i in 0..NUM_STEPS-1 {
-      let out_start_index = NUM_VARS_PER_STEP * i;
-      let in_start_next = NUM_VARS_PER_STEP * (i+1) + STATE_SIZE;
-      for j in 0..STATE_SIZE {
-        cs.enforce(
-          || format!("io consistency constraint {}, {}", i, j),
-          |_| LinearCombination::<F>::zero() + (F::from(1), CS::one()), 
-          |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(in_start_next+j))), 
-          |_| LinearCombination::<F>::zero() + (F::from(1), Variable::new_unchecked(Index::Aux(out_start_index+j))), 
-        );
-      }
-    }
-    drop(_guard);
-    drop(span);
     Ok(())
   }
 }
@@ -193,14 +147,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
-    let load_cfg_span = tracing::span!(tracing::Level::INFO, "load_cfg");
-    let _load_cfg_guard = load_cfg_span.enter();
     let cfg = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
-    drop(_load_cfg_guard);
-    drop(load_cfg_span);
-
-    let NUM_STEPS = self.num_steps;
-    let NUM_VARS_PER_STEP = cfg.r1cs.num_variables - 1; // exclude the constant 1
 
     let _ = circom_scotia::synthesize(
         &mut cs.namespace(|| "jolt_step_0"),
@@ -215,15 +162,18 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 
 
 #[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
-pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: RelaxedR1CSSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
-  let num_steps = circuit.inputs[0].len(); 
+pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
+  let num_steps = circuit.num_steps; 
   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
 
-  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
+  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
 
   // produce a SNARK
-  let res = SNARK::prove(&pk, circuit);
-  assert!(res.is_ok());
+  let proof = SNARK::prove(&pk, circuit);
+  assert!(proof.is_ok());
+
+  let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
+  assert!(res.is_ok()); 
 
   Ok(())
 }
@@ -234,10 +184,11 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
   TRACE_LEN: usize, 
   inputs: Vec<Vec<ArkF>>) -> Result<(), SpartanError> {
 
-
   type G1 = bn256::Point;
   type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-  type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
+  type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+
+  let NUM_STEPS = TRACE_LEN; 
 
   let inputs_ff = inputs
     .into_par_iter()
@@ -247,7 +198,7 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
         .collect::<Vec<Spartan2Fr>>()
     ).collect::<Vec<Vec<Spartan2Fr>>>();
 
-  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, TRACE_LEN, inputs_ff[0][0], inputs_ff);
+  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
   prove_jolt_circuit::<G1, S, Spartan2Fr>(jolt_circuit)
 }
 
@@ -258,6 +209,8 @@ mod test {
     traits::Group,
     SNARK,
   };
+
+  use super::{JoltCircuit, prove_jolt_circuit}; 
 
   // #[test]
   // fn test_jolt_snark() {
@@ -448,4 +401,5 @@ mod test {
     // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
     // assert!(res_verifier.is_err());
   }
+
 }
