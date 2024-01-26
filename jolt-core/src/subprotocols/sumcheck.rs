@@ -463,59 +463,51 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 })
                 .collect();
 
-            // TODO(sragss): OPTIMIZATION IDEAS
-            // - Optimize for 1s! 
-            // - Compute 'r' bindings from 'm_a' / 'm_b
-
             let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
             let _enter = _span.enter();
 
             
-            let batched_poly_evals: Vec<(F,F,F)> = lefts.par_iter()
-                .zip(rights.par_iter())
+            let batched_poly_evals: Vec<(F,F,F)> = lefts.par_iter_mut()
+                .zip(rights.par_iter_mut())
                 .map(|(left, right)| {
                 let _inner_span = tracing::span!(tracing::Level::TRACE, "inner_eval_loop");
                 let _inner_enter = _inner_span.enter();
 
-                let poly_evals: (F, F, F) = (0..len).into_iter().map(|i| {
+                let mut eval_0 = F::zero();
+                let mut eval_2 = F::zero();
+                let mut eval_3 = F::zero();
+
+                for i in 0..len {
                     let left = left.low_high_iter(i);
                     let right = right.low_high_iter(i);
 
                     match (left, right) {
                         ((None, None), (None, None)) => {
-                            eq_evals[i]
+                            eval_0 += eq_evals[i].0;
+                            eval_2 += eq_evals[i].1;
+                            eval_3 += eq_evals[i].2;
                         },
                         ((Some(low_left), None), (None, None)) => {
-                            // 2: high + (high - low) = 1 + (1 - low) = 2 - low
-                            // 3: high + (high - low) + (high - low) = 1 + (1 - low) + (1 - low) = 3 - low - low
-                            let eval_0 = *low_left * eq_evals[i].0;
-                            let eval_2 = (F::from(2u64) - low_left) * eq_evals[i].1;
-                            let eval_3 = (F::from(3u64) - low_left - low_left) * eq_evals[i].2;
-
-                            (eval_0, eval_2, eval_3)
+                            eval_0 += *low_left * eq_evals[i].0;
+                            eval_2 += (F::from(2u64) - low_left) * eq_evals[i].1;
+                            eval_3 += (F::from(3u64) - low_left - low_left) * eq_evals[i].2;
                         },
                         ((None, Some(high_left)), (None, None)) => {
-                            let eval_0 = eq_evals[i].0;
                             let m = *high_left - F::one();
-                            let eval_2 = (*high_left + m) * eq_evals[i].1;
-                            let eval_3 = (eval_2 + m) * eq_evals[i].2;
-
-                            (eval_0, eval_2, eval_3)
+                            eval_0 += eq_evals[i].0;
+                            eval_2 += (*high_left + m) * eq_evals[i].1;
+                            eval_3 += ((*high_left + m) + m) * eq_evals[i].2;
                         },
                         ((None, None), (Some(low_right), None)) => {
-                            let eval_0 = *low_right * eq_evals[i].0;
-                            let eval_2 = (F::from(2u64) - low_right) * eq_evals[i].1;
-                            let eval_3 = (F::from(3u64) - low_right - low_right) * eq_evals[i].2;
-
-                            (eval_0, eval_2, eval_3)
+                            eval_0 += *low_right * eq_evals[i].0;
+                            eval_2 += (F::from(2u64) - low_right) * eq_evals[i].1;
+                            eval_3 += (F::from(3u64) - low_right - low_right) * eq_evals[i].2;
                         },
                         ((None, None), (None, Some(high_right))) => {
-                            let eval_0 = eq_evals[i].0;
                             let m = *high_right - F::one();
-                            let eval_2 = (*high_right + m) * eq_evals[i].1;
-                            let eval_3 = (eval_2 + m) * eq_evals[i].2;
-
-                            (eval_0, eval_2, eval_3)
+                            eval_0 += eq_evals[i].0;
+                            eval_2 += (*high_right + m) * eq_evals[i].1;
+                            eval_3 += ((*high_right + m) + m) * eq_evals[i].2;
                         },
                         _ => {
                             let (left_low, left_high) = left;
@@ -535,30 +527,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             let right_2 = right_high + right_m;
                             let right_3 = right_2 + right_m;
 
-                            let eval_0 = mul_0_1_optimized(&left_low, &right_low) * eq_evals[i].0;
-                            let eval_2 = mul_0_1_optimized(&left_2, &right_2) * eq_evals[i].1;
-                            let eval_3 = mul_0_1_optimized(&left_3, &right_3) * eq_evals[i].2;
-
-                            (eval_0, eval_2, eval_3)
+                            eval_0 += mul_0_1_optimized(&left_low, &right_low) * eq_evals[i].0;
+                            eval_2 += mul_0_1_optimized(&left_2, &right_2) * eq_evals[i].1;
+                            eval_3 += mul_0_1_optimized(&left_3, &right_3) * eq_evals[i].2;
                         }
-                    }
-                }).fold(
-                    (F::zero(), F::zero(), F::zero()),
-                    |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                );
+                    };
+                }
 
-                // let _other_span = tracing::span!(tracing::Level::TRACE, "summing_loop");
-                // let _other_enter = _other_span.enter();
-                // // TODO(sragss): Split for now for benchmarking -- may save RAM / alloc time to combine
-                // let poly_evals = poly_evals.into_iter().fold(
-                //     (F::zero(), F::zero(), F::zero()),
-                //     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                // );
-
-                poly_evals
+                (eval_0, eval_2, eval_3)
             }).collect();
-
-
 
             drop(_enter);
             drop(_span);
@@ -593,20 +570,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 .chain(rights.iter_mut())
                 .collect();
 
+            poly_iter.iter_mut().for_each(|poly| poly.reset_iter());
 
             rayon::join(
                 || eq.bound_poly_var_top(&r_j),
                 || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j))
             );
-
-            // let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
-            //     .chain(params.poly_Bs.iter_mut())
-            //     .collect();
-
-            // rayon::join(
-            //     || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j)),
-            //     || params.poly_eq.bound_poly_var_top(&r_j)
-            // );
 
             drop(_enter);
             drop(_span);
@@ -878,14 +847,23 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
                 .into_par_iter()
                 .map(|batch_index| {
-                    let eval: (F, F, F) = (0..len)
-                        .map(|mle_index| {
+                    let (mut eval_0, mut eval_2, mut eval_3) = (F::zero(), F::zero(), F::zero());
+                    (0..len).into_iter().for_each(|mle_index| {
                             let low = mle_index;
                             let high = len + mle_index;
 
                             let eq_eval = eq_evals[low];
                             let flag_eval = flag_evals[params.a_to_b[batch_index]][mle_index];
                             let poly_eval = &params.poly_As[batch_index];
+
+                            // let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
+                            // Below is just a more complicated form of the following, optimizing for 0 / 1 flags.
+                            // let poly_m = poly_eval[high] - poly_eval[low];
+                            // let poly_2 = poly_eval[high] + poly_m;
+                            // let poly_3 = poly_2 + poly_m;
+
+                            // let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
+                            // let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
 
                             let eval_point_0 = if flag_eval.0.is_zero() {
                                 eq_eval.0
@@ -915,29 +893,18 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                                     eq_eval.2 * poly_3
                                 } else {
                                     let poly_3 = poly_2 + poly_m;
-                                    (eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2)))
+                                    eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2))
                                 }
                             } else {
                                 eq_eval.2
                             };
 
-                            // Above is just a more complicated form of the following, optimizing for 0 / 1 flags.
-                            // let poly_m = poly_eval[high] - poly_eval[low];
-                            // let poly_2 = poly_eval[high] + poly_m;
-                            // let poly_3 = poly_2 + poly_m;
+                            eval_0 += eval_point_0;
+                            eval_2 += eval_point_2;
+                            eval_3 += eval_point_3;
+                        });
 
-                            // let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
-                            // let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
-                            // let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
-
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        })
-                        .fold(
-                            (F::zero(), F::zero(), F::zero()),
-                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        );
-
-                        eval
+                        (eval_0, eval_2, eval_3)
                 })
                 .collect();
             drop(_evals_enter);
@@ -1281,7 +1248,7 @@ pub mod bench {
         use ark_std::UniformRand;
         use ark_std::{test_rng, rand::Rng};
 
-        let log_size = 18;
+        let log_size = 20;
         let batch_size = 80;
         let size = 1 << log_size;
         let mut poly_a_sparse: Vec<SparsePoly<Fr>> = vec![init_bind_bench(log_size, 0.93); batch_size];
