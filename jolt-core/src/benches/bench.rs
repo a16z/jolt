@@ -341,12 +341,12 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let instruction_lookups: InstructionLookupsProof<_, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions_r1cs, &mut transcript, &mut random_tape);
 
-        // let mut transcript = Transcript::new(b"Jolt transcript");
-        // assert!(RV32IJoltVM::verify_bytecode(bytecode_proof, &mut transcript).is_ok());
-        // assert!(RV32IJoltVM::verify_memory(memory_proof, &mut transcript).is_ok());
-        // assert!(
-        //     RV32IJoltVM::verify_instruction_lookups(instruction_lookups, &mut transcript).is_ok()
-        // );
+        let mut transcript = Transcript::new(b"Jolt transcript");
+        assert!(RV32IJoltVM::verify_bytecode(bytecode_proof, &mut transcript).is_ok());
+        assert!(RV32IJoltVM::verify_memory(memory_proof, &mut transcript).is_ok());
+        assert!(
+            RV32IJoltVM::verify_instruction_lookups(instruction_lookups, &mut transcript).is_ok()
+        );
     };
     tasks.push((
         tracing::info_span!("HashR1CS"),
