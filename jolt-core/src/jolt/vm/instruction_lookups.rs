@@ -523,67 +523,50 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
+    fn compute_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
+        let gamma_squared = gamma.square();
+        let read_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
 
                 let leaf_fingerprints = (0..self.num_lookups)
-                    .into_par_iter()
+                    // .into_par_iter()
                     .map(|i| {
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
                     })
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        let a = &polynomials.dim[dim_index][i];
-                        let v = &polynomials.E_polys[memory_index][i];
-                        let t = &(polynomials.read_cts[memory_index][i] + F::one());
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
-                    })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
+            .collect::<Vec<DensePolynomial<F>>>();
+        let write_leaves = read_leaves
+            .par_iter()
+            .map(|read_poly| {
+                DensePolynomial::new(
+                    read_poly
+                        .evals_ref()
+                        .iter()
+                        // .par_iter()
+                        .map(|eval| *eval + gamma_squared)
+                        .collect(),
+                )
             })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::init_leaves")]
-    fn init_leaves(
-        &self,
-        _polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        (0..Self::NUM_MEMORIES)
+            .collect();
+        let init_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
@@ -601,49 +584,33 @@ where
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
+            .collect::<Vec<DensePolynomial<F>>>();
+        let final_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-
                 let leaf_fingerprints = (0..M)
                     .map(|i| {
-                        let a = &F::from(i as u64);
-                        let v = &self.materialized_subtables[subtable_index][i];
-                        let t = &polynomials.final_cts[memory_index][i];
-
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
+                        init_leaves[memory_index][i]
+                            + mul_0_1_optimized(
+                                &polynomials.final_cts[memory_index][i],
+                                &gamma_squared,
+                            )
                     })
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
-            .collect()
-    }
+            .collect();
 
+        (read_leaves, write_leaves, init_leaves, final_leaves)
+    }
     /// Overrides default implementation to handle flags
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
+        read_fingerprints: Vec<DensePolynomial<F>>,
+        write_fingerprints: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let (read_fingerprints, write_fingerprints) = rayon::join(
-            || self.read_leaves(polynomials, gamma, tau),
-            || self.write_leaves(polynomials, gamma, tau),
-        );
-        assert_eq!(read_fingerprints.len(), write_fingerprints.len());
         assert_eq!(read_fingerprints.len(), Self::NUM_MEMORIES);
 
         let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)

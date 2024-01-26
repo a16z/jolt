@@ -660,10 +660,21 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::read_leaves")]
-    fn read_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
+    fn compute_leaves(
+        &self,
+        polynomials: &ReadWriteMemory<F, G>,
+        gamma: &F,
+        tau: &F,
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         let gamma_squared = gamma.square();
         let num_ops = polynomials.a_read_write.len();
+
         let read_fingerprints = (0..num_ops)
             .into_par_iter()
             .map(|i| {
@@ -673,12 +684,6 @@ where
                     - *tau
             })
             .collect();
-        vec![DensePolynomial::new(read_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::write_leaves")]
-    fn write_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        let num_ops = polynomials.a_read_write.len();
         let write_fingerprints = (0..num_ops)
             .into_par_iter()
             .map(|i| {
@@ -688,19 +693,10 @@ where
                     - *tau
             })
             .collect();
-        vec![DensePolynomial::new(write_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::init_leaves")]
-    fn init_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let init_fingerprints = (0..self.memory_size)
             .into_par_iter()
             .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from(i as u64) - *tau)
             .collect();
-        vec![DensePolynomial::new(init_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::final_leaves")]
-    fn final_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
         let final_fingerprints = (0..self.memory_size)
             .into_par_iter()
             .map(|i| {
@@ -710,7 +706,13 @@ where
                     - *tau
             })
             .collect();
-        vec![DensePolynomial::new(final_fingerprints)]
+
+        (
+            vec![DensePolynomial::new(read_fingerprints)],
+            vec![DensePolynomial::new(write_fingerprints)],
+            vec![DensePolynomial::new(init_fingerprints)],
+            vec![DensePolynomial::new(final_fingerprints)],
+        )
     }
 
     fn protocol_name() -> &'static [u8] {

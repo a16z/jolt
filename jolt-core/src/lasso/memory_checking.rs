@@ -168,10 +168,12 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // fka "ProductLayerProof"
+        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+            self.compute_leaves(polynomials, &gamma, &tau);
         let (read_write_circuit, read_hashes, write_hashes) =
-            self.read_write_grand_product(polynomials, &gamma, &tau);
+            self.read_write_grand_product(polynomials, read_leaves, write_leaves);
         let (init_final_circuit, init_hashes, final_hashes) =
-            self.init_final_grand_product(polynomials, &gamma, &tau);
+            self.init_final_grand_product(polynomials, init_leaves, final_leaves);
         debug_assert_eq!(read_hashes.len(), init_hashes.len());
         let num_memories = read_hashes.len();
 
@@ -206,18 +208,14 @@ where
     }
 
     /// Constructs a batched grand product circuit for the read and write multisets associated
-    /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
+    /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
         &self,
-        polynomials: &Polynomials,
-        gamma: &F,
-        tau: &F,
+        _polynomials: &Polynomials,
+        read_leaves: Vec<DensePolynomial<F>>,
+        write_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let (read_leaves, write_leaves) = rayon::join(
-            || self.read_leaves(polynomials, gamma, tau),
-            || self.write_leaves(polynomials, gamma, tau),
-        );
         debug_assert_eq!(read_leaves.len(), write_leaves.len());
         let num_memories = read_leaves.len();
 
@@ -251,18 +249,14 @@ where
     }
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
-    /// with the given `polynomials`. Also returns the corresponding multiset hashes for each memory.
+    /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
         &self,
-        polynomials: &Polynomials,
-        gamma: &F,
-        tau: &F,
+        _polynomials: &Polynomials,
+        init_leaves: Vec<DensePolynomial<F>>,
+        final_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let (init_leaves, final_leaves) = rayon::join(
-            || self.init_leaves(polynomials, gamma, tau),
-            || self.final_leaves(polynomials, gamma, tau),
-        );
         debug_assert_eq!(init_leaves.len(), final_leaves.len());
         let num_memories = init_leaves.len();
 
@@ -295,26 +289,21 @@ where
         )
     }
 
-    /// Computes the MLE of the leaves of the "read" grand product circuit; one per memory.
-    fn read_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F)
-        -> Vec<DensePolynomial<F>>;
-    /// Computes the MLE of the leaves of the "write" grand product circuit; one per memory.
-    fn write_leaves(
+    /// Computes the MLE of the leaves of the read, write, init, and final grand product circuits,
+    /// one of each type per memory.
+    /// Returns: (read, write, init, final)
+    fn compute_leaves(
         &self,
         polynomials: &Polynomials,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>>;
-    /// Computes the MLE of the leaves of the "init" grand product circuit; one per memory.
-    fn init_leaves(&self, polynomials: &Polynomials, gamma: &F, tau: &F)
-        -> Vec<DensePolynomial<F>>;
-    /// Computes the MLE of the leaves of the "final" grand product circuit; one per memory.
-    fn final_leaves(
-        &self,
-        polynomials: &Polynomials,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>>;
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    );
+
     /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.
     /// Each individual "leaf" of a grand product circuit (as computed by `read_leaves`, etc.) should be
     /// one such fingerprint.
@@ -387,8 +376,12 @@ where
             .init_final_openings
             .verify_openings(commitments, &r_init_final, transcript)?;
 
-        proof.read_write_openings.compute_verifier_openings(&r_read_write);
-        proof.init_final_openings.compute_verifier_openings(&r_init_final);
+        proof
+            .read_write_openings
+            .compute_verifier_openings(&r_read_write);
+        proof
+            .init_final_openings
+            .compute_verifier_openings(&r_init_final);
 
         assert_eq!(claims_read_write.len(), claims_init_final.len());
         assert!(claims_read_write.len() % 2 == 0);
@@ -481,84 +474,110 @@ mod tests {
         }
         struct FakeType();
         struct FakeOpeningProof();
-        #[rustfmt::skip]
-    impl StructuredOpeningProof<Fr, EdwardsProjective, NormalMems> for FakeOpeningProof {
-      type Openings = FakeType;
-      fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
-      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
-      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
-    }
+        impl StructuredOpeningProof<Fr, EdwardsProjective, NormalMems> for FakeOpeningProof {
+            type Openings = FakeType;
+            fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings {
+                unimplemented!()
+            }
+            fn prove_openings(
+                _: &FakeType,
+                _: &FakeType,
+                _: &Vec<Fr>,
+                _: Self::Openings,
+                _: &mut Transcript,
+                _: &mut RandomTape<EdwardsProjective>,
+            ) -> Self {
+                unimplemented!()
+            }
+            fn verify_openings(
+                &self,
+                _: &FakeType,
+                _: &Vec<Fr>,
+                _: &mut Transcript,
+            ) -> Result<(), ProofVerifyError> {
+                unimplemented!()
+            }
+        }
 
-        #[rustfmt::skip]
-    impl BatchablePolynomials for NormalMems {
-      type Commitment = FakeType;
-      type BatchedPolynomials = FakeType;
+        impl BatchablePolynomials for NormalMems {
+            type Commitment = FakeType;
+            type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
-    }
+            fn batch(&self) -> Self::BatchedPolynomials {
+                unimplemented!()
+            }
+            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+                unimplemented!()
+            }
+        }
 
         struct TestProver {}
-        #[rustfmt::skip] // Keep leaf functions small
-    impl MemoryCheckingProver<Fr, EdwardsProjective, NormalMems> for TestProver {
-      type ReadWriteOpenings = FakeOpeningProof;
-      type InitFinalOpenings = FakeOpeningProof;
+        impl MemoryCheckingProver<Fr, EdwardsProjective, NormalMems> for TestProver {
+            type ReadWriteOpenings = FakeOpeningProof;
+            type InitFinalOpenings = FakeOpeningProof;
 
-      type MemoryTuple = (Fr, Fr, Fr);
+            type MemoryTuple = (Fr, Fr, Fr);
 
-      fn read_leaves(
-        &self,
-        polynomials: &NormalMems,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        vec![DensePolynomial::new((0..polynomials.a_ops.len())
-          .map(|i| Self::fingerprint(&(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i]), gamma, tau))
-          .collect())]
-      }
+            #[rustfmt::skip]
+            fn compute_leaves(
+                &self,
+                polynomials: &NormalMems,
+                gamma: &Fr,
+                tau: &Fr,
+            ) -> (
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+            ) {
+                let read_leaves = vec![DensePolynomial::new(
+                    (0..polynomials.a_ops.len()).map(|i| {
+                        Self::fingerprint(
+                            &(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i]),
+                            gamma,
+                            tau,
+                        )
+                    }).collect(),
+                )];
+                let write_leaves = vec![DensePolynomial::new(
+                    (0..polynomials.a_ops.len()).map(|i| {
+                        Self::fingerprint(
+                            &(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i] + Fr::one()),
+                            gamma,
+                            tau,
+                        )
+                    }).collect(),
+                )];
+                let init_leaves = vec![DensePolynomial::new(
+                    (0..polynomials.v_mems.len()).map(|i| {
+                        Self::fingerprint(
+                            &(Fr::from(i as u64), polynomials.v_mems[i], Fr::zero()),
+                            gamma,
+                            tau,
+                        )
+                    }).collect(),
+                )];
+                let final_leaves = vec![DensePolynomial::new(
+                    (0..polynomials.v_mems.len()).map(|i| {
+                        Self::fingerprint(
+                            &(Fr::from(i as u64), polynomials.v_mems[i], polynomials.t_finals[i]),
+                            gamma,
+                            tau,
+                        )
+                    }).collect(),
+                )];
+                (read_leaves, write_leaves, init_leaves, final_leaves)
+            }
 
-      fn write_leaves(
-        &self,
-        polynomials: &NormalMems,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        vec![DensePolynomial::new((0..polynomials.a_ops.len())
-          .map(|i| Self::fingerprint(&(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i] + Fr::one()), gamma, tau))
-          .collect())]
-      }
+            fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+                let (a, v, t) = tuple;
+                t * &gamma.square() + v * gamma + a - tau
+            }
 
-      fn init_leaves(
-        &self,
-        polynomials: &NormalMems,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        vec![DensePolynomial::new((0..polynomials.v_mems.len())
-          .map(|i| Self::fingerprint(&(Fr::from(i as u64), polynomials.v_mems[i], Fr::zero()), gamma, tau))
-          .collect())]
-      }
-
-      fn final_leaves(
-        &self,
-        polynomials: &NormalMems,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        vec![DensePolynomial::new((0..polynomials.v_mems.len())
-          .map(|i| Self::fingerprint(&(Fr::from(i as u64), polynomials.v_mems[i], polynomials.t_finals[i]), gamma, tau))
-          .collect())]
-      }
-
-      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
-        let (a, v, t) = tuple;
-        t * &gamma.square() + v * gamma + a - tau
-      }
-
-      fn protocol_name() -> &'static [u8] {
-        b"protocol_name"
-      }
-    }
+            fn protocol_name() -> &'static [u8] {
+                b"protocol_name"
+            }
+        }
         // Imagine a size-8 range-check table (addresses and values just ascending), with 4 lookups
         let v_mems = vec![
             Fr::from(0),
@@ -667,119 +686,121 @@ mod tests {
 
         struct FakeType();
         struct FakeOpeningProof();
-        #[rustfmt::skip]
-    impl StructuredOpeningProof<Fr, EdwardsProjective, Polys> for FakeOpeningProof {
-      type Openings = FakeType;
-      fn open(_: &Polys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
-      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
-      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
-    }
+        impl StructuredOpeningProof<Fr, EdwardsProjective, Polys> for FakeOpeningProof {
+            type Openings = FakeType;
+            fn open(_: &Polys, _: &Vec<Fr>) -> Self::Openings {
+                unimplemented!()
+            }
+            fn prove_openings(
+                _: &FakeType,
+                _: &FakeType,
+                _: &Vec<Fr>,
+                _: Self::Openings,
+                _: &mut Transcript,
+                _: &mut RandomTape<EdwardsProjective>,
+            ) -> Self {
+                unimplemented!()
+            }
+            fn verify_openings(
+                &self,
+                _: &FakeType,
+                _: &Vec<Fr>,
+                _: &mut Transcript,
+            ) -> Result<(), ProofVerifyError> {
+                unimplemented!()
+            }
+        }
 
-        #[rustfmt::skip]
-    impl BatchablePolynomials for Polys {
-      type Commitment = FakeType;
-      type BatchedPolynomials = FakeType;
+        impl BatchablePolynomials for Polys {
+            type Commitment = FakeType;
+            type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
-    }
+            fn batch(&self) -> Self::BatchedPolynomials {
+                unimplemented!()
+            }
+            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+                unimplemented!()
+            }
+        }
 
         struct TestProver {}
-        #[rustfmt::skip] // Keep leaf functions small
-    impl MemoryCheckingProver<Fr, EdwardsProjective, Polys> for TestProver {
-      type ReadWriteOpenings = FakeOpeningProof;
-      type InitFinalOpenings = FakeOpeningProof;
+        impl MemoryCheckingProver<Fr, EdwardsProjective, Polys> for TestProver {
+            type ReadWriteOpenings = FakeOpeningProof;
+            type InitFinalOpenings = FakeOpeningProof;
 
-      type MemoryTuple = (Fr, Fr, Fr);
+            type MemoryTuple = (Fr, Fr, Fr);
 
-      fn read_leaves(
-        &self,
-        polynomials: &Polys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.a_0_ops.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index]),
-                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index]),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
+            #[rustfmt::skip]
+            fn compute_leaves(
+                &self,
+                polynomials: &Polys,
+                gamma: &Fr,
+                tau: &Fr,
+            ) -> (
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+            ) {
+                let read_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.a_0_ops.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index]),
+                                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index]),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                let write_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.a_0_ops.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one()),
+                                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one()),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                let init_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.v_mems.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero()),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                let final_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.v_mems.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index]),
+                                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index]),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                (read_leaves, write_leaves, init_leaves, final_leaves)
+            }
 
-      fn write_leaves(
-        &self,
-        polynomials: &Polys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.a_0_ops.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one()),
-                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one()),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
+            fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+                let (a, v, t) = tuple;
+                t * &gamma.square() + v * gamma + a - tau
+            }
 
-      fn init_leaves(
-        &self,
-        polynomials: &Polys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.v_mems.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero()),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
-
-      fn final_leaves(
-        &self,
-        polynomials: &Polys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.v_mems.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index]),
-                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index]),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
-
-      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
-        let (a, v, t) = tuple;
-        t * &gamma.square() + v * gamma + a - tau
-      }
-
-      fn protocol_name() -> &'static [u8] {
-        b"protocol_name"
-      }
-    }
+            fn protocol_name() -> &'static [u8] {
+                b"protocol_name"
+            }
+        }
 
         // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
         let v_mems = vec![
@@ -847,10 +868,8 @@ mod tests {
 
         // Check leaves match
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let init_leaves: Vec<DensePolynomial<Fr>> = prover.init_leaves(&polys, gamma, tau);
-        let read_leaves: Vec<DensePolynomial<Fr>> = prover.read_leaves(&polys, gamma, tau);
-        let write_leaves: Vec<DensePolynomial<Fr>> = prover.write_leaves(&polys, gamma, tau);
-        let final_leaves: Vec<DensePolynomial<Fr>> = prover.final_leaves(&polys, gamma, tau);
+        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+            prover.compute_leaves(&polys, gamma, tau);
 
         [0, 1].into_iter().for_each(|i| {
             let init_leaves = &init_leaves[i];
@@ -927,177 +946,184 @@ mod tests {
 
         struct FakeType();
         struct FakeOpeningProof();
-        #[rustfmt::skip]
-    impl StructuredOpeningProof<Fr, EdwardsProjective, FlagPolys> for FakeOpeningProof {
-      type Openings = FakeType;
-      fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self::Openings { unimplemented!() }
-      fn prove_openings(_: &FakeType, _: &FakeType, _: &Vec<Fr>, _: Self::Openings, _: &mut Transcript, _: &mut RandomTape<EdwardsProjective>) -> Self { unimplemented!() }
-      fn verify_openings(&self, _: &FakeType, _: &Vec<Fr>, _: &mut Transcript) -> Result<(), ProofVerifyError> { unimplemented!() }
-    }
+        impl StructuredOpeningProof<Fr, EdwardsProjective, FlagPolys> for FakeOpeningProof {
+            type Openings = FakeType;
+            fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self::Openings {
+                unimplemented!()
+            }
+            fn prove_openings(
+                _: &FakeType,
+                _: &FakeType,
+                _: &Vec<Fr>,
+                _: Self::Openings,
+                _: &mut Transcript,
+                _: &mut RandomTape<EdwardsProjective>,
+            ) -> Self {
+                unimplemented!()
+            }
+            fn verify_openings(
+                &self,
+                _: &FakeType,
+                _: &Vec<Fr>,
+                _: &mut Transcript,
+            ) -> Result<(), ProofVerifyError> {
+                unimplemented!()
+            }
+        }
 
-        #[rustfmt::skip]
-    impl BatchablePolynomials for FlagPolys {
-      type Commitment = FakeType;
-      type BatchedPolynomials = FakeType;
+        impl BatchablePolynomials for FlagPolys {
+            type Commitment = FakeType;
+            type BatchedPolynomials = FakeType;
 
-      fn batch(&self) -> Self::BatchedPolynomials { unimplemented!() }
-      fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment { unimplemented!() }
-    }
+            fn batch(&self) -> Self::BatchedPolynomials {
+                unimplemented!()
+            }
+            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+                unimplemented!()
+            }
+        }
 
         struct TestProver {}
-        #[rustfmt::skip] // Keep leaf functions small
-    impl MemoryCheckingProver<Fr, EdwardsProjective, FlagPolys> for TestProver {
-      type ReadWriteOpenings = FakeOpeningProof;
-      type InitFinalOpenings = FakeOpeningProof;
+        impl MemoryCheckingProver<Fr, EdwardsProjective, FlagPolys> for TestProver {
+            type ReadWriteOpenings = FakeOpeningProof;
+            type InitFinalOpenings = FakeOpeningProof;
 
-      type MemoryTuple = (Fr, Fr, Fr, Option<Fr>);
+            type MemoryTuple = (Fr, Fr, Fr, Option<Fr>);
 
-      fn read_leaves(
-        &self,
-        polynomials: &FlagPolys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.a_0_ops.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index], None),
-                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index], None),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
-
-      fn write_leaves(
-        &self,
-        polynomials: &FlagPolys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.a_0_ops.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one(), None),
-                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one(), None),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
-
-      fn init_leaves(
-        &self,
-        polynomials: &FlagPolys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.v_mems.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero(), None),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
-
-      fn final_leaves(
-        &self,
-        polynomials: &FlagPolys,
-        gamma: &Fr,
-        tau: &Fr,
-      ) -> Vec<DensePolynomial<Fr>> {
-        [0,1].iter().map(|memory_index| {
-          DensePolynomial::new((0..polynomials.v_mems.len())
-            .map(|leaf_index| {
-              let tuple = match memory_index {
-                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index], None),
-                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index], None),
-                _ => unimplemented!()
-              };
-              Self::fingerprint(&tuple, gamma, tau)
-            })
-            .collect())
-        }).collect()
-      }
-
-      fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
-        let (a, v, t, flag) = *tuple;
-        match flag {
-          Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + Fr::one() - val,
-          None => t * gamma.square() + v * *gamma + a - tau,
-        }
-      }
-
-      // FLAGS OVERRIDES
-
-      // Override read_write_grand product to call BatchedGrandProductCircuit::new_batch_flags and insert our additional toggling layer.
-      fn read_write_grand_product(
-          &self,
-          polynomials: &FlagPolys,
-          gamma: &Fr,
-          tau: &Fr,
-        ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>, Vec<Fr>) {
-          // Fingerprint will generate "unflagged" leaves for the final layer
-          let read_fingerprints: Vec<DensePolynomial<Fr>> = self.read_leaves(polynomials, gamma, tau);
-          let write_fingerprints: Vec<DensePolynomial<Fr>> = self.write_leaves(polynomials, gamma, tau);
-
-          // Generate "flagged" leaves for the second to last layer. Input to normal Grand Products
-          let num_memories = 2;
-          let mut circuits = Vec::with_capacity(2 * num_memories);
-          let mut read_hashes = Vec::with_capacity(num_memories);
-          let mut write_hashes = Vec::with_capacity(num_memories);
-
-          for i in 0..num_memories {
-            let mut toggled_read_fingerprints = read_fingerprints[i].evals();
-            let mut toggled_write_fingerprints = write_fingerprints[i].evals();
-
-            let subtable_index = i;
-            for leaf_index in 0..polynomials.a_0_ops.len() {
-              let flag = match subtable_index {
-                0 => polynomials.flags_0[leaf_index],
-                1 => polynomials.flags_1[leaf_index],
-                _ => unimplemented!()
-              };
-              if flag == Fr::zero() {
-                toggled_read_fingerprints[leaf_index] = Fr::one();
-                toggled_write_fingerprints[leaf_index] = Fr::one();
-              }
+            #[rustfmt::skip]
+            fn compute_leaves(
+                &self,
+                polynomials: &FlagPolys,
+                gamma: &Fr,
+                tau: &Fr,
+            ) -> (
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+                Vec<DensePolynomial<Fr>>,
+            ) {
+                let read_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.a_0_ops.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index], None),
+                                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index], None),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                let write_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.a_0_ops.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one(), None),
+                                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one(), None),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                let init_leaves = [0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.v_mems.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero(), None),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                let final_leaves =[0, 1].iter().map(|memory_index| {
+                    DensePolynomial::new(
+                        (0..polynomials.v_mems.len()).map(|leaf_index| {
+                            let tuple = match memory_index {
+                                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index], None),
+                                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index], None),
+                                _ => unimplemented!(),
+                            };
+                            Self::fingerprint(&tuple, gamma, tau)
+                        }).collect(),
+                    )
+                }).collect();
+                (read_leaves, write_leaves, init_leaves, final_leaves)
             }
 
-            let read_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
-            let write_circuit = GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
-            read_hashes.push(read_circuit.evaluate());
-            write_hashes.push(write_circuit.evaluate());
-            circuits.push(read_circuit);
-            circuits.push(write_circuit);
-          }
+            fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
+                let (a, v, t, flag) = *tuple;
+                match flag {
+                    Some(val) => {
+                        val * (t * gamma.square() + v * *gamma + a - tau) + Fr::one() - val
+                    }
+                    None => t * gamma.square() + v * *gamma + a - tau,
+                }
+            }
 
-          let expanded_flag_map = vec![0, 0, 1, 1];
-          let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
-            circuits, 
-            vec![polynomials.flags_0.clone(), polynomials.flags_1.clone()], 
-            expanded_flag_map, 
-            vec![read_fingerprints[0].clone(), write_fingerprints[0].clone(), read_fingerprints[1].clone(), write_fingerprints[1].clone()]
-          );
+            // FLAGS OVERRIDES
 
-          (batched_circuits, read_hashes, write_hashes)
-      }
+            // Override read_write_grand product to call BatchedGrandProductCircuit::new_batch_flags and insert our additional toggling layer.
+            fn read_write_grand_product(
+                &self,
+                polynomials: &FlagPolys,
+                read_fingerprints: Vec<DensePolynomial<Fr>>,
+                write_fingerprints: Vec<DensePolynomial<Fr>>,
+            ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>, Vec<Fr>) {
+                // Generate "flagged" leaves for the second to last layer. Input to normal Grand Products
+                let num_memories = 2;
+                let mut circuits = Vec::with_capacity(2 * num_memories);
+                let mut read_hashes = Vec::with_capacity(num_memories);
+                let mut write_hashes = Vec::with_capacity(num_memories);
 
-      fn protocol_name() -> &'static [u8] {
-        b"protocol_name"
-      }
-    }
+                for i in 0..num_memories {
+                    let mut toggled_read_fingerprints = read_fingerprints[i].evals();
+                    let mut toggled_write_fingerprints = write_fingerprints[i].evals();
+
+                    let subtable_index = i;
+                    for leaf_index in 0..polynomials.a_0_ops.len() {
+                        let flag = match subtable_index {
+                            0 => polynomials.flags_0[leaf_index],
+                            1 => polynomials.flags_1[leaf_index],
+                            _ => unimplemented!(),
+                        };
+                        if flag == Fr::zero() {
+                            toggled_read_fingerprints[leaf_index] = Fr::one();
+                            toggled_write_fingerprints[leaf_index] = Fr::one();
+                        }
+                    }
+
+                    let read_circuit =
+                        GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
+                    let write_circuit =
+                        GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+                    read_hashes.push(read_circuit.evaluate());
+                    write_hashes.push(write_circuit.evaluate());
+                    circuits.push(read_circuit);
+                    circuits.push(write_circuit);
+                }
+
+                let expanded_flag_map = vec![0, 0, 1, 1];
+                let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
+                    circuits,
+                    vec![polynomials.flags_0.clone(), polynomials.flags_1.clone()],
+                    expanded_flag_map,
+                    vec![
+                        read_fingerprints[0].clone(),
+                        write_fingerprints[0].clone(),
+                        read_fingerprints[1].clone(),
+                        write_fingerprints[1].clone(),
+                    ],
+                );
+
+                (batched_circuits, read_hashes, write_hashes)
+            }
+
+            fn protocol_name() -> &'static [u8] {
+                b"protocol_name"
+            }
+        }
 
         // Imagine a 2 memories. Size-8 range-check table (addresses and values just ascending), with 4 lookups into each
         let v_mems = vec![

@@ -224,44 +224,117 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
+    fn compute_leaves(
         &self,
-        _polynomials: &RangeCheckPolynomials<F, G>,
-        _gamma: &F,
-        _tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
-    }
+        polynomials: &RangeCheckPolynomials<F, G>,
+        gamma: &F,
+        tau: &F,
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
+        let M = polynomials.read_timestamps.len();
+        let gamma_squared = gamma.square();
 
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::write_leaves")]
-    fn write_leaves(
-        &self,
-        _polynomials: &RangeCheckPolynomials<F, G>,
-        _gamma: &F,
-        _tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
-    }
-
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::init_leaves")]
-    fn init_leaves(
-        &self,
-        _polynomials: &RangeCheckPolynomials<F, G>,
-        _gamma: &F,
-        _tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
-    }
-
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::final_leaves")]
-    fn final_leaves(
-        &self,
-        _polynomials: &RangeCheckPolynomials<F, G>,
-        _gamma: &F,
-        _tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        unimplemented!("Leaves are constructed in TimestampValidityProof::prove")
+        let (init_leaves, read_leaves) = rayon::join(
+            || {
+                let init_fingerprints: Vec<F> = (0..M)
+                    .into_par_iter()
+                    .map(|i| {
+                        // 0 * gamma^2 +
+                        F::from(i as u64) * gamma + F::from(i as u64) - tau
+                    })
+                    .collect();
+                vec![DensePolynomial::new(init_fingerprints)]
+            },
+            || {
+                let read_fingerprints = rayon::join(
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                polynomials.read_cts_read_timestamp[i] * gamma_squared
+                                    + F::from(polynomials.read_timestamps[i]) * gamma
+                                    + F::from(polynomials.read_timestamps[i])
+                                    - tau
+                            })
+                            .collect()
+                    },
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                polynomials.read_cts_global_minus_read[i] * gamma_squared
+                                    + (F::from(i as u64 - polynomials.read_timestamps[i])) * gamma
+                                    + (F::from(i as u64 - polynomials.read_timestamps[i]))
+                                    - tau
+                            })
+                            .collect()
+                    },
+                );
+                vec![
+                    DensePolynomial::new(read_fingerprints.0),
+                    DensePolynomial::new(read_fingerprints.1),
+                ]
+            },
+        );
+        let (final_leaves, write_leaves) = rayon::join(
+            || {
+                let final_fingerprints = rayon::join(
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.final_cts_read_timestamp[i],
+                                    &gamma_squared,
+                                ) + init_leaves[0][i]
+                            })
+                            .collect()
+                    },
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.final_cts_global_minus_read[i],
+                                    &gamma_squared,
+                                ) + init_leaves[0][i]
+                            })
+                            .collect()
+                    },
+                );
+                vec![
+                    DensePolynomial::new(final_fingerprints.0),
+                    DensePolynomial::new(final_fingerprints.1),
+                ]
+            },
+            || {
+                let write_fingerprints = rayon::join(
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| read_leaves[0].evals_ref()[i] + gamma_squared)
+                            .collect()
+                    },
+                    || {
+                        (0..M)
+                            .into_par_iter()
+                            .map(|i| read_leaves[1].evals_ref()[i] + gamma_squared)
+                            .collect()
+                    },
+                );
+                vec![
+                    DensePolynomial::new(write_fingerprints.0),
+                    DensePolynomial::new(write_fingerprints.1),
+                ]
+            },
+        );
+        
+        (read_leaves, write_leaves, init_leaves, final_leaves)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -294,11 +367,7 @@ where
             .unwrap()
             .t_read_opening;
         vec![
-            (
-                t_read_opening,
-                t_read_opening,
-                openings.openings[0],
-            ),
+            (t_read_opening, t_read_opening, openings.openings[0]),
             (
                 openings.identity_poly_opening.unwrap() - t_read_opening,
                 openings.identity_poly_opening.unwrap() - t_read_opening,
@@ -465,115 +534,10 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // fka "ProductLayerProof"
-        let _span = tracing::span!(
-            tracing::Level::TRACE,
-            "TimestampValiditProof: compute leaves"
-        );
-        let _enter = _span.enter();
-
-        let M = polynomials.read_timestamps.len();
-
-        let gamma_squared = gamma.square();
-
-        let (init_leaves, read_leaves) = rayon::join(
-            || {
-                let init_fingerprints: Vec<F> = (0..M)
-                    .into_par_iter()
-                    .map(|i| {
-                        // 0 * gamma^2 +
-                        F::from(i as u64) * gamma + F::from(i as u64) - tau
-                    })
-                    .collect();
-                DensePolynomial::new(init_fingerprints)
-            },
-            || {
-                let read_fingerprints = rayon::join(
-                    || {
-                        (0..M)
-                            .into_par_iter()
-                            .map(|i| {
-                                polynomials.read_cts_read_timestamp[i] * gamma_squared
-                                    + F::from(polynomials.read_timestamps[i]) * gamma
-                                    + F::from(polynomials.read_timestamps[i])
-                                    - tau
-                            })
-                            .collect()
-                    },
-                    || {
-                        (0..M)
-                            .into_par_iter()
-                            .map(|i| {
-                                polynomials.read_cts_global_minus_read[i] * gamma_squared
-                                    + (F::from(i as u64 - polynomials.read_timestamps[i])) * gamma
-                                    + (F::from(i as u64 - polynomials.read_timestamps[i]))
-                                    - tau
-                            })
-                            .collect()
-                    },
-                );
-                vec![
-                    DensePolynomial::new(read_fingerprints.0),
-                    DensePolynomial::new(read_fingerprints.1),
-                ]
-            },
-        );
-        let (final_leaves, write_leaves) = rayon::join(
-            || {
-                let final_fingerprints = rayon::join(
-                    || {
-                        (0..M)
-                            .into_par_iter()
-                            .map(|i| {
-                                mul_0_1_optimized(
-                                    &polynomials.final_cts_read_timestamp[i],
-                                    &gamma_squared,
-                                ) + init_leaves[i]
-                            })
-                            .collect()
-                    },
-                    || {
-                        (0..M)
-                            .into_par_iter()
-                            .map(|i| {
-                                mul_0_1_optimized(
-                                    &polynomials.final_cts_global_minus_read[i],
-                                    &gamma_squared,
-                                ) + init_leaves[i]
-                            })
-                            .collect()
-                    },
-                );
-                vec![
-                    DensePolynomial::new(final_fingerprints.0),
-                    DensePolynomial::new(final_fingerprints.1),
-                ]
-            },
-            || {
-                let write_fingerprints = rayon::join(
-                    || {
-                        (0..M)
-                            .into_par_iter()
-                            .map(|i| read_leaves[0].evals_ref()[i] + gamma_squared)
-                            .collect()
-                    },
-                    || {
-                        (0..M)
-                            .into_par_iter()
-                            .map(|i| read_leaves[1].evals_ref()[i] + gamma_squared)
-                            .collect()
-                    },
-                );
-                vec![
-                    DensePolynomial::new(write_fingerprints.0),
-                    DensePolynomial::new(write_fingerprints.1),
-                ]
-            },
-        );
-        drop(_enter);
-        drop(_span);
-
+        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+            polynomials.compute_leaves(polynomials, &gamma, &tau);
         let leaves = [
-            &init_leaves,
+            &init_leaves[0],
             &read_leaves[0],
             &write_leaves[0],
             &final_leaves[0],
@@ -584,7 +548,7 @@ where
 
         let _span = tracing::span!(
             tracing::Level::TRACE,
-            "TimestampValiditProof: construct grand product circuits"
+            "TimestampValidityProof: construct grand product circuits"
         );
         let _enter = _span.enter();
 
@@ -631,7 +595,7 @@ where
 
         let _span = tracing::span!(
             tracing::Level::TRACE,
-            "TimestampValiditProof: prove grand products"
+            "TimestampValidityProof: prove grand products"
         );
         let _enter = _span.enter();
         let (batched_grand_product, r_grand_product) =

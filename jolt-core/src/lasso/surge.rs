@@ -381,106 +381,105 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
-    #[tracing::instrument(skip_all, name = "Surge::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
+    fn compute_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         let gamma_squared = gamma.square();
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
-                            + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                            + polynomials.dim[dim_index][i]
-                            - *tau
+
+        let (init_leaves, read_leaves) = rayon::join(
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let subtable_index = Self::memory_to_subtable_index(memory_index);
+                        let leaf_fingerprints = (0..self.M)
+                            .map(|i| {
+                                // 0 * gamma^2 +
+                                mul_0_1_optimized(
+                                    &self.materialized_subtables[subtable_index][i],
+                                    gamma,
+                                ) + F::from(i as u64)
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-    #[tracing::instrument(skip_all, name = "Surge::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &SurgePolys<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        mul_0_1_optimized(
-                            &(polynomials.read_cts[dim_index][i] + F::one()),
-                            &gamma_squared,
-                        ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                            + polynomials.dim[dim_index][i]
-                            - *tau
+                    .collect()
+            },
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let dim_index = Self::memory_to_dimension_index(memory_index);
+                        let leaf_fingerprints = (0..self.num_lookups)
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.read_cts[dim_index][i],
+                                    &gamma_squared,
+                                ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                                    + polynomials.dim[dim_index][i]
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-    #[tracing::instrument(skip_all, name = "Surge::init_leaves")]
-    fn init_leaves(
-        &self,
-        _polynomials: &SurgePolys<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..self.M)
-                    .map(|i| {
-                        // 0 * gamma^2 +
-                        mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
-                            + F::from(i as u64)
-                            - *tau
+                    .collect()
+            },
+        );
+        let (final_leaves, write_leaves) = rayon::join(
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let dim_index = Self::memory_to_dimension_index(memory_index);
+                        let subtable_index = Self::memory_to_subtable_index(memory_index);
+                        let leaf_fingerprints = (0..self.M)
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.final_cts[dim_index][i],
+                                    &gamma_squared,
+                                ) + mul_0_1_optimized(
+                                    &self.materialized_subtables[subtable_index][i],
+                                    gamma,
+                                ) + F::from(i as u64)
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-    #[tracing::instrument(skip_all, name = "Surge::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &SurgePolys<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..self.M)
-                    .map(|i| {
-                        mul_0_1_optimized(&polynomials.final_cts[dim_index][i], &gamma_squared)
-                            + mul_0_1_optimized(
-                                &self.materialized_subtables[subtable_index][i],
-                                gamma,
-                            )
-                            + F::from(i as u64)
-                            - *tau
+                    .collect()
+            },
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let dim_index = Self::memory_to_dimension_index(memory_index);
+                        let leaf_fingerprints = (0..self.num_lookups)
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &(polynomials.read_cts[dim_index][i] + F::one()),
+                                    &gamma_squared,
+                                ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                                    + polynomials.dim[dim_index][i]
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
+                    .collect()
+            },
+        );
+
+        (read_leaves, write_leaves, init_leaves, final_leaves)
     }
 
     fn protocol_name() -> &'static [u8] {

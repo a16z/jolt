@@ -509,113 +509,103 @@ where
         result - tau
     }
 
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]
+    fn compute_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         let num_ops = polynomials.a_read_write.len();
-        let read_fingerprints = (0..num_ops)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write.opcode[i],
-                        polynomials.v_read_write.rd[i],
-                        polynomials.v_read_write.rs1[i],
-                        polynomials.v_read_write.rs2[i],
-                        polynomials.v_read_write.imm[i],
-                        polynomials.t_read[i],
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(read_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &BytecodePolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let num_ops = polynomials.a_read_write.len();
-        let read_fingerprints = (0..num_ops)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write.opcode[i],
-                        polynomials.v_read_write.rd[i],
-                        polynomials.v_read_write.rs1[i],
-                        polynomials.v_read_write.rs2[i],
-                        polynomials.v_read_write.imm[i],
-                        polynomials.t_read[i] + F::one(),
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(read_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::init_leaves")]
-    fn init_leaves(
-        &self,
-        polynomials: &BytecodePolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
         let memory_size = polynomials.v_init_final.opcode.len();
-        let init_fingerprints = (0..memory_size)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        F::from(i as u64),
-                        polynomials.v_init_final.opcode[i],
-                        polynomials.v_init_final.rd[i],
-                        polynomials.v_init_final.rs1[i],
-                        polynomials.v_init_final.rs2[i],
-                        polynomials.v_init_final.imm[i],
-                        F::zero(),
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(init_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &BytecodePolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let memory_size = polynomials.v_init_final.opcode.len();
-        let init_fingerprints = (0..memory_size)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        F::from(i as u64),
-                        polynomials.v_init_final.opcode[i],
-                        polynomials.v_init_final.rd[i],
-                        polynomials.v_init_final.rs1[i],
-                        polynomials.v_init_final.rs2[i],
-                        polynomials.v_init_final.imm[i],
-                        polynomials.t_final[i],
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(init_fingerprints)]
+
+        let (read_leaves, init_leaves) = rayon::join(
+            || {
+                let read_fingerprints = (0..num_ops).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            polynomials.a_read_write[i],
+                            polynomials.v_read_write.opcode[i],
+                            polynomials.v_read_write.rd[i],
+                            polynomials.v_read_write.rs1[i],
+                            polynomials.v_read_write.rs2[i],
+                            polynomials.v_read_write.imm[i],
+                            polynomials.t_read[i],
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(read_fingerprints)]
+            },
+            || {
+                let init_fingerprints = (0..memory_size).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            F::from(i as u64),
+                            polynomials.v_init_final.opcode[i],
+                            polynomials.v_init_final.rd[i],
+                            polynomials.v_init_final.rs1[i],
+                            polynomials.v_init_final.rs2[i],
+                            polynomials.v_init_final.imm[i],
+                            F::zero(),
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(init_fingerprints)]
+            },
+        );
+        let (write_leaves, final_leaves) = rayon::join(
+            || {
+                let read_fingerprints = (0..num_ops).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            polynomials.a_read_write[i],
+                            polynomials.v_read_write.opcode[i],
+                            polynomials.v_read_write.rd[i],
+                            polynomials.v_read_write.rs1[i],
+                            polynomials.v_read_write.rs2[i],
+                            polynomials.v_read_write.imm[i],
+                            polynomials.t_read[i] + F::one(),
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(read_fingerprints)]
+            },
+            || {
+                let final_fingerprints = (0..memory_size).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            F::from(i as u64),
+                            polynomials.v_init_final.opcode[i],
+                            polynomials.v_init_final.rd[i],
+                            polynomials.v_init_final.rs1[i],
+                            polynomials.v_init_final.rs2[i],
+                            polynomials.v_init_final.imm[i],
+                            polynomials.t_final[i],
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(final_fingerprints)]
+            },
+        );
+
+        (read_leaves, write_leaves, init_leaves, final_leaves)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -897,11 +887,8 @@ mod tests {
             BytecodePolynomials::new(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let init_leaves: Vec<DensePolynomial<Fr>> = polys.init_leaves(&polys, gamma, tau);
-        let read_leaves: Vec<DensePolynomial<Fr>> = polys.read_leaves(&polys, gamma, tau);
-        let write_leaves: Vec<DensePolynomial<Fr>> = polys.write_leaves(&polys, gamma, tau);
-        let final_leaves: Vec<DensePolynomial<Fr>> = polys.final_leaves(&polys, gamma, tau);
-
+        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+            polys.compute_leaves(&polys, &gamma, &tau);
         let init_leaves = &init_leaves[0];
         let read_leaves = &read_leaves[0];
         let write_leaves = &write_leaves[0];
