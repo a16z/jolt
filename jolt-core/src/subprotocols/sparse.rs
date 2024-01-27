@@ -9,39 +9,44 @@ pub struct SparseEntry<F> {
     index: usize
 }
 
+impl<F> SparseEntry<F> {
+    pub fn new(value: F, index: usize) -> Self {
+        Self { value, index }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SparsePoly<F> {
     low_entries: Vec<SparseEntry<F>>,
     high_entries: Vec<SparseEntry<F>>,
 
     num_vars: usize,
-    len: usize,
+    dense_len: usize,
 
-    // TODO(sragss): Should move these to their own iterator
     low_sparse_index: usize,
     high_sparse_index: usize
 }
 
-impl<F: PrimeField> SparsePoly<F> {
-    pub fn new(entries: Vec<F>, indices: Vec<Option<usize>>, num_vars: usize) -> Self {
-        let mut low_entries = Vec::new();
-        let mut high_entries = Vec::new();
-        let len = 1 << num_vars;
-        let mid = len / 2;
-        assert_eq!(indices.len(), len);
+impl<F> std::ops::Index<usize> for SparsePoly<F> {
+    type Output = SparseEntry<F>;
 
-        for (dense_index, opt_index) in indices.into_iter().enumerate() {
-            if let Some(sparse_index) = opt_index {
-                if dense_index < mid {
-                    low_entries.push(SparseEntry { value: entries[sparse_index], index: dense_index })
-                } else {
-                    high_entries.push(SparseEntry { value: entries[sparse_index], index: dense_index - mid })
-                }
-
-            }
+    fn index(&self, index: usize) -> &Self::Output {
+        if index < self.low_entries.len() {
+            &self.low_entries[index]
+        } else {
+            &self.high_entries[index - self.low_entries.len()]
         }
+    }
+}
 
-        Self { low_entries, high_entries, num_vars, len, low_sparse_index: 0, high_sparse_index: 0 }
+impl<F: PrimeField> SparsePoly<F> {
+    pub fn new(low_entries: Vec<SparseEntry<F>>, high_entries: Vec<SparseEntry<F>>, dense_len: usize) -> Self {
+        let mid = dense_len / 2;
+        assert!(low_entries.len() < dense_len);
+        assert!(high_entries.len() < dense_len);
+        let num_vars = dense_len.log_2();
+
+        Self { low_entries, high_entries, num_vars, dense_len, low_sparse_index: 0, high_sparse_index: 0 }
     }
 
     pub fn final_eval(&self) -> F {
@@ -54,7 +59,7 @@ impl<F: PrimeField> SparsePoly<F> {
     }
 
     pub fn mid(&self) -> usize {
-        self.len / 2
+        self.dense_len / 2
     }
 
     #[inline]
@@ -138,14 +143,18 @@ impl<F: PrimeField> SparsePoly<F> {
         self.low_entries = new_low_entries;
         self.high_entries = new_high_entries;
         self.num_vars -= 1;
-        self.len /= 2;
+        self.dense_len /= 2;
         self.low_sparse_index = 0;
         self.high_sparse_index = 0;
     }
 
+    pub fn sparse_len(&self) -> usize {
+        self.low_entries.len() + self.high_entries.len()
+    }
+
     pub fn to_dense(self) -> DensePolynomial<F> {
         let half = self.mid();
-        let mut dense_evals: Vec<F> = vec![F::one(); self.len];
+        let mut dense_evals: Vec<F> = vec![F::one(); self.dense_len];
         for low_entry in self.low_entries {
             dense_evals[low_entry.index] = low_entry.value;
         } 
@@ -157,97 +166,119 @@ impl<F: PrimeField> SparsePoly<F> {
     }
 }
 
-// #[derive(Debug, Clone)]
-// pub struct SparseGrandProductCircuit<F> {
-//     left_vec: Vec<Vec<SparseEntry<F>>>,
-//     right_vec: Vec<Vec<SparseEntry<F>>>,
-// }
+#[derive(Debug, Clone)]
+pub struct SparseGrandProductCircuit<F> {
+    left: Vec<SparsePoly<F>>,
+    right: Vec<SparsePoly<F>>,
+}
 
-// impl<F: PrimeField> SparseGrandProductCircuit<F> {
-//     pub fn construct(leaves: Vec<F>, flags: Vec<bool>) -> Self {
-//         let num_leaves = leaves.len();
-//         let num_layers = num_leaves.log_2(); 
-//         let leaf_half = num_leaves / 2;
+impl<F: PrimeField> SparseGrandProductCircuit<F> {
+    pub fn construct(leaves: Vec<F>, flags: Vec<bool>) -> Self {
+        let num_leaves = leaves.len();
+        let num_layers = num_leaves.log_2(); 
+        let leaf_half = num_leaves / 2;
 
-//         let mut lefts: Vec<Vec<SparseEntry<F>>> = Vec::with_capacity(num_layers);
-//         let mut rights: Vec<Vec<SparseEntry<F>>> = Vec::with_capacity(num_layers);
+        let mut lefts: Vec<SparsePoly<F>> = Vec::with_capacity(num_layers);
+        let mut rights: Vec<SparsePoly<F>> = Vec::with_capacity(num_layers);
 
-//         // TODO(sragss): Attempt rough capacity planning here? We could construct metadata from initial flag scan.
-//         let mut left: Vec<SparseEntry<F>> = Vec::new();
-//         let mut right: Vec<SparseEntry<F>> = Vec::new();
+        // TODO(sragss): Attempt rough capacity planning here? We could construct metadata from initial flag scan.
+        let mut left_low: Vec<SparseEntry<F>> = Vec::new();
+        let mut left_high: Vec<SparseEntry<F>> = Vec::new();
+        let mut right_low: Vec<SparseEntry<F>> = Vec::new();
+        let mut right_high: Vec<SparseEntry<F>> = Vec::new();
 
-//         // First layer
-//         for leaf_index in 0..num_leaves {
-//             if flags[leaf_index] { 
-//                 if leaf_index < leaf_half {
-//                     left.push(SparseEntry::new(leaves[leaf_index], leaf_index));
-//                 } else {
-//                     right.push(SparseEntry::new(leaves[leaf_index], leaf_index - leaf_half));
-//                 }
-//             }
-//         }
-//         lefts.push(left);
-//         rights.push(right);
+        // First layer
+        for leaf_index in 0..num_leaves {
+            if flags[leaf_index] { 
+                if leaf_index < leaf_half / 2 {
+                    left_low.push(SparseEntry::new(leaves[leaf_index], leaf_index));
+                } else if leaf_index < leaf_half {
+                    left_high.push(SparseEntry::new(leaves[leaf_index], leaf_index));
+                } else if leaf_index < leaf_half + (leaf_half / 2) {
+                    right_low.push(SparseEntry::new(leaves[leaf_index], leaf_index));
+                } else {
+                    right_high.push(SparseEntry::new(leaves[leaf_index], leaf_index));
+                }
+            }
+        }
+        lefts.push(SparsePoly::new(left_low, left_high, leaf_half));
+        rights.push(SparsePoly::new(right_low, right_high, leaf_half));
 
-//         let mut layer_len = num_leaves;
-//         for layer in 0..num_layers - 1 {
-//             let (left, right) = 
-//                 Self::compute_layer(&lefts[layer], &rights[layer], layer_len);
+        let mut layer_len = num_leaves;
+        for layer in 0..num_layers - 1 {
+            let (left, right) = 
+                Self::compute_layer(&lefts[layer], &rights[layer], layer_len);
 
-//             lefts.push(left);
-//             rights.push(right);
+            lefts.push(left);
+            rights.push(right);
 
-//             layer_len /= 2;
-//         }
+            layer_len /= 2;
+        }
 
-//         Self { 
-//             left_vec: lefts, 
-//             right_vec: rights
-//         }
-//     }
+        Self { 
+            left: lefts, 
+            right: rights
+        }
+    }
 
-//     fn compute_layer(
-//             prior_left: &Vec<SparseEntry<F>>, 
-//             prior_right: &Vec<SparseEntry<F>>, 
-//             prior_len: usize) -> (Vec<SparseEntry<F>>, Vec<SparseEntry<F>>) {
-//         // TODO(sragss): Attempt capacity planning?
-//         let mut left: Vec<SparseEntry<F>> = Vec::new();
-//         let mut right: Vec<SparseEntry<F>> = Vec::new();
+    fn compute_layer(
+            prior_left: &SparsePoly<F>, 
+            prior_right: &SparsePoly<F>, 
+            prior_len: usize) -> (SparsePoly<F>, SparsePoly<F>) {
+        // Capacity has the potential to overshoot by a factor 2
+        let max_capacity = prior_left.sparse_len();
+        let mut left_low: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
+        let mut left_high: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
+        let max_capacity = prior_right.sparse_len();
+        let mut right_low: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
+        let mut right_high: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
 
-//         let mut left_sparse_index: usize = 0;
-//         let mut right_sparse_index: usize = 0;
+        let mut left_sparse_index: usize = 0;
+        let mut right_sparse_index: usize = 0;
 
-//         while left_sparse_index < prior_left.len() && right_sparse_index < prior_right.len() {
-//             // Mere existence of these indices means they're "non-sparse": not equal to 1.
-//             let left_index = prior_left[left_sparse_index].index;
-//             let right_index = prior_right[right_sparse_index].index;
+        while left_sparse_index < prior_left.sparse_len() && right_sparse_index < prior_right.sparse_len() {
+            // Mere existence of these indices means they're "non-sparse": not equal to 1.
+            let left_index = prior_left[left_sparse_index].index;
+            let right_index = prior_right[right_sparse_index].index;
 
-//             let entry = if left_index == right_index {
-//                 let value = prior_left[left_sparse_index].value * prior_right[right_sparse_index].value;
-//                 left_sparse_index += 1;
-//                 right_sparse_index += 1;
-//                 SparseEntry::new(value, left_index)
-//             } else if left_index < right_index {
-//                 let entry = prior_left[left_sparse_index].clone();
-//                 left_sparse_index += 1;
-//                 entry
-//             } else if right_index < left_index {
-//                 let entry = prior_right[right_sparse_index].clone();
-//                 right_sparse_index += 1;
-//                 entry
-//             } else {
-//                 unreachable!();
-//             };
+            todo!("sam deal with the index updates");
 
-//             if entry.index < prior_len / 4 {
-//                 left.push(entry);
-//             } else {
-//                 right.push(entry);
-//             }
-//         }
-//         (left, right)
-//     }
-// }
+            let entry = if left_index == right_index {
+                let value = prior_left[left_sparse_index].value * prior_right[right_sparse_index].value;
+                left_sparse_index += 1;
+                right_sparse_index += 1;
+                SparseEntry::new(value, left_index)
+            } else if left_index < right_index {
+                let entry = prior_left[left_sparse_index].clone();
+                left_sparse_index += 1;
+                entry
+            } else if right_index < left_index {
+                let entry = prior_right[right_sparse_index].clone();
+                right_sparse_index += 1;
+                entry
+            } else {
+                unreachable!();
+            };
+
+            // prior_left.dense_len() + prior_right.dense_len() == prior_len
+            // dense_left.len() == dense_right.len() == prior_len / 4
+            // dense_left_low.len() == dense_left_high.len() == ... == prior.len / 8
+            if entry.index < prior_len / 8 {
+                left_low.push(entry);
+            } else if entry.index < prior_len / 4 {
+                left_high.push(entry);
+            } else if entry.index < (prior_len / 4) + (prior_len / 8) {
+                right_low.push(entry);
+            } else {
+                right_high.push(entry);
+            }
+        }
+        let new_len = prior_len / 2;
+        let left = SparsePoly::new(left_low, left_high, new_len);
+        let right = SparsePoly::new(right_low, right_high, new_len);
+        (left, right)
+    }
+}
 
 
 #[cfg(test)]
@@ -261,25 +292,26 @@ mod tests {
         let dense = DensePolynomial::new(vec![Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]);
         let sparse = SparsePoly::new(
             vec![
-                Fr::from(4),
-                Fr::from(5),
-                Fr::from(6),
-                Fr::from(7),
+                SparseEntry::new(Fr::from(4), 0),
+                SparseEntry::new(Fr::from(5), 1),
             ],
-            vec![Some(0), Some(1), Some(2), Some(3)],
-            2);
+            vec![
+                SparseEntry::new(Fr::from(6), 0),
+                SparseEntry::new(Fr::from(7), 1),
+            ],
+            4);
         assert_eq!(dense, sparse.to_dense());
 
         let dense = DensePolynomial::new(vec![Fr::one(), Fr::one(), Fr::from(3), Fr::one()]);
-        let sparse = SparsePoly::new(vec![Fr::from(3)], vec![None, None, Some(0), None], 2);
+        let sparse = SparsePoly::new(vec![], vec![SparseEntry::new(Fr::from(3), 0)], 4);
         assert_eq!(dense, sparse.to_dense());
 
         let dense = DensePolynomial::new(vec![Fr::from(2), Fr::from(2), Fr::one(), Fr::one()]);
-        let sparse = SparsePoly::new(vec![Fr::from(2), Fr::from(2)], vec![Some(0), Some(1), None, None], 2);
+        let sparse = SparsePoly::new(vec![SparseEntry::new(Fr::from(2), 0), SparseEntry::new(Fr::from(2), 1)], vec![], 4);
         assert_eq!(dense, sparse.to_dense());
 
         let dense = DensePolynomial::new(vec![Fr::one(), Fr::one(), Fr::from(8), Fr::from(8)]);
-        let sparse = SparsePoly::new(vec![Fr::from(8), Fr::from(8)], vec![None, None, Some(0), Some(1)], 2);
+        let sparse = SparsePoly::new(vec![], vec![SparseEntry::new(Fr::from(8), 0), SparseEntry::new(Fr::from(8), 1)], 4);
         assert_eq!(dense, sparse.to_dense());
     }
 
@@ -288,18 +320,14 @@ mod tests {
         let mut dense = DensePolynomial::new(vec![Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)]);
         let mut sparse = SparsePoly::new(
             vec![
-                Fr::from(4),
-                Fr::from(5),
-                Fr::from(6),
-                Fr::from(7),
+                SparseEntry::new(Fr::from(4), 0),
+                SparseEntry::new(Fr::from(5), 1),
             ],
             vec![
-                Some(0),
-                Some(1),
-                Some(2),
-                Some(3),
+                SparseEntry::new(Fr::from(6), 0),
+                SparseEntry::new(Fr::from(7), 1),
             ],
-            2);
+            4);
         assert_eq!(dense, sparse.clone().to_dense());
         let r = Fr::from(12);
         dense.bound_poly_var_top(&r);
@@ -311,16 +339,11 @@ mod tests {
     fn bound_poly_var_top_sparse_left() {
         let mut dense = DensePolynomial::new(vec![Fr::from(1), Fr::from(1), Fr::from(6), Fr::from(7)]);
         let mut sparse = SparsePoly::new(
+            vec![], 
             vec![
-                Fr::from(6),
-                Fr::from(7),
-            ], 
-            vec![
-                None,
-                None,
-                Some(0),
-                Some(1),
-            ], 2);
+                SparseEntry::new(Fr::from(6), 0),
+                SparseEntry::new(Fr::from(7), 1)
+            ], 4);
         assert_eq!(dense, sparse.clone().to_dense());
         let r = Fr::from(12);
         dense.bound_poly_var_top(&r);
@@ -333,15 +356,11 @@ mod tests {
         let mut dense = DensePolynomial::new(vec![Fr::from(4), Fr::from(5), Fr::from(1), Fr::from(1)]);
         let mut sparse = SparsePoly::new(
             vec![
-                Fr::from(4),
-                Fr::from(5),
+                SparseEntry::new(Fr::from(4), 0),
+                SparseEntry::new(Fr::from(5), 1),
             ],
             vec![
-                Some(0),
-                Some(1),
-                None,
-                None
-            ], 2);
+            ], 4);
         assert_eq!(dense, sparse.clone().to_dense());
         let r = Fr::from(12);
         dense.bound_poly_var_top(&r);
@@ -399,23 +418,27 @@ mod tests {
 
 pub mod bench {
     use super::*;
-    use ark_std::UniformRand;
     use ark_std::{test_rng, rand::Rng};
 
     pub fn init_bind_bench<F: PrimeField>(log_size: usize, pct_ones: f64) -> SparsePoly<F> {
         let mut rng = test_rng();
 
-        let size = 1 << log_size;
-        let mut entries = Vec::new();
-        let mut indices = vec![None; size];
-        let mut sparse_index = 0;
-        for i in 0..size {
+        let size = 1usize << log_size;
+        let half = size / 2;
+
+        let mut low_entries = Vec::new();
+        let mut high_entries = Vec::new();
+
+        for i in 0..half {
             if rng.gen::<f64>() > pct_ones {
-                entries.push(F::rand(&mut rng));
-                indices[i] = Some(sparse_index);
-                sparse_index += 1;
+                low_entries.push(SparseEntry::new(F::rand(&mut rng), i));
             }
         }
-        SparsePoly::new(entries, indices, log_size)
+        for i in 0..half {
+            if rng.gen::<f64>() > pct_ones {
+                high_entries.push(SparseEntry::new(F::rand(&mut rng), i));
+            }
+        }
+        SparsePoly::new(low_entries, high_entries, size)
     }
 }
