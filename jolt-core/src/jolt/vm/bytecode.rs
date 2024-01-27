@@ -229,13 +229,13 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         let opcode_index = |index: usize| -> usize {
             index
         };
-        let rd_index = |index: usize| -> usize {
+        let rs1_index = |index: usize| -> usize {
             len + index
         };
-        let rs1_index = |index: usize| -> usize {
+        let rs2_index = |index: usize| -> usize {
             2*len + index
         };
-        let rs2_index = |index: usize| -> usize {
+        let rd_index = |index: usize| -> usize {
             3*len + index
         };
         let imm_index = |index: usize| -> usize {
@@ -247,9 +247,9 @@ impl<F: PrimeField> FiveTuplePoly<F> {
 
         for (index, row) in elf.iter().enumerate() {
             packed[opcode_index(index)] = F::from(row.opcode);
-            packed[rd_index(index)] = F::from(row.rd);
             packed[rs1_index(index)] = F::from(row.rs1);
             packed[rs2_index(index)] = F::from(row.rs2);
+            packed[rd_index(index)] = F::from(row.rd);
             packed[imm_index(index)] = F::from(row.imm);
         }
 
