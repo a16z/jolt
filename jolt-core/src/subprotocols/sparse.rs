@@ -41,7 +41,6 @@ impl<F> std::ops::Index<usize> for SparsePoly<F> {
 
 impl<F: PrimeField> SparsePoly<F> {
     pub fn new(low_entries: Vec<SparseEntry<F>>, high_entries: Vec<SparseEntry<F>>, dense_len: usize) -> Self {
-        let mid = dense_len / 2;
         assert!(low_entries.len() <= dense_len);
         assert!(high_entries.len() <= dense_len);
         let num_vars = dense_len.log_2();
@@ -173,7 +172,7 @@ pub struct SparseGrandProductCircuit<F> {
 }
 
 impl<F: PrimeField> SparseGrandProductCircuit<F> {
-    pub fn construct(leaves: Vec<F>, flags: Vec<bool>) -> Self {
+    pub fn construct(leaves: &[F], flags: &[bool]) -> Self {
         assert_eq!(leaves.len(), flags.len());
         let num_leaves = leaves.len();
         let num_layers = num_leaves.log_2(); 
@@ -237,9 +236,9 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
 
         let mut left_sparse_index: usize = 0;
         let mut right_sparse_index: usize = 0;
-        while left_sparse_index < prior_left.low_entries.len() && right_sparse_index < prior_right.low_entries.len() {
-            let left_index = prior_left.low_entries[left_sparse_index].index;
-            let right_index = prior_right.low_entries[right_sparse_index].index;
+        while left_sparse_index < prior_left.low_entries.len() || right_sparse_index < prior_right.low_entries.len() {
+            let left_index = if left_sparse_index == prior_left.low_entries.len() { prior_left.dense_len } else { prior_left.low_entries[left_sparse_index].index };
+            let right_index = if right_sparse_index == prior_right.low_entries.len() { prior_right.dense_len } else { prior_right.low_entries[right_sparse_index].index };
 
             let mut entry = if left_index == right_index {
                 let value = prior_left.low_entries[left_sparse_index].value * prior_right.low_entries[right_sparse_index].value;
@@ -274,9 +273,9 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
         let mut right_high: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
         let mut left_sparse_index: usize = 0;
         let mut right_sparse_index: usize = 0;
-        while left_sparse_index < prior_left.high_entries.len() && right_sparse_index < prior_right.high_entries.len() {
-            let left_index = prior_left.high_entries[left_sparse_index].index;
-            let right_index = prior_right.high_entries[right_sparse_index].index;
+        while left_sparse_index < prior_left.high_entries.len() || right_sparse_index < prior_right.high_entries.len() {
+            let left_index = if left_sparse_index == prior_left.high_entries.len() { prior_left.dense_len } else { prior_left.high_entries[left_sparse_index].index };
+            let right_index = if right_sparse_index == prior_right.high_entries.len() { prior_right.dense_len } else { prior_right.high_entries[right_sparse_index].index };
 
             let mut entry = if left_index == right_index {
                 let value = prior_left.high_entries[left_sparse_index].value * prior_right.high_entries[right_sparse_index].value;
@@ -310,6 +309,43 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
         let left = SparsePoly::new(left_low, left_high, new_len);
         let right = SparsePoly::new(right_low, right_high, new_len);
         (left, right)
+    }
+
+    pub fn num_layers(&self) -> usize {
+        self.left.len()
+    }
+
+    pub fn evaluate(&self) -> F {
+        let num_layers = self.num_layers();
+        let left = &self.left[num_layers - 1];
+        let right = &self.right[num_layers - 1];
+        assert_eq!(left.num_vars, 0);
+        assert_eq!(right.num_vars, 0);
+
+        assert_eq!(left.high_entries.len(), 0);
+        assert_eq!(right.high_entries.len(), 0);
+
+        // It's possible that an entire side of the GKR circuit evaluates
+        // to one, in which case the sparse representation will be empty.
+        let left_val = if left.low_entries.len() == 1 {
+            left.low_entries[0].value
+        } else if left.low_entries.len() == 0 {
+            println!("hit the left one case");
+            F::one() 
+        } else {
+            panic!("shouldn't happen");
+        };
+
+        let right_val = if right.low_entries.len() == 1 {
+            right.low_entries[0].value
+        } else if right.low_entries.len() == 0 {
+            println!("hit the right one case - left: {left:?}");
+            F::one()
+        } else {
+            panic!("shouldn't happen");
+        };
+
+        left_val * right_val
     }
 }
 
@@ -455,7 +491,7 @@ mod tests {
         let leaves: Vec<Fr> = vec![Fr::from(0), Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4), Fr::from(5), Fr::from(6), Fr::from(7)];
         let flags: Vec<bool> = vec![true, true, true, true, true, true, true, true];
 
-        let circuit = SparseGrandProductCircuit::construct(leaves, flags);
+        let circuit = SparseGrandProductCircuit::construct(&leaves, &flags);
 
         // Example:
         // 0: LEFT = A, B, C, D     RIGHT = E, F, G, H
@@ -543,11 +579,33 @@ mod tests {
         }).collect();
 
         let mut dense_circuit = GrandProductCircuit::new(&DensePolynomial::new(dense_leaves_toggled));
-        let sparse_circuit = SparseGrandProductCircuit::construct(leaves, flags);
+        let sparse_circuit = SparseGrandProductCircuit::construct(&leaves, &flags);
 
         let (dense_layer_0_left, dense_layer_0_right) = dense_circuit.take_layer(0);
         assert_eq!(dense_layer_0_left, sparse_circuit.left[0].clone().to_dense());
         assert_eq!(dense_layer_0_right, sparse_circuit.right[0].clone().to_dense());
+    }
+
+    #[test]
+    fn sparse_circuit_evaluation() {
+        let leaves = vec![Fr::from(10), Fr::from(20), Fr::from(30), Fr::from(40), Fr::from(50), Fr::from(60), Fr::from(70), Fr::from(80)];
+        let flags = vec![true, true, true, true, true, true, true, true];
+        let circuit = SparseGrandProductCircuit::construct(&leaves, &flags);
+
+        let product = leaves.iter().product();
+        assert_eq!(circuit.evaluate(), product);
+
+        let flags = vec![false, false, false, false, true, true, true, true];
+        let half_leaves = &leaves[4..8];
+        let product = half_leaves.iter().product();
+        let circuit = SparseGrandProductCircuit::construct(&leaves, &flags);
+        assert_eq!(circuit.evaluate(), product);
+
+        let flags = vec![true, true, true, true, false, false, false, false];
+        let half_leaves = &leaves[0..4];
+        let product = half_leaves.iter().product();
+        let circuit = SparseGrandProductCircuit::construct(&leaves, &flags);
+        assert_eq!(circuit.evaluate(), product);
     }
 }
 

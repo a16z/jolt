@@ -14,6 +14,7 @@ use rayon::prelude::*;
 use crate::lasso::memory_checking::MultisetHashes;
 use crate::poly::hyrax::HyraxGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
+use crate::subprotocols::sparse::SparseGrandProductCircuit;
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -620,14 +621,15 @@ where
             .map(|(i, leaves_poly)| {
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i / 2);
-                let flag = &subtable_flag_polys[subtable_index];
-                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(&leaves_poly, &flag);
-                GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_leaves_l),
-                    DensePolynomial::new(toggled_leaves_r),
-                )
+                let flags = &subtable_flag_polys[subtable_index];
+                let flags_bool: Vec<bool> = (0..flags.len())
+                    .into_iter()
+                    .map(|i| flags[i].is_one())
+                    .collect();
+
+                SparseGrandProductCircuit::construct(leaves_poly.evals_ref(), &flags_bool)
             })
-            .collect::<Vec<GrandProductCircuit<F>>>();
+            .collect::<Vec<SparseGrandProductCircuit<F>>>();
 
         drop(_enter);
         drop(_span);

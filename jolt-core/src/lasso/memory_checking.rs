@@ -460,6 +460,8 @@ where
 mod tests {
     use std::collections::HashSet;
 
+    use crate::subprotocols::sparse::SparseGrandProductCircuit;
+
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
     use ark_ff::Field;
@@ -966,64 +968,118 @@ mod tests {
 
             type MemoryTuple = (Fr, Fr, Fr, Option<Fr>);
 
-            #[rustfmt::skip]
             fn compute_leaves(
                 &self,
                 polynomials: &FlagPolys,
                 gamma: &Fr,
                 tau: &Fr,
-            ) -> (
-                Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
-            ) {
-                let read_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
-                    DensePolynomial::new(
-                        (0..polynomials.a_0_ops.len()).map(|leaf_index| {
-                            let tuple = match memory_index {
-                                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index], None),
-                                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index], None),
-                                _ => unimplemented!(),
-                            };
-                            Self::fingerprint(&tuple, gamma, tau)
-                        }).collect(),
-                    )
-                }).collect();
-                let write_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
-                    DensePolynomial::new(
-                        (0..polynomials.a_0_ops.len()).map(|leaf_index| {
-                            let tuple = match memory_index {
-                                0 => (polynomials.a_0_ops[leaf_index], polynomials.v_0_ops[leaf_index], polynomials.t_0_reads[leaf_index] + Fr::one(), None),
-                                1 => (polynomials.a_1_ops[leaf_index], polynomials.v_1_ops[leaf_index], polynomials.t_1_reads[leaf_index] + Fr::one(), None),
-                                _ => unimplemented!(),
-                            };
-                            Self::fingerprint(&tuple, gamma, tau)
-                        }).collect(),
-                    )
-                }).collect();
-                let init_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
-                    DensePolynomial::new(
-                        (0..polynomials.v_mems.len()).map(|leaf_index| {
-                            let tuple = match memory_index {
-                                0 | 1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], Fr::zero(), None),
-                                _ => unimplemented!(),
-                            };
-                            Self::fingerprint(&tuple, gamma, tau)
-                        }).collect(),
-                    )
-                }).collect();
-                let final_leaves: Vec<DensePolynomial<Fr>> =[0, 1].iter().map(|memory_index| {
-                    DensePolynomial::new(
-                        (0..polynomials.v_mems.len()).map(|leaf_index| {
-                            let tuple = match memory_index {
-                                0 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_0_finals[leaf_index], None),
-                                1 => (Fr::from(leaf_index as u64), polynomials.v_mems[leaf_index], polynomials.t_1_finals[leaf_index], None),
-                                _ => unimplemented!(),
-                            };
-                            Self::fingerprint(&tuple, gamma, tau)
-                        }).collect(),
-                    )
-                }).collect();
-                (interleave(read_leaves, write_leaves).collect(), interleave(init_leaves, final_leaves).collect())
+            ) -> (Vec<DensePolynomial<Fr>>, Vec<DensePolynomial<Fr>>) {
+                let read_leaves: Vec<DensePolynomial<Fr>> = [0, 1]
+                    .iter()
+                    .map(|memory_index| {
+                        DensePolynomial::new(
+                            (0..polynomials.a_0_ops.len())
+                                .map(|leaf_index| {
+                                    let tuple = match memory_index {
+                                        0 => (
+                                            polynomials.a_0_ops[leaf_index],
+                                            polynomials.v_0_ops[leaf_index],
+                                            polynomials.t_0_reads[leaf_index],
+                                            None,
+                                        ),
+                                        1 => (
+                                            polynomials.a_1_ops[leaf_index],
+                                            polynomials.v_1_ops[leaf_index],
+                                            polynomials.t_1_reads[leaf_index],
+                                            None,
+                                        ),
+                                        _ => unimplemented!(),
+                                    };
+                                    Self::fingerprint(&tuple, gamma, tau)
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let write_leaves: Vec<DensePolynomial<Fr>> = [0, 1]
+                    .iter()
+                    .map(|memory_index| {
+                        DensePolynomial::new(
+                            (0..polynomials.a_0_ops.len())
+                                .map(|leaf_index| {
+                                    let tuple = match memory_index {
+                                        0 => (
+                                            polynomials.a_0_ops[leaf_index],
+                                            polynomials.v_0_ops[leaf_index],
+                                            polynomials.t_0_reads[leaf_index] + Fr::one(),
+                                            None,
+                                        ),
+                                        1 => (
+                                            polynomials.a_1_ops[leaf_index],
+                                            polynomials.v_1_ops[leaf_index],
+                                            polynomials.t_1_reads[leaf_index] + Fr::one(),
+                                            None,
+                                        ),
+                                        _ => unimplemented!(),
+                                    };
+                                    Self::fingerprint(&tuple, gamma, tau)
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let init_leaves: Vec<DensePolynomial<Fr>> = [0, 1]
+                    .iter()
+                    .map(|memory_index| {
+                        DensePolynomial::new(
+                            (0..polynomials.v_mems.len())
+                                .map(|leaf_index| {
+                                    let tuple = match memory_index {
+                                        0 | 1 => (
+                                            Fr::from(leaf_index as u64),
+                                            polynomials.v_mems[leaf_index],
+                                            Fr::zero(),
+                                            None,
+                                        ),
+                                        _ => unimplemented!(),
+                                    };
+                                    Self::fingerprint(&tuple, gamma, tau)
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let final_leaves: Vec<DensePolynomial<Fr>> = [0, 1]
+                    .iter()
+                    .map(|memory_index| {
+                        DensePolynomial::new(
+                            (0..polynomials.v_mems.len())
+                                .map(|leaf_index| {
+                                    let tuple = match memory_index {
+                                        0 => (
+                                            Fr::from(leaf_index as u64),
+                                            polynomials.v_mems[leaf_index],
+                                            polynomials.t_0_finals[leaf_index],
+                                            None,
+                                        ),
+                                        1 => (
+                                            Fr::from(leaf_index as u64),
+                                            polynomials.v_mems[leaf_index],
+                                            polynomials.t_1_finals[leaf_index],
+                                            None,
+                                        ),
+                                        _ => unimplemented!(),
+                                    };
+                                    Self::fingerprint(&tuple, gamma, tau)
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                (
+                    interleave(read_leaves, write_leaves).collect(),
+                    interleave(init_leaves, final_leaves).collect(),
+                )
             }
 
             fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
@@ -1051,26 +1107,25 @@ mod tests {
                 let mut write_hashes = vec![];
 
                 for i in 0..num_memories {
-                    let mut toggled_read_fingerprints = read_write_leaves[2 * i].evals();
-                    let mut toggled_write_fingerprints = read_write_leaves[2 * i + 1].evals();
-
                     let subtable_index = i;
-                    for leaf_index in 0..polynomials.a_0_ops.len() {
-                        let flag = match subtable_index {
-                            0 => polynomials.flags_0[leaf_index],
-                            1 => polynomials.flags_1[leaf_index],
-                            _ => unimplemented!(),
-                        };
-                        if flag == Fr::zero() {
-                            toggled_read_fingerprints[leaf_index] = Fr::one();
-                            toggled_write_fingerprints[leaf_index] = Fr::one();
-                        }
-                    }
+                    let flag_field = match subtable_index {
+                        0 => polynomials.flags_0.as_ref(),
+                        1 => polynomials.flags_1.as_ref(),
+                        _ => unimplemented!(),
+                    };
+                    let flag_bool: Vec<bool> = (0..flag_field.len())
+                        .into_iter()
+                        .map(|i| flag_field[i].is_one())
+                        .collect();
 
-                    let read_circuit =
-                        GrandProductCircuit::new(&DensePolynomial::new(toggled_read_fingerprints));
-                    let write_circuit =
-                        GrandProductCircuit::new(&DensePolynomial::new(toggled_write_fingerprints));
+                    let read_circuit = SparseGrandProductCircuit::construct(
+                        read_write_leaves[2 * i].evals_ref(),
+                        &flag_bool,
+                    );
+                    let write_circuit = SparseGrandProductCircuit::construct(
+                        read_write_leaves[2 * i + 1].evals_ref(),
+                        &flag_bool,
+                    );
                     read_hashes.push(read_circuit.evaluate());
                     write_hashes.push(write_circuit.evaluate());
                     circuits.push(read_circuit);
