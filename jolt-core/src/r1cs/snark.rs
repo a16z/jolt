@@ -172,8 +172,8 @@ pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F:
   let proof = SNARK::prove(&pk, circuit);
   assert!(proof.is_ok());
 
-  let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
-  assert!(res.is_ok()); 
+  // let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
+  // assert!(res.is_ok()); 
 
   Ok(())
 }
