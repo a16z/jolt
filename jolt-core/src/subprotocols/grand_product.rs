@@ -2,7 +2,7 @@ use super::sparse::SparseGrandProductCircuit;
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::subprotocols::sumcheck::CubicSumcheckType;
+use crate::subprotocols::sparse::SparsePoly;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
@@ -210,10 +210,10 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 
                 let num_rounds = eq.get_num_vars();
 
-                // Each of these is needed exactly once, transfer ownership rather than clone.
-                let fingerprint_polys = fingerprint_polys.clone();
-                let flags = flags.clone();
-                let flag_map = flag_map.clone();
+                // Transfer ownership of fingerprint_polys, flags, and flag_map as they are needed exactly once.
+                let fingerprint_polys = std::mem::take(fingerprint_polys);
+                let flags = std::mem::take(flags);
+                let flag_map = std::mem::take(flag_map);
                 CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, flag_map, num_rounds)
             }
             BatchedGrandProductCircuit::Normal { circuits } => {
@@ -232,15 +232,13 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
             } => {
                 // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
                 let layer_id = layer_id - 1;
-
                 let num_rounds = eq.get_num_vars();
 
-                todo!("need to adjust CubicSumcheckparams to accept my new shit.");
-                // let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = circuits
-                //     .iter_mut()
-                //     .map(|circuit| circuit.take_layer(layer_id))
-                //     .unzip();
-                // CubicSumcheckParams::new_prod_ones(lefts, rights, eq, num_rounds)
+                let (lefts, rights): (Vec<SparsePoly<F>>, Vec<SparsePoly<F>>) = circuits
+                    .iter_mut()
+                    .map(|circuit| circuit.take_layer(layer_id))
+                    .unzip();
+                CubicSumcheckParams::new_sparse(lefts, rights, eq, num_rounds)
             }
         }
     }
@@ -282,7 +280,10 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
-            let sumcheck_type = params.sumcheck_type.clone();
+            let sumcheck_is_prod = match params {
+                CubicSumcheckParams::Prod(_) | CubicSumcheckParams::ProdOnes(_) | CubicSumcheckParams::Sparse(_) => true,
+                _ => false,
+            };
             let (proof, rand_prod, claims_prod) =
                 SumcheckInstanceProof::prove_cubic_batched::<G>(
                     &claim, params, &coeff_vec, transcript,
@@ -303,7 +304,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 );
             }
 
-            if sumcheck_type == CubicSumcheckType::Prod || sumcheck_type == CubicSumcheckType::ProdOnes {
+            if sumcheck_is_prod {
                 // Prod layers must generate an additional random coefficient. The sumcheck randomness indexes into the current layer,
                 // but the resulting randomness and claims are about the next layer. The next layer is indexed by an additional variable
                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').

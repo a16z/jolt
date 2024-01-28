@@ -48,13 +48,22 @@ impl<F: PrimeField> SparsePoly<F> {
         Self { low_entries, high_entries, num_vars, dense_len, low_sparse_index: 0, high_sparse_index: 0 }
     }
 
+    pub fn empty() -> Self {
+        Self { low_entries: vec![], high_entries: vec![], num_vars: 0, dense_len: 0, low_sparse_index: 0, high_sparse_index: 0 }
+    }
+
     pub fn final_eval(&self) -> F {
-        assert_eq!(self.low_entries.len(), 1);
         assert_eq!(self.high_entries.len(), 0);
-        assert_eq!(self.num_vars, 0);
-        let entry = self.low_entries[0].clone();
-        assert_eq!(entry.index, 0 );
-        entry.value
+        if self.low_entries.len() == 1 {
+            let entry = &self.low_entries[0];
+            assert_eq!(entry.index, 0);
+            entry.value
+        } else if self.low_entries.len() == 0 {
+            // Possible in the case of full sparsity
+            F::one()
+        } else {
+            panic!("shouldn't happen")
+        }
     }
 
     pub fn mid(&self) -> usize {
@@ -172,6 +181,7 @@ pub struct SparseGrandProductCircuit<F> {
 }
 
 impl<F: PrimeField> SparseGrandProductCircuit<F> {
+    #[tracing::instrument(skip_all, name = "SparseGrandProductCircuit::construct")]
     pub fn construct(leaves: &[F], flags: &[bool]) -> Self {
         assert_eq!(leaves.len(), flags.len());
         let num_leaves = leaves.len();
@@ -330,7 +340,6 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
         let left_val = if left.low_entries.len() == 1 {
             left.low_entries[0].value
         } else if left.low_entries.len() == 0 {
-            println!("hit the left one case");
             F::one() 
         } else {
             panic!("shouldn't happen");
@@ -339,13 +348,24 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
         let right_val = if right.low_entries.len() == 1 {
             right.low_entries[0].value
         } else if right.low_entries.len() == 0 {
-            println!("hit the right one case - left: {left:?}");
             F::one()
         } else {
             panic!("shouldn't happen");
         };
 
         left_val * right_val
+    }
+
+    pub fn take_layer(&mut self, layer_id: usize) -> (SparsePoly<F>, SparsePoly<F>) {
+        let left = std::mem::replace(
+            &mut self.left[layer_id],
+            SparsePoly::empty(),
+        );
+        let right = std::mem::replace(
+            &mut self.right[layer_id],
+            SparsePoly::empty(),
+        );
+        (left, right)
     }
 }
 

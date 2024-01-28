@@ -21,32 +21,29 @@ use crate::msm::VariableBaseMSM;
 
 use super::sparse::SparsePoly;
 
-
 #[derive(Debug, Clone, PartialEq)]
-pub enum CubicSumcheckType {
-    // eq * A * B
-    Prod,
-
-    // eq * A * B, optimized for high probability (A, B) = 1
-    ProdOnes,
-
-    // eq *(A * flags + (1 - flags))
-    Flags,
+pub enum CubicSumcheckParams<F: PrimeField> {
+    Prod(DenseCubicInner<F>),
+    ProdOnes(DenseCubicInner<F>),
+    Flags(DenseCubicInner<F>),
+    Sparse(SparseCubicInner<F>)
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CubicSumcheckParams<F: PrimeField> {
+pub struct DenseCubicInner<F: PrimeField> {
     poly_As: Vec<DensePolynomial<F>>,
     poly_Bs: Vec<DensePolynomial<F>>,
-
-    // TODO(JOLT-41): Consider swapping to iterator references for `poly_As` / `poly_Bs`
     a_to_b: Vec<usize>,
-
     poly_eq: DensePolynomial<F>,
-
     pub num_rounds: usize,
+}
 
-    pub sumcheck_type: CubicSumcheckType,
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparseCubicInner<F: PrimeField> {
+    lefts: Vec<SparsePoly<F>>,
+    rights: Vec<SparsePoly<F>>,
+    poly_eq: DensePolynomial<F>,
+    pub num_rounds: usize
 }
 
 impl<F: PrimeField> CubicSumcheckParams<F> {
@@ -62,14 +59,34 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
 
         let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
 
-        CubicSumcheckParams {
+        CubicSumcheckParams::Prod(DenseCubicInner {
             poly_As: poly_lefts,
             poly_Bs: poly_rights,
             a_to_b,
             poly_eq,
             num_rounds,
-            sumcheck_type: CubicSumcheckType::Prod,
-        }
+        })
+    }
+
+    /// flag_map: poly_leaves length vector mapping between poly_leaves indices and flag indices.
+    pub fn new_flags(
+        poly_leaves: Vec<DensePolynomial<F>>,
+        poly_flags: Vec<DensePolynomial<F>>,
+        poly_eq: DensePolynomial<F>,
+        flag_map: Vec<usize>,
+        num_rounds: usize,
+    ) -> Self {
+        debug_assert_eq!(poly_leaves.len(), flag_map.len());
+        debug_assert_eq!(poly_leaves[0].len(), poly_flags[0].len());
+        debug_assert_eq!(poly_leaves[0].len(), poly_eq.len());
+
+        CubicSumcheckParams::Flags(DenseCubicInner {
+            poly_As: poly_leaves,
+            poly_Bs: poly_flags,
+            a_to_b: flag_map,
+            poly_eq,
+            num_rounds,
+        })
     }
 
     pub fn new_prod_ones(
@@ -84,44 +101,33 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
 
         let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
 
-        CubicSumcheckParams {
+        CubicSumcheckParams::ProdOnes(DenseCubicInner {
             poly_As: poly_lefts,
             poly_Bs: poly_rights,
             a_to_b,
             poly_eq,
             num_rounds,
-            sumcheck_type: CubicSumcheckType::ProdOnes,
-        }
+        })
     }
-    /// flag_map: poly_leaves length vector mapping between poly_leaves indices and flag indices.
-    pub fn new_flags(
-        poly_leaves: Vec<DensePolynomial<F>>,
-        poly_flags: Vec<DensePolynomial<F>>,
+
+    pub fn new_sparse(
+        lefts: Vec<SparsePoly<F>>,
+        rights: Vec<SparsePoly<F>>,
         poly_eq: DensePolynomial<F>,
-        flag_map: Vec<usize>,
-        num_rounds: usize,
+        log_size: usize,
     ) -> Self {
-        debug_assert_eq!(poly_leaves.len(), flag_map.len());
-        debug_assert_eq!(poly_leaves[0].len(), poly_flags[0].len());
-        debug_assert_eq!(poly_leaves[0].len(), poly_eq.len());
+        // debug_assert_eq!(poly_a_sparse.len(), poly_b_sparse.len());
+        // debug_assert_eq!(poly_a_sparse[0].len(), poly_b_sparse[0].len());
+        // debug_assert_eq!(poly_a_sparse[0].len(), poly_eq.len());
+        debug_assert_eq!(lefts.len(), rights.len());
 
-        CubicSumcheckParams {
-            poly_As: poly_leaves,
-            poly_Bs: poly_flags,
-            a_to_b: flag_map,
+
+        CubicSumcheckParams::Sparse(SparseCubicInner {
+            lefts,
+            rights,
             poly_eq,
-            num_rounds,
-            sumcheck_type: CubicSumcheckType::Flags,
-        }
-    }
-
-    #[inline]
-    pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
-        match self.sumcheck_type {
-            CubicSumcheckType::Prod => Self::combine_prod(a, b, c),
-            CubicSumcheckType::ProdOnes => Self::combine_prod(a, b, c),
-            CubicSumcheckType::Flags => Self::combine_flags(a, b, c),
-        }
+            num_rounds: log_size
+        })
     }
 
     #[inline]
@@ -147,8 +153,9 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
             *eq * (*flag * h + (F::one() + flag.neg()))
         }
     }
+}
 
-    #[tracing::instrument(skip_all, name = "get_final_evals")]
+impl<F: PrimeField> DenseCubicInner<F> {
     pub fn get_final_evals(&self) -> (Vec<F>, Vec<F>, F) {
         debug_assert_eq!(self.poly_As[0].len(), 1);
         debug_assert_eq!(self.poly_Bs[0].len(), 1);
@@ -291,17 +298,18 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     where
         G: CurveGroup<ScalarField = F>,
     {
-        match params.sumcheck_type {
-            CubicSumcheckType::Prod => Self::prove_cubic_batched_prod::<G>(claim, params, coeffs, transcript),
-            CubicSumcheckType::ProdOnes => Self::prove_cubic_batched_prod_ones::<G>(claim, params, coeffs, transcript),
-            CubicSumcheckType::Flags => Self::prove_cubic_batched_flags::<G>(claim, params, coeffs, transcript)
+        match params {
+            CubicSumcheckParams::Prod(params) => Self::prove_cubic_batched_prod::<G>(claim, params, coeffs, transcript),
+            CubicSumcheckParams::ProdOnes(params) => Self::prove_cubic_batched_prod_ones::<G>(claim, params, coeffs, transcript),
+            CubicSumcheckParams::Flags(params) => Self::prove_cubic_batched_flags::<G>(claim, params, coeffs, transcript),
+            CubicSumcheckParams::Sparse(params) => Self::prove_cubic_batched_sparse_prod::<G>(claim, params, coeffs, transcript),
         }
     }
 
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_batched_prod")]
     pub fn prove_cubic_batched_prod<G>(
         claim: &F,
-        params: CubicSumcheckParams<F>,
+        params: DenseCubicInner<F>,
         coeffs: &[F],
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
@@ -433,11 +441,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_sparse_prod")]
     pub fn prove_cubic_batched_sparse_prod<G>(
         claim: &F,
-        mut eq: DensePolynomial<F>,
-        mut lefts: Vec<SparsePoly<F>>,
-        mut rights: Vec<SparsePoly<F>>,
+        params: SparseCubicInner<F>,
         coeffs: &[F],
-        num_rounds: usize,
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
     where
@@ -447,7 +452,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
-        for _j in 0..num_rounds {
+        let mut eq = params.poly_eq;
+        let mut lefts = params.lefts;
+        let mut rights = params.rights;
+
+        for _j in 0..params.num_rounds {
             let len = eq.len() / 2;
             let eq_evals: Vec<(F, F, F)> = (0..len)
                 .into_par_iter()
@@ -596,7 +605,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_batched_prod_ones")]
     pub fn prove_cubic_batched_prod_ones<G>(
         claim: &F,
-        params: CubicSumcheckParams<F>,
+        params: DenseCubicInner<F>,
         coeffs: &[F],
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
@@ -774,7 +783,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched_special_fork_flags")]
     pub fn prove_cubic_batched_flags<G>(
         claim: &F,
-        params: CubicSumcheckParams<F>,
+        params: DenseCubicInner<F>,
         coeffs: &[F],
         transcript: &mut Transcript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
@@ -1219,27 +1228,22 @@ pub mod bench {
                     poly_b_dense.clone(), 
                     poly_eq.clone(), 
                     log_size);
-                let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<EdwardsProjective>(
-                    &joint_claim, 
-                    params, 
-                    &coeffs, 
-                    &mut transcript);
+                let (_proof, prove_randomness, final_poly_evals) = 
+                    SumcheckInstanceProof::<Fr>::prove_cubic_batched::<EdwardsProjective>(&joint_claim, params, &coeffs, &mut transcript);
             })
         });
 
         group.bench_function("prove_cubic_batched_sparse_prod", |b| {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
+                let params = CubicSumcheckParams::new_sparse(
+                    poly_a_sparse.clone(),
+                    poly_b_sparse.clone(),
+                    poly_eq.clone(),
+                    log_size
+                );
                 let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) =
-                    SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<EdwardsProjective>(
-                        &joint_claim, 
-                        poly_eq.clone(), 
-                        poly_a_sparse.clone(), 
-                        poly_b_sparse.clone(),
-                        &coeffs, 
-                        log_size, 
-                        &mut transcript
-                    );
+                    SumcheckInstanceProof::<Fr>::prove_cubic_batched::<EdwardsProjective>(&joint_claim, params, &coeffs, &mut transcript);
             })
         });
     }
@@ -1283,21 +1287,19 @@ pub mod bench {
             poly_b_dense.clone(), 
             poly_eq.clone(), 
             log_size);
-        let (_proof, prove_randomness, final_poly_evals) = black_box(SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<EdwardsProjective>(
+        let (_proof, prove_randomness, final_poly_evals) = black_box(SumcheckInstanceProof::<Fr>::prove_cubic_batched::<EdwardsProjective>(
             &joint_claim, 
             params, 
             &coeffs, 
             &mut transcript));
 
         let mut transcript = Transcript::new(b"test_transcript");
+        let params = CubicSumcheckParams::new_sparse(poly_a_sparse.clone(), poly_b_sparse.clone(), poly_eq.clone(), log_size);
         let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) = black_box(
-            SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<EdwardsProjective>(
+            SumcheckInstanceProof::<Fr>::prove_cubic_batched::<EdwardsProjective>(
                 &joint_claim, 
-                poly_eq.clone(), 
-                poly_a_sparse.clone(), 
-                poly_b_sparse.clone(),
+                params,
                 &coeffs, 
-                log_size, 
                 &mut transcript
             )
         );
@@ -1533,21 +1535,24 @@ mod test {
             poly_b_dense.clone(), 
             poly_eq.clone(), 
             log_size);
-        let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched_prod_ones::<G1Projective>(
+        let (_proof, prove_randomness, final_poly_evals) = SumcheckInstanceProof::<Fr>::prove_cubic_batched::<G1Projective>(
             &joint_claim, 
             params, 
             &coeffs, 
             &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
+        let params = CubicSumcheckParams::new_sparse(
+            poly_a_sparse.clone(), 
+            poly_b_sparse.clone(),
+            poly_eq.clone(), 
+            log_size
+        );
         let (_sparse_proof, sparse_prove_randomness, sparse_final_poly_evals) =
-            SumcheckInstanceProof::<Fr>::prove_cubic_batched_sparse_prod::<G1Projective>(
+            SumcheckInstanceProof::<Fr>::prove_cubic_batched::<G1Projective>(
                 &joint_claim, 
-                poly_eq.clone(), 
-                poly_a_sparse.clone(), 
-                poly_b_sparse.clone(),
+                params, 
                 &coeffs, 
-                log_size, 
                 &mut transcript
             );
         assert_eq!(prove_randomness, sparse_prove_randomness);
