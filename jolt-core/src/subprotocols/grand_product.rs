@@ -134,24 +134,22 @@ impl<F: PrimeField> LayerProofBatched<F> {
     }
 }
 
-pub struct BatchedGrandProductCircuit<F: PrimeField> {
-    pub circuits: Vec<GrandProductCircuit<F>>,
-
-    flags_present: bool,
-    flags: Option<Vec<DensePolynomial<F>>>,
-    flag_map: Option<Vec<usize>>,
-    fingerprint_polys: Option<Vec<DensePolynomial<F>>>,
+pub enum BatchedGrandProductCircuit<F: PrimeField> {
+    Normal {
+        circuits: Vec<GrandProductCircuit<F>>,
+    },
+    Flag {
+        circuits: Vec<GrandProductCircuit<F>>,
+        flags: Vec<DensePolynomial<F>>,
+        flag_map: Vec<usize>,
+        fingerprint_polys: Vec<DensePolynomial<F>>,
+    },
 }
 
 impl<F: PrimeField> BatchedGrandProductCircuit<F> {
     pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
-        Self {
+        BatchedGrandProductCircuit::Normal {
             circuits,
-
-            flags_present: false,
-            flags: None,
-            flag_map: None,
-            fingerprint_polys: None,
         }
     }
 
@@ -165,23 +163,25 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
         assert_eq!(circuits.len(), fingerprint_polys.len());
         flag_map.iter().for_each(|i| assert!(*i < flags.len()));
 
-        Self {
+        BatchedGrandProductCircuit::Flag {
             circuits,
+            flags,
+            flag_map,
+            fingerprint_polys,
+        }
+    }
 
-            flags_present: true,
-            flags: Some(flags),
-            flag_map: Some(flag_map),
-            fingerprint_polys: Some(fingerprint_polys),
+    pub fn circuits(&self) -> &Vec<GrandProductCircuit<F>> {
+        match self {
+            BatchedGrandProductCircuit::Normal { circuits } => circuits,
+            BatchedGrandProductCircuit::Flag { circuits, .. } => circuits,
         }
     }
 
     fn num_layers(&self) -> usize {
-        let prod_layers = self.circuits[0].left_vec.len();
-
-        if self.flags.is_some() {
-            prod_layers + 1
-        } else {
-            prod_layers
+        match self {
+            BatchedGrandProductCircuit::Normal { circuits } => circuits[0].left_vec.len(),
+            BatchedGrandProductCircuit::Flag { circuits, .. } => circuits[0].left_vec.len() + 1,
         }
     }
 
@@ -191,36 +191,47 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
         layer_id: usize,
         eq: DensePolynomial<F>,
     ) -> CubicSumcheckParams<F> {
-        if self.flags_present && layer_id == 0 {
-            let flags = self.flags.as_ref().unwrap();
-            debug_assert_eq!(flags[0].len(), eq.len());
+        match self {
+            BatchedGrandProductCircuit::Flag {
+                circuits,
+                flags,
+                flag_map,
+                fingerprint_polys,
+                ..
+            } if layer_id == 0 => {
+                debug_assert_eq!(flags[0].len(), eq.len());
 
-            let num_rounds = eq.get_num_vars();
+                let num_rounds = eq.get_num_vars();
 
-            // Each of these is needed exactly once, transfer ownership rather than clone.
-            let fingerprint_polys = self.fingerprint_polys.take().unwrap();
-            let flags = self.flags.take().unwrap();
-            let flag_map = self.flag_map.take().unwrap();
-            CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, flag_map, num_rounds)
-        } else {
-            // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
-            let layer_id = if self.flags_present {
-                layer_id - 1
-            } else {
-                layer_id
-            };
+                // Each of these is needed exactly once, transfer ownership rather than clone.
+                let fingerprint_polys = fingerprint_polys.clone();
+                let flags = flags.clone();
+                let flag_map = flag_map.clone();
+                CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, flag_map, num_rounds)
+            }
+            BatchedGrandProductCircuit::Normal { circuits } => {
+                let num_rounds = circuits[0].left_vec[layer_id].get_num_vars();
 
-            let num_rounds = self.circuits[0].left_vec[layer_id].get_num_vars();
-
-            let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = self
-                .circuits
-                .iter_mut()
-                .map(|circuit| circuit.take_layer(layer_id))
-                .unzip();
-            if self.flags_present {
-                CubicSumcheckParams::new_prod_ones(lefts, rights, eq, num_rounds)
-            } else {
+                let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = circuits
+                    .iter_mut()
+                    .map(|circuit| circuit.take_layer(layer_id))
+                    .unzip();
                 CubicSumcheckParams::new_prod(lefts, rights, eq, num_rounds)
+            }
+            BatchedGrandProductCircuit::Flag {
+                circuits,
+                ..
+            } => {
+                // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
+                let layer_id = layer_id - 1;
+
+                let num_rounds = circuits[0].left_vec[layer_id].get_num_vars();
+
+                let (lefts, rights): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = circuits
+                    .iter_mut()
+                    .map(|circuit| circuit.take_layer(layer_id))
+                    .unzip();
+                CubicSumcheckParams::new_prod_ones(lefts, rights, eq, num_rounds)
             }
         }
     }
@@ -241,8 +252,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         G: CurveGroup<ScalarField = F>,
     {
         let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
-        let mut claims_to_verify = (0..batch.circuits.len())
-            .map(|i| batch.circuits[i].evaluate())
+        let mut claims_to_verify = (0..batch.circuits().len())
+            .map(|i| batch.circuits()[i].evaluate())
             .collect::<Vec<F>>();
 
         let mut rand = Vec::new();
@@ -269,7 +280,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 );
 
             let (claims_poly_A, claims_poly_B, _claim_eq) = claims_prod;
-            for i in 0..batch.circuits.len() {
+            for i in 0..batch.circuits().len() {
                 <Transcript as ProofTranscript<G>>::append_scalar(
                     transcript,
                     b"claim_prod_left",
@@ -294,7 +305,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                     b"challenge_r_layer",
                 );
 
-                claims_to_verify = (0..batch.circuits.len())
+                claims_to_verify = (0..batch.circuits().len())
                     .map(|i| claims_poly_A[i] + r_layer * (claims_poly_B[i] - claims_poly_A[i]))
                     .collect::<Vec<F>>();
 
