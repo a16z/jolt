@@ -70,18 +70,6 @@ impl<'a, F: PrimeField> SparsePolyIter<'a, F> {
     }
 }
 
-impl<F> std::ops::Index<usize> for SparsePoly<F> {
-    type Output = SparseEntry<F>;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        if index < self.low_entries.len() {
-            &self.low_entries[index]
-        } else {
-            &self.high_entries[index - self.low_entries.len()]
-        }
-    }
-}
-
 impl<F: PrimeField> SparsePoly<F> {
     pub fn new(low_entries: Vec<SparseEntry<F>>, high_entries: Vec<SparseEntry<F>>, dense_len: usize) -> Self {
         assert!(low_entries.len() <= dense_len);
@@ -246,83 +234,46 @@ impl<F: PrimeField> SparseGrandProductCircuit<F> {
             prior_right: &SparsePoly<F>, 
             prior_len: usize) -> (SparsePoly<F>, SparsePoly<F>) {
 
-        // TODO(sragss): Dedupe below -- it's gross.
+        let compute_entries = |left_entries: &Vec<SparseEntry<F>>, right_entries: &Vec<SparseEntry<F>>, prior_len: usize| -> (Vec<SparseEntry<F>>, Vec<SparseEntry<F>>) {
+            let max_capacity = left_entries.len().max(right_entries.len());
+            let mut low: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
+            let mut high: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
 
-        // Capacity has the potential to overshoot by a factor 2
-        let max_capacity = prior_left.sparse_len();
-        let mut left_low: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
-        let mut left_high: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
+            let mut left_sparse_index: usize = 0;
+            let mut right_sparse_index: usize = 0;
+            while left_sparse_index < left_entries.len() || right_sparse_index < right_entries.len() {
+                let left_index = if left_sparse_index == left_entries.len() { prior_len } else { left_entries[left_sparse_index].index };
+                let right_index = if right_sparse_index == right_entries.len() { prior_len } else { right_entries[right_sparse_index].index };
 
-        let mut left_sparse_index: usize = 0;
-        let mut right_sparse_index: usize = 0;
-        while left_sparse_index < prior_left.low_entries.len() || right_sparse_index < prior_right.low_entries.len() {
-            let left_index = if left_sparse_index == prior_left.low_entries.len() { prior_left.dense_len } else { prior_left.low_entries[left_sparse_index].index };
-            let right_index = if right_sparse_index == prior_right.low_entries.len() { prior_right.dense_len } else { prior_right.low_entries[right_sparse_index].index };
+                let mut entry = if left_index == right_index {
+                    let value = left_entries[left_sparse_index].value * right_entries[right_sparse_index].value;
+                    left_sparse_index += 1;
+                    right_sparse_index += 1;
+                    SparseEntry::new(value, left_index)
+                } else if left_index < right_index {
+                    let entry = left_entries[left_sparse_index].clone();
+                    left_sparse_index += 1;
+                    entry
+                } else if right_index < left_index {
+                    let entry = right_entries[right_sparse_index].clone();
+                    right_sparse_index += 1;
+                    entry
+                } else {
+                    unreachable!();
+                };
 
-            let mut entry = if left_index == right_index {
-                let value = prior_left.low_entries[left_sparse_index].value * prior_right.low_entries[right_sparse_index].value;
-                left_sparse_index += 1;
-                right_sparse_index += 1;
-                SparseEntry::new(value, left_index)
-            } else if left_index < right_index {
-                let entry = prior_left.low_entries[left_sparse_index].clone();
-                left_sparse_index += 1;
-                entry
-            } else if right_index < left_index {
-                let entry = prior_right.low_entries[right_sparse_index].clone();
-                right_sparse_index += 1;
-                entry
-            } else {
-                unreachable!();
-            };
-
-            // prior_left.dense_len() + prior_right.dense_len() == prior_len
-            // dense_left.len() == dense_right.len() == prior_len / 4
-            // dense_left_low.len() == dense_left_high.len() == ... == prior.len / 8
-            if entry.index < prior_len / 8 || prior_len == 4 {
-                left_low.push(entry);
-            } else {
-                entry.index -= prior_len / 8;
-                left_high.push(entry);
+                if entry.index < prior_len / 8 || prior_len == 4 {
+                    low.push(entry);
+                } else {
+                    entry.index -= prior_len / 8;
+                    high.push(entry);
+                }
             }
-        }
+            (low, high)
+        };
 
-        let max_capacity = prior_right.sparse_len();
-        let mut right_low: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
-        let mut right_high: Vec<SparseEntry<F>> = Vec::with_capacity(max_capacity);
-        let mut left_sparse_index: usize = 0;
-        let mut right_sparse_index: usize = 0;
-        while left_sparse_index < prior_left.high_entries.len() || right_sparse_index < prior_right.high_entries.len() {
-            let left_index = if left_sparse_index == prior_left.high_entries.len() { prior_left.dense_len } else { prior_left.high_entries[left_sparse_index].index };
-            let right_index = if right_sparse_index == prior_right.high_entries.len() { prior_right.dense_len } else { prior_right.high_entries[right_sparse_index].index };
-
-            let mut entry = if left_index == right_index {
-                let value = prior_left.high_entries[left_sparse_index].value * prior_right.high_entries[right_sparse_index].value;
-                left_sparse_index += 1;
-                right_sparse_index += 1;
-                SparseEntry::new(value, left_index)
-            } else if left_index < right_index {
-                let entry = prior_left.high_entries[left_sparse_index].clone();
-                left_sparse_index += 1;
-                entry
-            } else if right_index < left_index {
-                let entry = prior_right.high_entries[right_sparse_index].clone();
-                right_sparse_index += 1;
-                entry
-            } else {
-                unreachable!();
-            };
-
-            // prior_left.dense_len() + prior_right.dense_len() == prior_len
-            // dense_left.len() == dense_right.len() == prior_len / 4
-            // dense_left_low.len() == dense_left_high.len() == ... == prior.len / 8
-            if entry.index < prior_len / 8 || prior_len == 4 {
-                right_low.push(entry);
-            } else {
-                entry.index -= prior_len / 8;
-                right_high.push(entry);
-            }
-        }
+        let (left_low, left_high) = compute_entries(&prior_left.low_entries, &prior_right.low_entries, prior_len);
+        let (right_low, right_high) = compute_entries(&prior_left.high_entries, &prior_right.high_entries, prior_len);
 
         let new_len = prior_len / 4;
         let left = SparsePoly::new(left_low, left_high, new_len);
