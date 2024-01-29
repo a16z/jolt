@@ -3,14 +3,17 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use merlin::Transcript;
-use rayon::iter::IntoParallelIterator;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use std::any::TypeId;
 use std::marker::PhantomData;
-use std::{any::TypeId, collections::HashMap};
+use std::sync::Arc;
 use strum::{EnumCount, IntoEnumIterator};
+use tracing::trace_span;
 
 use rayon::prelude::*;
 
-use crate::utils::{count_poly_zeros, mul_0_1_optimized, split_poly_flagged};
+use crate::lasso::memory_checking::MultisetHashes;
+use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -68,10 +71,6 @@ where
     ///
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
     pub instruction_flag_polys: Vec<DensePolynomial<F>>,
-
-    /// NUM_SUBTABLES sized – uncommitted but used by the prover for grand products. Can be derived by verifier
-    /// via summation of all instruction_flags that use a given subtable
-    pub subtable_flag_polys: Vec<DensePolynomial<F>>,
 }
 
 /// Batched version of InstructionPolynomials.
@@ -529,20 +528,15 @@ where
         polynomials: &InstructionPolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-    ) {
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
-        let read_leaves = (0..Self::NUM_MEMORIES)
+
+        let read_write_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
-            .map(|memory_index| {
+            .flat_map_iter(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
 
-                let leaf_fingerprints = (0..self.num_lookups)
-                    // .into_par_iter()
+                let read_fingerprints: Vec<F> = (0..self.num_lookups)
                     .map(|i| {
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
@@ -550,108 +544,157 @@ where
                         mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
                     })
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect::<Vec<DensePolynomial<F>>>();
-        let write_leaves = read_leaves
-            .par_iter()
-            .map(|read_poly| {
-                DensePolynomial::new(
-                    read_poly
-                        .evals_ref()
-                        .iter()
-                        // .par_iter()
-                        .map(|eval| *eval + gamma_squared)
-                        .collect(),
-                )
+                let write_fingerprints = read_fingerprints
+                    .iter()
+                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .collect();
+                [
+                    DensePolynomial::new(read_fingerprints),
+                    DensePolynomial::new(write_fingerprints),
+                ]
             })
             .collect();
-        let init_leaves = (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
 
-                let leaf_fingerprints = (0..M)
+        let init_final_leaves: Vec<DensePolynomial<F>> = self
+            .materialized_subtables
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(subtable_index, subtable)| {
+                let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
                         let a = &F::from(i as u64);
-                        let v = &self.materialized_subtables[subtable_index][i];
+                        let v = &subtable[i];
                         // let t = F::zero();
-
                         // Compute h(a,v,t) where t == 0
-
                         mul_0_1_optimized(v, gamma) + a - tau
                     })
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect::<Vec<DensePolynomial<F>>>();
-        let final_leaves = (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let leaf_fingerprints = (0..M)
-                    .map(|i| {
-                        init_leaves[memory_index][i]
-                            + mul_0_1_optimized(
-                                &polynomials.final_cts[memory_index][i],
-                                &gamma_squared,
-                            )
+
+                let final_leaves: Vec<DensePolynomial<F>> = (0..C)
+                    .map(|dim_index| {
+                        let memory_index = C * subtable_index + dim_index;
+                        let final_cts = &polynomials.final_cts[memory_index];
+                        let final_fingerprints = (0..M)
+                            .map(|i| {
+                                init_fingerprints[i]
+                                    + mul_0_1_optimized(&final_cts[i], &gamma_squared)
+                            })
+                            .collect();
+                        DensePolynomial::new(final_fingerprints)
                     })
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
+
+                let mut polys = Vec::with_capacity(C + 1);
+                polys.push(DensePolynomial::new(init_fingerprints));
+                polys.extend(final_leaves);
+                polys
             })
             .collect();
 
-        (read_leaves, write_leaves, init_leaves, final_leaves)
+        (read_write_leaves, init_final_leaves)
     }
+
+    fn interleave_hashes(multiset_hashes: MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
+        // R W R W R W ...
+        let read_write_hashes =
+            interleave(multiset_hashes.read_hashes, multiset_hashes.write_hashes).collect();
+
+        // I F F F F I F F F F ...
+        let mut init_final_hashes = Vec::with_capacity(
+            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len(),
+        );
+        for subtable_index in 0..Self::NUM_SUBTABLES {
+            init_final_hashes.push(multiset_hashes.init_hashes[subtable_index]);
+            init_final_hashes.extend_from_slice(
+                &multiset_hashes.final_hashes[C * subtable_index..C * (subtable_index + 1)],
+            );
+        }
+
+        (read_write_hashes, init_final_hashes)
+    }
+
+    fn uninterleave_hashes(
+        read_write_hashes: Vec<F>,
+        init_final_hashes: Vec<F>,
+    ) -> MultisetHashes<F> {
+        assert_eq!(read_write_hashes.len(), 2 * Self::NUM_MEMORIES);
+        assert_eq!(
+            init_final_hashes.len(),
+            Self::NUM_SUBTABLES + Self::NUM_MEMORIES
+        );
+
+        let mut read_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
+        let mut write_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
+        for i in 0..Self::NUM_MEMORIES {
+            read_hashes.push(read_write_hashes[2 * i]);
+            write_hashes.push(read_write_hashes[2 * i + 1]);
+        }
+
+        let mut init_hashes = Vec::with_capacity(Self::NUM_SUBTABLES);
+        let mut final_hashes = Vec::with_capacity(Self::NUM_MEMORIES);
+        let mut init_final_hashes = init_final_hashes.iter();
+        for _ in 0..Self::NUM_SUBTABLES {
+            // I
+            init_hashes.push(*init_final_hashes.next().unwrap());
+            // F F F F
+            for _ in 0..C {
+                final_hashes.push(*init_final_hashes.next().unwrap());
+            }
+        }
+
+        MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes,
+            final_hashes,
+        }
+    }
+
     /// Overrides default implementation to handle flags
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
-        read_fingerprints: Vec<DensePolynomial<F>>,
-        write_fingerprints: Vec<DensePolynomial<F>>,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        assert_eq!(read_fingerprints.len(), Self::NUM_MEMORIES);
+        read_write_leaves: Vec<DensePolynomial<F>>,
+    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
+        assert_eq!(read_write_leaves.len(), 2 * Self::NUM_MEMORIES);
 
-        let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .flat_map(|i| {
+        let _span = trace_span!("InstructionLookups: construct circuits");
+        let _enter = _span.enter();
+
+        let subtable_flag_polys = Self::subtable_flag_polys(&polynomials.instruction_flag_polys);
+
+        let read_write_circuits = read_write_leaves
+            .par_iter()
+            .enumerate()
+            .map(|(i, leaves_poly)| {
                 // Split while cloning to save on future cloning in GrandProductCircuit
-                let subtable_index = Self::memory_to_subtable_index(i);
-                let flag = &polynomials.subtable_flag_polys[subtable_index];
-                let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
-                    split_poly_flagged(&read_fingerprints[i], &flag);
-                let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
-                    split_poly_flagged(&write_fingerprints[i], &flag);
-
-                let (read_circuit, write_circuit) = rayon::join(
-                    || {
-                        GrandProductCircuit::new_split(
-                            DensePolynomial::new(toggled_read_fingerprints_l),
-                            DensePolynomial::new(toggled_read_fingerprints_r),
-                        )
-                    },
-                    || {
-                        GrandProductCircuit::new_split(
-                            DensePolynomial::new(toggled_write_fingerprints_l),
-                            DensePolynomial::new(toggled_write_fingerprints_r),
-                        )
-                    },
-                );
-                vec![read_circuit, write_circuit]
+                let subtable_index = Self::memory_to_subtable_index(i / 2);
+                let flag = &subtable_flag_polys[subtable_index];
+                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(&leaves_poly, &flag);
+                GrandProductCircuit::new_split(
+                    DensePolynomial::new(toggled_leaves_l),
+                    DensePolynomial::new(toggled_leaves_r),
+                )
             })
-            .collect();
-        let read_hashes: Vec<F> = circuits
+            .collect::<Vec<GrandProductCircuit<F>>>();
+
+        drop(_enter);
+        drop(_span);
+
+        let _span = trace_span!("InstructionLookups: compute hashes");
+        let _enter = _span.enter();
+
+        let read_write_hashes: Vec<F> = read_write_circuits
             .par_iter()
-            .step_by(2)
             .map(|circuit| circuit.evaluate())
             .collect();
-        let write_hashes: Vec<F> = circuits
-            .par_iter()
-            .skip(1)
-            .step_by(2)
-            .map(|circuit| circuit.evaluate())
-            .collect();
+
+        drop(_enter);
+        drop(_span);
+
+        let _span = trace_span!("InstructionLookups: the rest");
+        let _enter = _span.enter();
 
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
         let expanded_flag_map: Vec<usize> = (0..2 * Self::NUM_MEMORIES)
@@ -660,13 +703,16 @@ where
 
         // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
         let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
-            circuits,
-            polynomials.subtable_flag_polys.clone(),
+            read_write_circuits,
+            subtable_flag_polys,
             expanded_flag_map,
-            interleave(read_fingerprints, write_fingerprints).collect(),
+            read_write_leaves,
         );
 
-        (batched_circuits, read_hashes, write_hashes)
+        drop(_enter);
+        drop(_span);
+
+        (batched_circuits, read_write_hashes)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -1026,15 +1072,12 @@ where
             .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
             .collect();
 
-        let subtable_flag_polys = Self::subtable_flag_polys(&instruction_flag_polys);
-
         InstructionPolynomials {
             _group: PhantomData,
             dim,
             read_cts,
             final_cts,
             instruction_flag_polys,
-            subtable_flag_polys,
             E_polys,
         }
     }
@@ -1092,7 +1135,7 @@ where
         let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
         random_vars.push(r_j);
 
-        let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
+        let _bind_span = trace_span!("BindPolys");
         let _bind_enter = _bind_span.enter();
         eq_poly.bound_poly_var_top(&r_j);
         let mut flag_polys_updated: Vec<DensePolynomial<F>> = flag_polys
@@ -1119,7 +1162,7 @@ where
             random_vars.push(r_j);
 
             // Bind all polys
-            let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
+            let _bind_span = trace_span!("BindPolys");
             let _bind_enter = _bind_span.enter();
             eq_poly.bound_poly_var_top(&r_j);
             flag_polys_updated
@@ -1289,10 +1332,11 @@ where
         E_polys: &Vec<DensePolynomial<F>>,
         eq: &EqPolynomial<F>,
     ) -> F {
-        let m = ops.len().next_power_of_two();
-
         #[cfg(test)]
-        E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
+        {
+            let m = ops.len().next_power_of_two();
+            E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
+        }
 
         let eq_evals = eq.evals();
 
@@ -1313,7 +1357,7 @@ where
                 let collation_eval = op.combine_lookups(&filtered_operands, C, M);
                 eq_evals[k] * collation_eval
             })
-            .reduce(|| F::zero(), |a, b| a + b);
+            .sum();
 
         claim
     }

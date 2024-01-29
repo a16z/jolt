@@ -666,12 +666,7 @@ where
         polynomials: &ReadWriteMemory<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-    ) {
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
         let num_ops = polynomials.a_read_write.len();
 
@@ -708,10 +703,14 @@ where
             .collect();
 
         (
-            vec![DensePolynomial::new(read_fingerprints)],
-            vec![DensePolynomial::new(write_fingerprints)],
-            vec![DensePolynomial::new(init_fingerprints)],
-            vec![DensePolynomial::new(final_fingerprints)],
+            vec![
+                DensePolynomial::new(read_fingerprints),
+                DensePolynomial::new(write_fingerprints),
+            ],
+            vec![
+                DensePolynomial::new(init_fingerprints),
+                DensePolynomial::new(final_fingerprints),
+            ],
         )
     }
 

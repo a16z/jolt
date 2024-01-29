@@ -515,12 +515,7 @@ where
         polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-    ) {
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let num_ops = polynomials.a_read_write.len();
         let memory_size = polynomials.v_init_final.opcode.len();
 
@@ -542,7 +537,7 @@ where
                     )
                 })
                 .collect();
-                vec![DensePolynomial::new(read_fingerprints)]
+                DensePolynomial::new(read_fingerprints)
             },
             || {
                 let init_fingerprints = (0..memory_size).map(|i| {
@@ -561,7 +556,7 @@ where
                     )
                 })
                 .collect();
-                vec![DensePolynomial::new(init_fingerprints)]
+                DensePolynomial::new(init_fingerprints)
             },
         );
         let (write_leaves, final_leaves) = rayon::join(
@@ -582,7 +577,7 @@ where
                     )
                 })
                 .collect();
-                vec![DensePolynomial::new(read_fingerprints)]
+                DensePolynomial::new(read_fingerprints)
             },
             || {
                 let final_fingerprints = (0..memory_size).map(|i| {
@@ -601,11 +596,14 @@ where
                     )
                 })
                 .collect();
-                vec![DensePolynomial::new(final_fingerprints)]
+                DensePolynomial::new(final_fingerprints)
             },
         );
 
-        (read_leaves, write_leaves, init_leaves, final_leaves)
+        (
+            vec![read_leaves, write_leaves],
+            vec![init_leaves, final_leaves],
+        )
     }
 
     fn protocol_name() -> &'static [u8] {
