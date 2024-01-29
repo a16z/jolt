@@ -486,9 +486,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 let mut eval_2 = F::zero();
                 let mut eval_3 = F::zero();
 
+                let mut left_iter = left.low_high_iter();
+                let mut right_iter = right.low_high_iter();
+
                 for i in 0..len {
-                    let left = left.low_high_iter(i);
-                    let right = right.low_high_iter(i);
+                    let left = left_iter.next(i);
+                    let right = right_iter.next(i);
 
                     match (left, right) {
                         ((None, None), (None, None)) => {
@@ -578,8 +581,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let mut poly_iter: Vec<&mut SparsePoly<F>> = lefts.iter_mut()
                 .chain(rights.iter_mut())
                 .collect();
-
-            poly_iter.iter_mut().for_each(|poly| poly.reset_iter());
 
             rayon::join(
                 || eq.bound_poly_var_top(&r_j),

@@ -19,12 +19,55 @@ impl<F> SparseEntry<F> {
 pub struct SparsePoly<F> {
     low_entries: Vec<SparseEntry<F>>,
     high_entries: Vec<SparseEntry<F>>,
-
     num_vars: usize,
     dense_len: usize,
+}
 
+pub struct SparsePolyIter<'a, F> {
+    poly: &'a SparsePoly<F>,
     low_sparse_index: usize,
-    high_sparse_index: usize
+    high_sparse_index: usize,
+}
+
+impl<'a, F: PrimeField> SparsePolyIter<'a, F> {
+    pub fn new(poly: &'a SparsePoly<F>) -> Self {
+        Self {
+            poly,
+            low_sparse_index: 0,
+            high_sparse_index: 0,
+        }
+    }
+
+    #[inline]
+    pub fn next(&mut self, index: usize) -> (Option<&F>, Option<&F>) {
+        assert!(index < self.poly.dense_mid());
+
+        let low = if self.low_sparse_index < self.poly.low_entries.len() {
+            let entry = &self.poly.low_entries[self.low_sparse_index];
+            if entry.index == index {
+                self.low_sparse_index += 1;
+                Some(&entry.value)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let high = if self.high_sparse_index < self.poly.high_entries.len() {
+            let entry = &self.poly.high_entries[self.high_sparse_index];
+            if entry.index == index {
+                self.high_sparse_index += 1;
+                Some(&entry.value)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        (low, high)
+    }
 }
 
 impl<F> std::ops::Index<usize> for SparsePoly<F> {
@@ -45,11 +88,59 @@ impl<F: PrimeField> SparsePoly<F> {
         assert!(high_entries.len() <= dense_len);
         let num_vars = dense_len.log_2();
 
-        Self { low_entries, high_entries, num_vars, dense_len, low_sparse_index: 0, high_sparse_index: 0 }
+        Self { low_entries, high_entries, num_vars, dense_len }
     }
 
     pub fn empty() -> Self {
-        Self { low_entries: vec![], high_entries: vec![], num_vars: 0, dense_len: 0, low_sparse_index: 0, high_sparse_index: 0 }
+        Self { low_entries: vec![], high_entries: vec![], num_vars: 0, dense_len: 0 }
+    }
+
+    pub fn bound_poly_var_top(&mut self, r: &F) {
+        let span_alloc = tracing::span!(tracing::Level::TRACE, "bound::allocation");
+        let _enter_alloc = span_alloc.enter();
+
+        let num_entries = std::cmp::max(self.low_entries.len(), self.high_entries.len());
+        let mut new_low_entries: Vec<SparseEntry<F>> = Vec::with_capacity(num_entries);
+        let mut new_high_entries: Vec<SparseEntry<F>> = Vec::with_capacity(num_entries);
+        drop(_enter_alloc);
+        drop(span_alloc);
+
+
+        let span = tracing::span!(tracing::Level::TRACE, "bound::inner_loop");
+        let _enter = span.enter();
+        let mut iter = self.low_high_iter();
+        for i in 0..self.dense_mid() {
+            let new_value = match iter.next(i){
+                (None, None) => continue,
+                (Some(low), None) => {
+                    let m = F::one() - low;
+                    *low + m * r
+                },
+                (None, Some(high)) => {
+                    let m = *high - F::one();
+                    F::one() + m * r
+                },
+                (Some(low), Some(high)) => {
+                    let m = *high - low;
+                    *low + m * r
+                },
+            };
+
+            if i < self.dense_mid() / 2  || self.dense_mid() == 1 {
+                new_low_entries.push(SparseEntry { value: new_value, index: i});
+            } else {
+                let index = i - self.dense_mid() / 2;
+                new_high_entries.push(SparseEntry { value: new_value, index });
+            }
+        }
+
+        drop(_enter);
+        drop(span);
+
+        self.low_entries = new_low_entries;
+        self.high_entries = new_high_entries;
+        self.num_vars -= 1;
+        self.dense_len /= 2;
     }
 
     pub fn final_eval(&self) -> F {
@@ -66,102 +157,20 @@ impl<F: PrimeField> SparsePoly<F> {
         }
     }
 
-    pub fn mid(&self) -> usize {
+    pub fn dense_mid(&self) -> usize {
         self.dense_len / 2
-    }
-
-    #[inline]
-    pub fn low_high_iter(&mut self, index: usize) -> (Option<&F>, Option<&F>) {
-        assert!(index < self.mid());
-
-        let low = if self.low_sparse_index < self.low_entries.len() {
-            let entry = &self.low_entries[self.low_sparse_index];
-            if entry.index == index {
-                self.low_sparse_index += 1;
-                Some(&entry.value)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let high = if self.high_sparse_index < self.high_entries.len() {
-            let entry = &self.high_entries[self.high_sparse_index];
-            if entry.index == index {
-                self.high_sparse_index += 1;
-                Some(&entry.value)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        (low, high)
-    }
-
-    // TODO(sragss): RM IN FAVOR OF ITER
-    pub fn reset_iter(&mut self) {
-        self.low_sparse_index = 0;
-        self.high_sparse_index = 0;
-    }
-
-    pub fn bound_poly_var_top(&mut self, r: &F) {
-        let span_alloc = tracing::span!(tracing::Level::TRACE, "bound::allocation");
-        let _enter_alloc = span_alloc.enter();
-
-        let num_entries = std::cmp::max(self.low_entries.len(), self.high_entries.len());
-        let mut new_low_entries: Vec<SparseEntry<F>> = Vec::with_capacity(num_entries);
-        let mut new_high_entries: Vec<SparseEntry<F>> = Vec::with_capacity(num_entries);
-        drop(_enter_alloc);
-        drop(span_alloc);
-
-
-        let span = tracing::span!(tracing::Level::TRACE, "bound::inner_loop");
-        let _enter = span.enter();
-        for i in 0..self.mid() {
-            let new_value = match self.low_high_iter(i){
-                (None, None) => continue,
-                (Some(low), None) => {
-                    let m = F::one() - low;
-                    *low + m * r
-                },
-                (None, Some(high)) => {
-                    let m = *high - F::one();
-                    F::one() + m * r
-                },
-                (Some(low), Some(high)) => {
-                    let m = *high - low;
-                    *low + m * r
-                },
-            };
-
-            if i < self.mid() / 2  || self.mid() == 1 {
-                new_low_entries.push(SparseEntry { value: new_value, index: i});
-            } else {
-                let index = i - self.mid() / 2;
-                new_high_entries.push(SparseEntry { value: new_value, index });
-            }
-        }
-
-        drop(_enter);
-        drop(span);
-
-        self.low_entries = new_low_entries;
-        self.high_entries = new_high_entries;
-        self.num_vars -= 1;
-        self.dense_len /= 2;
-        self.low_sparse_index = 0;
-        self.high_sparse_index = 0;
     }
 
     pub fn sparse_len(&self) -> usize {
         self.low_entries.len() + self.high_entries.len()
     }
 
+    pub fn low_high_iter(&self) -> SparsePolyIter<F> {
+        SparsePolyIter::new(self)
+    }
+
     pub fn to_dense(self) -> DensePolynomial<F> {
-        let half = self.mid();
+        let half = self.dense_mid();
         let mut dense_evals: Vec<F> = vec![F::one(); self.dense_len];
         for low_entry in self.low_entries {
             dense_evals[low_entry.index] = low_entry.value;
