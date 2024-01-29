@@ -13,6 +13,7 @@ use ark_serialize::*;
 use ark_std::One;
 use merlin::Transcript;
 use rayon::prelude::*;
+use tracing::trace_span;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -145,59 +146,6 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
         } else {
             *eq * (*flag * h + (F::one() + flag.neg()))
         }
-    }
-
-    pub fn pairs_iter(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &DensePolynomial<F>,
-            &DensePolynomial<F>,
-            &DensePolynomial<F>,
-        ),
-    > {
-        self.poly_As.iter().enumerate().map(move |(i, a)| {
-            let b_idx = match self.sumcheck_type {
-                CubicSumcheckType::Prod => i,
-                CubicSumcheckType::ProdOnes => i,
-                CubicSumcheckType::Flags => self.a_to_b[i],
-            };
-
-            let b = &self.poly_Bs[b_idx];
-            let c = &self.poly_eq;
-            (a, b, c)
-        })
-    }
-
-    pub fn pairs_par_iter(
-        &self,
-    ) -> impl ParallelIterator<
-        Item = (
-            &DensePolynomial<F>,
-            &DensePolynomial<F>,
-            &DensePolynomial<F>,
-        ),
-    > {
-        self.poly_As.par_iter().enumerate().map(move |(i, a)| {
-            let b_idx = match self.sumcheck_type {
-                CubicSumcheckType::Prod => i,
-                CubicSumcheckType::ProdOnes => i,
-                CubicSumcheckType::Flags => self.a_to_b[i],
-            };
-
-            let b = &self.poly_Bs[b_idx];
-            let c = &self.poly_eq;
-            (a, b, c)
-        })
-    }
-
-    pub fn apply_bound_poly_var_top(&mut self, r_j: &F) {
-        let mut all_polys_iter: Vec<&mut DensePolynomial<F>> = self.poly_As.iter_mut()
-        .chain(self.poly_Bs.iter_mut())
-        .chain(std::iter::once(&mut self.poly_eq))
-        .collect();
-
-        all_polys_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
     }
 
     pub fn get_final_evals(&self) -> (Vec<F>, Vec<F>, F) {
@@ -386,7 +334,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // - Optimize for 1s! 
             // - Compute 'r' bindings from 'm_a' / 'm_b
 
-            let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
+            let _span = trace_span!("eval_loop");
             let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len()).into_par_iter()
                 .map(|batch_index| {
@@ -450,7 +398,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            let _span = tracing::span!(tracing::Level::TRACE, "binding");
+            let _span = trace_span!("binding");
             let _enter = _span.enter();
 
             let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
@@ -510,7 +458,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // TODO(sragss): OPTIMIZATION IDEAS
             // - Compute 'r' bindings from 'm_a' / 'm_b
 
-            let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
+            let _span = trace_span!("eval_loop");
             let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
                 .into_par_iter()
@@ -626,7 +574,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            let _span = tracing::span!(tracing::Level::TRACE, "binding");
+            let _span = trace_span!("binding");
             let _enter = _span.enter();
 
             // params.apply_bound_poly_var_top(&r_j);
@@ -670,7 +618,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         for _j in 0..params.num_rounds {
 
             let len = params.poly_As[0].len() / 2;
-            let eq_span = tracing::span!(tracing::Level::TRACE, "eq_evals");
+            let eq_span = trace_span!("eq_evals");
             let _eq_enter = eq_span.enter();
             let eq_evals: Vec<(F, F, F)> = (0..len)
                 .into_par_iter()
@@ -690,7 +638,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             drop(_eq_enter);
             drop(eq_span);
 
-            let flag_span = tracing::span!(tracing::Level::TRACE, "flag_evals");
+            let flag_span = trace_span!("flag_evals");
             let _flag_enter = flag_span.enter();
             // Batch<MLEIndex<(eval_0, eval_2, eval_3)>>
             let flag_evals: Vec<Vec<(F, F, F)>> = (0..params.poly_Bs.len())
@@ -722,7 +670,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             drop(_flag_enter);
             drop(flag_span);
 
-            let evals_span = tracing::span!(tracing::Level::TRACE, "evals");
+            let evals_span = trace_span!("evals");
             let _evals_enter = evals_span.enter();
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
                 .into_par_iter()
@@ -816,23 +764,23 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            let bound_span = tracing::span!(tracing::Level::TRACE, "apply_bound_poly_var_top");
+            let bound_span = trace_span!("apply_bound_poly_var_top");
             let _bound_enter = bound_span.enter();
             
-            let poly_As_span = tracing::span!(tracing::Level::TRACE, "apply_bound_poly_As");
+            let poly_As_span = trace_span!("apply_bound_poly_As");
             let _poly_As_enter = poly_As_span.enter();
             params.poly_As.par_iter_mut()
                 .for_each(|poly| poly.bound_poly_var_top(&r_j));
             drop(_poly_As_enter);
             drop(poly_As_span);
             
-            let poly_eq_span = tracing::span!(tracing::Level::TRACE, "apply_bound_poly_eq");
+            let poly_eq_span = trace_span!("apply_bound_poly_eq");
             let _poly_eq_enter = poly_eq_span.enter();
             params.poly_eq.bound_poly_var_top(&r_j);
             drop(_poly_eq_enter);
             drop(poly_eq_span);
             
-            let poly_Bs_span = tracing::span!(tracing::Level::TRACE, "apply_bound_poly_Bs");
+            let poly_Bs_span = trace_span!("apply_bound_poly_Bs");
             let _poly_Bs_enter = poly_Bs_span.enter();
             params.poly_Bs.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
             drop(_poly_Bs_enter);

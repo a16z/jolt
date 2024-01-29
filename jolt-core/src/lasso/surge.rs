@@ -4,7 +4,9 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
+};
 
 use crate::{
     jolt::instruction::JoltInstruction,
@@ -387,99 +389,67 @@ where
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-    ) {
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
 
-        let (init_leaves, read_leaves) = rayon::join(
-            || {
-                (0..Self::num_memories())
-                    .into_par_iter()
-                    .map(|memory_index| {
-                        let subtable_index = Self::memory_to_subtable_index(memory_index);
-                        let leaf_fingerprints = (0..self.M)
-                            .map(|i| {
-                                // 0 * gamma^2 +
-                                mul_0_1_optimized(
-                                    &self.materialized_subtables[subtable_index][i],
-                                    gamma,
-                                ) + F::from(i as u64)
-                                    - *tau
-                            })
-                            .collect();
-                        DensePolynomial::new(leaf_fingerprints)
+        let read_write_leaves = (0..Self::num_memories())
+            .into_par_iter()
+            .flat_map_iter(|memory_index| {
+                let dim_index = Self::memory_to_dimension_index(memory_index);
+                let read_fingerprints: Vec<F> = (0..self.num_lookups)
+                    .map(|i| {
+                        mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
+                            + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                            + polynomials.dim[dim_index][i]
+                            - *tau
                     })
-                    .collect()
-            },
-            || {
-                (0..Self::num_memories())
-                    .into_par_iter()
-                    .map(|memory_index| {
-                        let dim_index = Self::memory_to_dimension_index(memory_index);
-                        let leaf_fingerprints = (0..self.num_lookups)
-                            .map(|i| {
-                                mul_0_1_optimized(
-                                    &polynomials.read_cts[dim_index][i],
-                                    &gamma_squared,
-                                ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                                    + polynomials.dim[dim_index][i]
-                                    - *tau
-                            })
-                            .collect();
-                        DensePolynomial::new(leaf_fingerprints)
-                    })
-                    .collect()
-            },
-        );
-        let (final_leaves, write_leaves) = rayon::join(
-            || {
-                (0..Self::num_memories())
-                    .into_par_iter()
-                    .map(|memory_index| {
-                        let dim_index = Self::memory_to_dimension_index(memory_index);
-                        let subtable_index = Self::memory_to_subtable_index(memory_index);
-                        let leaf_fingerprints = (0..self.M)
-                            .map(|i| {
-                                mul_0_1_optimized(
-                                    &polynomials.final_cts[dim_index][i],
-                                    &gamma_squared,
-                                ) + mul_0_1_optimized(
-                                    &self.materialized_subtables[subtable_index][i],
-                                    gamma,
-                                ) + F::from(i as u64)
-                                    - *tau
-                            })
-                            .collect();
-                        DensePolynomial::new(leaf_fingerprints)
-                    })
-                    .collect()
-            },
-            || {
-                (0..Self::num_memories())
-                    .into_par_iter()
-                    .map(|memory_index| {
-                        let dim_index = Self::memory_to_dimension_index(memory_index);
-                        let leaf_fingerprints = (0..self.num_lookups)
-                            .map(|i| {
-                                mul_0_1_optimized(
-                                    &(polynomials.read_cts[dim_index][i] + F::one()),
-                                    &gamma_squared,
-                                ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                                    + polynomials.dim[dim_index][i]
-                                    - *tau
-                            })
-                            .collect();
-                        DensePolynomial::new(leaf_fingerprints)
-                    })
-                    .collect()
-            },
-        );
+                    .collect();
+                let write_fingerprints = read_fingerprints
+                    .iter()
+                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
+                    .collect();
 
-        (read_leaves, write_leaves, init_leaves, final_leaves)
+                vec![
+                    DensePolynomial::new(read_fingerprints),
+                    DensePolynomial::new(write_fingerprints),
+                ]
+            })
+            .collect();
+
+        let init_final_leaves = (0..Self::num_memories())
+            .into_par_iter()
+            .flat_map_iter(|memory_index| {
+                let dim_index = Self::memory_to_dimension_index(memory_index);
+                let subtable_index = Self::memory_to_subtable_index(memory_index);
+                // TODO(moodlezoup): Only need one init polynomial per subtable
+                let init_fingerprints: Vec<F> = (0..self.M)
+                    .map(|i| {
+                        // 0 * gamma^2 +
+                        mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
+                            + F::from(i as u64)
+                            - *tau
+                    })
+                    .collect();
+                let final_fingerprints = init_fingerprints
+                    .iter()
+                    .enumerate()
+                    .map(|(i, init_fingerprint)| {
+                        *init_fingerprint
+                            + mul_0_1_optimized(
+                                &polynomials.final_cts[dim_index][i],
+                                &gamma_squared,
+                            )
+                    })
+                    .collect();
+
+                vec![
+                    DensePolynomial::new(init_fingerprints),
+                    DensePolynomial::new(final_fingerprints),
+                ]
+            })
+            .collect();
+
+        (read_write_leaves, init_final_leaves)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -606,7 +576,6 @@ where
         let num_lookups = ops.len().next_power_of_two();
         let instruction = Instruction::default();
 
-        let num_subtables = instruction.subtables::<F>(C).len();
         let materialized_subtables = instruction
             .subtables(C)
             .par_iter()

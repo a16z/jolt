@@ -2,7 +2,8 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::marker::PhantomData;
+use std::{iter::zip, marker::PhantomData};
+use tracing::trace_span;
 
 use crate::{
     lasso::memory_checking::{
@@ -230,30 +231,25 @@ where
         polynomials: &RangeCheckPolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> (
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-        Vec<DensePolynomial<F>>,
-    ) {
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let M = polynomials.read_timestamps.len();
         let gamma_squared = gamma.square();
 
         let (init_leaves, read_leaves) = rayon::join(
             || {
-                let init_fingerprints: Vec<F> = (0..M)
+                let init_fingerprints = (0..M)
                     .into_par_iter()
                     .map(|i| {
                         // 0 * gamma^2 +
                         F::from(i as u64) * gamma + F::from(i as u64) - tau
                     })
                     .collect();
-                vec![DensePolynomial::new(init_fingerprints)]
+                DensePolynomial::new(init_fingerprints)
             },
             || {
-                let read_fingerprints = rayon::join(
+                rayon::join(
                     || {
-                        (0..M)
+                        let read_fingerprints = (0..M)
                             .into_par_iter()
                             .map(|i| {
                                 polynomials.read_cts_read_timestamp[i] * gamma_squared
@@ -261,10 +257,11 @@ where
                                     + F::from(polynomials.read_timestamps[i])
                                     - tau
                             })
-                            .collect()
+                            .collect();
+                        DensePolynomial::new(read_fingerprints)
                     },
                     || {
-                        (0..M)
+                        let read_fingerprints = (0..M)
                             .into_par_iter()
                             .map(|i| {
                                 polynomials.read_cts_global_minus_read[i] * gamma_squared
@@ -272,69 +269,65 @@ where
                                     + (F::from(i as u64 - polynomials.read_timestamps[i]))
                                     - tau
                             })
-                            .collect()
+                            .collect();
+                        DensePolynomial::new(read_fingerprints)
                     },
-                );
-                vec![
-                    DensePolynomial::new(read_fingerprints.0),
-                    DensePolynomial::new(read_fingerprints.1),
-                ]
+                )
             },
         );
         let (final_leaves, write_leaves) = rayon::join(
             || {
-                let final_fingerprints = rayon::join(
+                rayon::join(
                     || {
-                        (0..M)
+                        let final_fingerprints = (0..M)
                             .into_par_iter()
                             .map(|i| {
                                 mul_0_1_optimized(
                                     &polynomials.final_cts_read_timestamp[i],
                                     &gamma_squared,
-                                ) + init_leaves[0][i]
+                                ) + init_leaves[i]
                             })
-                            .collect()
+                            .collect();
+                        DensePolynomial::new(final_fingerprints)
                     },
                     || {
-                        (0..M)
+                        let final_fingerprints = (0..M)
                             .into_par_iter()
                             .map(|i| {
                                 mul_0_1_optimized(
                                     &polynomials.final_cts_global_minus_read[i],
                                     &gamma_squared,
-                                ) + init_leaves[0][i]
+                                ) + init_leaves[i]
                             })
-                            .collect()
+                            .collect();
+                        DensePolynomial::new(final_fingerprints)
                     },
-                );
-                vec![
-                    DensePolynomial::new(final_fingerprints.0),
-                    DensePolynomial::new(final_fingerprints.1),
-                ]
+                )
             },
             || {
-                let write_fingerprints = rayon::join(
+                rayon::join(
                     || {
-                        (0..M)
+                        let write_fingeprints = (0..M)
                             .into_par_iter()
-                            .map(|i| read_leaves[0].evals_ref()[i] + gamma_squared)
-                            .collect()
+                            .map(|i| read_leaves.0.evals_ref()[i] + gamma_squared)
+                            .collect();
+                        DensePolynomial::new(write_fingeprints)
                     },
                     || {
-                        (0..M)
+                        let write_fingeprints = (0..M)
                             .into_par_iter()
-                            .map(|i| read_leaves[1].evals_ref()[i] + gamma_squared)
-                            .collect()
+                            .map(|i| read_leaves.1.evals_ref()[i] + gamma_squared)
+                            .collect();
+                        DensePolynomial::new(write_fingeprints)
                     },
-                );
-                vec![
-                    DensePolynomial::new(write_fingerprints.0),
-                    DensePolynomial::new(write_fingerprints.1),
-                ]
+                )
             },
         );
-        
-        (read_leaves, write_leaves, init_leaves, final_leaves)
+
+        (
+            vec![read_leaves.0, read_leaves.1, write_leaves.0, write_leaves.1],
+            vec![init_leaves, final_leaves.0, final_leaves.1],
+        )
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -397,18 +390,11 @@ where
     }
 
     fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
-        vec![
-            (
-                openings.identity_poly_opening.unwrap(),
-                openings.identity_poly_opening.unwrap(),
-                F::zero(),
-            ),
-            (
-                openings.identity_poly_opening.unwrap(),
-                openings.identity_poly_opening.unwrap(),
-                F::zero(),
-            ),
-        ]
+        vec![(
+            openings.identity_poly_opening.unwrap(),
+            openings.identity_poly_opening.unwrap(),
+            F::zero(),
+        )]
     }
 
     fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
@@ -432,8 +418,7 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    read_timestamp_multiset_hashes: MultisetHashes<F>,
-    global_minus_read_multiset_hashes: MultisetHashes<F>,
+    multiset_hashes: MultisetHashes<F>,
     opening_proof: RangeCheckOpenings<F, G>,
     batched_grand_product: BatchedGrandProductArgument<F>,
     pub commitment: RangeCheckCommitment<G>,
@@ -457,12 +442,8 @@ where
             RangeCheckPolynomials::new(read_timestamps);
         let batched_range_check_polys = range_check_polys.batch();
         let range_check_commitment = RangeCheckPolynomials::commit(&batched_range_check_polys);
-        let (
-            batched_grand_product,
-            read_timestamp_multiset_hashes,
-            global_minus_read_multiset_hashes,
-            r_grand_product,
-        ) = TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
+        let (batched_grand_product, multiset_hashes, r_grand_product) =
+            TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
         let chis = EqPolynomial::new(r_grand_product.to_vec()).evals();
         let openings: Vec<F> = [
@@ -504,8 +485,7 @@ where
         ));
 
         Self {
-            read_timestamp_multiset_hashes,
-            global_minus_read_multiset_hashes,
+            multiset_hashes,
             opening_proof,
             batched_grand_product,
             commitment: range_check_commitment,
@@ -515,12 +495,7 @@ where
     fn prove_grand_products(
         polynomials: &RangeCheckPolynomials<F, G>,
         transcript: &mut Transcript,
-    ) -> (
-        BatchedGrandProductArgument<F>,
-        MultisetHashes<F>,
-        MultisetHashes<F>,
-        Vec<F>,
-    ) {
+    ) -> (BatchedGrandProductArgument<F>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
             transcript,
@@ -534,22 +509,19 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // fka "ProductLayerProof"
-        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+        let (read_write_leaves, init_final_leaves) =
             polynomials.compute_leaves(polynomials, &gamma, &tau);
         let leaves = [
-            &init_leaves[0],
-            &read_leaves[0],
-            &write_leaves[0],
-            &final_leaves[0],
-            &read_leaves[1],
-            &write_leaves[1],
-            &final_leaves[1],
+            &init_final_leaves[0], // init
+            &read_write_leaves[0], // read 
+            &read_write_leaves[1], // read
+            &read_write_leaves[2], // write
+            &read_write_leaves[3], // write
+            &init_final_leaves[1], // final
+            &init_final_leaves[2], // final
         ];
 
-        let _span = tracing::span!(
-            tracing::Level::TRACE,
-            "TimestampValidityProof: construct grand product circuits"
-        );
+        let _span = trace_span!("TimestampValidityProof: construct grand product circuits");
         let _enter = _span.enter();
 
         let circuits: Vec<GrandProductCircuit<F>> = leaves
@@ -564,51 +536,25 @@ where
             .par_iter()
             .map(|circuit| circuit.evaluate())
             .collect();
-
-        let read_timestamp_hashes = MultisetHashes {
-            hash_init: hashes[0],
-            hash_read: hashes[1],
-            hash_write: hashes[2],
-            hash_final: hashes[3],
+        let multiset_hashes = MultisetHashes {
+            init_hashes: vec![hashes[0]],
+            read_hashes: vec![hashes[1], hashes[2]],
+            write_hashes: vec![hashes[3], hashes[4]],
+            final_hashes: vec![hashes[5], hashes[6]],
         };
-        debug_assert_eq!(
-            read_timestamp_hashes.hash_init * read_timestamp_hashes.hash_write,
-            read_timestamp_hashes.hash_final * read_timestamp_hashes.hash_read,
-            "Multiset hashes don't match"
-        );
-        read_timestamp_hashes.append_to_transcript::<G>(transcript);
-
-        let global_minus_read_hashes = MultisetHashes {
-            hash_init: hashes[0],
-            hash_read: hashes[4],
-            hash_write: hashes[5],
-            hash_final: hashes[6],
-        };
-        debug_assert_eq!(
-            global_minus_read_hashes.hash_init * global_minus_read_hashes.hash_write,
-            global_minus_read_hashes.hash_final * global_minus_read_hashes.hash_read,
-            "Multiset hashes don't match"
-        );
-        global_minus_read_hashes.append_to_transcript::<G>(transcript);
+        multiset_hashes.check_multiset_equality();
+        multiset_hashes.append_to_transcript::<G>(transcript);
 
         let batched_circuit = BatchedGrandProductCircuit::new_batch(circuits);
 
-        let _span = tracing::span!(
-            tracing::Level::TRACE,
-            "TimestampValidityProof: prove grand products"
-        );
+        let _span = trace_span!("TimestampValidityProof: prove grand products");
         let _enter = _span.enter();
         let (batched_grand_product, r_grand_product) =
             BatchedGrandProductArgument::prove::<G>(batched_circuit, transcript);
         drop(_enter);
         drop(_span);
 
-        (
-            batched_grand_product,
-            read_timestamp_hashes,
-            global_minus_read_hashes,
-            r_grand_product,
-        )
+        (batched_grand_product, multiset_hashes, r_grand_product)
     }
 
     pub fn verify(
@@ -629,42 +575,20 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // Multiset equality checks
-        assert_eq!(
-            self.read_timestamp_multiset_hashes.hash_init
-                * self.read_timestamp_multiset_hashes.hash_write,
-            self.read_timestamp_multiset_hashes.hash_read
-                * self.read_timestamp_multiset_hashes.hash_final
-        );
-        self.read_timestamp_multiset_hashes
-            .append_to_transcript::<G>(transcript);
+        self.multiset_hashes.check_multiset_equality();
+        self.multiset_hashes.append_to_transcript::<G>(transcript);
 
-        assert_eq!(
-            self.global_minus_read_multiset_hashes.hash_init
-                * self.global_minus_read_multiset_hashes.hash_write,
-            self.global_minus_read_multiset_hashes.hash_read
-                * self.global_minus_read_multiset_hashes.hash_final
-        );
-        self.global_minus_read_multiset_hashes
-            .append_to_transcript::<G>(transcript);
-
-        assert_eq!(
-            self.read_timestamp_multiset_hashes.hash_init,
-            self.global_minus_read_multiset_hashes.hash_init
-        );
-
-        let interleaved_hashes = vec![
-            self.read_timestamp_multiset_hashes.hash_init,
-            self.read_timestamp_multiset_hashes.hash_read,
-            self.read_timestamp_multiset_hashes.hash_write,
-            self.read_timestamp_multiset_hashes.hash_final,
-            self.global_minus_read_multiset_hashes.hash_read,
-            self.global_minus_read_multiset_hashes.hash_write,
-            self.global_minus_read_multiset_hashes.hash_final,
-        ];
+        let concatenated_hashes = [
+            self.multiset_hashes.init_hashes.clone(),
+            self.multiset_hashes.read_hashes.clone(),
+            self.multiset_hashes.write_hashes.clone(),
+            self.multiset_hashes.final_hashes.clone(),
+        ]
+        .concat();
 
         let (grand_product_claims, r_grand_product) = self
             .batched_grand_product
-            .verify::<G, Transcript>(&interleaved_hashes, transcript);
+            .verify::<G, Transcript>(&concatenated_hashes, transcript);
 
         self.opening_proof
             .verify_openings(&self.commitment, &r_grand_product, transcript)?;
@@ -678,28 +602,41 @@ where
             .compute_verifier_openings(&r_grand_product);
 
         debug_assert_eq!(grand_product_claims.len(), 7);
-        let grand_product_claims: Vec<MultisetHashes<F>> = vec![
-            MultisetHashes {
-                hash_init: grand_product_claims[0],
-                hash_read: grand_product_claims[1],
-                hash_write: grand_product_claims[2],
-                hash_final: grand_product_claims[3],
-            },
-            MultisetHashes {
-                hash_init: grand_product_claims[0],
-                hash_read: grand_product_claims[4],
-                hash_write: grand_product_claims[5],
-                hash_final: grand_product_claims[6],
-            },
-        ];
-        RangeCheckPolynomials::check_fingerprints(
-            grand_product_claims,
-            &self.opening_proof,
-            &self.opening_proof,
-            &gamma,
-            &tau,
+        let read_fingerprints: Vec<_> = RangeCheckPolynomials::read_tuples(&self.opening_proof)
+            .iter()
+            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
+            .collect();
+        let write_fingerprints: Vec<_> = RangeCheckPolynomials::write_tuples(&self.opening_proof)
+            .iter()
+            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
+            .collect();
+        let init_fingerprints: Vec<_> = RangeCheckPolynomials::init_tuples(&self.opening_proof)
+            .iter()
+            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
+            .collect();
+        let final_fingerprints: Vec<_> = RangeCheckPolynomials::final_tuples(&self.opening_proof)
+            .iter()
+            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
+            .collect();
+        assert_eq!(
+            init_fingerprints.len()
+                + read_fingerprints.len()
+                + write_fingerprints.len()
+                + final_fingerprints.len(),
+            grand_product_claims.len()
         );
-
+        for (claim, fingerprint) in zip(
+            grand_product_claims,
+            [
+                init_fingerprints,
+                read_fingerprints,
+                write_fingerprints,
+                final_fingerprints,
+            ]
+            .concat(),
+        ) {
+            assert_eq!(claim, fingerprint);
+        }
         Ok(())
     }
 
