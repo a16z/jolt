@@ -10,7 +10,6 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-    lasso::surge::SurgeProof,
     poly::{
         dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
         eq_poly::EqPolynomial,
@@ -20,10 +19,10 @@ use crate::{
     subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
     utils::{errors::ProofVerifyError, mul_0_optimized, random::RandomTape},
 };
-use common::constants::{
-    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
-};
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::{to_ram_address, ELFInstruction};
+
+use super::timestamp_range_check::TimestampValidityProof;
 
 pub trait RandomInstruction {
     fn random(index: usize, rng: &mut StdRng) -> Self;
@@ -107,8 +106,8 @@ where
         MemoryInitFinalOpenings<F, G>,
     >,
     pub commitment: MemoryCommitment<G>,
-    pub timestamp_validity_proof: SurgeProof<F, G>,
     pub memory_trace_size: usize,
+    pub timestamp_validity_proof: TimestampValidityProof<F, G>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -132,22 +131,22 @@ where
     /// Size of entire address space (i.e. RAM + registers for RISC-V)
     memory_size: usize,
     /// MLE of initial memory values. RAM is initialized to contain the program bytecode.
-    v_init: DensePolynomial<F>,
+    pub v_init: DensePolynomial<F>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
     /// and vice versa, so the read addresses and write addresses are the same.
-    a_read_write: DensePolynomial<F>,
+    pub a_read_write: DensePolynomial<F>,
     /// MLE of the read values.
-    v_read: DensePolynomial<F>,
+    pub v_read: DensePolynomial<F>,
     /// MLE of the write values.
-    v_write: DensePolynomial<F>,
+    pub v_write: DensePolynomial<F>,
     /// MLE of the final memory state.
-    v_final: DensePolynomial<F>,
+    pub v_final: DensePolynomial<F>,
     /// MLE of the read timestamps.
-    t_read: DensePolynomial<F>,
+    pub t_read: DensePolynomial<F>,
     /// MLE of the write timestamps.
-    t_write: DensePolynomial<F>,
+    pub t_write: DensePolynomial<F>,
     /// MLE of the final timestamps.
-    t_final: DensePolynomial<F>,
+    pub t_final: DensePolynomial<F>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
@@ -209,30 +208,28 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let mut timestamp: u64 = 0;
         let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
         let _enter = span.enter();
-        for step in memory_trace.chunks(MEMORY_OPS_PER_INSTRUCTION) {
-            for memory_access in step {
-                match memory_access {
-                    MemoryOp::Read(a, v) => {
-                        let remapped_a = remap_address(*a);
-                        debug_assert_eq!(*v, v_final[remapped_a as usize]);
-                        a_read_write.push(remapped_a);
-                        v_read.push(*v);
-                        v_write.push(*v);
-                        t_read.push(t_final[remapped_a as usize]);
-                        t_write.push(timestamp + 1);
-                        t_final[remapped_a as usize] = timestamp + 1;
-                    }
-                    MemoryOp::Write(a, v_new) => {
-                        let remapped_a = remap_address(*a);
-                        let v_old = v_final[remapped_a as usize];
-                        a_read_write.push(remapped_a);
-                        v_read.push(v_old);
-                        v_write.push(*v_new);
-                        v_final[remapped_a as usize] = *v_new;
-                        t_read.push(t_final[remapped_a as usize]);
-                        t_write.push(timestamp + 1);
-                        t_final[remapped_a as usize] = timestamp + 1;
-                    }
+        for memory_access in memory_trace {
+            match memory_access {
+                MemoryOp::Read(a, v) => {
+                    let remapped_a = remap_address(a);
+                    debug_assert_eq!(v, v_final[remapped_a as usize]);
+                    a_read_write.push(remapped_a);
+                    v_read.push(v);
+                    v_write.push(v);
+                    t_read.push(t_final[remapped_a as usize]);
+                    t_write.push(timestamp + 1);
+                    t_final[remapped_a as usize] = timestamp + 1;
+                }
+                MemoryOp::Write(a, v_new) => {
+                    let remapped_a = remap_address(a);
+                    let v_old = v_final[remapped_a as usize];
+                    a_read_write.push(remapped_a);
+                    v_read.push(v_old);
+                    v_write.push(v_new);
+                    v_final[remapped_a as usize] = v_new;
+                    t_read.push(t_final[remapped_a as usize]);
+                    t_write.push(timestamp + 1);
+                    t_final[remapped_a as usize] = timestamp + 1;
                 }
             }
             timestamp += 1;
@@ -403,7 +400,7 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
 }
 
 pub struct MemoryCommitment<G: CurveGroup> {
-    generators: MemoryCommitmentGenerators<G>,
+    pub generators: MemoryCommitmentGenerators<G>,
     /// Commitments for:
     /// a_read_write, v_read, v_write, t_read, t_write
     pub read_write_commitments: CombinedTableCommitment<G>,
@@ -478,7 +475,7 @@ where
     /// Evaluation of the v_write polynomial at the opening point.
     v_write_opening: F,
     /// Evaluation of the t_read polynomial at the opening point.
-    t_read_opening: F,
+    pub t_read_opening: F,
     /// Evaluation of the t_write polynomial at the opening point.
     t_write_opening: F,
     read_write_opening_proof: CombinedTableEvalProof<G>,
@@ -626,6 +623,11 @@ where
         }
     }
 
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+    }
+
     fn verify_openings(
         &self,
         commitment: &MemoryCommitment<G>,
@@ -658,10 +660,21 @@ where
         t * gamma.square() + v * *gamma + a - tau
     }
 
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::read_leaves")]
-    fn read_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
+    fn compute_leaves(
+        &self,
+        polynomials: &ReadWriteMemory<F, G>,
+        gamma: &F,
+        tau: &F,
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         let gamma_squared = gamma.square();
         let num_ops = polynomials.a_read_write.len();
+
         let read_fingerprints = (0..num_ops)
             .into_par_iter()
             .map(|i| {
@@ -671,12 +684,6 @@ where
                     - *tau
             })
             .collect();
-        vec![DensePolynomial::new(read_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::write_leaves")]
-    fn write_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        let num_ops = polynomials.a_read_write.len();
         let write_fingerprints = (0..num_ops)
             .into_par_iter()
             .map(|i| {
@@ -686,19 +693,10 @@ where
                     - *tau
             })
             .collect();
-        vec![DensePolynomial::new(write_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::init_leaves")]
-    fn init_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
         let init_fingerprints = (0..self.memory_size)
             .into_par_iter()
             .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from(i as u64) - *tau)
             .collect();
-        vec![DensePolynomial::new(init_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::final_leaves")]
-    fn final_leaves(&self, polynomials: &Self, gamma: &F, tau: &F) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
         let final_fingerprints = (0..self.memory_size)
             .into_par_iter()
             .map(|i| {
@@ -708,7 +706,13 @@ where
                     - *tau
             })
             .collect();
-        vec![DensePolynomial::new(final_fingerprints)]
+
+        (
+            vec![DensePolynomial::new(read_fingerprints)],
+            vec![DensePolynomial::new(write_fingerprints)],
+            vec![DensePolynomial::new(init_fingerprints)],
+            vec![DensePolynomial::new(final_fingerprints)],
+        )
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -721,11 +725,6 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_read_write_opening,

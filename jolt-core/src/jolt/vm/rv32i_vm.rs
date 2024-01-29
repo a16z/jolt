@@ -130,7 +130,7 @@ pub enum RV32IJoltVM {}
 const C: usize = 4;
 const M: usize = 1 << 16;
 
-impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
+impl<F, G> Jolt<'_, F, G, C, M> for RV32IJoltVM
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -234,10 +234,10 @@ mod tests {
         );
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let instruction_lookups: InstructionLookupsProof<_, _> =
+        let instruction_lookups: InstructionLookupsProof<_, _, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
-        let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
+        let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
             instruction_lookups,
             read_write_memory: memory_proof,
             bytecode: bytecode_proof,
@@ -367,10 +367,10 @@ mod tests {
         );
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let instruction_lookups: InstructionLookupsProof<_, _> =
+        let instruction_lookups: InstructionLookupsProof<_, _, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
-        let jolt_proof: JoltProof<Fr, EdwardsProjective> = JoltProof {
+        let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
             instruction_lookups,
             read_write_memory: memory_proof,
             bytecode: bytecode_proof,
@@ -457,7 +457,7 @@ mod tests {
         let mut prover_transcript = Transcript::new(b"example");
         let mut random_tape = RandomTape::new(b"test_tape");
 
-        let proof: InstructionLookupsProof<Fr, EdwardsProjective> =
+        let proof: InstructionLookupsProof<Fr, EdwardsProjective, _> =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(RV32IJoltVM::verify_instruction_lookups(proof, &mut verifier_transcript).is_ok());

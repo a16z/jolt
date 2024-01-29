@@ -5,10 +5,10 @@ use rand::rngs::StdRng;
 use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
+use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
-use common::{to_ram_address, ELFInstruction};
 use common::RV32IM;
-use crate::jolt::trace::{JoltProvableTrace, rv::RVTraceRow};
+use common::{to_ram_address, ELFInstruction};
 
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -99,14 +99,19 @@ impl ELFRow {
             None,
             None,
             None,
-        ).to_circuit_flags();
+        )
+        .to_circuit_flags();
 
-        let circuit_flags_bits: Vec<bool> = circuit_flags.iter().map(|x| 
-            if x.is_zero() { false } else { true } 
-        ).collect();
+        let circuit_flags_bits: Vec<bool> = circuit_flags
+            .iter()
+            .map(|x| if x.is_zero() { false } else { true })
+            .collect();
 
         println!("opcode as u8: {:?}", (self.opcode as u8));
-        println!("opcode: {:?}", RV32IM::from_repr(self.opcode as u8).unwrap());
+        println!(
+            "opcode: {:?}",
+            RV32IM::from_repr(self.opcode as u8).unwrap()
+        );
         println!("bits: {:?}", circuit_flags_bits);
 
         let mut bytes = [0u8; 2];
@@ -118,9 +123,7 @@ impl ELFRow {
 
         println!("bytes: {:?}", bytes);
 
-        F::from_le_bytes_mod_order(
-            &bytes
-        )
+        F::from_le_bytes_mod_order(&bytes)
     }
 }
 
@@ -237,13 +240,10 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         }
 
         [
-            opcodes,
-            rs1s,
-            rs2s,
-            rds,
-            imms,
-            // circuit_flags, 
-        ].concat()
+            opcodes, rs1s, rs2s, rds, imms,
+            // circuit_flags,
+        ]
+        .concat()
     }
 }
 
@@ -312,14 +312,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
-    pub fn r1cs_polys_from_bytecode(mut bytecode: Vec<ELFRow>, mut trace: Vec<ELFRow>) -> [Vec<F>; 3] {
-        // As R1CS isn't padded, measure length here before padding is applied. 
+    pub fn r1cs_polys_from_bytecode(
+        mut bytecode: Vec<ELFRow>,
+        mut trace: Vec<ELFRow>,
+    ) -> [Vec<F>; 3] {
+        // As R1CS isn't padded, measure length here before padding is applied.
         let num_ops: usize = trace.len();
 
         Self::validate_bytecode(&bytecode, &trace);
         Self::preprocess(&mut bytecode, &mut trace);
 
-        // ignore the padding 
+        // ignore the padding
         let trace = trace.drain(0..num_ops).collect::<Vec<ELFRow>>();
 
         let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
@@ -340,16 +343,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             final_cts[trace.address] = counter + 1;
         }
 
-        // create a closure to convert usize to F vector 
-        let to_f_vec = |vec: &Vec<usize>| -> Vec<F> {
-            vec.iter().map(|x| F::from(*x as u64)).collect()
-        };
+        // create a closure to convert usize to F vector
+        let to_f_vec =
+            |vec: &Vec<usize>| -> Vec<F> { vec.iter().map(|x| F::from(*x as u64)).collect() };
 
         let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
 
         [
             to_f_vec(&a_read_write_usize),
-            v_read_write, 
+            v_read_write,
             to_f_vec(&read_cts),
         ]
     }
@@ -507,113 +509,103 @@ where
         result - tau
     }
 
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]
+    fn compute_leaves(
         &self,
         polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         let num_ops = polynomials.a_read_write.len();
-        let read_fingerprints = (0..num_ops)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write.opcode[i],
-                        polynomials.v_read_write.rd[i],
-                        polynomials.v_read_write.rs1[i],
-                        polynomials.v_read_write.rs2[i],
-                        polynomials.v_read_write.imm[i],
-                        polynomials.t_read[i],
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(read_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &BytecodePolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let num_ops = polynomials.a_read_write.len();
-        let read_fingerprints = (0..num_ops)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        polynomials.a_read_write[i],
-                        polynomials.v_read_write.opcode[i],
-                        polynomials.v_read_write.rd[i],
-                        polynomials.v_read_write.rs1[i],
-                        polynomials.v_read_write.rs2[i],
-                        polynomials.v_read_write.imm[i],
-                        polynomials.t_read[i] + F::one(),
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(read_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::init_leaves")]
-    fn init_leaves(
-        &self,
-        polynomials: &BytecodePolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
         let memory_size = polynomials.v_init_final.opcode.len();
-        let init_fingerprints = (0..memory_size)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        F::from(i as u64),
-                        polynomials.v_init_final.opcode[i],
-                        polynomials.v_init_final.rd[i],
-                        polynomials.v_init_final.rs1[i],
-                        polynomials.v_init_final.rs2[i],
-                        polynomials.v_init_final.imm[i],
-                        F::zero(),
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(init_fingerprints)]
-    }
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &BytecodePolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let memory_size = polynomials.v_init_final.opcode.len();
-        let init_fingerprints = (0..memory_size)
-            .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                    &[
-                        F::from(i as u64),
-                        polynomials.v_init_final.opcode[i],
-                        polynomials.v_init_final.rd[i],
-                        polynomials.v_init_final.rs1[i],
-                        polynomials.v_init_final.rs2[i],
-                        polynomials.v_init_final.imm[i],
-                        polynomials.t_final[i],
-                    ],
-                    gamma,
-                    tau,
-                )
-            })
-            .collect();
-        vec![DensePolynomial::new(init_fingerprints)]
+
+        let (read_leaves, init_leaves) = rayon::join(
+            || {
+                let read_fingerprints = (0..num_ops).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            polynomials.a_read_write[i],
+                            polynomials.v_read_write.opcode[i],
+                            polynomials.v_read_write.rd[i],
+                            polynomials.v_read_write.rs1[i],
+                            polynomials.v_read_write.rs2[i],
+                            polynomials.v_read_write.imm[i],
+                            polynomials.t_read[i],
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(read_fingerprints)]
+            },
+            || {
+                let init_fingerprints = (0..memory_size).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            F::from(i as u64),
+                            polynomials.v_init_final.opcode[i],
+                            polynomials.v_init_final.rd[i],
+                            polynomials.v_init_final.rs1[i],
+                            polynomials.v_init_final.rs2[i],
+                            polynomials.v_init_final.imm[i],
+                            F::zero(),
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(init_fingerprints)]
+            },
+        );
+        let (write_leaves, final_leaves) = rayon::join(
+            || {
+                let read_fingerprints = (0..num_ops).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            polynomials.a_read_write[i],
+                            polynomials.v_read_write.opcode[i],
+                            polynomials.v_read_write.rd[i],
+                            polynomials.v_read_write.rs1[i],
+                            polynomials.v_read_write.rs2[i],
+                            polynomials.v_read_write.imm[i],
+                            polynomials.t_read[i] + F::one(),
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(read_fingerprints)]
+            },
+            || {
+                let final_fingerprints = (0..memory_size).map(|i| {
+                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                        &[
+                            F::from(i as u64),
+                            polynomials.v_init_final.opcode[i],
+                            polynomials.v_init_final.rd[i],
+                            polynomials.v_init_final.rs1[i],
+                            polynomials.v_init_final.rs2[i],
+                            polynomials.v_init_final.imm[i],
+                            polynomials.t_final[i],
+                        ],
+                        gamma,
+                        tau,
+                    )
+                })
+                .collect();
+                vec![DensePolynomial::new(final_fingerprints)]
+            },
+        );
+
+        (read_leaves, write_leaves, init_leaves, final_leaves)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -626,11 +618,6 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write_opening,
@@ -827,6 +814,11 @@ where
         }
     }
 
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+    }
+
     fn verify_openings(
         &self,
         commitment: &BytecodeCommitment<G>,
@@ -895,11 +887,8 @@ mod tests {
             BytecodePolynomials::new(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let init_leaves: Vec<DensePolynomial<Fr>> = polys.init_leaves(&polys, gamma, tau);
-        let read_leaves: Vec<DensePolynomial<Fr>> = polys.read_leaves(&polys, gamma, tau);
-        let write_leaves: Vec<DensePolynomial<Fr>> = polys.write_leaves(&polys, gamma, tau);
-        let final_leaves: Vec<DensePolynomial<Fr>> = polys.final_leaves(&polys, gamma, tau);
-
+        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+            polys.compute_leaves(&polys, &gamma, &tau);
         let init_leaves = &init_leaves[0];
         let read_leaves = &read_leaves[0];
         let write_leaves = &write_leaves[0];

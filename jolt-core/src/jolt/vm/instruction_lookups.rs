@@ -412,11 +412,13 @@ where
     }
 }
 
-pub struct InstructionFinalOpenings<F, G>
+pub struct InstructionFinalOpenings<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
+    _subtables: PhantomData<Subtables>,
     /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     final_openings: Vec<F>,
     final_opening_proof: CombinedTableEvalProof<G>,
@@ -426,11 +428,12 @@ where
     v_init_final: Option<Vec<F>>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for InstructionFinalOpenings<F, G>
+impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+    for InstructionFinalOpenings<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     type Openings = Vec<F>;
 
@@ -464,11 +467,22 @@ where
         );
 
         Self {
+            _subtables: PhantomData,
             final_openings: openings,
             final_opening_proof,
             a_init_final: None,
             v_init_final: None,
         }
+    }
+
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+        self.v_init_final = Some(
+            Subtables::iter()
+                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .collect(),
+        );
     }
 
     fn verify_openings(
@@ -497,7 +511,7 @@ where
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
     type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
-    type InitFinalOpenings = InstructionFinalOpenings<F, G>;
+    type InitFinalOpenings = InstructionFinalOpenings<F, G, Subtables>;
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
@@ -509,67 +523,50 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
+    fn compute_leaves(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
+        let gamma_squared = gamma.square();
+        let read_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
 
                 let leaf_fingerprints = (0..self.num_lookups)
-                    .into_par_iter()
+                    // .into_par_iter()
                     .map(|i| {
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
                     })
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        let a = &polynomials.dim[dim_index][i];
-                        let v = &polynomials.E_polys[memory_index][i];
-                        let t = &(polynomials.read_cts[memory_index][i] + F::one());
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
-                    })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
+            .collect::<Vec<DensePolynomial<F>>>();
+        let write_leaves = read_leaves
+            .par_iter()
+            .map(|read_poly| {
+                DensePolynomial::new(
+                    read_poly
+                        .evals_ref()
+                        .iter()
+                        // .par_iter()
+                        .map(|eval| *eval + gamma_squared)
+                        .collect(),
+                )
             })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::init_leaves")]
-    fn init_leaves(
-        &self,
-        _polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        (0..Self::NUM_MEMORIES)
+            .collect();
+        let init_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
@@ -587,56 +584,38 @@ where
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
+            .collect::<Vec<DensePolynomial<F>>>();
+        let final_leaves = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-
                 let leaf_fingerprints = (0..M)
                     .map(|i| {
-                        let a = &F::from(i as u64);
-                        let v = &self.materialized_subtables[subtable_index][i];
-                        let t = &polynomials.final_cts[memory_index][i];
-
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
+                        init_leaves[memory_index][i]
+                            + mul_0_1_optimized(
+                                &polynomials.final_cts[memory_index][i],
+                                &gamma_squared,
+                            )
                     })
                     .collect();
                 DensePolynomial::new(leaf_fingerprints)
             })
-            .collect()
-    }
+            .collect();
 
+        (read_leaves, write_leaves, init_leaves, final_leaves)
+    }
     /// Overrides default implementation to handle flags
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
         &self,
         polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
+        read_fingerprints: Vec<DensePolynomial<F>>,
+        write_fingerprints: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let (read_fingerprints, write_fingerprints) = rayon::join(
-            || self.read_leaves(polynomials, gamma, tau),
-            || self.write_leaves(polynomials, gamma, tau),
-        );
-        assert_eq!(read_fingerprints.len(), write_fingerprints.len());
         assert_eq!(read_fingerprints.len(), Self::NUM_MEMORIES);
 
         let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)
             .into_par_iter()
             .flat_map(|i| {
-                let half = read_fingerprints[i].len() / 2;
-
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let subtable_index = Self::memory_to_subtable_index(i);
                 let flag = &polynomials.subtable_flag_polys[subtable_index];
@@ -704,16 +683,6 @@ where
     InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        openings.v_init_final = Some(
-            Subtables::iter()
-                .map(|subtable| subtable.evaluate_mle(opening_point))
-                .collect(),
-        );
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         let subtable_flags = Self::subtable_flags(&openings.flag_openings);
         (0..Self::NUM_MEMORIES)
@@ -768,10 +737,11 @@ where
 }
 
 /// Proof of instruction lookups for a single Jolt program execution.
-pub struct InstructionLookupsProof<F, G>
+pub struct InstructionLookupsProof<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     /// Commitments to all polynomials
     commitment: InstructionCommitment<G>,
@@ -784,7 +754,7 @@ where
         G,
         InstructionPolynomials<F, G>,
         InstructionReadWriteOpenings<F, G>,
-        InstructionFinalOpenings<F, G>,
+        InstructionFinalOpenings<F, G, Subtables>,
     >,
 }
 
@@ -845,7 +815,7 @@ where
         &self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> InstructionLookupsProof<F, G> {
+    ) -> InstructionLookupsProof<F, G, Subtables> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = self.polynomialize();
@@ -920,7 +890,7 @@ where
     }
 
     pub fn verify(
-        proof: InstructionLookupsProof<F, G>,
+        proof: InstructionLookupsProof<F, G, Subtables>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());

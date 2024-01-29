@@ -279,21 +279,25 @@ where
     }
 }
 
-pub struct SurgeFinalOpenings<F, G>
+pub struct SurgeFinalOpenings<F, G, Instruction, const C: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Instruction: JoltInstruction + Default,
 {
+    _instruction: PhantomData<Instruction>,
     final_openings: Vec<F>, // C-sized
     final_opening_proof: CombinedTableEvalProof<G>,
     a_init_final: Option<F>,      // Computed by verifier
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
-impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeFinalOpenings<F, G>
+impl<F, G, Instruction, const C: usize> StructuredOpeningProof<F, G, SurgePolys<F, G>>
+    for SurgeFinalOpenings<F, G, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Instruction: JoltInstruction + Default,
 {
     type Openings = Vec<F>;
 
@@ -326,11 +330,24 @@ where
         );
 
         Self {
+            _instruction: PhantomData,
             final_openings: openings,
             final_opening_proof,
             a_init_final: None, // Computed by verifier
             v_init_final: None, // Computed by verifier
         }
+    }
+
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+        self.v_init_final = Some(
+            Instruction::default()
+                .subtables(C)
+                .iter()
+                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .collect(),
+        );
     }
 
     fn verify_openings(
@@ -357,113 +374,112 @@ where
     Instruction: JoltInstruction + Default + Sync,
 {
     type ReadWriteOpenings = SurgeReadWriteOpenings<F, G>;
-    type InitFinalOpenings = SurgeFinalOpenings<F, G>;
+    type InitFinalOpenings = SurgeFinalOpenings<F, G, Instruction, C>;
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
         t * gamma.square() + v * *gamma + a - tau
     }
 
-    #[tracing::instrument(skip_all, name = "Surge::read_leaves")]
-    fn read_leaves(
+    #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
+    fn compute_leaves(
         &self,
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
+    ) -> (
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+        Vec<DensePolynomial<F>>,
+    ) {
         let gamma_squared = gamma.square();
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
-                            + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                            + polynomials.dim[dim_index][i]
-                            - *tau
+
+        let (init_leaves, read_leaves) = rayon::join(
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let subtable_index = Self::memory_to_subtable_index(memory_index);
+                        let leaf_fingerprints = (0..self.M)
+                            .map(|i| {
+                                // 0 * gamma^2 +
+                                mul_0_1_optimized(
+                                    &self.materialized_subtables[subtable_index][i],
+                                    gamma,
+                                ) + F::from(i as u64)
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-    #[tracing::instrument(skip_all, name = "Surge::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &SurgePolys<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        mul_0_1_optimized(
-                            &(polynomials.read_cts[dim_index][i] + F::one()),
-                            &gamma_squared,
-                        ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
-                            + polynomials.dim[dim_index][i]
-                            - *tau
+                    .collect()
+            },
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let dim_index = Self::memory_to_dimension_index(memory_index);
+                        let leaf_fingerprints = (0..self.num_lookups)
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.read_cts[dim_index][i],
+                                    &gamma_squared,
+                                ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                                    + polynomials.dim[dim_index][i]
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-    #[tracing::instrument(skip_all, name = "Surge::init_leaves")]
-    fn init_leaves(
-        &self,
-        _polynomials: &SurgePolys<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..self.M)
-                    .map(|i| {
-                        // 0 * gamma^2 +
-                        mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
-                            + F::from(i as u64)
-                            - *tau
+                    .collect()
+            },
+        );
+        let (final_leaves, write_leaves) = rayon::join(
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let dim_index = Self::memory_to_dimension_index(memory_index);
+                        let subtable_index = Self::memory_to_subtable_index(memory_index);
+                        let leaf_fingerprints = (0..self.M)
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &polynomials.final_cts[dim_index][i],
+                                    &gamma_squared,
+                                ) + mul_0_1_optimized(
+                                    &self.materialized_subtables[subtable_index][i],
+                                    gamma,
+                                ) + F::from(i as u64)
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-    #[tracing::instrument(skip_all, name = "Surge::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &SurgePolys<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_squared = gamma.square();
-        (0..Self::num_memories())
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let leaf_fingerprints = (0..self.M)
-                    .map(|i| {
-                        mul_0_1_optimized(&polynomials.final_cts[dim_index][i], &gamma_squared)
-                            + mul_0_1_optimized(
-                                &self.materialized_subtables[subtable_index][i],
-                                gamma,
-                            )
-                            + F::from(i as u64)
-                            - *tau
+                    .collect()
+            },
+            || {
+                (0..Self::num_memories())
+                    .into_par_iter()
+                    .map(|memory_index| {
+                        let dim_index = Self::memory_to_dimension_index(memory_index);
+                        let leaf_fingerprints = (0..self.num_lookups)
+                            .map(|i| {
+                                mul_0_1_optimized(
+                                    &(polynomials.read_cts[dim_index][i] + F::one()),
+                                    &gamma_squared,
+                                ) + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
+                                    + polynomials.dim[dim_index][i]
+                                    - *tau
+                            })
+                            .collect();
+                        DensePolynomial::new(leaf_fingerprints)
                     })
-                    .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
+                    .collect()
+            },
+        );
+
+        (read_leaves, write_leaves, init_leaves, final_leaves)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -478,18 +494,6 @@ where
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        openings.v_init_final = Some(
-            Instruction::default()
-                .subtables(C)
-                .iter()
-                .map(|subtable| subtable.evaluate_mle(opening_point))
-                .collect(),
-        );
-    }
-
     fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
@@ -567,10 +571,11 @@ where
     M: usize,
 }
 
-pub struct SurgeProof<F, G>
+pub struct SurgeProof<F, G, Instruction, const C: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Instruction: JoltInstruction + Default,
 {
     /// Commitments to all polynomials
     commitment: SurgeCommitment<G>,
@@ -582,7 +587,7 @@ where
         G,
         SurgePolys<F, G>,
         SurgeReadWriteOpenings<F, G>,
-        SurgeFinalOpenings<F, G>,
+        SurgeFinalOpenings<F, G, Instruction, C>,
     >,
 }
 
@@ -634,7 +639,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::prove")]
-    pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G> {
+    pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G, Instruction, C> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = self.construct_polys();
@@ -713,7 +718,7 @@ where
     }
 
     pub fn verify(
-        proof: SurgeProof<F, G>,
+        proof: SurgeProof<F, G, Instruction, C>,
         transcript: &mut Transcript,
         M: usize,
     ) -> Result<(), ProofVerifyError> {

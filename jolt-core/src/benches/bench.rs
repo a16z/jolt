@@ -19,7 +19,7 @@ use crate::jolt::vm::instruction_lookups::InstructionLookupsProof;
 use crate::jolt::vm::read_write_memory::{
     random_memory_trace, MemoryOp, RandomInstruction, ReadWriteMemoryProof,
 };
-use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
+use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32ISubtables, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::lasso::surge::Surge;
 use crate::poly::dense_mlpoly::bench::{
@@ -106,7 +106,7 @@ fn prove_e2e_except_r1cs(
         );
         let _ =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let _: InstructionLookupsProof<Fr, EdwardsProjective> =
+        let _: InstructionLookupsProof<Fr, EdwardsProjective, RV32ISubtables<Fr>> =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
     });
     vec![(
@@ -338,7 +338,7 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         );
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let instruction_lookups: InstructionLookupsProof<_, _> =
+        let instruction_lookups: InstructionLookupsProof<_, _, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions_r1cs, &mut transcript, &mut random_tape);
 
         let mut transcript = Transcript::new(b"Jolt transcript");
@@ -471,7 +471,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         );
         let memory_proof: ReadWriteMemoryProof<Fr, EdwardsProjective> =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let instruction_lookups: InstructionLookupsProof<_, _> =
+        let instruction_lookups: InstructionLookupsProof<_, _, _> =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
         let mut transcript = Transcript::new(b"Jolt transcript");
