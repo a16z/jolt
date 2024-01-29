@@ -866,7 +866,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             let flag_eval = flag_evals[params.a_to_b[batch_index]][mle_index];
                             let poly_eval = &params.poly_As[batch_index];
 
-                            // let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
                             // Below is just a more complicated form of the following, optimizing for 0 / 1 flags.
                             // let poly_m = poly_eval[high] - poly_eval[low];
                             // let poly_2 = poly_eval[high] + poly_m;
