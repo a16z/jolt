@@ -10,16 +10,15 @@ use super::Jolt;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
     and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction, bgeu::BGEUInstruction,
-    blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, or::ORInstruction, 
-    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, 
+    blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, or::ORInstruction,
+    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
     srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
     gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
     or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
-    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, zero_lsb::ZeroLSBSubtable,
-    LassoSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, LassoSubtable,
 };
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
@@ -119,8 +118,7 @@ subtable_enum!(
   SRL2: SrlSubtable<F, 2, WORD_SIZE>,
   SRL3: SrlSubtable<F, 3, WORD_SIZE>,
   TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
-  XOR: XorSubtable<F>,
-  ZERO_LSB: ZeroLSBSubtable<F>
+  XOR: XorSubtable<F>
 );
 
 // ==================== JOLT ====================
@@ -158,8 +156,8 @@ mod tests {
     use crate::jolt::instruction::{
         add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
         bgeu::BGEUInstruction, blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction,
-        or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, 
-        sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, 
+        or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction,
+        sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction,
         JoltInstruction, Opcode,
     };
     use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
@@ -289,16 +287,21 @@ mod tests {
             .flat_map(|row| {
                 let instructions = row.to_jolt_instructions();
                 if instructions.is_empty() {
-                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()] 
+                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
                 } else {
                     instructions
                 }
             })
             .collect();
-    
-        let memory_trace_r1cs = converted_trace.clone().into_iter().flat_map(|row| row.to_ram_ops()).collect_vec();
 
-        let circuit_flags = converted_trace.clone()
+        let memory_trace_r1cs = converted_trace
+            .clone()
+            .into_iter()
+            .flat_map(|row| row.to_ram_ops())
+            .collect_vec();
+
+        let circuit_flags = converted_trace
+            .clone()
             .iter()
             .flat_map(|row| row.to_circuit_flags())
             .collect::<Vec<_>>();
@@ -307,14 +310,14 @@ mod tests {
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
         RV32IJoltVM::prove_r1cs(
-            instructions_r1cs, 
+            instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
-            bytecode, 
-            memory_trace_r1cs, 
+            bytecode,
+            memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
-            &mut random_tape
+            &mut random_tape,
         );
     }
 
@@ -416,16 +419,21 @@ mod tests {
             .flat_map(|row| {
                 let instructions = row.to_jolt_instructions();
                 if instructions.is_empty() {
-                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()] 
+                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
                 } else {
                     instructions
                 }
             })
             .collect();
-    
-        let memory_trace_r1cs = converted_trace.clone().into_iter().flat_map(|row| row.to_ram_ops()).collect_vec();
 
-        let circuit_flags = converted_trace.clone()
+        let memory_trace_r1cs = converted_trace
+            .clone()
+            .into_iter()
+            .flat_map(|row| row.to_ram_ops())
+            .collect_vec();
+
+        let circuit_flags = converted_trace
+            .clone()
             .iter()
             .flat_map(|row| row.to_circuit_flags())
             .collect::<Vec<_>>();
@@ -434,17 +442,16 @@ mod tests {
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
         RV32IJoltVM::prove_r1cs(
-            instructions_r1cs, 
+            instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
-            bytecode, 
-            memory_trace_r1cs, 
+            bytecode,
+            memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
             &mut random_tape,
         );
     }
-
 
     #[test]
     fn instruction_lookups() {

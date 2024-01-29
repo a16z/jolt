@@ -6,7 +6,6 @@ use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use std::any::TypeId;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::trace_span;
 
@@ -754,15 +753,8 @@ where
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
 
-        (0..Self::NUM_MEMORIES)
-            .map(|memory_index| {
-                (
-                    a_init,
-                    v_init[Self::memory_to_subtable_index(memory_index)],
-                    F::zero(),
-                    None,
-                )
-            })
+        (0..Self::NUM_SUBTABLES)
+            .map(|subtable_index| (a_init, v_init[subtable_index], F::zero(), None))
             .collect()
     }
     fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {

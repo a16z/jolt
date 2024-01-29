@@ -885,12 +885,12 @@ mod tests {
             BytecodePolynomials::new(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_leaves, write_leaves, init_leaves, final_leaves) =
+        let (read_write_leaves, init_final_leaves) =
             polys.compute_leaves(&polys, &gamma, &tau);
-        let init_leaves = &init_leaves[0];
-        let read_leaves = &read_leaves[0];
-        let write_leaves = &write_leaves[0];
-        let final_leaves = &final_leaves[0];
+        let init_leaves = &init_final_leaves[0];
+        let read_leaves = &read_write_leaves[0];
+        let write_leaves = &read_write_leaves[1];
+        let final_leaves = &init_final_leaves[1];
 
         let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
         let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();

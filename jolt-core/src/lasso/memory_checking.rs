@@ -400,45 +400,47 @@ where
         gamma: &F,
         tau: &F,
     ) {
-        let read_fingerprints: Vec<_> =
+        let read_hashes: Vec<_> =
             <Self as MemoryCheckingVerifier<_, _, _>>::read_tuples(read_write_openings)
                 .iter()
                 .map(|tuple| Self::fingerprint(tuple, gamma, tau))
                 .collect();
-        let write_fingerprints: Vec<_> =
+        let write_hashes: Vec<_> =
             <Self as MemoryCheckingVerifier<_, _, _>>::write_tuples(read_write_openings)
                 .iter()
                 .map(|tuple| Self::fingerprint(tuple, gamma, tau))
                 .collect();
-        assert_eq!(
-            read_fingerprints.len() + write_fingerprints.len(),
-            claims_read_write.len()
-        );
-        for (claim, fingerprint) in zip(
-            claims_read_write,
-            interleave(read_fingerprints, write_fingerprints),
-        ) {
-            assert_eq!(claim, fingerprint);
-        }
-
-        let init_fingerprints: Vec<_> =
+        let init_hashes: Vec<_> =
             <Self as MemoryCheckingVerifier<_, _, _>>::init_tuples(init_final_openings)
                 .iter()
                 .map(|tuple| Self::fingerprint(tuple, gamma, tau))
                 .collect();
-        let final_fingerprints: Vec<_> =
+        let final_hashes: Vec<_> =
             <Self as MemoryCheckingVerifier<_, _, _>>::final_tuples(init_final_openings)
                 .iter()
                 .map(|tuple| Self::fingerprint(tuple, gamma, tau))
                 .collect();
         assert_eq!(
-            init_fingerprints.len() + final_fingerprints.len(),
+            read_hashes.len() + write_hashes.len(),
+            claims_read_write.len()
+        );
+        assert_eq!(
+            init_hashes.len() + final_hashes.len(),
             claims_init_final.len()
         );
-        for (claim, fingerprint) in zip(
-            claims_init_final,
-            interleave(init_fingerprints, final_fingerprints),
-        ) {
+
+        let multiset_hashes = MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes,
+            final_hashes,
+        };
+        let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(multiset_hashes);
+
+        for (claim, fingerprint) in zip(claims_read_write, read_write_hashes) {
+            assert_eq!(claim, fingerprint);
+        }
+        for (claim, fingerprint) in zip(claims_init_final, init_final_hashes) {
             assert_eq!(claim, fingerprint);
         }
     }
@@ -519,10 +521,8 @@ mod tests {
             ) -> (
                 Vec<DensePolynomial<Fr>>,
                 Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
             ) {
-                let read_leaves = vec![DensePolynomial::new(
+                let read_leaves = DensePolynomial::new(
                     (0..polynomials.a_ops.len()).map(|i| {
                         Self::fingerprint(
                             &(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i]),
@@ -530,8 +530,8 @@ mod tests {
                             tau,
                         )
                     }).collect(),
-                )];
-                let write_leaves = vec![DensePolynomial::new(
+                );
+                let write_leaves = DensePolynomial::new(
                     (0..polynomials.a_ops.len()).map(|i| {
                         Self::fingerprint(
                             &(polynomials.a_ops[i], polynomials.v_ops[i], polynomials.t_reads[i] + Fr::one()),
@@ -539,8 +539,8 @@ mod tests {
                             tau,
                         )
                     }).collect(),
-                )];
-                let init_leaves = vec![DensePolynomial::new(
+                );
+                let init_leaves = DensePolynomial::new(
                     (0..polynomials.v_mems.len()).map(|i| {
                         Self::fingerprint(
                             &(Fr::from(i as u64), polynomials.v_mems[i], Fr::zero()),
@@ -548,8 +548,8 @@ mod tests {
                             tau,
                         )
                     }).collect(),
-                )];
-                let final_leaves = vec![DensePolynomial::new(
+                );
+                let final_leaves = DensePolynomial::new(
                     (0..polynomials.v_mems.len()).map(|i| {
                         Self::fingerprint(
                             &(Fr::from(i as u64), polynomials.v_mems[i], polynomials.t_finals[i]),
@@ -557,8 +557,8 @@ mod tests {
                             tau,
                         )
                     }).collect(),
-                )];
-                (read_leaves, write_leaves, init_leaves, final_leaves)
+                );
+                (vec![read_leaves, write_leaves], vec![init_leaves, final_leaves])
             }
 
             fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
@@ -631,18 +631,10 @@ mod tests {
             &mut transcript,
             TestProver::protocol_name(),
         );
-        for hash in multiset_hashes.iter() {
-            hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
-        }
+        multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
+        let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
+            TestProver::interleave_hashes(multiset_hashes);
 
-        let interleaved_read_write_hashes = multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_read, hash.hash_write])
-            .collect();
-        let interleaved_init_final_hashes = multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_init, hash.hash_final])
-            .collect();
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
         assert_eq!(r_rw_verify, r_rw);
@@ -731,10 +723,8 @@ mod tests {
             ) -> (
                 Vec<DensePolynomial<Fr>>,
                 Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
             ) {
-                let read_leaves = [0, 1].iter().map(|memory_index| {
+                let read_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.a_0_ops.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -746,7 +736,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                let write_leaves = [0, 1].iter().map(|memory_index| {
+                let write_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.a_0_ops.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -758,7 +748,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                let init_leaves = [0, 1].iter().map(|memory_index| {
+                let init_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.v_mems.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -769,7 +759,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                let final_leaves = [0, 1].iter().map(|memory_index| {
+                let final_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.v_mems.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -781,7 +771,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                (read_leaves, write_leaves, init_leaves, final_leaves)
+                (interleave(read_leaves, write_leaves).collect(), interleave(init_leaves, final_leaves).collect())
             }
 
             fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
@@ -860,15 +850,13 @@ mod tests {
 
         // Check leaves match
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_leaves, write_leaves, init_leaves, final_leaves) =
-            prover.compute_leaves(&polys, gamma, tau);
+        let (read_write_leaves, init_final_leaves) = prover.compute_leaves(&polys, gamma, tau);
 
         [0, 1].into_iter().for_each(|i| {
-            let init_leaves = &init_leaves[i];
-            let read_leaves = &read_leaves[i];
-            let write_leaves = &write_leaves[i];
-            let final_leaves = &final_leaves[i];
-
+            let read_leaves = &read_write_leaves[2 * i];
+            let write_leaves = &read_write_leaves[2 * i + 1];
+            let init_leaves = &init_final_leaves[2 * i];
+            let final_leaves = &init_final_leaves[2 * i + 1];
             let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
             let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();
             let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
@@ -894,18 +882,10 @@ mod tests {
             &mut transcript,
             TestProver::protocol_name(),
         );
-        for hash in multiset_hashes.iter() {
-            hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
-        }
+        multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
+        let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
+            TestProver::interleave_hashes(multiset_hashes);
 
-        let interleaved_read_write_hashes = multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_read, hash.hash_write])
-            .collect();
-        let interleaved_init_final_hashes = multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_init, hash.hash_final])
-            .collect();
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
         assert_eq!(r_rw_verify, r_rw);
@@ -991,10 +971,8 @@ mod tests {
             ) -> (
                 Vec<DensePolynomial<Fr>>,
                 Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
-                Vec<DensePolynomial<Fr>>,
             ) {
-                let read_leaves = [0, 1].iter().map(|memory_index| {
+                let read_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.a_0_ops.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -1006,7 +984,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                let write_leaves = [0, 1].iter().map(|memory_index| {
+                let write_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.a_0_ops.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -1018,7 +996,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                let init_leaves = [0, 1].iter().map(|memory_index| {
+                let init_leaves: Vec<DensePolynomial<Fr>> = [0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.v_mems.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -1029,7 +1007,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                let final_leaves =[0, 1].iter().map(|memory_index| {
+                let final_leaves: Vec<DensePolynomial<Fr>> =[0, 1].iter().map(|memory_index| {
                     DensePolynomial::new(
                         (0..polynomials.v_mems.len()).map(|leaf_index| {
                             let tuple = match memory_index {
@@ -1041,7 +1019,7 @@ mod tests {
                         }).collect(),
                     )
                 }).collect();
-                (read_leaves, write_leaves, init_leaves, final_leaves)
+                (interleave(read_leaves, write_leaves).collect(), interleave(init_leaves, final_leaves).collect())
             }
 
             fn fingerprint(tuple: &Self::MemoryTuple, gamma: &Fr, tau: &Fr) -> Fr {
@@ -1060,18 +1038,17 @@ mod tests {
             fn read_write_grand_product(
                 &self,
                 polynomials: &FlagPolys,
-                read_fingerprints: Vec<DensePolynomial<Fr>>,
-                write_fingerprints: Vec<DensePolynomial<Fr>>,
-            ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>, Vec<Fr>) {
+                read_write_leaves: Vec<DensePolynomial<Fr>>,
+            ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>) {
                 // Generate "flagged" leaves for the second to last layer. Input to normal Grand Products
                 let num_memories = 2;
                 let mut circuits = Vec::with_capacity(2 * num_memories);
-                let mut read_hashes = Vec::with_capacity(num_memories);
-                let mut write_hashes = Vec::with_capacity(num_memories);
+                let mut read_hashes = vec![];
+                let mut write_hashes = vec![];
 
                 for i in 0..num_memories {
-                    let mut toggled_read_fingerprints = read_fingerprints[i].evals();
-                    let mut toggled_write_fingerprints = write_fingerprints[i].evals();
+                    let mut toggled_read_fingerprints = read_write_leaves[2 * i].evals();
+                    let mut toggled_write_fingerprints = read_write_leaves[2 * i + 1].evals();
 
                     let subtable_index = i;
                     for leaf_index in 0..polynomials.a_0_ops.len() {
@@ -1101,15 +1078,13 @@ mod tests {
                     circuits,
                     vec![polynomials.flags_0.clone(), polynomials.flags_1.clone()],
                     expanded_flag_map,
-                    vec![
-                        read_fingerprints[0].clone(),
-                        write_fingerprints[0].clone(),
-                        read_fingerprints[1].clone(),
-                        write_fingerprints[1].clone(),
-                    ],
+                    read_write_leaves,
                 );
 
-                (batched_circuits, read_hashes, write_hashes)
+                (
+                    batched_circuits,
+                    interleave(read_hashes, write_hashes).collect(),
+                )
             }
 
             fn protocol_name() -> &'static [u8] {
@@ -1212,18 +1187,10 @@ mod tests {
             &mut transcript,
             TestProver::protocol_name(),
         );
-        for hash in multiset_hashes.iter() {
-            hash.append_to_transcript::<EdwardsProjective>(&mut transcript);
-        }
+        multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
+        let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
+            TestProver::interleave_hashes(multiset_hashes);
 
-        let interleaved_read_write_hashes = multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_read, hash.hash_write])
-            .collect();
-        let interleaved_init_final_hashes = multiset_hashes
-            .iter()
-            .flat_map(|hash| [hash.hash_init, hash.hash_final])
-            .collect();
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
         assert_eq!(r_rw_verify, r_rw);

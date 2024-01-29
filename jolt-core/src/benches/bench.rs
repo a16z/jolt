@@ -162,7 +162,7 @@ fn prove_memory(
     let memory_trace = random_memory_trace(
         &bytecode,
         memory_size,
-        MEMORY_OPS_PER_INSTRUCTION * num_cycles,
+        8 * num_cycles,
         &mut rng,
     );
 

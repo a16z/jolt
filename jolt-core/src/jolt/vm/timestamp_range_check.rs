@@ -1,6 +1,5 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use itertools::interleave;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{iter::zip, marker::PhantomData};
