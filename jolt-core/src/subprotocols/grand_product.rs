@@ -525,15 +525,6 @@ mod grand_product_circuit_tests {
         }).collect();
         let flag_poly = DensePolynomial::new(flag_vec);
 
-        // Grand Product Circuit leaves are those that are toggled
-        // let mut read_leaves = read_fingerprints.clone();
-        // read_leaves[2] = Fr::one();
-        // let mut write_leaves = write_fingerprints.clone();
-        // write_leaves[2] = Fr::one();
-
-        // let read_leaf_poly = DensePolynomial::new(read_leaves);
-        // let write_leaf_poly = DensePolynomial::new(write_leaves);
-
         let flag_map = vec![0, 0];
 
         // Construct the GPCs not from the raw fingerprints, but from the flagged fingerprints!
