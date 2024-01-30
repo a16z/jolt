@@ -64,7 +64,7 @@ zeroize = { version = "1", default-features = false }
 common = { path = "../common" }
 compiler = { path = "../compiler" }
 
-witness = { git = "https://github.com/philsippl/circom-witness-rs", branch = "separate-witgen" }
+witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 ruint = "1.11.1"
 spartan2 = { git = "https://github.com/a16z/Spartan2.git" }
 
