@@ -23,19 +23,12 @@ use crate::{
     utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
 };
 
-pub struct BytecodeProof<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    pub memory_checking_proof: MemoryCheckingProof<
-        G,
-        BytecodePolynomials<F, G>,
-        BytecodeReadWriteOpenings<F, G>,
-        BytecodeInitFinalOpenings<F, G>,
-    >,
-    pub commitment: BytecodeCommitment<G>,
-}
+pub type BytecodeProof<F, G> = MemoryCheckingProof<
+    G,
+    BytecodePolynomials<F, G>,
+    BytecodeReadWriteOpenings<F, G>,
+    BytecodeInitFinalOpenings<F, G>,
+>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ELFRow {

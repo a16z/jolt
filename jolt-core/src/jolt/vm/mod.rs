@@ -2,36 +2,27 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
 use merlin::Transcript;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::lasso::memory_checking::{
-    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier,
+use crate::jolt::{
+    instruction::{JoltInstruction, Opcode},
+    subtable::LassoSubtable,
+    vm::timestamp_range_check::TimestampValidityProof,
 };
+use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::prove_r1cs;
 use crate::r1cs::snark::JoltCircuit;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
-use crate::{
-    jolt::{
-        instruction::{JoltInstruction, Opcode},
-        subtable::LassoSubtable,
-        vm::timestamp_range_check::{RangeCheckPolynomials, TimestampValidityProof},
-    },
-    subprotocols::batched_commitment::BatchedPolynomialCommitment,
-};
 use common::ELFInstruction;
 
-use self::bytecode::{
-    BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeProof,
-    BytecodeReadWriteOpenings, ELFRow,
+use self::bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, ELFRow};
+use self::instruction_lookups::{
+    InstructionCommitment, InstructionLookups, InstructionLookupsProof,
 };
-use self::instruction_lookups::{InstructionLookups, InstructionLookupsProof};
-use self::read_write_memory::{
-    MemoryCommitment, MemoryInitFinalOpenings, MemoryOp, MemoryReadWriteOpenings, ReadWriteMemory,
-    ReadWriteMemoryProof,
-};
+use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory, ReadWriteMemoryProof};
 
 struct JoltProof<F, G, Subtables>
 where
@@ -45,6 +36,12 @@ where
     // TODO: r1cs
 }
 
+pub struct JoltCommitments<G: CurveGroup> {
+    pub bytecode: BytecodeCommitment<G>,
+    pub read_write_memory: MemoryCommitment<G>,
+    pub instruction_lookups: InstructionCommitment<G>,
+}
+
 pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
@@ -54,33 +51,50 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         mut bytecode_trace: Vec<ELFRow>,
         memory_trace: Vec<MemoryOp>,
         instructions: Vec<Self::InstructionSet>,
-    ) -> JoltProof<F, G, Self::Subtables> {
+    ) -> (JoltProof<F, G, Self::Subtables>, JoltCommitments<G>) {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape = RandomTape::new(b"Jolt prover randomness");
         let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
-        let bytecode_proof = Self::prove_bytecode(
+        let (bytecode_proof, bytecode_commitment) = Self::prove_bytecode(
             bytecode_rows,
             bytecode_trace,
             &mut transcript,
             &mut random_tape,
         );
-        let memory_proof =
+        let (memory_proof, memory_commitment) =
             Self::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let instruction_lookups =
+        let (instruction_lookups_proof, instruction_lookups_commitment) =
             Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
-        todo!("rics");
-        JoltProof {
-            instruction_lookups,
-            read_write_memory: memory_proof,
+        todo!("r1cs");
+        let jolt_proof = JoltProof {
             bytecode: bytecode_proof,
-        }
+            read_write_memory: memory_proof,
+            instruction_lookups: instruction_lookups_proof,
+        };
+        let jolt_commitments = JoltCommitments {
+            bytecode: bytecode_commitment,
+            read_write_memory: memory_commitment,
+            instruction_lookups: instruction_lookups_commitment,
+        };
+        (jolt_proof, jolt_commitments)
     }
 
-    fn verify(proof: JoltProof<F, G, Self::Subtables>) -> Result<(), ProofVerifyError> {
+    fn verify(
+        proof: JoltProof<F, G, Self::Subtables>,
+        commitments: JoltCommitments<G>,
+    ) -> Result<(), ProofVerifyError> {
         let mut transcript = Transcript::new(b"Jolt transcript");
-        Self::verify_bytecode(proof.bytecode, &mut transcript)?;
-        Self::verify_memory(proof.read_write_memory, &mut transcript)?;
-        Self::verify_instruction_lookups(proof.instruction_lookups, &mut transcript)?;
+        Self::verify_bytecode(proof.bytecode, commitments.bytecode, &mut transcript)?;
+        Self::verify_memory(
+            proof.read_write_memory,
+            commitments.read_write_memory,
+            &mut transcript,
+        )?;
+        Self::verify_instruction_lookups(
+            proof.instruction_lookups,
+            commitments.instruction_lookups,
+            &mut transcript,
+        )?;
         todo!("r1cs");
     }
 
@@ -89,7 +103,10 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         ops: Vec<Self::InstructionSet>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> InstructionLookupsProof<F, G, Self::Subtables> {
+    ) -> (
+        InstructionLookupsProof<F, G, Self::Subtables>,
+        InstructionCommitment<G>,
+    ) {
         let instruction_lookups =
             InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
         instruction_lookups.prove_lookups(transcript, random_tape)
@@ -97,10 +114,11 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
 
     fn verify_instruction_lookups(
         proof: InstructionLookupsProof<F, G, Self::Subtables>,
+        commitment: InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
-            proof, transcript,
+            proof, commitment, transcript,
         )
     }
 
@@ -110,33 +128,27 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> BytecodeProof<F, G> {
+    ) -> (BytecodeProof<F, G>, BytecodeCommitment<G>) {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
         let batched_polys = polys.batch();
         let commitment = BytecodePolynomials::commit(&batched_polys);
 
-        let memory_checking_proof = polys.prove_memory_checking(
+        let proof = polys.prove_memory_checking(
             &polys,
             &batched_polys,
             &commitment,
             transcript,
             random_tape,
         );
-        BytecodeProof {
-            memory_checking_proof,
-            commitment,
-        }
+        (proof, commitment)
     }
 
     fn verify_bytecode(
         proof: BytecodeProof<F, G>,
+        commitment: BytecodeCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        BytecodePolynomials::verify_memory_checking(
-            proof.memory_checking_proof,
-            &proof.commitment,
-            transcript,
-        )
+        BytecodePolynomials::verify_memory_checking(proof, &commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
@@ -145,7 +157,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         memory_trace: Vec<MemoryOp>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> ReadWriteMemoryProof<F, G> {
+    ) -> (ReadWriteMemoryProof<F, G>, MemoryCommitment<G>) {
         let memory_trace_size = memory_trace.len();
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
@@ -168,28 +180,27 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             random_tape,
         );
 
-        ReadWriteMemoryProof {
-            memory_checking_proof,
+        (
+            ReadWriteMemoryProof {
+                memory_checking_proof,
+                memory_trace_size,
+                timestamp_validity_proof,
+            },
             commitment,
-            memory_trace_size,
-            timestamp_validity_proof,
-        }
+        )
     }
 
     fn verify_memory(
         mut proof: ReadWriteMemoryProof<F, G>,
+        commitment: MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemory::verify_memory_checking(
             proof.memory_checking_proof,
-            &proof.commitment,
+            &commitment,
             transcript,
         )?;
-        TimestampValidityProof::verify(
-            &mut proof.timestamp_validity_proof,
-            &proof.commitment,
-            transcript,
-        )
+        TimestampValidityProof::verify(&mut proof.timestamp_validity_proof, &commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]

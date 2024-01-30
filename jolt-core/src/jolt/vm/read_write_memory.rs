@@ -107,7 +107,6 @@ where
         MemoryReadWriteOpenings<F, G>,
         MemoryInitFinalOpenings<F, G>,
     >,
-    pub commitment: MemoryCommitment<G>,
     pub memory_trace_size: usize,
     pub timestamp_validity_proof: TimestampValidityProof<F, G>,
 }

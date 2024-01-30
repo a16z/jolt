@@ -763,9 +763,6 @@ where
     G: CurveGroup<ScalarField = F>,
     Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
-    /// Commitments to all polynomials
-    commitment: InstructionCommitment<G>,
-
     /// "Primary" sumcheck, i.e. proving \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x))
     primary_sumcheck: PrimarySumcheck<F, G>,
 
@@ -835,7 +832,10 @@ where
         &self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> InstructionLookupsProof<F, G, Subtables> {
+    ) -> (
+        InstructionLookupsProof<F, G, Subtables>,
+        InstructionCommitment<G>,
+    ) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = self.polynomialize();
@@ -902,21 +902,23 @@ where
             random_tape,
         );
 
-        InstructionLookupsProof {
+        (
+            InstructionLookupsProof {
+                primary_sumcheck,
+                memory_checking,
+            },
             commitment,
-            primary_sumcheck,
-            memory_checking,
-        }
+        )
     }
 
     pub fn verify(
         proof: InstructionLookupsProof<F, G, Subtables>,
+        commitment: InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        proof
-            .commitment
+        commitment
             .E_commitment
             .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
 
@@ -956,12 +958,12 @@ where
         );
 
         proof.primary_sumcheck.openings.verify_openings(
-            &proof.commitment,
+            &commitment,
             &r_primary_sumcheck,
             transcript,
         )?;
 
-        Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)?;
+        Self::verify_memory_checking(proof.memory_checking, &commitment, transcript)?;
 
         Ok(())
     }
