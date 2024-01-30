@@ -85,8 +85,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let wtns_buffer_size = witness::get_inputs_size(&graph);
     let wtns_mapping = witness::get_input_mapping(&variable_names, &graph);
 
-    let full_wtns_span = tracing::span!(tracing::Level::INFO, "witness_computation");
-    let full_wtns_guard = full_wtns_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().map(|v| ff_to_ruint(v.clone())).collect()).collect::<Vec<_>>();
       step_inputs.push(vec![U256::from(i as u64), ff_to_ruint(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
@@ -103,20 +101,14 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
 
       uint_jolt_witness.into_iter().map(|x| ruint_to_ff(x)).collect::<Vec<_>>()
     }).collect();
-    drop(full_wtns_guard);
-    drop(full_wtns_span);
 
     for i in 0..NUM_STEPS {
-      let span = tracing::span!(tracing::Level::INFO, "circom_scotia::synthesize");
-      let _guard = span.enter();
       let witness = &jolt_witnesses[i];
       let total_vars = cfg.r1cs.num_inputs + cfg.r1cs.num_aux;
       (1..total_vars).for_each(|i| {
           let f = witness[i];
           let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
       });
-      drop(_guard);
-      drop(span);
     }
     drop(_compute_witness_guard);
     drop(compute_witness_span);
