@@ -10,13 +10,13 @@ use crate::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
     },
     poly::{
-        dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
-        combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+        batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
         grand_product::{
             BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
         },
@@ -75,14 +75,7 @@ where
     }
 }
 
-pub struct RangeCheckCommitment<G: CurveGroup> {
-    generators: RangeCheckCommitmentGenerators<G>,
-    pub commitment: CombinedTableCommitment<G>,
-}
-
-/// Container for generators for polynomial commitments. These preallocate memory
-/// and allow commitments to `DensePolynomials`.
-pub type RangeCheckCommitmentGenerators<G> = PolyCommitmentGens<G>;
+pub type RangeCheckCommitment<G> = BatchedPolynomialCommitment<G>;
 pub type BatchedRangeCheckPolynomials<F> = DensePolynomial<F>;
 
 impl<F, G> BatchablePolynomials for RangeCheckPolynomials<F, G>
@@ -105,13 +98,7 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (generators, commitment) =
-            batched_polys.combined_commit(b"BatchedRangeCheckPolynomials");
-
-        Self::Commitment {
-            generators,
-            commitment,
-        }
+        batched_polys.combined_commit(b"BatchedRangeCheckPolynomials")
     }
 }
 
@@ -121,7 +108,7 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     openings: [F; 4],
-    opening_proof: CombinedTableEvalProof<G>,
+    opening_proof: BatchedPolynomialOpeningProof<G>,
     memory_poly_openings: Option<MemoryReadWriteOpenings<F, G>>,
     identity_poly_opening: Option<F>,
 }
@@ -158,11 +145,11 @@ where
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let opening_proof = CombinedTableEvalProof::prove(
+        let opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials,
             &openings,
             opening_point,
-            &commitment.generators,
+            &commitment,
             transcript,
             random_tape,
         );
@@ -186,13 +173,8 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.opening_proof.verify(
-            opening_point,
-            &self.openings,
-            &commitment.generators,
-            &commitment.commitment,
-            transcript,
-        )
+        self.opening_proof
+            .verify(opening_point, &self.openings, &commitment, transcript)
     }
 }
 
@@ -513,7 +495,7 @@ where
             polynomials.compute_leaves(polynomials, &gamma, &tau);
         let leaves = [
             &init_final_leaves[0], // init
-            &read_write_leaves[0], // read 
+            &read_write_leaves[0], // read
             &read_write_leaves[1], // read
             &read_write_leaves[2], // write
             &read_write_leaves[3], // write

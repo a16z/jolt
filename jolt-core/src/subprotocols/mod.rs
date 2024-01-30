@@ -2,7 +2,7 @@
 
 mod zk;
 
-pub mod combined_table_proof;
+pub mod batched_commitment;
 pub mod dot_product;
 pub mod grand_product;
 pub mod sumcheck;

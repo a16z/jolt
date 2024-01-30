@@ -4,27 +4,24 @@ use ark_std::log2;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::any::TypeId;
-use std::path::PathBuf;
 use strum::{EnumCount, IntoEnumIterator};
-use textplots::{Chart, Plot, Shape};
 
-use crate::jolt::{
-    instruction::{sltu::SLTUInstruction, JoltInstruction, Opcode},
-    subtable::LassoSubtable,
-    vm::timestamp_range_check::{RangeCheckPolynomials, TimestampValidityProof},
+use crate::lasso::memory_checking::{
+    MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier,
 };
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::prove_r1cs;
 use crate::r1cs::snark::JoltCircuit;
 use crate::utils::{errors::ProofVerifyError, random::RandomTape};
 use crate::{
-    lasso::{
-        memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
-        surge::{Surge, SurgeProof},
+    jolt::{
+        instruction::{JoltInstruction, Opcode},
+        subtable::LassoSubtable,
+        vm::timestamp_range_check::{RangeCheckPolynomials, TimestampValidityProof},
     },
-    utils::math::Math,
+    subprotocols::batched_commitment::BatchedPolynomialCommitment,
 };
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
+use common::ELFInstruction;
 
 use self::bytecode::{
     BytecodeCommitment, BytecodeInitFinalOpenings, BytecodePolynomials, BytecodeProof,

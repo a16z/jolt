@@ -4,21 +4,19 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
-use rayon::iter::{
-    IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
-};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
-        combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+        batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
@@ -42,18 +40,9 @@ pub struct BatchedSurgePolynomials<F: PrimeField> {
 }
 
 pub struct SurgeCommitment<G: CurveGroup> {
-    generators: SurgeCommitmentGenerators<G>,
-    pub dim_read_commitment: CombinedTableCommitment<G>,
-    pub final_commitment: CombinedTableCommitment<G>,
-    pub E_commitment: CombinedTableCommitment<G>,
-}
-
-/// Container for generators for polynomial commitments. These preallocate memory
-/// and allow commitments to `DensePolynomials`.
-pub struct SurgeCommitmentGenerators<G: CurveGroup> {
-    pub dim_read_commitment_gens: PolyCommitmentGens<G>,
-    pub final_commitment_gens: PolyCommitmentGens<G>,
-    pub E_commitment_gens: PolyCommitmentGens<G>,
+    pub dim_read_commitment: BatchedPolynomialCommitment<G>,
+    pub final_commitment: BatchedPolynomialCommitment<G>,
+    pub E_commitment: BatchedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials for SurgePolys<F, G>
@@ -85,27 +74,20 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
+        let dim_read_commitment = batched_polys
             .batched_dim_read
             .combined_commit(b"BatchedSurgePolynomials.dim_read");
-        let (final_commitment_gens, final_commitment) = batched_polys
+        let final_commitment = batched_polys
             .batched_final
             .combined_commit(b"BatchedSurgePolynomials.final_cts");
-        let (E_commitment_gens, E_commitment) = batched_polys
+        let E_commitment = batched_polys
             .batched_E
             .combined_commit(b"BatchedSurgePolynomials.E_poly");
-
-        let generators = SurgeCommitmentGenerators {
-            dim_read_commitment_gens,
-            final_commitment_gens,
-            E_commitment_gens,
-        };
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_commitment,
-            generators,
         }
     }
 }
@@ -117,7 +99,7 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     E_poly_openings: Vec<F>,
-    E_poly_opening_proof: CombinedTableEvalProof<G>,
+    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G, SurgePolys<F, G>>
@@ -144,11 +126,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let E_poly_opening_proof = CombinedTableEvalProof::prove(
+        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
             &E_poly_openings,
             opening_point,
-            &commitment.generators.E_commitment_gens,
+            &commitment.E_commitment,
             transcript,
             random_tape,
         );
@@ -168,7 +150,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
         self.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
-            &commitment.generators.E_commitment_gens,
             &commitment.E_commitment,
             transcript,
         )
@@ -184,8 +165,8 @@ where
     read_openings: Vec<F>,   // C-sized
     E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
 
-    dim_read_opening_proof: CombinedTableEvalProof<G>,
-    E_poly_opening_proof: CombinedTableEvalProof<G>,
+    dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
+    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeReadWriteOpenings<F, G>
@@ -224,19 +205,19 @@ where
             .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
-        let dim_read_opening_proof = CombinedTableEvalProof::prove(
+        let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
             &dim_read_openings,
             &opening_point,
-            &commitment.generators.dim_read_commitment_gens,
+            &commitment.dim_read_commitment,
             transcript,
             random_tape,
         );
-        let E_poly_opening_proof = CombinedTableEvalProof::prove(
+        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
             E_poly_openings,
             &opening_point,
-            &commitment.generators.E_commitment_gens,
+            &commitment.E_commitment,
             transcript,
             random_tape,
         );
@@ -264,7 +245,6 @@ where
         self.dim_read_opening_proof.verify(
             opening_point,
             &dim_read_openings,
-            &commitment.generators.dim_read_commitment_gens,
             &commitment.dim_read_commitment,
             transcript,
         )?;
@@ -272,7 +252,6 @@ where
         self.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
-            &commitment.generators.E_commitment_gens,
             &commitment.E_commitment,
             transcript,
         )?;
@@ -289,7 +268,7 @@ where
 {
     _instruction: PhantomData<Instruction>,
     final_openings: Vec<F>, // C-sized
-    final_opening_proof: CombinedTableEvalProof<G>,
+    final_opening_proof: BatchedPolynomialOpeningProof<G>,
     a_init_final: Option<F>,      // Computed by verifier
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
@@ -322,11 +301,11 @@ where
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let final_opening_proof = CombinedTableEvalProof::prove(
+        let final_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
             &openings,
             &opening_point,
-            &commitment.generators.final_commitment_gens,
+            &commitment.final_commitment,
             transcript,
             random_tape,
         );
@@ -361,7 +340,6 @@ where
         self.final_opening_proof.verify(
             opening_point,
             &self.final_openings,
-            &commitment.generators.final_commitment_gens,
             &commitment.final_commitment,
             transcript,
         )
@@ -846,7 +824,7 @@ where
 mod tests {
     use merlin::Transcript;
 
-    use super::{Surge, SurgeProof};
+    use super::Surge;
     use crate::jolt::instruction::xor::XORInstruction;
     use ark_curve25519::{EdwardsProjective, Fr};
 

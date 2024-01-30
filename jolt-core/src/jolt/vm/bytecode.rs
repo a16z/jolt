@@ -13,11 +13,13 @@ use common::{to_ram_address, ELFInstruction};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        dense_mlpoly::DensePolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
-    subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+    subprotocols::batched_commitment::{
+        BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
+    },
     utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
 };
 
@@ -417,19 +419,13 @@ pub struct BatchedBytecodePolynomials<F: PrimeField> {
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
-    generators: BytecodeCommitmentGenerators<G>,
     /// Combined commitment for:
     /// - a_read_write, t_read, v_read_write
-    pub read_write_commitments: CombinedTableCommitment<G>,
+    pub read_write_commitments: BatchedPolynomialCommitment<G>,
 
     // Combined commitment for:
     // - t_final, v_init_final
-    pub init_final_commitments: CombinedTableCommitment<G>,
-}
-
-pub struct BytecodeCommitmentGenerators<G: CurveGroup> {
-    pub gens_read_write: PolyCommitmentGens<G>,
-    pub gens_init_final: PolyCommitmentGens<G>,
+    pub init_final_commitments: BatchedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials for BytecodePolynomials<F, G>
@@ -468,22 +464,16 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (gens_read_write, read_write_commitments) = batched_polys
+        let read_write_commitments = batched_polys
             .combined_read_write
             .combined_commit(b"BatchedBytecodePolynomials.read_write");
-        let (gens_init_final, init_final_commitments) = batched_polys
+        let init_final_commitments = batched_polys
             .combined_init_final
             .combined_commit(b"BatchedBytecodePolynomials.init_final");
-
-        let generators = BytecodeCommitmentGenerators {
-            gens_read_write,
-            gens_init_final,
-        };
 
         Self::Commitment {
             read_write_commitments,
             init_final_commitments,
-            generators,
         }
     }
 }
@@ -674,7 +664,7 @@ where
     /// Evaluation of the t_read polynomial at the opening point.
     t_read_opening: F,
 
-    read_write_opening_proof: CombinedTableEvalProof<G>,
+    read_write_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>>
@@ -711,11 +701,11 @@ where
             vec![a_read_write_opening.clone(), t_read_opening.clone()];
         combined_openings.extend(v_read_write_openings.iter());
 
-        let read_write_opening_proof = CombinedTableEvalProof::prove(
+        let read_write_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_read_write,
             &combined_openings,
             &opening_point,
-            &commitment.generators.gens_read_write,
+            &commitment.read_write_commitments,
             transcript,
             random_tape,
         );
@@ -743,7 +733,6 @@ where
         self.read_write_opening_proof.verify(
             opening_point,
             &combined_openings,
-            &commitment.generators.gens_read_write,
             &commitment.read_write_commitments,
             transcript,
         )
@@ -762,7 +751,7 @@ where
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
 
-    init_final_opening_proof: CombinedTableEvalProof<G>,
+    init_final_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>>
@@ -795,11 +784,11 @@ where
 
         let mut combined_openings: Vec<F> = vec![t_final];
         combined_openings.extend(v_init_final.iter());
-        let init_final_opening_proof = CombinedTableEvalProof::prove(
+        let init_final_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_init_final,
             &combined_openings,
             &opening_point,
-            &commitment.generators.gens_init_final,
+            &commitment.init_final_commitments,
             transcript,
             random_tape,
         );
@@ -829,7 +818,6 @@ where
         self.init_final_opening_proof.verify(
             opening_point,
             &combined_openings,
-            &commitment.generators.gens_init_final,
             &commitment.init_final_commitments,
             transcript,
         )
@@ -885,8 +873,7 @@ mod tests {
             BytecodePolynomials::new(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_write_leaves, init_final_leaves) =
-            polys.compute_leaves(&polys, &gamma, &tau);
+        let (read_write_leaves, init_final_leaves) = polys.compute_leaves(&polys, &gamma, &tau);
         let init_leaves = &init_final_leaves[0];
         let read_leaves = &read_write_leaves[0];
         let write_leaves = &read_write_leaves[1];

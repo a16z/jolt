@@ -27,7 +27,7 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+        batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
         grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
         sumcheck::SumcheckInstanceProof,
     },
@@ -86,17 +86,14 @@ pub struct BatchedInstructionPolynomials<F: PrimeField> {
 
 /// Commitments to BatchedInstructionPolynomials.
 pub struct InstructionCommitment<G: CurveGroup> {
-    /// Group generators used for commitments.
-    pub generators: InstructionCommitmentGenerators<G>,
-
     /// Commitment to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: CombinedTableCommitment<G>,
+    pub dim_read_commitment: BatchedPolynomialCommitment<G>,
     /// Commitment to final_cts_i polynomials.
-    pub final_commitment: CombinedTableCommitment<G>,
+    pub final_commitment: BatchedPolynomialCommitment<G>,
     /// Commitment to E_i polynomials.
-    pub E_commitment: CombinedTableCommitment<G>,
+    pub E_commitment: BatchedPolynomialCommitment<G>,
     /// Commitment to flag polynomials.
-    pub instruction_flag_commitment: CombinedTableCommitment<G>,
+    pub instruction_flag_commitment: BatchedPolynomialCommitment<G>,
 }
 
 /// Contains generators used to commit to InstructionPolynomials.
@@ -118,7 +115,6 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        use rayon::prelude::*;
         let (batched_dim_read, (batched_final, batched_E, batched_flag)) = rayon::join(
             || DensePolynomial::merge(self.dim.iter().chain(&self.read_cts)),
             || {
@@ -141,32 +137,24 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
+        let dim_read_commitment = batched_polys
             .batched_dim_read
             .combined_commit(b"BatchedInstructionPolynomials.dim_read");
-        let (final_commitment_gens, final_commitment) = batched_polys
+        let final_commitment = batched_polys
             .batched_final
             .combined_commit(b"BatchedInstructionPolynomials.final_cts");
-        let (E_commitment_gens, E_commitment) = batched_polys
+        let E_commitment = batched_polys
             .batched_E
             .combined_commit(b"BatchedInstructionPolynomials.E_poly");
-        let (flag_commitment_gens, instruction_flag_commitment) = batched_polys
+        let instruction_flag_commitment = batched_polys
             .batched_flag
             .combined_commit_with_hint(b"BatchedInstructionPolynomials.flag");
-
-        let generators = InstructionCommitmentGenerators {
-            dim_read_commitment_gens,
-            final_commitment_gens,
-            E_commitment_gens,
-            flag_commitment_gens,
-        };
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_commitment,
             instruction_flag_commitment,
-            generators,
         }
     }
 }
@@ -183,8 +171,8 @@ where
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     flag_openings: Vec<F>,
 
-    E_poly_opening_proof: CombinedTableEvalProof<G>,
-    flag_opening_proof: CombinedTableEvalProof<G>,
+    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
+    flag_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
@@ -211,19 +199,19 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         let E_poly_openings = &openings.0;
         let flag_openings = &openings.1;
 
-        let E_poly_opening_proof = CombinedTableEvalProof::prove(
+        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
             E_poly_openings,
             opening_point,
-            &commitment.generators.E_commitment_gens,
+            &commitment.E_commitment,
             transcript,
             random_tape,
         );
-        let flag_opening_proof = CombinedTableEvalProof::prove(
+        let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_flag,
             flag_openings,
             opening_point,
-            &commitment.generators.flag_commitment_gens,
+            &commitment.instruction_flag_commitment,
             transcript,
             random_tape,
         );
@@ -245,14 +233,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         self.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
-            &commitment.generators.E_commitment_gens,
             &commitment.E_commitment,
             transcript,
         )?;
         self.flag_opening_proof.verify(
             opening_point,
             &self.flag_openings,
-            &commitment.generators.flag_commitment_gens,
             &commitment.instruction_flag_commitment,
             transcript,
         )?;
@@ -275,9 +261,9 @@ where
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     flag_openings: Vec<F>,
 
-    dim_read_opening_proof: CombinedTableEvalProof<G>,
-    E_poly_opening_proof: CombinedTableEvalProof<G>,
-    flag_opening_proof: CombinedTableEvalProof<G>,
+    dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
+    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
+    flag_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
@@ -336,27 +322,27 @@ where
             .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
-        let dim_read_opening_proof = CombinedTableEvalProof::prove(
+        let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
             &dim_read_openings,
             &opening_point,
-            &commitment.generators.dim_read_commitment_gens,
+            &commitment.dim_read_commitment,
             transcript,
             random_tape,
         );
-        let E_poly_opening_proof = CombinedTableEvalProof::prove(
+        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
             E_poly_openings,
             &opening_point,
-            &commitment.generators.E_commitment_gens,
+            &commitment.E_commitment,
             transcript,
             random_tape,
         );
-        let flag_opening_proof = CombinedTableEvalProof::prove(
+        let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_flag,
             flag_openings,
             &opening_point,
-            &commitment.generators.flag_commitment_gens,
+            &commitment.instruction_flag_commitment,
             transcript,
             random_tape,
         );
@@ -386,7 +372,6 @@ where
         self.dim_read_opening_proof.verify(
             opening_point,
             &dim_read_openings,
-            &commitment.generators.dim_read_commitment_gens,
             &commitment.dim_read_commitment,
             transcript,
         )?;
@@ -394,7 +379,6 @@ where
         self.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
-            &commitment.generators.E_commitment_gens,
             &commitment.E_commitment,
             transcript,
         )?;
@@ -402,7 +386,6 @@ where
         self.flag_opening_proof.verify(
             opening_point,
             &self.flag_openings,
-            &commitment.generators.flag_commitment_gens,
             &commitment.instruction_flag_commitment,
             transcript,
         )?;
@@ -419,7 +402,7 @@ where
     _subtables: PhantomData<Subtables>,
     /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     final_openings: Vec<F>,
-    final_opening_proof: CombinedTableEvalProof<G>,
+    final_opening_proof: BatchedPolynomialOpeningProof<G>,
     /// Evaluation of the a_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
     /// Evaluation of the v_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
@@ -455,11 +438,11 @@ where
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let final_opening_proof = CombinedTableEvalProof::prove(
+        let final_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
             &openings,
             &opening_point,
-            &commitment.generators.final_commitment_gens,
+            &commitment.final_commitment,
             transcript,
             random_tape,
         );
@@ -492,7 +475,6 @@ where
         self.final_opening_proof.verify(
             opening_point,
             &self.final_openings,
-            &commitment.generators.final_commitment_gens,
             &commitment.final_commitment,
             transcript,
         )

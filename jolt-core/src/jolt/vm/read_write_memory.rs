@@ -11,12 +11,14 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
-    subprotocols::combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+    subprotocols::batched_commitment::{
+        BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
+    },
     utils::{errors::ProofVerifyError, mul_0_optimized, random::RandomTape},
 };
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -80,7 +82,7 @@ pub fn random_memory_trace(
                 address = address + RAM_START_ADDRESS - REGISTER_COUNT;
                 memory_trace.push(MemoryOp::Write(address, new_value));
             } else {
-                /// Registers are 32 bits
+                // Registers are 32 bits
                 let new_value = rng.next_u32() as u64;
                 memory[address as usize] = new_value;
                 memory_trace.push(MemoryOp::Write(address, new_value));
@@ -400,19 +402,13 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
 }
 
 pub struct MemoryCommitment<G: CurveGroup> {
-    pub generators: MemoryCommitmentGenerators<G>,
     /// Commitments for:
     /// a_read_write, v_read, v_write, t_read, t_write
-    pub read_write_commitments: CombinedTableCommitment<G>,
+    pub read_write_commitments: BatchedPolynomialCommitment<G>,
 
     /// Commitments for:
     /// v_init, v_final, t_final
-    pub init_final_commitments: CombinedTableCommitment<G>,
-}
-
-pub struct MemoryCommitmentGenerators<G: CurveGroup> {
-    pub gens_read_write: PolyCommitmentGens<G>,
-    pub gens_init_final: PolyCommitmentGens<G>,
+    pub init_final_commitments: BatchedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials for ReadWriteMemory<F, G>
@@ -443,22 +439,16 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
     fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (gens_read_write, read_write_commitments) = batched_polys
+        let read_write_commitments = batched_polys
             .batched_read_write
             .combined_commit(b"BatchedMemoryPolynomials.batched_read_write");
-        let (gens_init_final, init_final_commitments) = batched_polys
+        let init_final_commitments = batched_polys
             .batched_init_final
             .combined_commit(b"BatchedMemoryPolynomials.batched_init_final");
-
-        let generators = MemoryCommitmentGenerators {
-            gens_read_write,
-            gens_init_final,
-        };
 
         Self::Commitment {
             read_write_commitments,
             init_final_commitments,
-            generators,
         }
     }
 }
@@ -478,7 +468,7 @@ where
     pub t_read_opening: F,
     /// Evaluation of the t_write polynomial at the opening point.
     t_write_opening: F,
-    read_write_opening_proof: CombinedTableEvalProof<G>,
+    read_write_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryReadWriteOpenings<F, G>
@@ -514,11 +504,11 @@ where
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let read_write_opening_proof = CombinedTableEvalProof::prove(
+        let read_write_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_read_write,
             &openings.to_vec(),
             &opening_point,
-            &commitment.generators.gens_read_write,
+            &commitment.read_write_commitments,
             transcript,
             random_tape,
         );
@@ -550,7 +540,6 @@ where
         self.read_write_opening_proof.verify(
             opening_point,
             &combined_openings,
-            &commitment.generators.gens_read_write,
             &commitment.read_write_commitments,
             transcript,
         )
@@ -571,7 +560,7 @@ where
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
 
-    init_final_opening_proof: CombinedTableEvalProof<G>,
+    init_final_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryInitFinalOpenings<F, G>
@@ -605,11 +594,11 @@ where
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
-        let init_final_opening_proof = CombinedTableEvalProof::prove(
+        let init_final_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_init_final,
             &openings.to_vec(),
             &opening_point,
-            &commitment.generators.gens_init_final,
+            &commitment.init_final_commitments,
             transcript,
             random_tape,
         );
@@ -637,7 +626,6 @@ where
         self.init_final_opening_proof.verify(
             opening_point,
             &vec![self.v_init, self.v_final, self.t_final],
-            &commitment.generators.gens_init_final,
             &commitment.init_final_commitments,
             transcript,
         )
@@ -754,8 +742,6 @@ where
 mod tests {
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
-    use ark_std::{log2, test_rng, One, Zero};
-    use rand_chacha::rand_core::RngCore;
     use rand_core::SeedableRng;
 
     #[test]

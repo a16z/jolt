@@ -13,32 +13,26 @@ use crate::{
     },
 };
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CombinedTableCommitment<G: CurveGroup> {
-    joint_commitment: PolyCommitment<G>,
-}
-
-impl<G: CurveGroup> CombinedTableCommitment<G> {
-    pub fn new(joint_commitment: PolyCommitment<G>) -> Self {
-        Self { joint_commitment }
-    }
+pub struct BatchedPolynomialCommitment<G: CurveGroup> {
+    pub generators: PolyCommitmentGens<G>,
+    pub joint_commitment: PolyCommitment<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct CombinedTableEvalProof<G: CurveGroup> {
+pub struct BatchedPolynomialOpeningProof<G: CurveGroup> {
     joint_proof: PolyEvalProof<G>,
 }
 
-impl<G: CurveGroup> CombinedTableEvalProof<G> {
+impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
     fn prove_single(
         joint_poly: &DensePolynomial<G::ScalarField>,
-        r: &[G::ScalarField],
+        opening_point: &[G::ScalarField],
         evals: &[G::ScalarField],
-        gens: &PolyCommitmentGens<G>,
+        commitment: &BatchedPolynomialCommitment<G>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> PolyEvalProof<G> {
-        assert_eq!(joint_poly.get_num_vars(), r.len() + evals.len().log_2());
+        assert_eq!(joint_poly.get_num_vars(), opening_point.len() + evals.len().log_2());
 
         // append the claimed evaluations to transcript
         <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
@@ -58,7 +52,7 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
             assert_eq!(poly_evals.len(), 1);
             let joint_claim_eval = poly_evals[0];
             let mut r_joint = challenges;
-            r_joint.extend(r);
+            r_joint.extend(opening_point);
 
             debug_assert_eq!(joint_poly.evaluate(&r_joint), joint_claim_eval);
             (r_joint, joint_claim_eval)
@@ -76,7 +70,7 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
             &r_joint,
             &eval_joint,
             None,
-            gens,
+            &commitment.generators,
             transcript,
             random_tape,
         );
@@ -85,41 +79,41 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
     }
 
     /// evalues both polynomials at r and produces a joint proof of opening
-    #[tracing::instrument(skip_all, name = "CombinedEval.prove")]
+    #[tracing::instrument(skip_all, name = "BatchedPolynomialOpeningProof::prove")]
     pub fn prove(
         combined_poly: &DensePolynomial<G::ScalarField>,
-        eval_ops_val_vec: &[G::ScalarField],
-        r: &[G::ScalarField],
-        gens: &PolyCommitmentGens<G>,
+        openings: &[G::ScalarField],
+        opening_point: &[G::ScalarField],
+        commitment: &BatchedPolynomialCommitment<G>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
     ) -> Self {
         <Transcript as ProofTranscript<G>>::append_protocol_name(
             transcript,
-            CombinedTableEvalProof::<G>::protocol_name(),
+            BatchedPolynomialOpeningProof::<G>::protocol_name(),
         );
 
         let evals = {
-            let mut evals: Vec<G::ScalarField> = eval_ops_val_vec.to_vec();
+            let mut evals: Vec<G::ScalarField> = openings.to_vec();
             evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
             evals.to_vec()
         };
-        let joint_proof = CombinedTableEvalProof::<G>::prove_single(
+        let joint_proof = BatchedPolynomialOpeningProof::<G>::prove_single(
             combined_poly,
-            r,
+            opening_point,
             &evals,
-            gens,
+            commitment,
             transcript,
             random_tape,
         );
 
-        CombinedTableEvalProof { joint_proof }
+        BatchedPolynomialOpeningProof { joint_proof }
     }
 
     fn verify_single(
         proof: &PolyEvalProof<G>,
-        comm: &PolyCommitment<G>,
-        r: &[G::ScalarField],
+        commitment: &PolyCommitment<G>,
+        opening_point: &[G::ScalarField],
         evals: &[G::ScalarField],
         gens: &PolyCommitmentGens<G>,
         transcript: &mut Transcript,
@@ -140,7 +134,7 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
         assert_eq!(poly_evals.len(), 1);
         let joint_claim_eval = poly_evals[0];
         let mut r_joint = challenges;
-        r_joint.extend(r);
+        r_joint.extend(opening_point);
 
         // decommit the joint polynomial at r_joint
         <Transcript as ProofTranscript<G>>::append_scalar(
@@ -149,41 +143,40 @@ impl<G: CurveGroup> CombinedTableEvalProof<G> {
             &joint_claim_eval,
         );
 
-        proof.verify_plain(gens, transcript, &r_joint, &joint_claim_eval, comm)
+        proof.verify_plain(gens, transcript, &r_joint, &joint_claim_eval, commitment)
     }
 
     // verify evaluations of both polynomials at r
     pub fn verify(
         &self,
-        r: &[G::ScalarField],
-        evals: &[G::ScalarField],
-        gens: &PolyCommitmentGens<G>,
-        comm: &CombinedTableCommitment<G>,
+        opening_point: &[G::ScalarField],
+        openings: &[G::ScalarField],
+        commitment: &BatchedPolynomialCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(
             transcript,
-            CombinedTableEvalProof::<G>::protocol_name(),
+            BatchedPolynomialOpeningProof::<G>::protocol_name(),
         );
-        let mut evals = evals.to_owned();
+        let mut evals = openings.to_owned();
         evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
-        CombinedTableEvalProof::<G>::verify_single(
+        BatchedPolynomialOpeningProof::<G>::verify_single(
             &self.joint_proof,
-            &comm.joint_commitment,
-            r,
+            &commitment.joint_commitment,
+            opening_point,
             &evals,
-            gens,
+            &commitment.generators,
             transcript,
         )
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Lasso CombinedTableEvalProof"
+        b"Lasso BatchedPolynomialOpeningProof"
     }
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for CombinedTableCommitment<G> {
+impl<G: CurveGroup> AppendToTranscript<G> for BatchedPolynomialCommitment<G> {
     fn append_to_transcript<T: ProofTranscript<G>>(
         &self,
         label: &'static [u8],

@@ -4,7 +4,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
 use super::commitments::{Commitments, MultiCommitGens};
-use crate::subprotocols::combined_table_proof::CombinedTableCommitment;
+use crate::subprotocols::batched_commitment::BatchedPolynomialCommitment;
 use crate::subprotocols::dot_product::{DotProductProof, DotProductProofGens};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
@@ -134,10 +134,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         let C = (0..L_size)
             .into_par_iter()
             .map(|i| {
-                Commitments::batch_commit(
-                    self.Z[R_size * i..R_size * (i + 1)].as_ref(),
-                    &gens,
-                )
+                Commitments::batch_commit(self.Z[R_size * i..R_size * (i + 1)].as_ref(), &gens)
             })
             .collect();
         PolyCommitment { C }
@@ -297,7 +294,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         Self {
             num_vars,
             len,
-            Z: new_evals
+            Z: new_evals,
         }
     }
 
@@ -309,7 +306,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         for i in 0..n {
             // let low' = low + r * (high - low)
             // Special truth table here
-            //         high 0   high 1 
+            //         high 0   high 1
             // low 0     0        r
             // low 1   (1-r)      1
             let low = self.Z[i];
@@ -337,7 +334,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         Self {
             num_vars,
             len,
-            Z: new_evals
+            Z: new_evals,
         }
     }
 
@@ -415,28 +412,31 @@ impl<F: PrimeField> DensePolynomial<F> {
         DensePolynomial::new(Z)
     }
 
-    pub fn combined_commit<G>(
-        &self,
-        label: &'static [u8],
-    ) -> (PolyCommitmentGens<G>, CombinedTableCommitment<G>)
+    pub fn combined_commit<G>(&self, label: &'static [u8]) -> BatchedPolynomialCommitment<G>
     where
         G: CurveGroup<ScalarField = F>,
     {
         let generators = PolyCommitmentGens::new(self.num_vars, label);
         let (joint_commitment, _) = self.commit(&generators, None);
-        (generators, CombinedTableCommitment::new(joint_commitment))
+        BatchedPolynomialCommitment {
+            generators,
+            joint_commitment,
+        }
     }
 
     pub fn combined_commit_with_hint<G>(
         &self,
         label: &'static [u8],
-    ) -> (PolyCommitmentGens<G>, CombinedTableCommitment<G>)
+    ) -> BatchedPolynomialCommitment<G>
     where
         G: CurveGroup<ScalarField = F>,
     {
         let generators = PolyCommitmentGens::new(self.num_vars, label);
         let joint_commitment = self.commit_with_hint(&generators, CommitHint::Normal);
-        (generators, CombinedTableCommitment::new(joint_commitment))
+        BatchedPolynomialCommitment {
+            generators,
+            joint_commitment,
+        }
     }
 
     pub fn from_usize(Z: &[usize]) -> Self {
@@ -950,7 +950,6 @@ mod tests {
             Fr::from(8)
         );
     }
-
 
     #[test]
     fn commit_with_hint_parity() {
