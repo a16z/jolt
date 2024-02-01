@@ -68,8 +68,7 @@ fn prove_e2e_except_r1cs(
     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
-    // 7 memory ops per instruction, rounded up to still be a power of 2
-    let memory_trace = random_memory_trace(&bytecode, memory_size, 8 * num_cycles, &mut rng);
+    let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
     let bytecode_rows: Vec<ELFRow> = (0..bytecode_size)
         .map(|i| ELFRow::random(i, &mut rng))
         .collect();
@@ -135,7 +134,7 @@ fn prove_memory(
     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
-    let memory_trace = random_memory_trace(&bytecode, memory_size, 8 * num_cycles, &mut rng);
+    let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");

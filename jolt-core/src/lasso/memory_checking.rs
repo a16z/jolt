@@ -242,11 +242,11 @@ where
         )
     }
 
-    fn interleave_hashes(multiset_hashes: MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
+    fn interleave_hashes(multiset_hashes: &MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
         let read_write_hashes =
-            interleave(multiset_hashes.read_hashes, multiset_hashes.write_hashes).collect();
+            interleave(multiset_hashes.read_hashes.clone(), multiset_hashes.write_hashes.clone()).collect();
         let init_final_hashes =
-            interleave(multiset_hashes.init_hashes, multiset_hashes.final_hashes).collect();
+            interleave(multiset_hashes.init_hashes.clone(), multiset_hashes.final_hashes.clone()).collect();
 
         (read_write_hashes, init_final_hashes)
     }
@@ -350,7 +350,7 @@ where
         Self::check_multiset_equality(&proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript::<G>(transcript);
 
-        let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(proof.multiset_hashes);
+        let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(&proof.multiset_hashes);
 
         let (claims_read_write, r_read_write) = proof
             .read_write_grand_product
@@ -445,7 +445,7 @@ where
             init_hashes,
             final_hashes,
         };
-        let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(multiset_hashes);
+        let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(&multiset_hashes);
 
         for (claim, fingerprint) in zip(claims_read_write, read_write_hashes) {
             assert_eq!(claim, fingerprint);
@@ -479,22 +479,22 @@ mod tests {
         struct FakeType();
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, EdwardsProjective, NormalMems> for FakeOpeningProof {
-            type Openings = FakeType;
-            fn open(_: &NormalMems, _: &Vec<Fr>) -> Self::Openings {
+            fn open(_: &NormalMems, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
             fn prove_openings(
                 _: &FakeType,
                 _: &FakeType,
                 _: &Vec<Fr>,
-                _: Self::Openings,
+                _: &Self,
                 _: &mut Transcript,
                 _: &mut RandomTape<EdwardsProjective>,
-            ) -> Self {
+            ) -> Self::Proof {
                 unimplemented!()
             }
             fn verify_openings(
                 &self,
+                _: &Self::Proof,
                 _: &FakeType,
                 _: &Vec<Fr>,
                 _: &mut Transcript,
@@ -643,7 +643,7 @@ mod tests {
         );
         multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
-            TestProver::interleave_hashes(multiset_hashes);
+            TestProver::interleave_hashes(&multiset_hashes);
 
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
@@ -657,7 +657,7 @@ mod tests {
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
         let set1: HashSet<_> = vec1.iter().cloned().collect();
         let set2: HashSet<_> = vec2.iter().cloned().collect();
-        set1.difference(&set2).cloned().collect()
+        set1.symmetric_difference(&set2).cloned().collect()
     }
 
     #[test]
@@ -681,22 +681,22 @@ mod tests {
         struct FakeType();
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, EdwardsProjective, Polys> for FakeOpeningProof {
-            type Openings = FakeType;
-            fn open(_: &Polys, _: &Vec<Fr>) -> Self::Openings {
+            fn open(_: &Polys, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
             fn prove_openings(
                 _: &FakeType,
                 _: &FakeType,
                 _: &Vec<Fr>,
-                _: Self::Openings,
+                _: &Self,
                 _: &mut Transcript,
                 _: &mut RandomTape<EdwardsProjective>,
-            ) -> Self {
+            ) -> Self::Proof {
                 unimplemented!()
             }
             fn verify_openings(
                 &self,
+                _: &Self::Proof,
                 _: &FakeType,
                 _: &Vec<Fr>,
                 _: &mut Transcript,
@@ -894,7 +894,7 @@ mod tests {
         );
         multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
-            TestProver::interleave_hashes(multiset_hashes);
+            TestProver::interleave_hashes(&multiset_hashes);
 
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
@@ -929,22 +929,22 @@ mod tests {
         struct FakeType();
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, EdwardsProjective, FlagPolys> for FakeOpeningProof {
-            type Openings = FakeType;
-            fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self::Openings {
+            fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
             fn prove_openings(
                 _: &FakeType,
                 _: &FakeType,
                 _: &Vec<Fr>,
-                _: Self::Openings,
+                _: &Self,
                 _: &mut Transcript,
                 _: &mut RandomTape<EdwardsProjective>,
-            ) -> Self {
+            ) -> Self::Proof {
                 unimplemented!()
             }
             fn verify_openings(
                 &self,
+                _: &Self::Proof,
                 _: &FakeType,
                 _: &Vec<Fr>,
                 _: &mut Transcript,
@@ -1199,7 +1199,7 @@ mod tests {
         );
         multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
-            TestProver::interleave_hashes(multiset_hashes);
+            TestProver::interleave_hashes(&multiset_hashes);
 
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);

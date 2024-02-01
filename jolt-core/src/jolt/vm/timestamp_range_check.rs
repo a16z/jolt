@@ -1,8 +1,11 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use itertools::interleave;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+#[cfg(test)]
+use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
@@ -54,12 +57,21 @@ where
     pub fn new(read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) -> Self {
         let M = read_timestamps[0].len();
 
+        #[cfg(test)]
+        let mut init_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+        #[cfg(test)]
+        {
+            for i in 0..M {
+                init_tuples.insert((i as u64, i as u64, 0u64));
+            }
+        }
+
         let read_and_final_cts: Vec<[Vec<u64>; 4]> = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
             .map(|i| {
                 let mut read_cts_read_timestamp: Vec<u64> = vec![0; M];
-                let mut final_cts_read_timestamp: Vec<u64> = vec![0; M];
                 let mut read_cts_global_minus_read: Vec<u64> = vec![0; M];
+                let mut final_cts_read_timestamp: Vec<u64> = vec![0; M];
                 let mut final_cts_global_minus_read: Vec<u64> = vec![0; M];
 
                 for (j, read_timestamp) in read_timestamps[i].iter().enumerate() {
@@ -70,10 +82,52 @@ where
                     final_cts_global_minus_read[lookup_index] += 1;
                 }
 
+                #[cfg(test)]
+                {
+                    let global_minus_read_timestamps = &read_timestamps[i]
+                        .iter()
+                        .enumerate()
+                        .map(|(j, timestamp)| j as u64 - *timestamp)
+                        .collect();
+
+                    for (lookup_indices, read_cts, final_cts) in [
+                        (
+                            &read_timestamps[i],
+                            &read_cts_read_timestamp,
+                            &final_cts_read_timestamp,
+                        ),
+                        (
+                            &global_minus_read_timestamps,
+                            &read_cts_global_minus_read,
+                            &final_cts_global_minus_read,
+                        ),
+                    ]
+                    .iter()
+                    {
+                        let mut read_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+                        let mut write_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+                        for (v, t) in lookup_indices.iter().zip(read_cts.iter()) {
+                            read_tuples.insert((*v, *v, *t));
+                            write_tuples.insert((*v, *v, *t + 1));
+                        }
+
+                        let mut final_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+                        for (i, t) in final_cts.iter().enumerate() {
+                            final_tuples.insert((i as u64, i as u64, *t));
+                        }
+
+                        let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
+                        let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
+                        let set_difference: Vec<_> =
+                            init_write.symmetric_difference(&read_final).collect();
+                        assert_eq!(set_difference.len(), 0);
+                    }
+                }
+
                 [
                     read_cts_read_timestamp,
-                    final_cts_read_timestamp,
                     read_cts_global_minus_read,
+                    final_cts_read_timestamp,
                     final_cts_global_minus_read,
                 ]
             })
@@ -270,7 +324,7 @@ where
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
-        let M = polynomials.read_timestamps.len();
+        let M = polynomials.read_timestamps[0].len();
         let gamma_squared = gamma.square();
 
         let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
@@ -360,6 +414,64 @@ where
         init_final_leaves.push(init_leaves);
 
         (read_write_leaves, init_final_leaves)
+    }
+
+    fn interleave_hashes(multiset_hashes: &MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
+        let read_write_hashes = interleave(
+            multiset_hashes.read_hashes.clone(),
+            multiset_hashes.write_hashes.clone(),
+        )
+        .collect();
+        let mut init_final_hashes = multiset_hashes.final_hashes.clone();
+        init_final_hashes.extend(multiset_hashes.init_hashes.clone());
+
+        (read_write_hashes, init_final_hashes)
+    }
+
+    fn uninterleave_hashes(
+        read_write_hashes: Vec<F>,
+        init_final_hashes: Vec<F>,
+    ) -> MultisetHashes<F> {
+        let num_memories = 2 * MEMORY_OPS_PER_INSTRUCTION;
+
+        assert_eq!(read_write_hashes.len(), 2 * num_memories);
+        let mut read_hashes = Vec::with_capacity(num_memories);
+        let mut write_hashes = Vec::with_capacity(num_memories);
+        for i in 0..num_memories {
+            read_hashes.push(read_write_hashes[2 * i]);
+            write_hashes.push(read_write_hashes[2 * i + 1]);
+        }
+
+        assert_eq!(init_final_hashes.len(), num_memories + 1);
+        let mut final_hashes = init_final_hashes;
+        let init_hash = final_hashes.pop().unwrap();
+
+        MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes: vec![init_hash],
+            final_hashes,
+        }
+    }
+
+    fn check_multiset_equality(multiset_hashes: &MultisetHashes<F>) {
+        let num_memories = 2 * MEMORY_OPS_PER_INSTRUCTION;
+        assert_eq!(multiset_hashes.read_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.init_hashes.len(), 1);
+
+        (0..num_memories).into_par_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[i];
+            let write_hash = multiset_hashes.write_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[0];
+            let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -579,21 +691,14 @@ where
         // fka "ProductLayerProof"
         let (read_write_leaves, init_final_leaves) =
             polynomials.compute_leaves(polynomials, &gamma, &tau);
-        let leaves = [
-            &init_final_leaves[0], // init
-            &read_write_leaves[0], // read
-            &read_write_leaves[1], // read
-            &read_write_leaves[2], // write
-            &read_write_leaves[3], // write
-            &init_final_leaves[1], // final
-            &init_final_leaves[2], // final
-        ];
 
         let _span = trace_span!("TimestampValidityProof: construct grand product circuits");
         let _enter = _span.enter();
 
-        let circuits: Vec<GrandProductCircuit<F>> = leaves
-            .into_par_iter()
+        // R1, W1, R2, W2, ... R14, W14, F1, F2, ... F14, I
+        let circuits: Vec<GrandProductCircuit<F>> = read_write_leaves
+            .par_iter()
+            .chain(init_final_leaves.par_iter())
             .map(|leaves_poly| GrandProductCircuit::new(leaves_poly))
             .collect();
 
@@ -604,12 +709,11 @@ where
             .par_iter()
             .map(|circuit| circuit.evaluate())
             .collect();
-        let multiset_hashes = MultisetHashes {
-            init_hashes: vec![hashes[0]],
-            read_hashes: vec![hashes[1], hashes[2]],
-            write_hashes: vec![hashes[3], hashes[4]],
-            final_hashes: vec![hashes[5], hashes[6]],
-        };
+        let (read_write_hashes, init_final_hashes) = hashes.split_at(read_write_leaves.len());
+        let multiset_hashes = RangeCheckPolynomials::<F, G>::uninterleave_hashes(
+            read_write_hashes.to_vec(),
+            init_final_hashes.to_vec(),
+        );
         RangeCheckPolynomials::<F, G>::check_multiset_equality(&multiset_hashes);
         multiset_hashes.append_to_transcript::<G>(transcript);
 
@@ -646,14 +750,9 @@ where
         RangeCheckPolynomials::<F, G>::check_multiset_equality(&self.multiset_hashes);
         self.multiset_hashes.append_to_transcript::<G>(transcript);
 
-        let concatenated_hashes = [
-            self.multiset_hashes.init_hashes.clone(),
-            self.multiset_hashes.read_hashes.clone(),
-            self.multiset_hashes.write_hashes.clone(),
-            self.multiset_hashes.final_hashes.clone(),
-        ]
-        .concat();
-
+        let (read_write_hashes, init_final_hashes) =
+            RangeCheckPolynomials::<F, G>::interleave_hashes(&self.multiset_hashes);
+        let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let (grand_product_claims, r_grand_product) = self
             .batched_grand_product
             .verify::<G, Transcript>(&concatenated_hashes, transcript);
@@ -677,46 +776,98 @@ where
 
         self.openings.compute_verifier_openings(&r_grand_product);
 
-        debug_assert_eq!(grand_product_claims.len(), 7);
-        let read_fingerprints: Vec<_> = RangeCheckPolynomials::read_tuples(&self.openings)
+        let read_hashes: Vec<_> = RangeCheckPolynomials::read_tuples(&self.openings)
             .iter()
             .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
             .collect();
-        let write_fingerprints: Vec<_> = RangeCheckPolynomials::write_tuples(&self.openings)
+        let write_hashes: Vec<_> = RangeCheckPolynomials::write_tuples(&self.openings)
             .iter()
             .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
             .collect();
-        let init_fingerprints: Vec<_> = RangeCheckPolynomials::init_tuples(&self.openings)
+        let init_hashes: Vec<_> = RangeCheckPolynomials::init_tuples(&self.openings)
             .iter()
             .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
             .collect();
-        let final_fingerprints: Vec<_> = RangeCheckPolynomials::final_tuples(&self.openings)
+        let final_hashes: Vec<_> = RangeCheckPolynomials::final_tuples(&self.openings)
             .iter()
             .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
             .collect();
+
         assert_eq!(
-            init_fingerprints.len()
-                + read_fingerprints.len()
-                + write_fingerprints.len()
-                + final_fingerprints.len(),
-            grand_product_claims.len()
+            grand_product_claims.len(),
+            6 * MEMORY_OPS_PER_INSTRUCTION + 1
         );
-        for (claim, fingerprint) in zip(
-            grand_product_claims,
-            [
-                init_fingerprints,
-                read_fingerprints,
-                write_fingerprints,
-                final_fingerprints,
-            ]
-            .concat(),
-        ) {
-            assert_eq!(claim, fingerprint);
+        let (read_write_claims, init_final_claims) =
+            grand_product_claims.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
+
+        let multiset_hashes = MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes,
+            final_hashes,
+        };
+        let (read_write_hashes, init_final_hashes) =
+            RangeCheckPolynomials::<F, G>::interleave_hashes(&multiset_hashes);
+
+        for (claim, fingerprint) in zip(read_write_claims, read_write_hashes) {
+            assert_eq!(*claim, fingerprint);
         }
+        for (claim, fingerprint) in zip(init_final_claims, init_final_hashes) {
+            assert_eq!(*claim, fingerprint);
+        }
+
         Ok(())
     }
 
     fn protocol_name() -> &'static [u8] {
         b"Timestamp validity proof memory checking"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction};
+
+    use super::*;
+    use ark_curve25519::{EdwardsProjective, Fr};
+    use common::ELFInstruction;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn timestamp_range_check() {
+        const MEMORY_SIZE: usize = 1 << 16;
+        const NUM_OPS: usize = 1 << 8;
+        const BYTECODE_SIZE: usize = 1 << 8;
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+        let bytecode = (0..BYTECODE_SIZE)
+            .map(|i| ELFInstruction::random(i, &mut rng))
+            .collect();
+        let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
+
+        let mut transcript: Transcript = Transcript::new(b"test_transcript");
+        let mut random_tape = RandomTape::new(b"test_tape");
+
+        let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
+            ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
+        let batched_polys = rw_memory.batch();
+        let commitments = ReadWriteMemory::commit(&batched_polys);
+
+        let mut timestamp_validity_proof = TimestampValidityProof::prove(
+            read_timestamps,
+            &rw_memory,
+            &batched_polys,
+            &commitments,
+            &mut transcript,
+            &mut random_tape,
+        );
+
+        let mut transcript: Transcript = Transcript::new(b"test_transcript");
+        assert!(TimestampValidityProof::verify(
+            &mut timestamp_validity_proof,
+            &commitments,
+            &mut transcript,
+        )
+        .is_ok());
     }
 }

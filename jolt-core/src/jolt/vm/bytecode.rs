@@ -819,7 +819,7 @@ mod tests {
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
         let set1: HashSet<_> = vec1.iter().cloned().collect();
         let set2: HashSet<_> = vec2.iter().cloned().collect();
-        set1.difference(&set2).cloned().collect()
+        set1.symmetric_difference(&set2).cloned().collect()
     }
 
     #[test]

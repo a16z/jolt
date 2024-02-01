@@ -7,6 +7,8 @@ use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+#[cfg(test)]
+use std::collections::HashSet;
 
 use crate::{
     lasso::memory_checking::{
@@ -68,33 +70,46 @@ pub fn random_memory_trace(
     let m = m.next_power_of_two();
     let mut memory_trace = Vec::with_capacity(m);
     for _ in 0..m {
-        let ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] = std::array::from_fn(|_| {
-            let mut address = if rng.next_u32() % 3 == 0 {
-                rng.next_u64() % max_memory_address as u64
-            } else {
-                rng.next_u64() % REGISTER_COUNT
-            };
-            if rng.next_u32() % 2 == 0 {
-                let value = memory[address as usize];
-                if address >= REGISTER_COUNT {
-                    address = address + RAM_START_ADDRESS - REGISTER_COUNT;
-                }
-                MemoryOp::Read(address, value)
-            } else {
-                if address >= REGISTER_COUNT {
-                    // RAM is byte-addressable, so values are a single byte
-                    let new_value = rng.next_u64() & 0xff;
-                    memory[address as usize] = new_value;
-                    address = address + RAM_START_ADDRESS - REGISTER_COUNT;
-                    MemoryOp::Write(address, new_value)
-                } else {
-                    // Registers are 32 bits
-                    let new_value = rng.next_u32() as u64;
-                    memory[address as usize] = new_value;
-                    MemoryOp::Write(address, new_value)
-                }
+        let mut ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] =
+            std::array::from_fn(|_| MemoryOp::no_op());
+
+        let rs1 = rng.next_u64() % REGISTER_COUNT;
+        ops[0] = MemoryOp::Read(rs1, memory[rs1 as usize]);
+
+        let rs2 = rng.next_u64() % REGISTER_COUNT;
+        ops[1] = MemoryOp::Read(rs2, memory[rs2 as usize]);
+
+        // Don't write to the zero register
+        let rd = rng.next_u64() % (REGISTER_COUNT - 1) + 1;
+        // Registers are 32 bits
+        let register_value = rng.next_u32() as u64;
+        ops[2] = MemoryOp::Write(rd, register_value);
+        memory[rd as usize] = register_value;
+
+        if rng.next_u32() % 2 == 0 {
+            // LOAD
+            let remapped_address =
+                REGISTER_COUNT + rng.next_u64() % (max_memory_address as u64 - REGISTER_COUNT - 4);
+            let ram_address = remapped_address - REGISTER_COUNT + RAM_START_ADDRESS;
+            for i in 0..4 {
+                ops[i + 3] = MemoryOp::Read(
+                    ram_address + i as u64,
+                    memory[i + remapped_address as usize],
+                );
             }
-        });
+        } else {
+            // STORE
+            let remapped_address =
+                REGISTER_COUNT + rng.next_u64() % (max_memory_address as u64 - REGISTER_COUNT - 4);
+            let ram_address = remapped_address - REGISTER_COUNT + RAM_START_ADDRESS;
+            for i in 0..4 {
+                // RAM is byte-addressable, so values are a single byte
+                let ram_value = rng.next_u64() & 0xff;
+                ops[i + 3] = MemoryOp::Write(ram_address + i as u64, ram_value);
+                memory[i + remapped_address as usize] = ram_value;
+            }
+        }
+
         memory_trace.push(ops);
     }
 
@@ -204,6 +219,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             }
         }
 
+        #[cfg(test)]
+        let mut init_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+        #[cfg(test)]
+        {
+            for (a, v) in v_init.iter().enumerate() {
+                init_tuples.insert((a as u64, *v, 0u64));
+            }
+        }
+
         let mut a_read_write: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
             std::array::from_fn(|_| Vec::with_capacity(m));
         let mut v_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
@@ -217,39 +241,82 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let mut v_final: Vec<u64> = v_init.clone();
         let mut t_final: Vec<u64> = vec![0; memory_size];
 
+        #[cfg(test)]
+        let mut read_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+        #[cfg(test)]
+        let mut write_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+
         let mut timestamp: u64 = 0;
         let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
         let _enter = span.enter();
         for step in memory_trace {
+            // Read operations
             for (i, memory_access) in step.iter().enumerate() {
                 match memory_access {
                     MemoryOp::Read(a, v) => {
                         let remapped_a = remap_address(*a);
                         debug_assert_eq!(*v, v_final[remapped_a as usize]);
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, *v, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, *v, timestamp));
+                        }
+
                         a_read_write[i].push(remapped_a);
                         v_read[i].push(*v);
-                        v_write[i].push(*v);
                         t_read[i].push(t_final[remapped_a as usize]);
-                        t_write[i].push(timestamp + 1);
-                        t_final[remapped_a as usize] = timestamp + 1;
+                        v_write[i].push(*v);
+                        t_write[i].push(timestamp);
+                        t_final[remapped_a as usize] = timestamp;
                     }
+                    _ => {}
+                }
+            }
+
+            // Write operations
+            for (i, memory_access) in step.iter().enumerate() {
+                match memory_access {
                     MemoryOp::Write(a, v_new) => {
                         let remapped_a = remap_address(*a);
                         let v_old = v_final[remapped_a as usize];
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v_old, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, *v_new, timestamp + 1));
+                        }
+
                         a_read_write[i].push(remapped_a);
                         v_read[i].push(v_old);
-                        v_write[i].push(*v_new);
-                        v_final[remapped_a as usize] = *v_new;
                         t_read[i].push(t_final[remapped_a as usize]);
+                        v_write[i].push(*v_new);
                         t_write[i].push(timestamp + 1);
+                        v_final[remapped_a as usize] = *v_new;
                         t_final[remapped_a as usize] = timestamp + 1;
                     }
+                    _ => {}
                 }
             }
+
+            // Increment global timestamp
             timestamp += 1;
         }
         drop(_enter);
         drop(span);
+
+        #[cfg(test)]
+        {
+            let mut final_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+            for (a, (v, t)) in v_final.iter().zip(t_final.iter()).enumerate() {
+                final_tuples.insert((a as u64, *v, *t));
+            }
+
+            let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
+            let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
+            let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
+            assert_eq!(set_difference.len(), 0);
+        }
 
         (
             Self {
@@ -675,7 +742,7 @@ where
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
-        let num_ops = polynomials.a_read_write.len();
+        let num_ops = polynomials.a_read_write[0].len();
 
         let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()

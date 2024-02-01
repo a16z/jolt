@@ -573,10 +573,13 @@ where
         (read_write_leaves, init_final_leaves)
     }
 
-    fn interleave_hashes(multiset_hashes: MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
+    fn interleave_hashes(multiset_hashes: &MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
         // R W R W R W ...
-        let read_write_hashes =
-            interleave(multiset_hashes.read_hashes, multiset_hashes.write_hashes).collect();
+        let read_write_hashes = interleave(
+            multiset_hashes.read_hashes.clone(),
+            multiset_hashes.write_hashes.clone(),
+        )
+        .collect();
 
         // I F F F F I F F F F ...
         let mut init_final_hashes = Vec::with_capacity(
@@ -627,6 +630,25 @@ where
             init_hashes,
             final_hashes,
         }
+    }
+
+    fn check_multiset_equality(multiset_hashes: &MultisetHashes<F>) {
+        assert_eq!(multiset_hashes.init_hashes.len(), Self::NUM_SUBTABLES);
+        assert_eq!(multiset_hashes.read_hashes.len(), Self::NUM_MEMORIES);
+        assert_eq!(multiset_hashes.write_hashes.len(), Self::NUM_MEMORIES);
+        assert_eq!(multiset_hashes.final_hashes.len(), Self::NUM_MEMORIES);
+
+        (0..Self::NUM_MEMORIES).into_par_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[i];
+            let write_hash = multiset_hashes.write_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[Self::memory_to_subtable_index(i)];
+            let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
     }
 
     /// Overrides default implementation to handle flags
