@@ -204,15 +204,15 @@ mod tests {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
-        let (bytecode_proof, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
+        let (bytecode_proof, _, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
             bytecode_rows,
             bytecode_trace,
             &mut transcript,
             &mut random_tape,
         );
-        let (memory_proof, memory_commitment) =
+        let (memory_proof, _, memory_commitment) =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let (instruction_lookups_proof, instruction_lookups_commitment) =
+        let (instruction_lookups_proof, _, instruction_lookups_commitment) =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
         let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
@@ -357,15 +357,15 @@ mod tests {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =
             RandomTape::new(b"Jolt prover randomness");
-        let (bytecode_proof, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
+        let (bytecode_proof, _, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
             bytecode_rows,
             bytecode_trace,
             &mut transcript,
             &mut random_tape,
         );
-        let (memory_proof, memory_commitment) =
+        let (memory_proof, _, memory_commitment) =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let (instruction_lookups, instruction_lookups_commitment) =
+        let (instruction_lookups, _, instruction_lookups_commitment) =
             RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
 
         let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
@@ -475,7 +475,7 @@ mod tests {
         let mut prover_transcript = Transcript::new(b"example");
         let mut random_tape = RandomTape::<EdwardsProjective>::new(b"test_tape");
 
-        let (proof, commitment) =
+        let (proof, _, commitment) =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(RV32IJoltVM::verify_instruction_lookups(

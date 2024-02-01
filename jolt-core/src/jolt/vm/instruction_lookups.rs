@@ -854,6 +854,7 @@ where
         random_tape: &mut RandomTape<G>,
     ) -> (
         InstructionLookupsProof<F, G, Subtables>,
+        InstructionPolynomials<F, G>,
         InstructionCommitment<G>,
     ) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
@@ -932,6 +933,7 @@ where
                 primary_sumcheck,
                 memory_checking,
             },
+            polynomials,
             commitment,
         )
     }
