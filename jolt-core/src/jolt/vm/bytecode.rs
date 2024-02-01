@@ -26,8 +26,8 @@ use crate::{
 pub type BytecodeProof<F, G> = MemoryCheckingProof<
     G,
     BytecodePolynomials<F, G>,
-    BytecodeReadWriteOpenings<F, G>,
-    BytecodeInitFinalOpenings<F, G>,
+    BytecodeReadWriteOpenings<F>,
+    BytecodeInitFinalOpenings<F>,
 >;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -476,8 +476,8 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type ReadWriteOpenings = BytecodeReadWriteOpenings<F, G>;
-    type InitFinalOpenings = BytecodeInitFinalOpenings<F, G>;
+    type ReadWriteOpenings = BytecodeReadWriteOpenings<F>;
+    type InitFinalOpenings = BytecodeInitFinalOpenings<F>;
 
     // [a, opcode, rd, rs1, rs2, imm, t]
     type MemoryTuple = [F; 7];
@@ -645,10 +645,9 @@ where
     }
 }
 
-pub struct BytecodeReadWriteOpenings<F, G>
+pub struct BytecodeReadWriteOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     /// Evaluation of the a_read_write polynomial at the opening point.
     a_read_write_opening: F,
@@ -656,25 +655,20 @@ where
     v_read_write_openings: Vec<F>,
     /// Evaluation of the t_read polynomial at the opening point.
     t_read_opening: F,
-
-    read_write_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>>
-    for BytecodeReadWriteOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>> for BytecodeReadWriteOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = (F, Vec<F>, F);
-
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
-        (
-            polynomials.a_read_write.evaluate(&opening_point),
-            polynomials.v_read_write.evaluate(&opening_point),
-            polynomials.t_read.evaluate(&opening_point),
-        )
+    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+        Self {
+            a_read_write_opening: polynomials.a_read_write.evaluate(&opening_point),
+            v_read_write_openings: polynomials.v_read_write.evaluate(&opening_point),
+            t_read_opening: polynomials.t_read.evaluate(&opening_point),
+        }
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
@@ -682,37 +676,29 @@ where
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
-        openings: (F, Vec<F>, F),
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let a_read_write_opening = openings.0;
-        let v_read_write_openings = openings.1;
-        let t_read_opening = openings.2;
+    ) -> Self::Proof {
+        let mut combined_openings: Vec<F> = vec![
+            openings.a_read_write_opening.clone(),
+            openings.t_read_opening.clone(),
+        ];
+        combined_openings.extend(openings.v_read_write_openings.iter());
 
-        let mut combined_openings: Vec<F> =
-            vec![a_read_write_opening.clone(), t_read_opening.clone()];
-        combined_openings.extend(v_read_write_openings.iter());
-
-        let read_write_opening_proof = BatchedPolynomialOpeningProof::prove(
+        BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_read_write,
             &combined_openings,
             &opening_point,
             &commitment.read_write_commitments,
             transcript,
             random_tape,
-        );
-
-        Self {
-            a_read_write_opening,
-            v_read_write_openings,
-            t_read_opening,
-            read_write_opening_proof,
-        }
+        )
     }
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
@@ -723,7 +709,7 @@ where
         ];
         combined_openings.extend(self.v_read_write_openings.iter());
 
-        self.read_write_opening_proof.verify(
+        opening_proof.verify(
             opening_point,
             &combined_openings,
             &commitment.read_write_commitments,
@@ -732,10 +718,9 @@ where
     }
 }
 
-pub struct BytecodeInitFinalOpenings<F, G>
+pub struct BytecodeInitFinalOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
@@ -743,24 +728,20 @@ where
     v_init_final: Vec<F>,
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
-
-    init_final_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>>
-    for BytecodeInitFinalOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>> for BytecodeInitFinalOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = (Vec<F>, F);
-
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
-        (
-            polynomials.v_init_final.evaluate(&opening_point),
-            polynomials.t_final.evaluate(&opening_point),
-        )
+    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+        Self {
+            a_init_final: None,
+            v_init_final: polynomials.v_init_final.evaluate(&opening_point),
+            t_final: polynomials.t_final.evaluate(&opening_point),
+        }
     }
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
@@ -768,30 +749,20 @@ where
         polynomials: &BatchedBytecodePolynomials<F>,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
-        openings: Self::Openings,
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let v_init_final = openings.0;
-        let t_final = openings.1;
-
-        let mut combined_openings: Vec<F> = vec![t_final];
-        combined_openings.extend(v_init_final.iter());
-        let init_final_opening_proof = BatchedPolynomialOpeningProof::prove(
+    ) -> Self::Proof {
+        let mut combined_openings: Vec<F> = vec![openings.t_final];
+        combined_openings.extend(openings.v_init_final.iter());
+        BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_init_final,
             &combined_openings,
             &opening_point,
             &commitment.init_final_commitments,
             transcript,
             random_tape,
-        );
-
-        Self {
-            a_init_final: None, // Computed by verifier
-            v_init_final,
-            t_final,
-            init_final_opening_proof,
-        }
+        )
     }
 
     fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
@@ -801,6 +772,7 @@ where
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
@@ -808,7 +780,7 @@ where
         let mut combined_openings: Vec<F> = vec![self.t_final.clone()];
         combined_openings.extend(self.v_init_final.iter());
 
-        self.init_final_opening_proof.verify(
+        opening_proof.verify(
             opening_point,
             &combined_openings,
             &commitment.init_final_commitments,

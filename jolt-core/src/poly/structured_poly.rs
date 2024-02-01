@@ -2,7 +2,10 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 
-use crate::utils::{errors::ProofVerifyError, random::RandomTape};
+use crate::{
+    subprotocols::batched_commitment::BatchedPolynomialOpeningProof,
+    utils::{errors::ProofVerifyError, random::RandomTape},
+};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
@@ -30,10 +33,10 @@ where
     G: CurveGroup<ScalarField = F>,
     Polynomials: BatchablePolynomials + ?Sized,
 {
-    type Openings;
+    type Proof = BatchedPolynomialOpeningProof<G>;
 
     /// Evaluates each fo the given `polynomials` at the given `opening_point`.
-    fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self::Openings;
+    fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;
 
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
     /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
@@ -41,19 +44,20 @@ where
         polynomials: &Polynomials::BatchedPolynomials,
         commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
-        openings: Self::Openings,
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self;
+    ) -> Self::Proof;
 
-    /// Often some of the openings do not require an opening proof provided by the prover, and 
-    /// instead can be efficiently computed by the verifier by itself. This function populates 
+    /// Often some of the openings do not require an opening proof provided by the prover, and
+    /// instead can be efficiently computed by the verifier by itself. This function populates
     /// any such fields in `self`.
     fn compute_verifier_openings(&mut self, _opening_point: &Vec<F>) {}
 
     /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,

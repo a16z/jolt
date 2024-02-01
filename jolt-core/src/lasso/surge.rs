@@ -92,23 +92,13 @@ where
     }
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-struct PrimarySumcheckOpenings<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    E_poly_openings: Vec<F>,
-    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
-}
+type PrimarySumcheckOpenings<F> = Vec<F>;
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G, SurgePolys<F, G>>
-    for PrimarySumcheckOpenings<F, G>
+    for PrimarySumcheckOpenings<F>
 {
-    type Openings = Vec<F>;
-
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .E_polys
@@ -122,69 +112,65 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
-        E_poly_openings: Vec<F>,
+        E_poly_openings: &Vec<F>,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
+    ) -> Self::Proof {
+        BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            &E_poly_openings,
+            E_poly_openings,
             opening_point,
             &commitment.E_commitment,
             transcript,
             random_tape,
-        );
-
-        Self {
-            E_poly_openings,
-            E_poly_opening_proof,
-        }
+        )
     }
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.E_poly_opening_proof.verify(
-            opening_point,
-            &self.E_poly_openings,
-            &commitment.E_commitment,
-            transcript,
-        )
+        opening_proof.verify(opening_point, &self, &commitment.E_commitment, transcript)
     }
 }
 
-pub struct SurgeReadWriteOpenings<F, G>
+pub struct SurgeReadWriteOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     dim_openings: Vec<F>,    // C-sized
     read_openings: Vec<F>,   // C-sized
     E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
-
-    dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
-    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeReadWriteOpenings<F, G>
+pub struct SurgeReadWriteOpeningProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = [Vec<F>; 3];
+    dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
+    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
+}
+
+impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeReadWriteOpenings<F>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
+    type Proof = SurgeReadWriteOpeningProof<F, G>;
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
-        [
-            polynomials.dim.par_iter().map(evaluate).collect(),
-            polynomials.read_cts.par_iter().map(evaluate).collect(),
-            polynomials.E_polys.par_iter().map(evaluate).collect(),
-        ]
+        Self {
+            dim_openings: polynomials.dim.par_iter().map(evaluate).collect(),
+            read_openings: polynomials.read_cts.par_iter().map(evaluate).collect(),
+            E_poly_openings: polynomials.E_polys.par_iter().map(evaluate).collect(),
+        }
     }
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
@@ -192,17 +178,16 @@ where
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
-        openings: [Vec<F>; 3],
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let dim_openings = &openings[0];
-        let read_openings = &openings[1];
-        let E_poly_openings = &openings[2];
-
-        let mut dim_read_openings = [dim_openings.as_slice(), read_openings.as_slice()]
-            .concat()
-            .to_vec();
+    ) -> Self::Proof {
+        let mut dim_read_openings = [
+            openings.dim_openings.as_slice(),
+            openings.read_openings.as_slice(),
+        ]
+        .concat()
+        .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
@@ -215,17 +200,14 @@ where
         );
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            E_poly_openings,
+            &openings.E_poly_openings,
             &opening_point,
             &commitment.E_commitment,
             transcript,
             random_tape,
         );
 
-        Self {
-            dim_openings: dim_openings.to_vec(),
-            read_openings: read_openings.to_vec(),
-            E_poly_openings: E_poly_openings.to_vec(),
+        SurgeReadWriteOpeningProof {
             dim_read_opening_proof,
             E_poly_opening_proof,
         }
@@ -233,6 +215,7 @@ where
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
@@ -242,14 +225,14 @@ where
             .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
-        self.dim_read_opening_proof.verify(
+        opening_proof.dim_read_opening_proof.verify(
             opening_point,
             &dim_read_openings,
             &commitment.dim_read_commitment,
             transcript,
         )?;
 
-        self.E_poly_opening_proof.verify(
+        opening_proof.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
             &commitment.E_commitment,
@@ -260,36 +243,38 @@ where
     }
 }
 
-pub struct SurgeFinalOpenings<F, G, Instruction, const C: usize>
+pub struct SurgeFinalOpenings<F, Instruction, const C: usize>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default,
 {
     _instruction: PhantomData<Instruction>,
-    final_openings: Vec<F>, // C-sized
-    final_opening_proof: BatchedPolynomialOpeningProof<G>,
+    final_openings: Vec<F>,       // C-sized
     a_init_final: Option<F>,      // Computed by verifier
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
 impl<F, G, Instruction, const C: usize> StructuredOpeningProof<F, G, SurgePolys<F, G>>
-    for SurgeFinalOpenings<F, G, Instruction, C>
+    for SurgeFinalOpenings<F, Instruction, C>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default,
 {
-    type Openings = Vec<F>;
-
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-        polynomials
+        let final_openings = polynomials
             .final_cts
             .par_iter()
             .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect()
+            .collect();
+        Self {
+            _instruction: PhantomData,
+            final_openings,
+            a_init_final: None,
+            v_init_final: None,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
@@ -297,26 +282,18 @@ where
         polynomials: &BatchedSurgePolynomials<F>,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
-        openings: Vec<F>,
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let final_opening_proof = BatchedPolynomialOpeningProof::prove(
+    ) -> Self::Proof {
+        BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
-            &openings,
+            &openings.final_openings,
             &opening_point,
             &commitment.final_commitment,
             transcript,
             random_tape,
-        );
-
-        Self {
-            _instruction: PhantomData,
-            final_openings: openings,
-            final_opening_proof,
-            a_init_final: None, // Computed by verifier
-            v_init_final: None, // Computed by verifier
-        }
+        )
     }
 
     fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
@@ -333,11 +310,12 @@ where
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.final_opening_proof.verify(
+        opening_proof.verify(
             opening_point,
             &self.final_openings,
             &commitment.final_commitment,
@@ -353,8 +331,8 @@ where
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
-    type ReadWriteOpenings = SurgeReadWriteOpenings<F, G>;
-    type InitFinalOpenings = SurgeFinalOpenings<F, G, Instruction, C>;
+    type ReadWriteOpenings = SurgeReadWriteOpenings<F>;
+    type InitFinalOpenings = SurgeFinalOpenings<F, Instruction, C>;
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
@@ -501,7 +479,8 @@ pub struct SurgePrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     claimed_evaluation: F,
-    openings: PrimarySumcheckOpenings<F, G>,
+    openings: PrimarySumcheckOpenings<F>,
+    opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 pub struct Surge<F, G, Instruction, const C: usize>
@@ -534,8 +513,8 @@ where
     memory_checking: MemoryCheckingProof<
         G,
         SurgePolys<F, G>,
-        SurgeReadWriteOpenings<F, G>,
-        SurgeFinalOpenings<F, G, Instruction, C>,
+        SurgeReadWriteOpenings<F>,
+        SurgeFinalOpenings<F, Instruction, C>,
     >,
 }
 
@@ -632,12 +611,13 @@ where
 
         let mut random_tape = RandomTape::new(b"proof");
 
-        // Create a single opening proof for the E polynomials
-        let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
+        let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
+                                                                                   // Create a single opening proof for the E polynomials
+        let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
             &commitment,
             &r_z,
-            PrimarySumcheckOpenings::open(&polynomials, &r_z), // TODO: use return value from prove_arbitrary?
+            &sumcheck_openings,
             transcript,
             &mut random_tape,
         );
@@ -647,6 +627,7 @@ where
             sumcheck_proof: primary_sumcheck_proof,
             num_rounds,
             openings: sumcheck_openings,
+            opening_proof: sumcheck_opening_proof,
         };
 
         let memory_checking = self.prove_memory_checking(
@@ -696,20 +677,17 @@ where
 
         let eq_eval = EqPolynomial::new(r_primary_sumcheck.to_vec()).evaluate(&r_z);
         assert_eq!(
-            eq_eval
-                * instruction.combine_lookups(
-                    &proof.primary_sumcheck.openings.E_poly_openings,
-                    C,
-                    M
-                ),
+            eq_eval * instruction.combine_lookups(&proof.primary_sumcheck.openings, C, M),
             claim_last,
             "Primary sumcheck check failed."
         );
 
-        proof
-            .primary_sumcheck
-            .openings
-            .verify_openings(&proof.commitment, &r_z, transcript)?;
+        proof.primary_sumcheck.openings.verify_openings(
+            &proof.primary_sumcheck.opening_proof,
+            &proof.commitment,
+            &r_z,
+            transcript,
+        )?;
 
         Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)
     }

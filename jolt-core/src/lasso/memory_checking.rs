@@ -32,26 +32,6 @@ pub struct MultisetHashes<F: PrimeField> {
 }
 
 impl<F: PrimeField> MultisetHashes<F> {
-    pub fn check_multiset_equality(&self) {
-        let num_memories = self.read_hashes.len();
-        assert_eq!(self.final_hashes.len(), num_memories);
-        assert_eq!(self.write_hashes.len(), num_memories);
-        assert_eq!(num_memories % self.init_hashes.len(), 0);
-        let C = num_memories / self.init_hashes.len();
-
-        (0..num_memories).into_par_iter().for_each(|i| {
-            let read_hash = self.read_hashes[i];
-            let write_hash = self.write_hashes[i];
-            let init_hash = self.init_hashes[i / C];
-            let final_hash = self.final_hashes[i];
-            assert_eq!(
-                init_hash * write_hash,
-                final_hash * read_hash,
-                "Multiset hashes don't match"
-            );
-        });
-    }
-
     pub fn append_to_transcript<G: CurveGroup<ScalarField = F>>(
         &self,
         transcript: &mut Transcript,
@@ -97,8 +77,10 @@ where
     pub init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
     /// The opening proofs associated with the read/write grand product.
     pub read_write_openings: ReadWriteOpenings,
+    pub read_write_opening_proof: ReadWriteOpenings::Proof,
     /// The opening proofs associated with the init/final grand product.
     pub init_final_openings: InitFinalOpenings,
+    pub init_final_opening_proof: InitFinalOpenings::Proof,
 }
 
 pub trait MemoryCheckingProver<F, G, Polynomials>
@@ -134,20 +116,21 @@ where
             r_init_final,
         ) = self.prove_grand_products(polynomials, transcript);
 
-        // fka "HashLayerProof"
-        let read_write_openings = Self::ReadWriteOpenings::prove_openings(
+        let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
+        let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
             batched_polys,
             commitments,
             &r_read_write,
-            Self::ReadWriteOpenings::open(polynomials, &r_read_write),
+            &read_write_openings,
             transcript,
             random_tape,
         );
-        let init_final_openings = Self::InitFinalOpenings::prove_openings(
+        let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
+        let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
             batched_polys,
             commitments,
             &r_init_final,
-            Self::InitFinalOpenings::open(polynomials, &r_init_final),
+            &init_final_openings,
             transcript,
             random_tape,
         );
@@ -158,7 +141,9 @@ where
             read_write_grand_product,
             init_final_grand_product,
             read_write_openings,
+            read_write_opening_proof,
             init_final_openings,
+            init_final_opening_proof,
         }
     }
 
@@ -195,7 +180,7 @@ where
             self.init_final_grand_product(polynomials, init_final_leaves);
 
         let multiset_hashes = Self::uninterleave_hashes(read_write_hashes, init_final_hashes);
-        multiset_hashes.check_multiset_equality();
+        Self::check_multiset_equality(&multiset_hashes);
         multiset_hashes.append_to_transcript::<G>(transcript);
 
         let (read_write_grand_product, r_read_write) =
@@ -295,6 +280,25 @@ where
         }
     }
 
+    fn check_multiset_equality(multiset_hashes: &MultisetHashes<F>) {
+        let num_memories = multiset_hashes.read_hashes.len();
+        assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
+        assert_eq!(multiset_hashes.init_hashes.len(), num_memories);
+
+        (0..num_memories).into_par_iter().for_each(|i| {
+            let read_hash = multiset_hashes.read_hashes[i];
+            let write_hash = multiset_hashes.write_hashes[i];
+            let init_hash = multiset_hashes.init_hashes[i];
+            let final_hash = multiset_hashes.final_hashes[i];
+            assert_eq!(
+                init_hash * write_hash,
+                final_hash * read_hash,
+                "Multiset hashes don't match"
+            );
+        });
+    }
+
     /// Computes the MLE of the leaves of the read, write, init, and final grand product circuits,
     /// one of each type per memory.
     /// Returns: (interleaved read/write leaves, interleaved init/final leaves)
@@ -343,7 +347,7 @@ where
 
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        proof.multiset_hashes.check_multiset_equality();
+        Self::check_multiset_equality(&proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript::<G>(transcript);
 
         let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(proof.multiset_hashes);
@@ -355,12 +359,18 @@ where
             .init_final_grand_product
             .verify::<G, Transcript>(&init_final_hashes, transcript);
 
-        proof
-            .read_write_openings
-            .verify_openings(commitments, &r_read_write, transcript)?;
-        proof
-            .init_final_openings
-            .verify_openings(commitments, &r_init_final, transcript)?;
+        proof.read_write_openings.verify_openings(
+            &proof.read_write_opening_proof,
+            commitments,
+            &r_read_write,
+            transcript,
+        )?;
+        proof.init_final_openings.verify_openings(
+            &proof.init_final_opening_proof,
+            commitments,
+            &r_init_final,
+            transcript,
+        )?;
 
         proof
             .read_write_openings

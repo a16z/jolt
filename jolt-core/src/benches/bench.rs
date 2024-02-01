@@ -11,6 +11,7 @@ use crate::poly::dense_mlpoly::bench::{
 use crate::poly::dense_mlpoly::CommitHint;
 use crate::utils::random::RandomTape;
 use ark_curve25519::{EdwardsProjective, Fr};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
 use criterion::black_box;
 use itertools::Itertools;
@@ -289,13 +290,18 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .expect("deserialization failed");
         let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
-        // TODO(JOLT-89): Encapsulate this logic elsewhere.
-        // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // something about Linux boot requiring it...
-        let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        memory_trace.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
-        let next_power_of_two = memory_trace.len().next_power_of_two();
-        memory_trace.resize(next_power_of_two, MemoryOp::no_op());
+        // // TODO(JOLT-89): Encapsulate this logic elsewhere.
+        // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
+        // // something about Linux boot requiring it...
+        // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
+        let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
+            .into_iter()
+            .map(|row| row.to_ram_ops().try_into().unwrap())
+            .collect();
+        memory_trace.resize(
+            memory_trace.len().next_power_of_two(),
+            std::array::from_fn(|_| MemoryOp::no_op()),
+        );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =
@@ -434,13 +440,18 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .flat_map(|row| row.to_jolt_instructions())
             .collect();
 
-        // TODO(JOLT-89): Encapsulate this logic elsewhere.
-        // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // something about Linux boot requiring it...
-        let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        memory_trace.extend(converted_trace.into_iter().flat_map(|row| row.to_ram_ops()));
-        let next_power_of_two = memory_trace.len().next_power_of_two();
-        memory_trace.resize(next_power_of_two, MemoryOp::no_op());
+        // // TODO(JOLT-89): Encapsulate this logic elsewhere.
+        // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
+        // // something about Linux boot requiring it...
+        // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
+        let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
+            .into_iter()
+            .map(|row| row.to_ram_ops().try_into().unwrap())
+            .collect();
+        memory_trace.resize(
+            memory_trace.len().next_power_of_two(),
+            std::array::from_fn(|_| MemoryOp::no_op()),
+        );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         let mut random_tape: RandomTape<EdwardsProjective> =

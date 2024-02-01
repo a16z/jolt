@@ -161,29 +161,31 @@ where
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
-struct PrimarySumcheckOpenings<F, G>
+struct PrimarySumcheckOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     E_poly_openings: Vec<F>,
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     flag_openings: Vec<F>,
+}
 
+struct PrimarySumcheckOpeningProof<F, G>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
     E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
     flag_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
-    StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F, G>
+    StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F>
 {
-    type Openings = (Vec<F>, Vec<F>);
+    type Proof = PrimarySumcheckOpeningProof<F, G>;
 
-    fn open(
-        _polynomials: &InstructionPolynomials<F, G>,
-        _opening_point: &Vec<F>,
-    ) -> Self::Openings {
+    fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
@@ -192,16 +194,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
-        openings: (Vec<F>, Vec<F>),
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let E_poly_openings = &openings.0;
-        let flag_openings = &openings.1;
-
+    ) -> Self::Proof {
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            E_poly_openings,
+            &openings.E_poly_openings,
             opening_point,
             &commitment.E_commitment,
             transcript,
@@ -209,34 +208,33 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         );
         let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_flag,
-            flag_openings,
+            &openings.flag_openings,
             opening_point,
             &commitment.instruction_flag_commitment,
             transcript,
             random_tape,
         );
 
-        Self {
-            E_poly_openings: E_poly_openings.to_vec(),
+        PrimarySumcheckOpeningProof {
             E_poly_opening_proof,
-            flag_openings: flag_openings.to_vec(),
             flag_opening_proof,
         }
     }
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.E_poly_opening_proof.verify(
+        opening_proof.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
             &commitment.E_commitment,
             transcript,
         )?;
-        self.flag_opening_proof.verify(
+        opening_proof.flag_opening_proof.verify(
             opening_point,
             &self.flag_openings,
             &commitment.instruction_flag_commitment,
@@ -247,10 +245,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
     }
 }
 
-pub struct InstructionReadWriteOpenings<F, G>
+pub struct InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     /// Evaluations of the dim_i polynomials at the opening point. Vector is of length C.
     dim_openings: Vec<F>,
@@ -260,22 +257,28 @@ where
     E_poly_openings: Vec<F>,
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     flag_openings: Vec<F>,
+}
 
+pub struct InstructionReadWriteOpeningProof<F, G>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
     dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
     E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
     flag_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for InstructionReadWriteOpenings<F, G>
+    for InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = [Vec<F>; 4];
+    type Proof = InstructionReadWriteOpeningProof<F, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
@@ -300,7 +303,12 @@ where
             .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
             .collect();
 
-        [dim_openings, read_openings, E_poly_openings, flag_openings]
+        Self {
+            dim_openings,
+            read_openings,
+            E_poly_openings,
+            flag_openings,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
@@ -308,18 +316,16 @@ where
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
-        openings: [Vec<F>; 4],
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let dim_openings = &openings[0];
-        let read_openings = &openings[1];
-        let E_poly_openings = &openings[2];
-        let flag_openings = &openings[3];
-
-        let mut dim_read_openings = [dim_openings.as_slice(), read_openings.as_slice()]
-            .concat()
-            .to_vec();
+    ) -> Self::Proof {
+        let mut dim_read_openings = [
+            openings.dim_openings.as_slice(),
+            openings.read_openings.as_slice(),
+        ]
+        .concat()
+        .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
@@ -332,7 +338,7 @@ where
         );
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            E_poly_openings,
+            &openings.E_poly_openings,
             &opening_point,
             &commitment.E_commitment,
             transcript,
@@ -340,18 +346,14 @@ where
         );
         let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_flag,
-            flag_openings,
+            &openings.flag_openings,
             &opening_point,
             &commitment.instruction_flag_commitment,
             transcript,
             random_tape,
         );
 
-        Self {
-            dim_openings: dim_openings.to_vec(),
-            read_openings: read_openings.to_vec(),
-            E_poly_openings: E_poly_openings.to_vec(),
-            flag_openings: flag_openings.to_vec(),
+        InstructionReadWriteOpeningProof {
             dim_read_opening_proof,
             E_poly_opening_proof,
             flag_opening_proof,
@@ -360,6 +362,7 @@ where
 
     fn verify_openings(
         &self,
+        openings_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
@@ -369,21 +372,21 @@ where
             .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
-        self.dim_read_opening_proof.verify(
+        openings_proof.dim_read_opening_proof.verify(
             opening_point,
             &dim_read_openings,
             &commitment.dim_read_commitment,
             transcript,
         )?;
 
-        self.E_poly_opening_proof.verify(
+        openings_proof.E_poly_opening_proof.verify(
             opening_point,
             &self.E_poly_openings,
             &commitment.E_commitment,
             transcript,
         )?;
 
-        self.flag_opening_proof.verify(
+        openings_proof.flag_opening_proof.verify(
             opening_point,
             &self.flag_openings,
             &commitment.instruction_flag_commitment,
@@ -393,16 +396,14 @@ where
     }
 }
 
-pub struct InstructionFinalOpenings<F, G, Subtables>
+pub struct InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
     Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     _subtables: PhantomData<Subtables>,
     /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     final_openings: Vec<F>,
-    final_opening_proof: BatchedPolynomialOpeningProof<G>,
     /// Evaluation of the a_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
     /// Evaluation of the v_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
@@ -410,23 +411,27 @@ where
 }
 
 impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for InstructionFinalOpenings<F, G, Subtables>
+    for InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
-    type Openings = Vec<F>;
-
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-        polynomials
+        let final_openings = polynomials
             .final_cts
             .par_iter()
             .map(|final_cts_i| final_cts_i.evaluate_at_chi_low_optimized(&chis))
-            .collect()
+            .collect();
+        Self {
+            _subtables: PhantomData,
+            final_openings,
+            a_init_final: None,
+            v_init_final: None,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
@@ -434,26 +439,18 @@ where
         polynomials: &BatchedInstructionPolynomials<F>,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
-        openings: Vec<F>,
+        openings: &Self,
         transcript: &mut Transcript,
         random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let final_opening_proof = BatchedPolynomialOpeningProof::prove(
+    ) -> Self::Proof {
+        BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
-            &openings,
+            &openings.final_openings,
             &opening_point,
             &commitment.final_commitment,
             transcript,
             random_tape,
-        );
-
-        Self {
-            _subtables: PhantomData,
-            final_openings: openings,
-            final_opening_proof,
-            a_init_final: None,
-            v_init_final: None,
-        }
+        )
     }
 
     fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
@@ -468,11 +465,12 @@ where
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.final_opening_proof.verify(
+        opening_proof.verify(
             opening_point,
             &self.final_openings,
             &commitment.final_commitment,
@@ -490,8 +488,8 @@ where
     InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
 {
-    type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
-    type InitFinalOpenings = InstructionFinalOpenings<F, G, Subtables>;
+    type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
+    type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
@@ -770,17 +768,17 @@ where
     memory_checking: MemoryCheckingProof<
         G,
         InstructionPolynomials<F, G>,
-        InstructionReadWriteOpenings<F, G>,
-        InstructionFinalOpenings<F, G, Subtables>,
+        InstructionReadWriteOpenings<F>,
+        InstructionFinalOpenings<F, Subtables>,
     >,
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     claimed_evaluation: F,
-    openings: PrimarySumcheckOpenings<F, G>,
+    openings: PrimarySumcheckOpenings<F>,
+    opening_proof: PrimarySumcheckOpeningProof<F, G>,
 }
 
 pub struct InstructionLookups<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
@@ -878,11 +876,15 @@ where
             );
 
         // Create a single opening proof for the flag_evals and memory_evals
-        let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
+        let sumcheck_openings = PrimarySumcheckOpenings {
+            E_poly_openings: E_evals,
+            flag_openings: flag_evals,
+        };
+        let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
             &commitment,
             &r_primary_sumcheck,
-            (E_evals, flag_evals),
+            &sumcheck_openings,
             transcript,
             random_tape,
         );
@@ -892,6 +894,7 @@ where
             num_rounds,
             claimed_evaluation: sumcheck_claim,
             openings: sumcheck_openings,
+            opening_proof: sumcheck_opening_proof,
         };
 
         let memory_checking = self.prove_memory_checking(
@@ -958,6 +961,7 @@ where
         );
 
         proof.primary_sumcheck.openings.verify_openings(
+            &proof.primary_sumcheck.opening_proof,
             &commitment,
             &r_primary_sumcheck,
             transcript,
