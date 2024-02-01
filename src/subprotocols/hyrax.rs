@@ -66,8 +66,8 @@ impl<G: CurveGroup> PolyEvalProof<G> {
     &self,
     gens: &PolyCommitmentGens<G>,
     transcript: &mut Transcript,
-    r: &[G::ScalarField], // point at which the polynomial is evaluated
-    Zr: &G::ScalarField,  // evaluation \widetilde{Z}(r)
+    r: &[G::ScalarField],
+    Zr: &G::ScalarField,
     comm: &PolyCommitment<G>,
   ) -> Result<(), ProofVerifyError> {
     // compute a commitment to Zr with a blind of zero
@@ -75,13 +75,13 @@ impl<G: CurveGroup> PolyEvalProof<G> {
 
     // TODO: Make blinds an Option
     Hyrax::verify(
-      (
+      &(
         comm.clone(),
         PolyCommitmentBlinds {
           blinds: vec![G::ScalarField::zero()],
         },
       ),
-      None,
+      &None,
       r.to_vec(),
       gens,
       transcript,
@@ -146,23 +146,24 @@ impl<G: CurveGroup> PolynomialCommitmentScheme for Hyrax<G> {
   type Proof = (PolyEvalProof<G>, G);
   type Error = ProofVerifyError;
 
-  type ProverKey = (
-    Option<PolyCommitmentBlinds<G::ScalarField>>,
-    Option<G::ScalarField>,
-    PolyCommitmentGens<G>,
-    RandomTape<G>,
+  type ProverKey<'p> = (
+    Option<&'p PolyCommitmentBlinds<G::ScalarField>>,
+    Option<&'p G::ScalarField>,
+    &'p PolyCommitmentGens<G>,
+    &'p mut RandomTape<G>,
   );
-  type CommitmentKey = (PolyCommitmentGens<G>, Option<RandomTape<G>>);
+  type CommitmentKey<'c> = (PolyCommitmentGens<G>, Option<&'c mut RandomTape<G>>);
   type VerifierKey = PolyCommitmentGens<G>;
 
   #[tracing::instrument(skip_all, name = "DensePolynomial.commit")]
-  fn commit(
-    poly: Self::Polynomial,
-    ck: impl Borrow<Self::CommitmentKey>,
-  ) -> Result<Self::Commitment, Self::Error> {
+  fn commit<'a, 'c>(
+    poly: &'a Self::Polynomial,
+    ck: Self::CommitmentKey<'c>,
+  ) -> Result<Self::Commitment, Self::Error> 
+  {
     let n = poly.Z.len();
     let ell = poly.get_num_vars();
-    let ck = ck.borrow();
+    let (gens, random_tape) = ck;
     assert_eq!(n, ell.pow2());
 
     let (left_num_vars, right_num_vars) =
@@ -171,7 +172,6 @@ impl<G: CurveGroup> PolynomialCommitmentScheme for Hyrax<G> {
     let R_size = right_num_vars.pow2();
     assert_eq!(L_size * R_size, n);
 
-    let (gens, random_tape) = ck;
     let blinds = if let Some(t) = random_tape {
       PolyCommitmentBlinds {
         blinds: t.random_vector(b"poly_blinds", L_size),
@@ -188,23 +188,26 @@ impl<G: CurveGroup> PolynomialCommitmentScheme for Hyrax<G> {
   }
 
   // Note this excludes commitments which introduces a concern that the proof would generate for polys and commitments not tied to one another
-  fn prove(
-    poly: Self::Polynomial,
+  fn prove<'a, 'p>(
+    poly: &'a Self::Polynomial,
     //blinds_opt: Option<&PolyCommitmentBlinds<G::ScalarField>>,
-    evals: Self::Evaluation,     // evaluation of \widetilde{Z}(r)
-    challenges: Self::Challenge, // point at which the polynomial is evaluated
+    evals: &'a Self::Evaluation,     // evaluation of \widetilde{Z}(r)
+    challenges: &'a Self::Challenge, // point at which the polynomial is evaluated
     //blind_Zr_opt: Option<&G::ScalarField>, // specifies a blind for Zr
     //gens: &PolyCommitmentGens<G>,
     //random_tape: &mut RandomTape<G>,
-    pk: impl Borrow<Self::ProverKey>,
+    pk: Self::ProverKey<'p>,
     transcript: &mut Transcript,
-  ) -> Result<Self::Proof, Self::Error> {
+  ) -> Result<Self::Proof, Self::Error> 
+    where
+      Self::Challenge: 'a,
+  {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
       PolyEvalProof::<G>::protocol_name(),
     );
 
-    let (blinds_opt, blind_Zr_opt, gens, random_tape) = pk.borrow();
+    let (blinds_opt, blind_Zr_opt, gens, random_tape) = pk;
 
     // assert vectors are of the right size
     assert_eq!(poly.get_num_vars(), challenges.len());
@@ -240,7 +243,7 @@ impl<G: CurveGroup> PolynomialCommitmentScheme for Hyrax<G> {
     let (proof, _C_LR, C_Zr_prime) = DotProductProofLog::prove(
       &gens.gens,
       transcript,
-      &mut random_tape,
+      random_tape,
       &LZ,
       &LZ_blind,
       &R,
@@ -252,15 +255,19 @@ impl<G: CurveGroup> PolynomialCommitmentScheme for Hyrax<G> {
     Ok((PolyEvalProof { proof }, C_Zr_prime))
   }
 
-  fn verify(
-    commitments: Self::Commitment,
+  fn verify<'a>(
+    commitments: &'a Self::Commitment,
     // Find a better way to handle this... perhaps verifier key???
-    evals: Self::Evaluation,
+    evals: &'a Self::Evaluation,
     challenges: Self::Challenge, // point at which the polynomial is evaluated
-    vk: impl Borrow<Self::VerifierKey>, // C_Zr commitment to \widetilde{Z}(r)
+    vk: &'a Self::VerifierKey, // C_Zr commitment to \widetilde{Z}(r)
     transcript: &mut Transcript,
     proof: Self::Proof,
-  ) -> Result<(), Self::Error> {
+  ) -> Result<(), Self::Error> 
+    where
+      Self::Commitment: 'a,
+      Self::VerifierKey: 'a,
+  {
     <Transcript as ProofTranscript<G>>::append_protocol_name(
       transcript,
       PolyEvalProof::<G>::protocol_name(),

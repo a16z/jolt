@@ -179,7 +179,7 @@ where
     &self,
     gens: &PolyCommitmentGens<G>,
   ) -> CombinedTableCommitment<G> {
-    let (comm_ops_val, _blinds) = Hyrax::commit(self.combined_poly, (*gens, None)).unwrap();
+    let (comm_ops_val, _blinds) = Hyrax::<G>::commit(&self.combined_poly, (gens.clone(), None)).unwrap();
     CombinedTableCommitment { comm_ops_val }
   }
 
@@ -267,10 +267,10 @@ impl<G: CurveGroup, const C: usize> CombinedTableEvalProof<G, C> {
     <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"joint_claim_eval", &eval_joint);
 
     let (proof_table_eval, _comm_table_eval) = Hyrax::prove(
-      *joint_poly,
-      Some(eval_joint),
-      r_joint,
-      (None, None, *gens, *random_tape),
+      &joint_poly,
+      &Some(eval_joint),
+      &r_joint,
+      (None, None, &gens, random_tape),
       transcript,
     )
     .unwrap();

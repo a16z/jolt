@@ -654,15 +654,15 @@ mod tests {
     assert_eq!(eval, G::ScalarField::from(28u64));
 
     let gens = PolyCommitmentGens::<G>::new(poly.get_num_vars(), b"test-two");
-    let (poly_commitment, blinds) = Hyrax::commit(poly, &(gens, None)).unwrap();
+    let (poly_commitment, blinds) = Hyrax::commit(&poly, (gens.clone(), None)).unwrap();
 
     let mut random_tape = RandomTape::new(b"proof");
     let mut prover_transcript = Transcript::new(b"example");
     let (proof, C_Zr) = Hyrax::prove(
-      poly,
-      Some(eval),
-      r,
-      (Some(blinds), None, gens, random_tape),
+      &poly,
+      &Some(eval),
+      &r,
+      (Some(&blinds), None, &gens, &mut random_tape),
       &mut prover_transcript,
     )
     .unwrap();
@@ -670,8 +670,8 @@ mod tests {
     let mut verifier_transcript = Transcript::new(b"example");
 
     assert!(Hyrax::verify(
-      (poly_commitment, blinds),
-      None,
+      &(poly_commitment, blinds),
+      &None,
       r,
       &gens,
       &mut verifier_transcript,

@@ -5,17 +5,14 @@ use crate::{
   lasso::{
     densified::DensifiedRepresentation,
     surge::{SparsePolyCommitmentGens, SparsePolynomialEvaluationProof},
-  },
-  subtables::{
+  }, subprotocols::{traits::PolynomialCommitmentScheme, hyrax::Hyrax}, subtables::{
     and::AndSubtableStrategy, lt::LTSubtableStrategy, range_check::RangeCheckSubtableStrategy,
     SubtableStrategy,
-  },
-  utils::math::Math,
-  utils::random::RandomTape,
+  }, utils::math::Math, utils::random::RandomTape
 };
 
 macro_rules! e2e_test {
-  ($test_name:ident, $Strategy:ty, $G:ty, $F:ty, $PCS:ty, $CK:expr, $C:expr, $M:expr, $sparsity:expr) => {
+  ($test_name:ident, $Strategy:ty, $G:ty, $F:ty, $C:expr, $M:expr, $sparsity:expr) => {
     #[test]
     fn $test_name() {
       use crate::utils::test::{gen_indices, gen_random_point};
@@ -36,8 +33,7 @@ macro_rules! e2e_test {
         DensifiedRepresentation::from_lookup_indices(&nz, log_M);
       let gens =
         SparsePolyCommitmentGens::<$G>::new(b"gens_sparse_poly", C, $sparsity, NUM_MEMORIES, log_M);
-      let ck = 
-      let commitment = dense.commit::<$G, $PCS>(&ck);
+      let commitment = dense.commit(&gens);
 
       let r: Vec<$F> = gen_random_point(log_s);
 
@@ -62,6 +58,7 @@ macro_rules! e2e_test {
   };
 }
 
+/// Hyrax
 e2e_test!(
   prove_4d_lt,
   LTSubtableStrategy,

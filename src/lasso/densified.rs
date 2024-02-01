@@ -82,14 +82,14 @@ impl<F: PrimeField, const C: usize> DensifiedRepresentation<F, C> {
     &self,
     gens: &SparsePolyCommitmentGens<G>,
   ) -> SparsePolynomialCommitment<G> {
-    let (l_variate_polys_commitment, _) = Hyrax::commit(
-      self.combined_l_variate_polys.clone(),
+    let (l_variate_polys_commitment, _) = Hyrax::<G>::commit(
+      &self.combined_l_variate_polys,
       (gens.gens_combined_l_variate.clone(), None),
     )
     .unwrap();
-    let (log_m_variate_polys_commitment, _) = Hyrax::commit(
-      self.combined_log_m_variate_polys.clone(),
-      (gens.gens_combined_log_m_variate, None),
+    let (log_m_variate_polys_commitment, _) = Hyrax::<G>::commit(
+      &self.combined_log_m_variate_polys,
+      (gens.gens_combined_log_m_variate.clone(), None),
     )
     .unwrap();
 

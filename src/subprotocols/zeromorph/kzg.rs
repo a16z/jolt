@@ -113,11 +113,10 @@ pub struct UnivariateKZG<P> {
 
 impl<P: Pairing> UnivariateKZG<P> {
   pub fn commit_offset(
-    g1_powers: impl Borrow<Vec<P::G1Affine>>,
+    g1_powers: &Vec<P::G1Affine>,
     poly: &UniPoly<P::ScalarField>,
     offset: usize,
   ) -> Result<P::G1Affine, KZGError> {
-    let g1_powers = g1_powers.borrow();
 
     if poly.degree() > g1_powers.len() {
       return Err(KZGError::CommitLengthError(poly.degree(), g1_powers.len()));
@@ -134,10 +133,9 @@ impl<P: Pairing> UnivariateKZG<P> {
   }
 
   pub fn commit(
-    g1_powers: impl Borrow<Vec<P::G1Affine>>,
+    g1_powers: &Vec<P::G1Affine>,
     poly: &UniPoly<P::ScalarField>,
   ) -> Result<P::G1Affine, KZGError> {
-    let g1_powers = g1_powers.borrow();
 
     if poly.degree() > g1_powers.len() {
       return Err(KZGError::CommitLengthError(poly.degree(), g1_powers.len()));

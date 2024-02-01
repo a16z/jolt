@@ -412,10 +412,10 @@ where
     );
 
     let (proof_ops, _) = Hyrax::prove(
-      dense.combined_l_variate_polys,
-      Some(joint_claim_eval_ops),
-      r_joint_ops,
-      (None, None, gens.gens_combined_l_variate, *random_tape),
+      &dense.combined_l_variate_polys,
+      &Some(joint_claim_eval_ops),
+      &r_joint_ops,
+      (None, None, &gens.gens_combined_l_variate, random_tape),
       transcript,
     )
     .unwrap();
@@ -448,10 +448,10 @@ where
     );
 
     let (proof_mem, _) = Hyrax::prove(
-      dense.combined_log_m_variate_polys,
-      Some(joint_claim_eval_mem),
-      r_joint_mem,
-      (None, None, gens.gens_combined_log_m_variate, *random_tape),
+      &dense.combined_log_m_variate_polys,
+      &Some(joint_claim_eval_mem),
+      &r_joint_mem,
+      (None, None, &gens.gens_combined_log_m_variate, random_tape),
       transcript,
     )
     .unwrap();
