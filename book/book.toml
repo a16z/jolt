@@ -1,0 +1,6 @@
+[book]
+authors = ["sam"]
+language = "en"
+multilingual = false
+src = "src"
+title = "jolt-book"
