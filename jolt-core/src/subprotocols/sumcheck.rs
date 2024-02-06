@@ -475,6 +475,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = tracing::span!(tracing::Level::TRACE, "eval_loop");
             let _enter = _span.enter();
 
+            let two: F = F::from(2u64);
+            let three: F = F::from(3u64);
             
             let batched_poly_evals: Vec<(F,F,F)> = lefts.par_iter_mut()
                 .zip(rights.par_iter_mut())
@@ -501,8 +503,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                         },
                         ((Some(low_left), None), (None, None)) => {
                             eval_0 += *low_left * eq_evals[i].0;
-                            eval_2 += (F::from(2u64) - low_left) * eq_evals[i].1;
-                            eval_3 += (F::from(3u64) - low_left - low_left) * eq_evals[i].2;
+                            eval_2 += (two - low_left) * eq_evals[i].1;
+                            eval_3 += (three - low_left - low_left) * eq_evals[i].2;
                         },
                         ((None, Some(high_left)), (None, None)) => {
                             let m = *high_left - F::one();
@@ -512,8 +514,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                         },
                         ((None, None), (Some(low_right), None)) => {
                             eval_0 += *low_right * eq_evals[i].0;
-                            eval_2 += (F::from(2u64) - low_right) * eq_evals[i].1;
-                            eval_3 += (F::from(3u64) - low_right - low_right) * eq_evals[i].2;
+                            eval_2 += (two - low_right) * eq_evals[i].1;
+                            eval_3 += (three - low_right - low_right) * eq_evals[i].2;
                         },
                         ((None, None), (None, Some(high_right))) => {
                             let m = *high_right - F::one();
@@ -584,7 +586,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             rayon::join(
                 || eq.bound_poly_var_top(&r_j),
-                || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j))
+                || poly_iter.par_iter_mut().for_each(|poly| { poly.bound_poly_var_top(&r_j); })
             );
 
             drop(_enter);
