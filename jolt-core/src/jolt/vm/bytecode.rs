@@ -6,6 +6,7 @@ use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
+use crate::poly::eq_poly::EqPolynomial;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
 use common::{to_ram_address, ELFInstruction};
@@ -204,13 +205,14 @@ impl<F: PrimeField> FiveTuplePoly<F> {
     }
 
     #[tracing::instrument(skip_all, name = "FiveTuplePoly::evaluate")]
-    fn evaluate(&self, r: &[F]) -> Vec<F> {
+    /// Evaluates the 5-tuple poly at the lagrange basis `chi`
+    fn evaluate_at_chi(&self, chis: &Vec<F>) -> Vec<F> {
         vec![
-            self.opcode.evaluate(r),
-            self.rd.evaluate(r),
-            self.rs1.evaluate(r),
-            self.rs2.evaluate(r),
-            self.imm.evaluate(r),
+            self.opcode.evaluate_at_chi(chis),
+            self.rd.evaluate_at_chi(chis),
+            self.rs1.evaluate_at_chi(chis),
+            self.rs2.evaluate_at_chi(chis),
+            self.imm.evaluate_at_chi(chis),
         ]
     }
 
@@ -664,10 +666,11 @@ where
 {
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
-            a_read_write_opening: polynomials.a_read_write.evaluate(&opening_point),
-            v_read_write_openings: polynomials.v_read_write.evaluate(&opening_point),
-            t_read_opening: polynomials.t_read.evaluate(&opening_point),
+            a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
+            v_read_write_openings: polynomials.v_read_write.evaluate_at_chi(&chis),
+            t_read_opening: polynomials.t_read.evaluate_at_chi(&chis),
         }
     }
 
@@ -733,10 +736,11 @@ where
 {
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_init_final: None,
-            v_init_final: polynomials.v_init_final.evaluate(&opening_point),
-            t_final: polynomials.t_final.evaluate(&opening_point),
+            v_init_final: polynomials.v_init_final.evaluate_at_chi(&chis),
+            t_final: polynomials.t_final.evaluate_at_chi(&chis),
         }
     }
 
