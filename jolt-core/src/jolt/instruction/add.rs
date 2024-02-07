@@ -60,6 +60,16 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
+    fn lookup_entry_u64(&self) -> u64 {
+        if WORD_SIZE == 32 {
+            (self.0 as u32).overflowing_add(self.1 as u32).0.into()
+        } else if WORD_SIZE == 64 {
+            self.0.overflowing_add(self.1).0
+        } else {
+            panic!("only implemented for u32 / u64")
+        }
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)

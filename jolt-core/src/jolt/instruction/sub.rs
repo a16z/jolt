@@ -62,6 +62,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
         )
     }
 
+    fn lookup_entry_u64(&self) -> u64 {
+        self.0.overflowing_sub(self.1).0.into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)

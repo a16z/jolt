@@ -58,6 +58,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn lookup_entry_u64(&self) -> u64 {
+        // TODO(sragss): Not sure this is correct.
+        (self.0 as i32).checked_shr(self.1 as u32).unwrap_or(0) as u64
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)

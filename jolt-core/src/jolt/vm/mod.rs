@@ -285,16 +285,14 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         let (mut chunks_x, mut chunks_y): (Vec<F>, Vec<F>) = instructions
             .iter()
             .flat_map(|op| {
-                let chunks_xy = op.operand_chunks(C, log_M);
-                let chunks_x = chunks_xy[0].clone();
-                let chunks_y = chunks_xy[1].clone();
+                let [chunks_x, chunks_y] = op.operand_chunks(C, log_M);
                 chunks_x.into_iter().zip(chunks_y.into_iter())
             })
             .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
             .unzip();
 
-        let mut chunks_query = instructions
-            .iter()
+        let chunks_query = instructions
+            .par_iter()
             .flat_map(|op| op.to_indices(C, log_M))
             .map(|x| x as u64)
             .map(F::from)
@@ -354,7 +352,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     fn compute_lookup_outputs(instructions: &Vec<Self::InstructionSet>) -> Vec<F> {
         instructions
             .par_iter()
-            .map(|op| op.lookup_entry::<F>(C, M))
+            .map(|op| F::from(op.lookup_entry_u64()))
             .collect()
     }
 }

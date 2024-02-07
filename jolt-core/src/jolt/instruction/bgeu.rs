@@ -32,6 +32,10 @@ impl JoltInstruction for BGEUInstruction {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
+    fn lookup_entry_u64(&self) -> u64 {
+        (self.0 >= self.1).into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)

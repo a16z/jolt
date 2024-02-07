@@ -51,6 +51,7 @@ pub trait JoltInstruction: Sync + Clone {
 
         self.combine_lookups(&subtable_lookup_values, C, M)
     }
+    fn lookup_entry_u64(&self) -> u64;
     fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
         assert!(log_M % 2 == 0, "log_M must be even for operand_chunks to work");
         self.operands()
