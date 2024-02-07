@@ -134,25 +134,25 @@ where
             .collect();
 
         let read_cts_read_timestamp = read_and_final_cts
-            .iter()
+            .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[0]))
             .collect::<Vec<DensePolynomial<F>>>()
             .try_into()
             .unwrap();
         let read_cts_global_minus_read = read_and_final_cts
-            .iter()
+            .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[1]))
             .collect::<Vec<DensePolynomial<F>>>()
             .try_into()
             .unwrap();
         let final_cts_read_timestamp = read_and_final_cts
-            .iter()
+            .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[2]))
             .collect::<Vec<DensePolynomial<F>>>()
             .try_into()
             .unwrap();
         let final_cts_global_minus_read = read_and_final_cts
-            .iter()
+            .par_iter()
             .map(|cts| DensePolynomial::from_u64(&cts[3]))
             .collect::<Vec<DensePolynomial<F>>>()
             .try_into()
