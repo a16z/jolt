@@ -419,6 +419,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
+        let _drop_params_span = trace_span!("drop_params");
+        let _drop_params_enter = _drop_params_span.enter();
+        drop(params);
+        drop(_drop_params_enter);
+        drop(_drop_params_span);
+
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
 
@@ -596,6 +602,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
+        let _drop_span = trace_span!("drop_params");
+        let _drop_enter = _drop_span.enter();
+        drop(params);
+        drop(_drop_enter);
+        drop(_drop_span);
+
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
 
@@ -675,16 +687,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
                 .into_par_iter()
                 .map(|batch_index| {
-                    let eval: (F, F, F) = (0..len)
-                        .map(|mle_index| {
+                    let (mut eval_0, mut eval_2, mut eval_3) = (F::zero(), F::zero(), F::zero());
+                    (0..len).for_each(|mle_index| {
                             let low = mle_index;
                             let high = len + mle_index;
 
                             let eq_eval = eq_evals[low];
                             let flag_eval = flag_evals[params.a_to_b[batch_index]][mle_index];
                             let poly_eval = &params.poly_As[batch_index];
-
-                            let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
 
                             let eval_point_0 = if flag_eval.0.is_zero() {
                                 eq_eval.0
@@ -725,17 +735,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             // let poly_2 = poly_eval[high] + poly_m;
                             // let poly_3 = poly_2 + poly_m;
 
+                            // let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
                             // let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
                             // let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
 
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        })
-                        .fold(
-                            (F::zero(), F::zero(), F::zero()),
-                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        );
+                            eval_0 += eval_point_0;
+                            eval_2 += eval_point_2;
+                            eval_3 += eval_point_3;
+                        });
 
-                        eval
+                    (eval_0, eval_2, eval_3)
                 })
                 .collect();
             drop(_evals_enter);
@@ -794,6 +803,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         }
 
         let claims_prod = params.get_final_evals();
+
+        let _drop_span = trace_span!("drop_params");
+        let _drop_enter = _drop_span.enter();
+        drop(params);
+        drop(_drop_enter);
+        drop(_drop_span);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
