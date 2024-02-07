@@ -8,6 +8,7 @@ use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_serialize::*;
+use ark_std::{One, Zero};
 use merlin::Transcript;
 use rayon::prelude::*;
 
@@ -110,7 +111,7 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         assert_eq!(R.len(), R_size);
 
         // compute vector-matrix product between L and Z viewed as a matrix
-        let vector_matrix_product = poly.bound(&L);
+        let vector_matrix_product = Self::vector_matrix_product(poly, &L);
 
         HyraxOpeningProof {
             vector_matrix_product,
@@ -151,6 +152,36 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         } else {
             Err(ProofVerifyError::InternalError)
         }
+    }
+
+    #[tracing::instrument(skip_all, name = "HyraxOpeningProof::vector_matrix_product")]
+    fn vector_matrix_product(
+        poly: &DensePolynomial<G::ScalarField>,
+        L: &[G::ScalarField],
+    ) -> Vec<G::ScalarField> {
+        let (left_num_vars, right_num_vars) = super::hyrax::matrix_dimensions(poly.get_num_vars());
+        let L_size = left_num_vars.pow2();
+        let R_size = right_num_vars.pow2();
+
+        let bound_vals = (0..R_size)
+            .into_par_iter()
+            .map(|i| {
+                (0..L_size)
+                    .map(|j| {
+                        // TODO(sragss): Gate this logic for small dense_mlpoly
+                        if poly.evals_ref()[j * R_size + i].is_zero() {
+                            G::ScalarField::zero()
+                        } else if poly.evals_ref()[j * R_size + i].is_one() {
+                            L[j]
+                        } else {
+                            L[j] * poly.evals_ref()[j * R_size + i]
+                        }
+                    })
+                    .sum()
+            })
+            .collect();
+
+        bound_vals
     }
 }
 

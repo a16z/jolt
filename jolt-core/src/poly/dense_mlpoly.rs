@@ -73,39 +73,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         )
     }
 
-    #[tracing::instrument(skip_all, name = "DensePolynomial.bound")]
-    pub fn bound(&self, L: &[F]) -> Vec<F> {
-        let (left_num_vars, right_num_vars) =
-            super::hyrax::matrix_dimensions(self.get_num_vars());
-        let L_size = left_num_vars.pow2();
-        let R_size = right_num_vars.pow2();
-
-        let min_inner_iter_size = 1 << 10;
-        let bound_vals = (0..R_size)
-            .into_par_iter()
-            .map(|i| {
-                (0..L_size)
-                    .into_par_iter()
-                    .with_min_len(min_inner_iter_size)
-                    .map(|j| {
-                        // TODO(sragss): Gate this logic for small dense_mlpoly
-                        if L[j].is_zero() || self.Z[j * R_size + i].is_zero() {
-                            F::zero()
-                        } else if L[j].is_one() {
-                            self.Z[j * R_size + i]
-                        } else if self.Z[j * R_size + i].is_one() {
-                            L[j]
-                        } else {
-                            L[j] * self.Z[j * R_size + i]
-                        }
-                    })
-                    .sum()
-            })
-            .collect();
-
-        bound_vals
-    }
-
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let n = self.len() / 2;
 

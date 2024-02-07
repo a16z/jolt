@@ -8,9 +8,7 @@ use crate::jolt::vm::read_write_memory::{
 };
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
-use crate::poly::dense_mlpoly::bench::{
-    init_commit_bench, run_commit_bench,
-};
+use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_curve25519::{EdwardsProjective, Fr};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
@@ -344,7 +342,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        <RV32IJoltVM as Jolt<'_, Fr, EdwardsProjective, 4, 65536>>::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
