@@ -1,16 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::poly::commitments::MultiCommitGens;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::subprotocols::dot_product::DotProductProof;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use ark_std::One;
 use merlin::Transcript;
 use rayon::prelude::*;
 use tracing::trace_span;
@@ -684,8 +681,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             let flag_eval = flag_evals[params.a_to_b[batch_index]][mle_index];
                             let poly_eval = &params.poly_As[batch_index];
 
-                            let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
-
                             let eval_point_0 = if flag_eval.0.is_zero() {
                                 eq_eval.0
                             } else if flag_eval.0.is_one() {
@@ -725,6 +720,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             // let poly_2 = poly_eval[high] + poly_m;
                             // let poly_3 = poly_2 + poly_m;
 
+                            // let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
                             // let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
                             // let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
 
@@ -795,6 +791,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
+        let _drop_span = trace_span!("drop_params");
+        let _drop_enter = _drop_span.enter();
+        drop(params);
+        drop(_drop_enter);
+        drop(_drop_span);
+
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
 }
@@ -864,131 +866,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         }
 
         Ok((e, r))
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct ZKSumcheckInstanceProof<G: CurveGroup> {
-    comm_polys: Vec<G>,
-    comm_evals: Vec<G>,
-    proofs: Vec<DotProductProof<G>>,
-}
-
-#[allow(dead_code)]
-impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
-    pub fn new(comm_polys: Vec<G>, comm_evals: Vec<G>, proofs: Vec<DotProductProof<G>>) -> Self {
-        ZKSumcheckInstanceProof {
-            comm_polys,
-            comm_evals,
-            proofs,
-        }
-    }
-
-    pub fn verify(
-        &self,
-        comm_claim: &G,
-        num_rounds: usize,
-        degree_bound: usize,
-        gens_1: &MultiCommitGens<G>,
-        gens_n: &MultiCommitGens<G>,
-        transcript: &mut Transcript,
-    ) -> Result<(G, Vec<G::ScalarField>), ProofVerifyError> {
-        // verify degree bound
-        assert_eq!(gens_n.n, degree_bound + 1);
-
-        // verify that there is a univariate polynomial for each round
-        assert_eq!(self.comm_polys.len(), num_rounds);
-        assert_eq!(self.comm_evals.len(), num_rounds);
-
-        let mut r: Vec<G::ScalarField> = Vec::new();
-        for i in 0..self.comm_polys.len() {
-            let comm_poly = &self.comm_polys[i];
-
-            // append the prover's polynomial to the transcript
-            <Transcript as ProofTranscript<G>>::append_point(transcript, b"comm_poly", comm_poly);
-
-            //derive the verifier's challenge for the next round
-            let r_i = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
-
-            // verify the proof of sum-check and evals
-            let res = {
-                let comm_claim_per_round = if i == 0 {
-                    comm_claim
-                } else {
-                    &self.comm_evals[i - 1]
-                };
-                let comm_eval = &self.comm_evals[i];
-
-                // add two claims to transcript
-                <Transcript as ProofTranscript<G>>::append_point(
-                    transcript,
-                    b"comm_claim_per_round",
-                    comm_claim_per_round,
-                );
-                <Transcript as ProofTranscript<G>>::append_point(
-                    transcript,
-                    b"comm_eval",
-                    comm_eval,
-                );
-
-                // produce two weights
-                let w = <Transcript as ProofTranscript<G>>::challenge_vector(
-                    transcript,
-                    b"combine_two_claims_to_one",
-                    2,
-                );
-
-                // compute a weighted sum of the RHS
-                let bases = vec![comm_claim_per_round.into_affine(), comm_eval.into_affine()];
-
-                let comm_target = VariableBaseMSM::msm(bases.as_ref(), w.as_ref()).unwrap();
-
-                let a = {
-                    // the vector to use to decommit for sum-check test
-                    let a_sc = {
-                        let mut a = vec![G::ScalarField::one(); degree_bound + 1];
-                        a[0] += G::ScalarField::one();
-                        a
-                    };
-
-                    // the vector to use to decommit for evaluation
-                    let a_eval = {
-                        let mut a = vec![G::ScalarField::one(); degree_bound + 1];
-                        for j in 1..a.len() {
-                            a[j] = a[j - 1] * r_i;
-                        }
-                        a
-                    };
-
-                    // take weighted sum of the two vectors using w
-                    assert_eq!(a_sc.len(), a_eval.len());
-                    (0..a_sc.len())
-                        .map(|i| w[0] * a_sc[i] + w[1] * a_eval[i])
-                        .collect::<Vec<G::ScalarField>>()
-                };
-
-                self.proofs[i]
-                    .verify(
-                        gens_1,
-                        gens_n,
-                        transcript,
-                        &a,
-                        &self.comm_polys[i],
-                        &comm_target,
-                    )
-                    .is_ok()
-            };
-            if !res {
-                return Err(ProofVerifyError::InternalError);
-            }
-
-            r.push(r_i);
-        }
-
-        Ok((self.comm_evals[self.comm_evals.len() - 1], r))
     }
 }
 
@@ -1140,6 +1017,7 @@ mod test {
     use crate::{poly::eq_poly::EqPolynomial, utils::math::Math};
     use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
     use ark_ff::Zero;
+    use ark_std::One;
 
     #[test]
     fn sumcheck_arbitrary_cubic() {
