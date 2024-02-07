@@ -979,9 +979,7 @@ where
         let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
             .map(|op| Self::instruction_to_memory_indices(&op))
             .collect();
-        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
-            ..Self::NUM_MEMORIES)
-            .into_par_iter()
+        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0..Self::NUM_MEMORIES).into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
@@ -1045,7 +1043,7 @@ where
         }
 
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
-            .iter()
+            .par_iter()
             .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
             .collect();
 
