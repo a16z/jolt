@@ -424,7 +424,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             match memory_access {
                 MemoryOp::Read(a, v) => {
                     let remapped_a = remap_address(a);
-                    // TODO(arasuarun): This is a hack to get the memory parts of the hash example to work
                     debug_assert_eq!(v, v_final[remapped_a as usize]);
                     a_read_write.push(remapped_a);
                     v_read.push(v);
@@ -450,9 +449,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         drop(_enter);
         drop(span);
 
-        // create a closure to convert u64 to F vector
         let to_f_vec =
-            |v: &Vec<u64>| -> Vec<F> { v.iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
+            |v: &Vec<u64>| -> Vec<F> { v.into_par_iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
 
         let un_remap_address = |a: &Vec<u64>| {
             a.iter()

@@ -3,7 +3,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use circom_scotia::r1cs;
 use merlin::Transcript;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::*;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
@@ -256,16 +256,23 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
-        prog_v_rw.extend(circuit_flags.chunks(N_FLAGS).map(|x| {
+        let span = tracing::span!(tracing::Level::INFO, "pack_flags");
+        let _enter = span.enter();
+        let precomputed_powers: Vec<F> = (0..N_FLAGS).map(|i| F::from(2u64.pow(i as u32))).collect();
+        let packed_flags: Vec<F> = circuit_flags.par_chunks(N_FLAGS).map(|x| {
             x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
-                packed + *flag * F::from(2u64.pow((N_FLAGS - 1 - i) as u32))
+                packed + *flag * precomputed_powers[N_FLAGS - 1 - i]
             })
-        }));
+        }).collect();
+        prog_v_rw.extend(packed_flags);
+        drop(_enter);
+        drop(span);
 
         /* Transformation for single-step version */
-        let prog_v_components = prog_v_rw.chunks(TRACE_LEN).collect::<Vec<_>>();
+        let span = tracing::span!(tracing::Level::INFO, "transform_to_single_step");
+        let _enter = span.enter();
+        let prog_v_components: Vec<&[F]> = prog_v_rw.chunks(TRACE_LEN).collect::<Vec<_>>();
         let mut new_prog_v_rw = Vec::with_capacity(prog_v_rw.len());
-
         for i in 0..TRACE_LEN {
             for component in &prog_v_components {
                 if let Some(value) = component.get(i) {
@@ -273,6 +280,8 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
                 }
             }
         }
+        drop(_enter);
+        drop(span);
 
         prog_v_rw = new_prog_v_rw;
         /* End of transformation for single-step version */
