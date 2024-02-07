@@ -1438,11 +1438,11 @@ where
     /// Materializes all subtables used by this Jolt instance.
     #[tracing::instrument(skip_all, name = "InstructionLookups.materialize_subtables")]
     fn materialize_subtables() -> Vec<Vec<F>> {
-        let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Subtables::COUNT);
-        for subtable in Subtables::iter() {
-            subtables.push(subtable.materialize(M));
-        }
-        subtables
+        Subtables::iter()
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|subtable| subtable.materialize(M))
+            .collect()
     }
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.

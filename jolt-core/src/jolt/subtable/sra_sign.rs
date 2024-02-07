@@ -20,6 +20,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> SraSignSubtable<F, WORD_SIZE> {
 }
 
 impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<F, WORD_SIZE> {
+    #[tracing::instrument(skip_all, "sra_sign::materialize")]
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = Vec::with_capacity(M);
 
@@ -31,12 +32,12 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
         for idx in 0..M {
             let (x, y) = split_bits(idx, operand_chunk_width);
 
-            let x_sign = F::from(((x >> sign_bit_index) & 1) as u64);
+            let x_sign: u64 = (x >> sign_bit_index) as u64 & 1u64;
 
             let row = (0..(y % WORD_SIZE) as u32)
                 .into_iter()
-                .fold(F::zero(), |acc, i: u32| {
-                    acc + F::from(1_u64 << (WORD_SIZE as u32 - 1 - i)) * x_sign
+                .fold(0u64, |acc, i: u32| {
+                    acc + ((1u64 << (WORD_SIZE as u32 - 1 - i)) * x_sign)
                 });
 
             entries.push(F::from(row));
