@@ -15,7 +15,7 @@ use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::prove_r1cs;
 use crate::r1cs::snark::JoltCircuit;
-use crate::utils::{errors::ProofVerifyError, random::RandomTape};
+use crate::utils::errors::ProofVerifyError;
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
 
 use self::instruction_lookups::{
@@ -66,21 +66,16 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         instructions: Vec<Self::InstructionSet>,
     ) -> (JoltProof<F, G, Self::Subtables>, JoltCommitments<G>) {
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape = RandomTape::new(b"Jolt prover randomness");
         let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
-        let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let (bytecode_proof, bytecode_polynomials, bytecode_commitment) =
+            Self::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
         let (memory_proof, memory_polynomials, memory_commitment) =
-            Self::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            Self::prove_memory(bytecode, memory_trace, &mut transcript);
         let (
             instruction_lookups_proof,
             instruction_lookups_polynomials,
             instruction_lookups_commitment,
-        ) = Self::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+        ) = Self::prove_instruction_lookups(instructions, &mut transcript);
         todo!("r1cs");
         let jolt_proof = JoltProof {
             bytecode: bytecode_proof,
@@ -123,7 +118,6 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     fn prove_instruction_lookups(
         ops: Vec<Self::InstructionSet>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> (
         InstructionLookupsProof<F, G, Self::Subtables>,
         InstructionPolynomials<F, G>,
@@ -131,7 +125,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     ) {
         let instruction_lookups =
             InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
-        instruction_lookups.prove_lookups(transcript, random_tape)
+        instruction_lookups.prove_lookups(transcript)
     }
 
     fn verify_instruction_lookups(
@@ -149,7 +143,6 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         mut bytecode_rows: Vec<ELFRow>,
         mut trace: Vec<ELFRow>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> (
         BytecodeProof<F, G>,
         BytecodePolynomials<F, G>,
@@ -159,13 +152,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         let batched_polys = polys.batch();
         let commitment = BytecodePolynomials::commit(&batched_polys);
 
-        let proof = polys.prove_memory_checking(
-            &polys,
-            &batched_polys,
-            &commitment,
-            transcript,
-            random_tape,
-        );
+        let proof = polys.prove_memory_checking(&polys, &batched_polys, transcript);
         (proof, polys, commitment)
     }
 
@@ -182,7 +169,6 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> (
         ReadWriteMemoryProof<F, G>,
         ReadWriteMemory<F, G>,
@@ -192,13 +178,8 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
 
-        let memory_checking_proof = memory.prove_memory_checking(
-            &memory,
-            &batched_polys,
-            &commitment,
-            transcript,
-            random_tape,
-        );
+        let memory_checking_proof =
+            memory.prove_memory_checking(&memory, &batched_polys, transcript);
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,
@@ -206,7 +187,6 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             &batched_polys,
             &commitment,
             transcript,
-            random_tape,
         );
 
         (
@@ -241,7 +221,6 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) {
         let N_FLAGS = 17;
         let TRACE_LEN = trace.len();

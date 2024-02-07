@@ -1,11 +1,8 @@
+use ark_ec::{CurveGroup, ScalarMul};
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
 use ark_ff::{prelude::*, PrimeField};
 use ark_std::{borrow::Borrow, iterable::Iterable, vec::Vec};
-
-use ark_ec::{CurveGroup, ScalarMul};
-
-#[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
 #[cfg(not(feature = "ark-msm"))]
@@ -336,7 +333,7 @@ pub(crate) fn flags_msm<G: CurveGroup>(scalars: &[G::ScalarField], bases: &[G::A
         .into_iter()
         .enumerate()
         .filter(|(_index, scalar)| !scalar.is_zero())
-        .map(|(index, scalar)| bases[index])
+        .map(|(index, _scalar)| bases[index])
         .sum();
 
     result
@@ -379,8 +376,6 @@ pub(crate) fn sm_msm<V: VariableBaseMSM>(
 mod tests {
 
     use ark_std::test_rng;
-
-    use crate::poly::dense_mlpoly::DensePolynomial;
 
     use super::*;
 

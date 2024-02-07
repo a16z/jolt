@@ -1,23 +1,14 @@
 #![allow(clippy::too_many_arguments)]
-use crate::msm::{flags_msm, sm_msm};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
-use super::commitments::{Commitments, MultiCommitGens};
+use super::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::subprotocols::batched_commitment::BatchedPolynomialCommitment;
-use crate::subprotocols::dot_product::{DotProductProof, DotProductProofGens};
-use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
-use crate::utils::random::RandomTape;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::AffineRepr;
 use ark_ec::CurveGroup;
-use ark_ff::BigInteger;
 use ark_ff::PrimeField;
-use ark_serialize::*;
-use ark_std::{test_rng, UniformRand, Zero};
 use core::ops::Index;
-use merlin::Transcript;
+use rayon::prelude::*;
 use std::ops::AddAssign;
 
 #[cfg(feature = "ark-msm")]
@@ -26,47 +17,11 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-#[cfg(feature = "multicore")]
-use rayon::prelude::*;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct DensePolynomial<F> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,
     Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
-}
-
-pub struct PolyCommitmentGens<G> {
-    pub gens: DotProductProofGens<G>,
-}
-
-impl<G: CurveGroup> PolyCommitmentGens<G> {
-    // the number of variables in the multilinear polynomial
-    pub fn new(num_vars: usize, label: &'static [u8]) -> Self {
-        let (_left, right) = EqPolynomial::<G::ScalarField>::compute_factored_lens(num_vars);
-        let gens = DotProductProofGens::new(right.pow2(), label);
-        PolyCommitmentGens { gens }
-    }
-}
-
-pub struct PolyCommitmentBlinds<F> {
-    blinds: Vec<F>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize, PartialEq)]
-pub struct PolyCommitment<G: CurveGroup> {
-    C: Vec<G>,
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct ConstPolyCommitment<G: CurveGroup> {
-    C: G,
-}
-
-pub enum CommitHint {
-    Normal,
-    Flags,
-    Small,
 }
 
 impl<F: PrimeField> DensePolynomial<F> {
@@ -118,120 +73,10 @@ impl<F: PrimeField> DensePolynomial<F> {
         )
     }
 
-    #[cfg(feature = "multicore")]
-    #[tracing::instrument(skip_all, name = "DensePolynomial.commit_inner")]
-    fn commit_inner<G: CurveGroup<ScalarField = F>>(
-        &self,
-        blinds: &[F],
-        gens: &MultiCommitGens<G>,
-    ) -> PolyCommitment<G> {
-        let L_size = blinds.len();
-        let R_size = self.Z.len() / L_size;
-        assert_eq!(L_size * R_size, self.Z.len());
-
-        let gens = CurveGroup::normalize_batch(&gens.G);
-
-        let C = (0..L_size)
-            .into_par_iter()
-            .map(|i| {
-                Commitments::batch_commit(self.Z[R_size * i..R_size * (i + 1)].as_ref(), &gens)
-            })
-            .collect();
-        PolyCommitment { C }
-    }
-
-    #[cfg(not(feature = "multicore"))]
-    fn commit_inner<G: CurveGroup<ScalarField = F>>(
-        &self,
-        blinds: &[F],
-        gens: &MultiCommitGens<G>,
-    ) -> PolyCommitment<G> {
-        let L_size = blinds.len();
-        let R_size = self.Z.len() / L_size;
-        assert_eq!(L_size * R_size, self.Z.len());
-        let C = (0..L_size)
-            .map(|i| {
-                Commitments::batch_commit(
-                    self.Z[R_size * i..R_size * (i + 1)].as_ref(),
-                    &blinds[i],
-                    gens,
-                )
-            })
-            .collect();
-        PolyCommitment { C }
-    }
-
-    pub fn commit<G>(
-        &self,
-        gens: &PolyCommitmentGens<G>,
-        random_tape: Option<&mut RandomTape<G>>,
-    ) -> (PolyCommitment<G>, PolyCommitmentBlinds<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
-        let n = self.Z.len();
-        let ell = self.get_num_vars();
-        assert_eq!(n, ell.pow2());
-
-        let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(ell);
-        let L_size = left_num_vars.pow2();
-        let R_size = right_num_vars.pow2();
-        assert_eq!(L_size * R_size, n);
-
-        let blinds = if let Some(t) = random_tape {
-            PolyCommitmentBlinds {
-                blinds: t.random_vector(b"poly_blinds", L_size),
-            }
-        } else {
-            PolyCommitmentBlinds {
-                blinds: vec![F::zero(); L_size],
-            }
-        };
-
-        (self.commit_inner(&blinds.blinds, &gens.gens.gens_n), blinds)
-    }
-
-    /// Commit given the lagrange coefficients are 0 / 1
-    pub fn commit_with_hint<G>(
-        &self,
-        gens: &PolyCommitmentGens<G>,
-        hint: CommitHint,
-    ) -> PolyCommitment<G>
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
-        let n = self.Z.len();
-        let ell = self.get_num_vars();
-        assert_eq!(n, ell.pow2());
-
-        let (left_num_vars, right_num_vars) = EqPolynomial::<F>::compute_factored_lens(ell);
-        let L_size = left_num_vars.pow2();
-        let R_size = right_num_vars.pow2();
-        assert_eq!(L_size * R_size, n);
-
-        let gens: Vec<G::Affine> = CurveGroup::normalize_batch(&gens.gens.gens_n.G);
-
-        let C = (0..L_size)
-            .into_par_iter()
-            .map(|i| {
-                let scalars = self.Z[R_size * i..R_size * (i + 1)].as_ref();
-                match hint {
-                    CommitHint::Normal => Commitments::batch_commit(scalars, &gens),
-                    CommitHint::Flags => flags_msm(scalars, &gens),
-                    CommitHint::Small => {
-                        let bigints: Vec<_> = scalars.iter().map(|s| s.into_bigint()).collect();
-                        sm_msm(&bigints, &gens)
-                    }
-                }
-            })
-            .collect();
-        PolyCommitment { C }
-    }
-
     #[tracing::instrument(skip_all, name = "DensePolynomial.bound")]
     pub fn bound(&self, L: &[F]) -> Vec<F> {
         let (left_num_vars, right_num_vars) =
-            EqPolynomial::<F>::compute_factored_lens(self.get_num_vars());
+            super::hyrax::matrix_dimensions(self.get_num_vars());
         let L_size = left_num_vars.pow2();
         let R_size = right_num_vars.pow2();
 
@@ -253,7 +98,6 @@ impl<F: PrimeField> DensePolynomial<F> {
                         } else {
                             L[j] * self.Z[j * R_size + i]
                         }
-                        // L[j] * self.Z[j * R_size + i]
                     })
                     .sum()
             })
@@ -416,23 +260,8 @@ impl<F: PrimeField> DensePolynomial<F> {
     where
         G: CurveGroup<ScalarField = F>,
     {
-        let generators = PolyCommitmentGens::new(self.num_vars, label);
-        let (joint_commitment, _) = self.commit(&generators, None);
-        BatchedPolynomialCommitment {
-            generators,
-            joint_commitment,
-        }
-    }
-
-    pub fn combined_commit_with_hint<G>(
-        &self,
-        label: &'static [u8],
-    ) -> BatchedPolynomialCommitment<G>
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
-        let generators = PolyCommitmentGens::new(self.num_vars, label);
-        let joint_commitment = self.commit_with_hint(&generators, CommitHint::Normal);
+        let generators = HyraxGenerators::new(self.num_vars, label);
+        let joint_commitment = HyraxCommitment::commit(&self, &generators);
         BatchedPolynomialCommitment {
             generators,
             joint_commitment,
@@ -467,138 +296,6 @@ impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
     }
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for PolyCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
-        transcript.append_message(label, b"poly_commitment_begin");
-        for i in 0..self.C.len() {
-            transcript.append_point(b"poly_commitment_share", &self.C[i]);
-        }
-        transcript.append_message(label, b"poly_commitment_end");
-    }
-}
-
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PolyEvalProof<G: CurveGroup> {
-    proof: DotProductProof<G>,
-}
-
-impl<G: CurveGroup> PolyEvalProof<G> {
-    fn protocol_name() -> &'static [u8] {
-        b"polynomial evaluation proof"
-    }
-
-    #[tracing::instrument(skip_all, name = "DensePolyEval.prove")]
-    pub fn prove(
-        poly: &DensePolynomial<G::ScalarField>,
-        blinds_opt: Option<&PolyCommitmentBlinds<G::ScalarField>>,
-        r: &[G::ScalarField], // point at which the polynomial is evaluated
-        Zr: &G::ScalarField,  // evaluation of \widetilde{Z}(r)
-        blind_Zr_opt: Option<&G::ScalarField>, // specifies a blind for Zr
-        gens: &PolyCommitmentGens<G>,
-        transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> (PolyEvalProof<G>, G) {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            PolyEvalProof::<G>::protocol_name(),
-        );
-
-        // assert vectors are of the right size
-        assert_eq!(poly.get_num_vars(), r.len());
-
-        let (left_num_vars, right_num_vars) =
-            EqPolynomial::<G::ScalarField>::compute_factored_lens(r.len());
-        let L_size = left_num_vars.pow2();
-        let R_size = right_num_vars.pow2();
-
-        let default_blinds = PolyCommitmentBlinds {
-            blinds: vec![G::ScalarField::zero(); L_size],
-        };
-        let blinds = blinds_opt.map_or(&default_blinds, |p| p);
-
-        assert_eq!(blinds.blinds.len(), L_size);
-
-        let zero = G::ScalarField::zero();
-        let blind_Zr = blind_Zr_opt.map_or(&zero, |p| p);
-
-        // compute the L and R vectors
-        let eq = EqPolynomial::new(r.to_vec());
-        let (L, R) = eq.compute_factored_evals();
-        assert_eq!(L.len(), L_size);
-        assert_eq!(R.len(), R_size);
-
-        // compute the vector underneath L*Z and the L*blinds
-        // compute vector-matrix product between L and Z viewed as a matrix
-        let LZ = poly.bound(&L);
-        let LZ_blind: G::ScalarField = (0..L.len()).map(|i| blinds.blinds[i] * L[i]).sum();
-
-        // a dot product proof of size R_size
-        let (proof, _C_LR, C_Zr_prime) = DotProductProof::prove(
-            &gens.gens.gens_1,
-            &gens.gens.gens_n,
-            transcript,
-            random_tape,
-            &LZ,
-            &LZ_blind,
-            &R,
-            Zr,
-            blind_Zr,
-        );
-
-        (PolyEvalProof { proof }, C_Zr_prime)
-    }
-
-    pub fn verify(
-        &self,
-        gens: &PolyCommitmentGens<G>,
-        transcript: &mut Transcript,
-        r: &[G::ScalarField], // point at which the polynomial is evaluated
-        C_Zr: &G,             // commitment to \widetilde{Z}(r)
-        comm: &PolyCommitment<G>,
-    ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            PolyEvalProof::<G>::protocol_name(),
-        );
-
-        // compute L and R
-        let eq: EqPolynomial<_> = EqPolynomial::new(r.to_vec());
-        let (L, R) = eq.compute_factored_evals();
-
-        // compute a weighted sum of commitments and L
-        let C_affine = G::normalize_batch(&comm.C);
-
-        let C_LZ = VariableBaseMSM::msm(C_affine.as_ref(), L.as_ref()).unwrap();
-
-        self.proof.verify(
-            &gens.gens.gens_1,
-            &gens.gens.gens_n,
-            transcript,
-            &R,
-            &C_LZ,
-            C_Zr,
-        )
-    }
-
-    pub fn verify_plain(
-        &self,
-        gens: &PolyCommitmentGens<G>,
-        transcript: &mut Transcript,
-        r: &[G::ScalarField], // point at which the polynomial is evaluated
-        Zr: &G::ScalarField,  // evaluation \widetilde{Z}(r)
-        comm: &PolyCommitment<G>,
-    ) -> Result<(), ProofVerifyError> {
-        // compute a commitment to Zr with a blind of zero
-        let C_Zr = Zr.commit(&G::ScalarField::zero(), &gens.gens.gens_1);
-
-        self.verify(gens, transcript, r, &C_Zr, comm)
-    }
-}
-
 impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
     fn add_assign(&mut self, rhs: &DensePolynomial<F>) {
         assert_eq!(self.num_vars, rhs.num_vars);
@@ -617,7 +314,6 @@ pub mod bench {
     use super::*;
     use crate::utils::gen_random_point;
     use ark_curve25519::{EdwardsProjective, Fr};
-    use ark_std::{rand::Rng, test_rng, One, Zero};
     use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
 
     pub fn dense_ml_poly_bench(group: &mut BenchmarkGroup<'_, WallTime>) {
@@ -648,69 +344,27 @@ pub mod bench {
 
     pub fn init_commit_bench(
         log_size: usize,
-    ) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
+    ) -> (HyraxGenerators<EdwardsProjective>, DensePolynomial<Fr>) {
         let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
-        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
+        let gens = HyraxGenerators::new(log_size, b"test_gens");
         let poly = DensePolynomial::new(evals.clone());
         (gens, poly)
     }
 
-    /// Gets a commitment benchmark for evaluations that are not random field elements but rather 0/1
-    pub fn init_commit_bench_ones(
-        log_size: usize,
-        pct_ones: f64,
-    ) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
-        let mut evals: Vec<Fr> = Vec::with_capacity(1 << log_size);
-        let mut rng = test_rng();
-        for _ in 0..(1 << log_size) {
-            let val = if rng.gen::<f64>() < pct_ones {
-                Fr::one()
-            } else {
-                Fr::zero()
-            };
-            evals.push(val);
-        }
-
-        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
-        let poly = DensePolynomial::new(evals.clone());
-        (gens, poly)
-    }
-
-    pub fn init_commit_small(
-        log_size: usize,
-        max_size: usize,
-    ) -> (PolyCommitmentGens<EdwardsProjective>, DensePolynomial<Fr>) {
-        let mut evals: Vec<Fr> = Vec::with_capacity(1 << log_size);
-        let mut rng = test_rng();
-        for _ in 0..(1 << log_size) {
-            let val = Fr::from(rng.gen::<u64>() % (max_size as u64));
-            evals.push(val);
-        }
-
-        let gens = PolyCommitmentGens::new(log_size, b"test_gens");
-        let poly = DensePolynomial::new(evals.clone());
-        (gens, poly)
-    }
-
-    pub fn run_commit_bench(
-        gens: PolyCommitmentGens<EdwardsProjective>,
-        poly: DensePolynomial<Fr>,
-    ) {
-        let result = black_box(poly.commit::<EdwardsProjective>(&gens, None));
+    pub fn run_commit_bench(gens: HyraxGenerators<EdwardsProjective>, poly: DensePolynomial<Fr>) {
+        let result = black_box(HyraxCommitment::commit(&poly, &gens));
         black_box(result);
     }
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::subprotocols::dot_product::DotProductProof;
     use ark_curve25519::EdwardsProjective as G1Projective;
     use ark_curve25519::Fr;
+    use ark_std::test_rng;
     use ark_std::One;
     use ark_std::UniformRand;
-    use ark_std::{rand::Rng, test_rng};
 
     fn evaluate_with_LR<G: CurveGroup>(
         Z: &[G::ScalarField],
@@ -733,7 +387,7 @@ mod tests {
             .collect::<Vec<G::ScalarField>>();
 
         // compute dot product between LZ and R
-        DotProductProof::<G>::compute_dotproduct(&LZ, &R)
+        compute_dotproduct(&LZ, &R)
     }
 
     #[test]
@@ -887,48 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn check_polynomial_commit() {
-        check_polynomial_commit_helper::<G1Projective>()
-    }
-
-    fn check_polynomial_commit_helper<G: CurveGroup>() {
-        let Z = vec![
-            G::ScalarField::one(),
-            G::ScalarField::from(2u64),
-            G::ScalarField::one(),
-            G::ScalarField::from(4u64),
-        ];
-        let poly = DensePolynomial::new(Z);
-
-        // r = [4,3]
-        let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
-        let eval = poly.evaluate(&r);
-        assert_eq!(eval, G::ScalarField::from(28u64));
-
-        let gens = PolyCommitmentGens::<G>::new(poly.get_num_vars(), b"test-two");
-        let (poly_commitment, blinds) = poly.commit(&gens, None);
-
-        let mut random_tape = RandomTape::new(b"proof");
-        let mut prover_transcript = Transcript::new(b"example");
-        let (proof, C_Zr) = PolyEvalProof::prove(
-            &poly,
-            Some(&blinds),
-            &r,
-            &eval,
-            None,
-            &gens,
-            &mut prover_transcript,
-            &mut random_tape,
-        );
-
-        let mut verifier_transcript = Transcript::new(b"example");
-
-        assert!(proof
-            .verify(&gens, &mut verifier_transcript, &r, &C_Zr, &poly_commitment)
-            .is_ok());
-    }
-
-    #[test]
     fn evaluation() {
         let num_evals = 4;
         let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
@@ -949,27 +561,5 @@ mod tests {
             dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
             Fr::from(8)
         );
-    }
-
-    #[test]
-    fn commit_with_hint_parity() {
-        let log_size = 6;
-        let max_size = 1 << 4;
-
-        let mut evals: Vec<Fr> = Vec::with_capacity(1 << log_size);
-        let mut rng = test_rng();
-        for _ in 0..(1 << log_size) {
-            let val = Fr::from(rng.gen::<u64>() % (max_size as u64));
-            evals.push(val);
-        }
-
-        let gens: PolyCommitmentGens<G1Projective> =
-            PolyCommitmentGens::new(log_size, b"test_gens");
-        let poly: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-
-        let a = poly.commit_with_hint(&gens, CommitHint::Normal);
-        let b = poly.commit_with_hint(&gens, CommitHint::Small);
-
-        assert_eq!(a, b);
     }
 }

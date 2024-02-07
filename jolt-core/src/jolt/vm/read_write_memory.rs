@@ -23,7 +23,7 @@ use crate::{
     subprotocols::batched_commitment::{
         BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
     },
-    utils::{errors::ProofVerifyError, mul_0_optimized, random::RandomTape},
+    utils::{errors::ProofVerifyError, mul_0_optimized},
 };
 use common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
@@ -587,11 +587,9 @@ where
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
-        commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         let combined_openings: Vec<F> = openings
             .a_read_write_opening
@@ -604,11 +602,9 @@ where
 
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_read_write,
-            &combined_openings,
             &opening_point,
-            &commitment.read_write_commitments,
+            &combined_openings,
             transcript,
-            random_tape,
         )
     }
 
@@ -681,19 +677,15 @@ where
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
-        commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_init_final,
-            &vec![openings.v_init, openings.v_final, openings.t_final],
             &opening_point,
-            &commitment.init_final_commitments,
+            &vec![openings.v_init, openings.v_final, openings.t_final],
             transcript,
-            random_tape,
         )
     }
 
@@ -906,20 +898,13 @@ mod tests {
         let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let mut random_tape = RandomTape::new(b"test_tape");
 
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
         let commitments = ReadWriteMemory::commit(&batched_polys);
 
-        let proof = rw_memory.prove_memory_checking(
-            &rw_memory,
-            &batched_polys,
-            &commitments,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut transcript)

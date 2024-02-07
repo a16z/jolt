@@ -9,7 +9,6 @@ use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
 };
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::random::RandomTape;
 use crate::utils::transcript::ProofTranscript;
 
 use ark_ec::CurveGroup;
@@ -101,9 +100,7 @@ where
         &self,
         polynomials: &Polynomials,
         batched_polys: &Polynomials::BatchedPolynomials,
-        commitments: &Polynomials::Commitment,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
         // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
 
@@ -119,20 +116,16 @@ where
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
             batched_polys,
-            commitments,
             &r_read_write,
             &read_write_openings,
             transcript,
-            random_tape,
         );
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
             batched_polys,
-            commitments,
             &r_init_final,
             &init_final_openings,
             transcript,
-            random_tape,
         );
 
         MemoryCheckingProof {
@@ -243,10 +236,16 @@ where
     }
 
     fn interleave_hashes(multiset_hashes: &MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
-        let read_write_hashes =
-            interleave(multiset_hashes.read_hashes.clone(), multiset_hashes.write_hashes.clone()).collect();
-        let init_final_hashes =
-            interleave(multiset_hashes.init_hashes.clone(), multiset_hashes.final_hashes.clone()).collect();
+        let read_write_hashes = interleave(
+            multiset_hashes.read_hashes.clone(),
+            multiset_hashes.write_hashes.clone(),
+        )
+        .collect();
+        let init_final_hashes = interleave(
+            multiset_hashes.init_hashes.clone(),
+            multiset_hashes.final_hashes.clone(),
+        )
+        .collect();
 
         (read_write_hashes, init_final_hashes)
     }
@@ -350,7 +349,8 @@ where
         Self::check_multiset_equality(&proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript::<G>(transcript);
 
-        let (read_write_hashes, init_final_hashes) = Self::interleave_hashes(&proof.multiset_hashes);
+        let (read_write_hashes, init_final_hashes) =
+            Self::interleave_hashes(&proof.multiset_hashes);
 
         let (claims_read_write, r_read_write) = proof
             .read_write_grand_product
@@ -484,11 +484,9 @@ mod tests {
             }
             fn prove_openings(
                 _: &FakeType,
-                _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
                 _: &mut Transcript,
-                _: &mut RandomTape<EdwardsProjective>,
             ) -> Self::Proof {
                 unimplemented!()
             }
@@ -686,11 +684,9 @@ mod tests {
             }
             fn prove_openings(
                 _: &FakeType,
-                _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
                 _: &mut Transcript,
-                _: &mut RandomTape<EdwardsProjective>,
             ) -> Self::Proof {
                 unimplemented!()
             }
@@ -934,11 +930,9 @@ mod tests {
             }
             fn prove_openings(
                 _: &FakeType,
-                _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
                 _: &mut Transcript,
-                _: &mut RandomTape<EdwardsProjective>,
             ) -> Self::Proof {
                 unimplemented!()
             }

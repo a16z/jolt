@@ -4,40 +4,54 @@ use ark_std::Zero;
 use merlin::Transcript;
 
 use crate::{
-    poly::dense_mlpoly::{DensePolynomial, PolyCommitment, PolyCommitmentGens, PolyEvalProof},
+    poly::dense_mlpoly::DensePolynomial,
+    poly::hyrax::{HyraxCommitment, HyraxGenerators, HyraxOpeningProof},
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        random::RandomTape,
         transcript::{AppendToTranscript, ProofTranscript},
     },
 };
 
 pub struct BatchedPolynomialCommitment<G: CurveGroup> {
-    pub generators: PolyCommitmentGens<G>,
-    pub joint_commitment: PolyCommitment<G>,
+    pub generators: HyraxGenerators<G>,
+    pub joint_commitment: HyraxCommitment<G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedPolynomialOpeningProof<G: CurveGroup> {
-    joint_proof: PolyEvalProof<G>,
+    joint_proof: HyraxOpeningProof<G>,
 }
 
 impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
-    fn prove_single(
-        joint_poly: &DensePolynomial<G::ScalarField>,
+    /// evaluates both polynomials at r and produces a joint proof of opening
+    #[tracing::instrument(skip_all, name = "BatchedPolynomialOpeningProof::prove")]
+    pub fn prove(
+        combined_poly: &DensePolynomial<G::ScalarField>,
         opening_point: &[G::ScalarField],
-        evals: &[G::ScalarField],
-        commitment: &BatchedPolynomialCommitment<G>,
+        openings: &[G::ScalarField],
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> PolyEvalProof<G> {
-        assert_eq!(joint_poly.get_num_vars(), opening_point.len() + evals.len().log_2());
+    ) -> Self {
+        <Transcript as ProofTranscript<G>>::append_protocol_name(
+            transcript,
+            BatchedPolynomialOpeningProof::<G>::protocol_name(),
+        );
+
+        let evals = {
+            let mut evals: Vec<G::ScalarField> = openings.to_vec();
+            evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
+            evals.to_vec()
+        };
+
+        assert_eq!(
+            combined_poly.get_num_vars(),
+            opening_point.len() + evals.len().log_2()
+        );
 
         // append the claimed evaluations to transcript
-        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
+        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
 
-        // n-to-1 reduction
+        // Reduce openings p_1(r), p_2(r), ..., p_n(r) to a single opening
         let (r_joint, eval_joint) = {
             let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
                 transcript,
@@ -54,7 +68,7 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
             let mut r_joint = challenges;
             r_joint.extend(opening_point);
 
-            debug_assert_eq!(joint_poly.evaluate(&r_joint), joint_claim_eval);
+            debug_assert_eq!(combined_poly.evaluate(&r_joint), joint_claim_eval);
             (r_joint, joint_claim_eval)
         };
         // decommit the joint polynomial at r_joint
@@ -64,64 +78,30 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
             &eval_joint,
         );
 
-        let (proof_table_eval, _comm_table_eval) = PolyEvalProof::prove(
-            joint_poly,
-            None,
-            &r_joint,
-            &eval_joint,
-            None,
-            &commitment.generators,
-            transcript,
-            random_tape,
-        );
-
-        proof_table_eval
-    }
-
-    /// evalues both polynomials at r and produces a joint proof of opening
-    #[tracing::instrument(skip_all, name = "BatchedPolynomialOpeningProof::prove")]
-    pub fn prove(
-        combined_poly: &DensePolynomial<G::ScalarField>,
-        openings: &[G::ScalarField],
-        opening_point: &[G::ScalarField],
-        commitment: &BatchedPolynomialCommitment<G>,
-        transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            BatchedPolynomialOpeningProof::<G>::protocol_name(),
-        );
-
-        let evals = {
-            let mut evals: Vec<G::ScalarField> = openings.to_vec();
-            evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-            evals.to_vec()
-        };
-        let joint_proof = BatchedPolynomialOpeningProof::<G>::prove_single(
-            combined_poly,
-            opening_point,
-            &evals,
-            commitment,
-            transcript,
-            random_tape,
-        );
+        let joint_proof = HyraxOpeningProof::prove(combined_poly, &r_joint, transcript);
 
         BatchedPolynomialOpeningProof { joint_proof }
     }
 
-    fn verify_single(
-        proof: &PolyEvalProof<G>,
-        commitment: &PolyCommitment<G>,
+    // verify evaluations of both polynomials at r
+    pub fn verify(
+        &self,
         opening_point: &[G::ScalarField],
-        evals: &[G::ScalarField],
-        gens: &PolyCommitmentGens<G>,
+        openings: &[G::ScalarField],
+        commitment: &BatchedPolynomialCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        // append the claimed evaluations to transcript
-        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", evals);
+        <Transcript as ProofTranscript<G>>::append_protocol_name(
+            transcript,
+            BatchedPolynomialOpeningProof::<G>::protocol_name(),
+        );
+        let mut evals = openings.to_owned();
+        evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
-        // n-to-1 reduction
+        // append the claimed evaluations to transcript
+        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &evals);
+
+        // Reduce openings p_1(r), p_2(r), ..., p_n(r) to a single opening
         let challenges = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
             b"challenge_combine_n_to_one",
@@ -143,31 +123,12 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
             &joint_claim_eval,
         );
 
-        proof.verify_plain(gens, transcript, &r_joint, &joint_claim_eval, commitment)
-    }
-
-    // verify evaluations of both polynomials at r
-    pub fn verify(
-        &self,
-        opening_point: &[G::ScalarField],
-        openings: &[G::ScalarField],
-        commitment: &BatchedPolynomialCommitment<G>,
-        transcript: &mut Transcript,
-    ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            BatchedPolynomialOpeningProof::<G>::protocol_name(),
-        );
-        let mut evals = openings.to_owned();
-        evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
-
-        BatchedPolynomialOpeningProof::<G>::verify_single(
-            &self.joint_proof,
-            &commitment.joint_commitment,
-            opening_point,
-            &evals,
+        self.joint_proof.verify(
             &commitment.generators,
             transcript,
+            &r_joint,
+            &joint_claim_eval,
+            &commitment.joint_commitment,
         )
     }
 

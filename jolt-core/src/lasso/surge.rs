@@ -20,7 +20,7 @@ use crate::{
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
-        errors::ProofVerifyError, math::Math, mul_0_1_optimized, random::RandomTape,
+        errors::ProofVerifyError, math::Math, mul_0_1_optimized, 
         transcript::ProofTranscript,
     },
 };
@@ -110,19 +110,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
-        commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         E_poly_openings: &Vec<F>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            E_poly_openings,
             opening_point,
-            &commitment.E_commitment,
+            E_poly_openings,
             transcript,
-            random_tape,
         )
     }
 
@@ -176,11 +172,9 @@ where
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
-        commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         let mut dim_read_openings = [
             openings.dim_openings.as_slice(),
@@ -192,19 +186,15 @@ where
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
-            &dim_read_openings,
             &opening_point,
-            &commitment.dim_read_commitment,
+            &dim_read_openings,
             transcript,
-            random_tape,
         );
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            &openings.E_poly_openings,
             &opening_point,
-            &commitment.E_commitment,
+            &openings.E_poly_openings,
             transcript,
-            random_tape,
         );
 
         SurgeReadWriteOpeningProof {
@@ -280,19 +270,15 @@ where
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
-        commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
-            &openings.final_openings,
             &opening_point,
-            &commitment.final_commitment,
+            &openings.final_openings,
             transcript,
-            random_tape,
         )
     }
 
@@ -609,17 +595,13 @@ where
                 transcript,
             );
 
-        let mut random_tape = RandomTape::new(b"proof");
-
         let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
                                                                                    // Create a single opening proof for the E polynomials
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
-            &commitment,
             &r_z,
             &sumcheck_openings,
             transcript,
-            &mut random_tape,
         );
 
         let primary_sumcheck = SurgePrimarySumcheck {
@@ -630,13 +612,7 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = self.prove_memory_checking(
-            &polynomials,
-            &batched_polys,
-            &commitment,
-            transcript,
-            &mut random_tape,
-        );
+        let memory_checking = self.prove_memory_checking(&polynomials, &batched_polys, transcript);
 
         SurgeProof {
             commitment,

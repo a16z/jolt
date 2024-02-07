@@ -125,8 +125,8 @@ subtable_enum!(
 
 pub enum RV32IJoltVM {}
 
-const C: usize = 4;
-const M: usize = 1 << 16;
+pub const C: usize = 4;
+pub const M: usize = 1 << 16;
 
 impl<F, G> Jolt<'_, F, G, C, M> for RV32IJoltVM
 where
@@ -154,7 +154,6 @@ mod tests {
     use crate::jolt::vm::{JoltCommitments, JoltProof, MemoryOp};
     use crate::{
         jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I},
-        utils::random::RandomTape,
     };
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -202,18 +201,12 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        let (bytecode_proof, _, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let (bytecode_proof, _, bytecode_commitment) =
+            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
         let (memory_proof, _, memory_commitment) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
         let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript);
 
         let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
             instruction_lookups: instruction_lookups_proof,
@@ -293,13 +286,11 @@ mod tests {
         let circuit_flags = converted_trace
             .clone()
             .iter()
-            .flat_map(|row| row.to_circuit_flags())
+            .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        RV32IJoltVM::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -307,7 +298,6 @@ mod tests {
             memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
-            &mut random_tape,
         );
     }
 
@@ -355,18 +345,12 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        let (bytecode_proof, _, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let (bytecode_proof, _, bytecode_commitment) =
+            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
         let (memory_proof, _, memory_commitment) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
         let (instruction_lookups, _, instruction_lookups_commitment) =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript);
 
         let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
             instruction_lookups,
@@ -450,9 +434,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        RV32IJoltVM::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -460,7 +442,6 @@ mod tests {
             memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
-            &mut random_tape,
         );
     }
 
@@ -473,10 +454,12 @@ mod tests {
             .collect();
 
         let mut prover_transcript = Transcript::new(b"example");
-        let mut random_tape = RandomTape::<EdwardsProjective>::new(b"test_tape");
 
         let (proof, _, commitment) =
-            RV32IJoltVM::prove_instruction_lookups(ops, &mut prover_transcript, &mut random_tape);
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
+                ops,
+                &mut prover_transcript,
+            );
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(RV32IJoltVM::verify_instruction_lookups(
             proof,
