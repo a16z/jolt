@@ -20,7 +20,7 @@ use crate::{
     subprotocols::batched_commitment::{
         BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
     },
-    utils::{errors::ProofVerifyError, is_power_of_two, random::RandomTape},
+    utils::{errors::ProofVerifyError, is_power_of_two},
 };
 
 pub type BytecodeProof<F, G> = MemoryCheckingProof<
@@ -674,11 +674,9 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
-        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         let mut combined_openings: Vec<F> = vec![
             openings.a_read_write_opening.clone(),
@@ -688,11 +686,9 @@ where
 
         BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_read_write,
-            &combined_openings,
             &opening_point,
-            &commitment.read_write_commitments,
+            &combined_openings,
             transcript,
-            random_tape,
         )
     }
 
@@ -747,21 +743,17 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
-        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         let mut combined_openings: Vec<F> = vec![openings.t_final];
         combined_openings.extend(openings.v_init_final.iter());
         BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_init_final,
-            &combined_openings,
             &opening_point,
-            &commitment.init_final_commitments,
+            &combined_openings,
             transcript,
-            random_tape,
         )
     }
 
@@ -866,17 +858,10 @@ mod tests {
             BytecodePolynomials::new(program, trace);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let mut random_tape = RandomTape::new(b"test_tape");
 
         let batched_polys = polys.batch();
         let commitments = BytecodePolynomials::commit(&batched_polys);
-        let proof = polys.prove_memory_checking(
-            &polys,
-            &batched_polys,
-            &commitments,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let proof = polys.prove_memory_checking(&polys, &batched_polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         BytecodePolynomials::verify_memory_checking(proof, &commitments, &mut transcript)
@@ -904,15 +889,8 @@ mod tests {
         let commitments = BytecodePolynomials::commit(&batch);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let mut random_tape = RandomTape::new(b"test_tape");
 
-        let proof = polys.prove_memory_checking(
-            &polys,
-            &batch,
-            &commitments,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let proof = polys.prove_memory_checking(&polys, &batch, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         BytecodePolynomials::verify_memory_checking(proof, &commitments, &mut transcript)

@@ -37,14 +37,10 @@ impl<F: PrimeField> EqPolynomial<F> {
         evals
     }
 
-    pub fn compute_factored_lens(ell: usize) -> (usize, usize) {
-        (ell / 2, ell - ell / 2)
-    }
-
     #[tracing::instrument(skip_all, name = "EqPolynomial.compute_factored_evals")]
     pub fn compute_factored_evals(&self) -> (Vec<F>, Vec<F>) {
         let ell = self.r.len();
-        let (left_num_vars, _right_num_vars) = Self::compute_factored_lens(ell);
+        let (left_num_vars, _right_num_vars) = super::hyrax::matrix_dimensions(ell);
 
         let L = EqPolynomial::new(self.r[..left_num_vars].to_vec()).evals();
         let R = EqPolynomial::new(self.r[left_num_vars..ell].to_vec()).evals();

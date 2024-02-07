@@ -1,15 +1,14 @@
 use crate::jolt::instruction::add::ADDInstruction;
 use crate::jolt::trace::rv::RVTraceRow;
 use crate::jolt::trace::JoltProvableTrace;
-use crate::jolt::vm::bytecode::{random_bytecode_trace, ELFRow};
-use crate::jolt::vm::read_write_memory::{random_memory_trace, MemoryOp, RandomInstruction};
-use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, RV32I};
-use crate::jolt::vm::Jolt;
-use crate::poly::dense_mlpoly::bench::{
-    init_commit_bench, init_commit_bench_ones, init_commit_small, run_commit_bench,
+use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, ELFRow};
+use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
+use crate::jolt::vm::read_write_memory::{
+    random_memory_trace, MemoryOp, RandomInstruction, ReadWriteMemory,
 };
-use crate::poly::dense_mlpoly::CommitHint;
-use crate::utils::random::RandomTape;
+use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
+use crate::jolt::vm::Jolt;
+use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_curve25519::{EdwardsProjective, Fr};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
@@ -76,16 +75,12 @@ fn prove_e2e_except_r1cs(
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let mut random_tape: RandomTape<EdwardsProjective> = RandomTape::new(b"test_tape");
-        let _ = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
-        let _ =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
-        let _ = RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
+        let _: (_, BytecodePolynomials<Fr, EdwardsProjective>, _) =
+            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
+        let _: (_, ReadWriteMemory<Fr, EdwardsProjective>, _) =
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
+        let _: (_, InstructionPolynomials<Fr, EdwardsProjective>, _) =
+            RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript);
     });
     vec![(
         tracing::info_span!("prove_bytecode + prove_memory + prove_instruction_lookups"),
@@ -109,13 +104,8 @@ fn prove_bytecode(
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let mut random_tape: RandomTape<EdwardsProjective> = RandomTape::new(b"test_tape");
-        let _ = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let _: (_, BytecodePolynomials<Fr, EdwardsProjective>, _) =
+            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
     });
     vec![(tracing::info_span!("prove_bytecode"), work)]
 }
@@ -138,9 +128,8 @@ fn prove_memory(
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let mut random_tape: RandomTape<EdwardsProjective> = RandomTape::new(b"test_tape");
-        let _ =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+        let _: (_, ReadWriteMemory<Fr, EdwardsProjective>, _) =
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
     });
     vec![(tracing::info_span!("prove_memory"), work)]
 }
@@ -155,8 +144,8 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let mut random_tape: RandomTape<EdwardsProjective> = RandomTape::new(b"test_tape");
-        RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript, &mut random_tape);
+        let _: (_, InstructionPolynomials<Fr, EdwardsProjective>, _) =
+            RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript);
     });
     vec![(tracing::info_span!("prove_instruction_lookups"), work)]
 }
@@ -176,49 +165,6 @@ fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             Box::new(task) as Box<dyn FnOnce()>,
         ));
     }
-
-    // Commit only 0 / 1
-    for &log_size in &log_sizes {
-        let (gens, poly) = init_commit_bench_ones(log_size, 0.3);
-        let task = move || {
-            black_box(poly.commit_with_hint(&gens, CommitHint::Normal));
-        };
-        tasks.push((
-            tracing::info_span!("DensePoly::commit(0/1)", log_size = log_size),
-            Box::new(task) as Box<dyn FnOnce()>,
-        ));
-
-        let (gens, poly) = init_commit_bench_ones(log_size, 0.3);
-        let task = move || {
-            black_box(poly.commit_with_hint(&gens, CommitHint::Flags));
-        };
-        tasks.push((
-            tracing::info_span!("DensePoly::commit_with_hint(0/1)", log_size = log_size),
-            Box::new(task) as Box<dyn FnOnce()>,
-        ));
-    }
-
-    // Commit only small field elements (as if counts / indices)
-    for &log_size in &log_sizes {
-        let (gens, poly) = init_commit_small(log_size, 1 << 16);
-        let task = move || {
-            black_box(poly.commit_with_hint(&gens, CommitHint::Normal));
-        };
-        tasks.push((
-            tracing::info_span!("DensePoly::commit(small)", log_size = log_size),
-            Box::new(task) as Box<dyn FnOnce()>,
-        ));
-
-        let (gens, poly) = init_commit_small(log_size, 1 << 16);
-        let task = move || {
-            black_box(poly.commit_with_hint(&gens, CommitHint::Small));
-        };
-        tasks.push((
-            tracing::info_span!("DensePoly::commit_with_hint(small)", log_size = log_size),
-            Box::new(task) as Box<dyn FnOnce()>,
-        ));
-    }
-
     tasks
 }
 
@@ -266,14 +212,12 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let circuit_flags = converted_trace
             .iter()
-            .flat_map(|row| row.to_circuit_flags())
+            .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
         // TODO(sragss): Swap this to &Vec<Instructions> to avoid clone
-        RV32IJoltVM::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, Fr, EdwardsProjective, C, M>>::prove_r1cs(
             instructions_r1cs.clone(),
             bytecode_rows,
             bytecode_trace.clone(),
@@ -281,7 +225,6 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
-            &mut random_tape,
         );
 
         let bytecode_location = JoltPaths::bytecode_path("hash");
@@ -303,21 +246,22 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        let (bytecode_proof, _, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let (bytecode_proof, _, bytecode_commitment) =
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_bytecode(
+                bytecode_rows,
+                bytecode_trace,
+                &mut transcript,
+            );
         let (memory_proof, _, memory_commitment) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_memory(
+                bytecode,
+                memory_trace,
+                &mut transcript,
+            );
         let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            RV32IJoltVM::prove_instruction_lookups(
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
                 instructions_r1cs,
                 &mut transcript,
-                &mut random_tape,
             );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
@@ -398,9 +342,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        RV32IJoltVM::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -408,7 +350,6 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             memory_trace_r1cs,
             circuit_flags,
             &mut transcript,
-            &mut random_tape,
         );
 
         // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
@@ -453,18 +394,23 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut random_tape: RandomTape<EdwardsProjective> =
-            RandomTape::new(b"Jolt prover randomness");
-        let (bytecode_proof, _, bytecode_commitment) = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
-            bytecode_trace,
-            &mut transcript,
-            &mut random_tape,
-        );
+        let (bytecode_proof, _, bytecode_commitment) =
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_bytecode(
+                bytecode_rows,
+                bytecode_trace,
+                &mut transcript,
+            );
         let (memory_proof, _, memory_commitment) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript, &mut random_tape);
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_memory(
+                bytecode,
+                memory_trace,
+                &mut transcript,
+            );
         let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript, &mut random_tape);
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
+                instructions,
+                &mut transcript,
+            );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         assert!(

@@ -12,6 +12,7 @@ use tracing::trace_span;
 use rayon::prelude::*;
 
 use crate::lasso::memory_checking::MultisetHashes;
+use crate::poly::hyrax::HyraxGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     jolt::{
@@ -20,7 +21,7 @@ use crate::{
     },
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
@@ -34,7 +35,6 @@ use crate::{
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        random::RandomTape,
         transcript::{AppendToTranscript, ProofTranscript},
     },
 };
@@ -98,10 +98,10 @@ pub struct InstructionCommitment<G: CurveGroup> {
 
 /// Contains generators used to commit to InstructionPolynomials.
 pub struct InstructionCommitmentGenerators<G: CurveGroup> {
-    pub dim_read_commitment_gens: PolyCommitmentGens<G>,
-    pub final_commitment_gens: PolyCommitmentGens<G>,
-    pub E_commitment_gens: PolyCommitmentGens<G>,
-    pub flag_commitment_gens: PolyCommitmentGens<G>,
+    pub dim_read_commitment_gens: HyraxGenerators<G>,
+    pub final_commitment_gens: HyraxGenerators<G>,
+    pub E_commitment_gens: HyraxGenerators<G>,
+    pub flag_commitment_gens: HyraxGenerators<G>,
 }
 
 // TODO: macro?
@@ -148,7 +148,7 @@ where
             .combined_commit(b"BatchedInstructionPolynomials.E_poly");
         let instruction_flag_commitment = batched_polys
             .batched_flag
-            .combined_commit_with_hint(b"BatchedInstructionPolynomials.flag");
+            .combined_commit(b"BatchedInstructionPolynomials.flag");
 
         Self::Commitment {
             dim_read_commitment,
@@ -192,27 +192,21 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            &openings.E_poly_openings,
             opening_point,
-            &commitment.E_commitment,
+            &openings.E_poly_openings,
             transcript,
-            random_tape,
         );
         let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_flag,
-            &openings.flag_openings,
             opening_point,
-            &commitment.instruction_flag_commitment,
+            &openings.flag_openings,
             transcript,
-            random_tape,
         );
 
         PrimarySumcheckOpeningProof {
@@ -314,11 +308,9 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         let mut dim_read_openings = [
             openings.dim_openings.as_slice(),
@@ -330,27 +322,21 @@ where
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
-            &dim_read_openings,
             &opening_point,
-            &commitment.dim_read_commitment,
+            &dim_read_openings,
             transcript,
-            random_tape,
         );
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
-            &openings.E_poly_openings,
             &opening_point,
-            &commitment.E_commitment,
+            &openings.E_poly_openings,
             transcript,
-            random_tape,
         );
         let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_flag,
-            &openings.flag_openings,
             &opening_point,
-            &commitment.instruction_flag_commitment,
+            &openings.flag_openings,
             transcript,
-            random_tape,
         );
 
         InstructionReadWriteOpeningProof {
@@ -437,19 +423,15 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
-            &openings.final_openings,
             &opening_point,
-            &commitment.final_commitment,
+            &openings.final_openings,
             transcript,
-            random_tape,
         )
     }
 
@@ -851,7 +833,6 @@ where
     pub fn prove_lookups(
         &self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> (
         InstructionLookupsProof<F, G, Subtables>,
         InstructionPolynomials<F, G>,
@@ -905,11 +886,9 @@ where
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
-            &commitment,
             &r_primary_sumcheck,
             &sumcheck_openings,
             transcript,
-            random_tape,
         );
 
         let primary_sumcheck = PrimarySumcheck {
@@ -920,13 +899,7 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = self.prove_memory_checking(
-            &polynomials,
-            &batched_polys,
-            &commitment,
-            transcript,
-            random_tape,
-        );
+        let memory_checking = self.prove_memory_checking(&polynomials, &batched_polys, transcript);
 
         (
             InstructionLookupsProof {

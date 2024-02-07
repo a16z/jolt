@@ -4,7 +4,7 @@ use merlin::Transcript;
 
 use crate::{
     subprotocols::batched_commitment::BatchedPolynomialOpeningProof,
-    utils::{errors::ProofVerifyError, random::RandomTape},
+    utils::{errors::ProofVerifyError},
 };
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
@@ -42,11 +42,9 @@ where
     /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
     fn prove_openings(
         polynomials: &Polynomials::BatchedPolynomials,
-        commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
     ) -> Self::Proof;
 
     /// Often some of the openings do not require an opening proof provided by the prover, and
