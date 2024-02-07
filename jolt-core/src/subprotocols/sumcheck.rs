@@ -419,9 +419,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
-        let _drop_params_span = trace_span!("drop_params");
+        let _drop_params_span = trace_span!("drop_polys");
         let _drop_params_enter = _drop_params_span.enter();
-        drop(params);
+        drop(params.poly_As);
+        drop(params.poly_Bs);
         drop(_drop_params_enter);
         drop(_drop_params_span);
 
@@ -598,15 +599,18 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             e = poly.evaluate(&r_j);
             cubic_polys.push(poly.compress());
+
+            let _drop_eq_evals_span = trace_span!("drop_eq_evals");
+            let _drop_eq_evals_enter = _drop_eq_evals_span.enter();
+            drop(eq_evals);
+            drop(_drop_eq_evals_enter);
+            drop(_drop_eq_evals_span);
         }
 
         let claims_prod = params.get_final_evals();
 
-        let _drop_span = trace_span!("drop_params");
-        let _drop_enter = _drop_span.enter();
-        drop(params);
-        drop(_drop_enter);
-        drop(_drop_span);
+        std::mem::forget(params.poly_As);
+        std::mem::forget(params.poly_Bs);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -800,15 +804,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             e = poly.evaluate(&r_j);
             cubic_polys.push(poly.compress());
+
+            // TODO(sragss): Try the bumpalo herd allocator for flag_evals
+            std::mem::forget(flag_evals);
+            std::mem::forget(eq_evals);
         }
 
         let claims_prod = params.get_final_evals();
 
-        let _drop_span = trace_span!("drop_params");
-        let _drop_enter = _drop_span.enter();
-        drop(params);
-        drop(_drop_enter);
-        drop(_drop_span);
+        std::mem::forget(params.poly_As);
+        std::mem::forget(params.poly_Bs);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
