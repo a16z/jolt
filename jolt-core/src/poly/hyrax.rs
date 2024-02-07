@@ -2,10 +2,10 @@ use crate::poly::eq_poly::EqPolynomial;
 
 use super::dense_mlpoly::DensePolynomial;
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
-use crate::utils::compute_dotproduct;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::*;
 use ark_std::{One, Zero};
@@ -159,29 +159,24 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         poly: &DensePolynomial<G::ScalarField>,
         L: &[G::ScalarField],
     ) -> Vec<G::ScalarField> {
-        let (left_num_vars, right_num_vars) = super::hyrax::matrix_dimensions(poly.get_num_vars());
-        let L_size = left_num_vars.pow2();
+        let (_left_num_vars, right_num_vars) = super::hyrax::matrix_dimensions(poly.get_num_vars());
         let R_size = right_num_vars.pow2();
 
-        let bound_vals = (0..R_size)
-            .into_par_iter()
-            .map(|i| {
-                (0..L_size)
-                    .map(|j| {
-                        // TODO(sragss): Gate this logic for small dense_mlpoly
-                        if poly.evals_ref()[j * R_size + i].is_zero() {
-                            G::ScalarField::zero()
-                        } else if poly.evals_ref()[j * R_size + i].is_one() {
-                            L[j]
-                        } else {
-                            L[j] * poly.evals_ref()[j * R_size + i]
-                        }
-                    })
-                    .sum()
+        poly.evals_ref()
+            .par_chunks(R_size)
+            .enumerate()
+            .map(|(i, row)| {
+                row.iter()
+                    .map(|x| mul_0_1_optimized(&L[i], x))
+                    .collect::<Vec<G::ScalarField>>()
             })
-            .collect();
-
-        bound_vals
+            .reduce(
+                || vec![G::ScalarField::zero(); R_size],
+                |mut acc: Vec<_>, row| {
+                    acc.iter_mut().zip(row).for_each(|(x, y)| *x += y);
+                    acc
+                },
+            )
     }
 }
 
