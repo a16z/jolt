@@ -854,8 +854,8 @@ where
             self.ops.len().log_2(),
         );
 
-        let eq = EqPolynomial::new(r_eq.to_vec());
-        let sumcheck_claim = Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq);
+        let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
+        let sumcheck_claim = Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq_evals);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -863,7 +863,7 @@ where
             &sumcheck_claim,
         );
 
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r_eq).evals());
+        let mut eq_poly = DensePolynomial::new(eq_evals);
         let num_rounds = self.ops.len().log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
@@ -1305,15 +1305,13 @@ where
     fn compute_sumcheck_claim(
         ops: &Vec<InstructionSet>,
         E_polys: &Vec<DensePolynomial<F>>,
-        eq: &EqPolynomial<F>,
+        eq_evals: &Vec<F>,
     ) -> F {
         #[cfg(test)]
         {
             let m = ops.len().next_power_of_two();
             E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
         }
-
-        let eq_evals = eq.evals();
 
         let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
             .map(|op| Self::instruction_to_memory_indices(&op))
