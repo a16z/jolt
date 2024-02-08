@@ -11,6 +11,8 @@ use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT
 use common::RV32IM;
 use common::{to_ram_address, ELFInstruction};
 
+use rayon::prelude::*;
+
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
@@ -504,86 +506,77 @@ where
         let num_ops = polynomials.a_read_write.len();
         let memory_size = polynomials.v_init_final.opcode.len();
 
-        let (read_leaves, init_leaves) = rayon::join(
-            || {
-                let read_fingerprints = (0..num_ops).map(|i| {
-                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                        &[
-                            polynomials.a_read_write[i],
-                            polynomials.v_read_write.opcode[i],
-                            polynomials.v_read_write.rd[i],
-                            polynomials.v_read_write.rs1[i],
-                            polynomials.v_read_write.rs2[i],
-                            polynomials.v_read_write.imm[i],
-                            polynomials.t_read[i],
-                        ],
-                        gamma,
-                        tau,
-                    )
-                })
-                .collect();
-                DensePolynomial::new(read_fingerprints)
-            },
-            || {
-                let init_fingerprints = (0..memory_size).map(|i| {
-                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                        &[
-                            F::from(i as u64),
-                            polynomials.v_init_final.opcode[i],
-                            polynomials.v_init_final.rd[i],
-                            polynomials.v_init_final.rs1[i],
-                            polynomials.v_init_final.rs2[i],
-                            polynomials.v_init_final.imm[i],
-                            F::zero(),
-                        ],
-                        gamma,
-                        tau,
-                    )
-                })
-                .collect();
-                DensePolynomial::new(init_fingerprints)
-            },
-        );
-        let (write_leaves, final_leaves) = rayon::join(
-            || {
-                let read_fingerprints = (0..num_ops).map(|i| {
-                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                        &[
-                            polynomials.a_read_write[i],
-                            polynomials.v_read_write.opcode[i],
-                            polynomials.v_read_write.rd[i],
-                            polynomials.v_read_write.rs1[i],
-                            polynomials.v_read_write.rs2[i],
-                            polynomials.v_read_write.imm[i],
-                            polynomials.t_read[i] + F::one(),
-                        ],
-                        gamma,
-                        tau,
-                    )
-                })
-                .collect();
-                DensePolynomial::new(read_fingerprints)
-            },
-            || {
-                let final_fingerprints = (0..memory_size).map(|i| {
-                    <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                        &[
-                            F::from(i as u64),
-                            polynomials.v_init_final.opcode[i],
-                            polynomials.v_init_final.rd[i],
-                            polynomials.v_init_final.rs1[i],
-                            polynomials.v_init_final.rs2[i],
-                            polynomials.v_init_final.imm[i],
-                            polynomials.t_final[i],
-                        ],
-                        gamma,
-                        tau,
-                    )
-                })
-                .collect();
-                DensePolynomial::new(final_fingerprints)
-            },
-        );
+        let read_fingerprints = (0..num_ops).into_par_iter().map(|i| {
+            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                &[
+                    polynomials.a_read_write[i],
+                    polynomials.v_read_write.opcode[i],
+                    polynomials.v_read_write.rd[i],
+                    polynomials.v_read_write.rs1[i],
+                    polynomials.v_read_write.rs2[i],
+                    polynomials.v_read_write.imm[i],
+                    polynomials.t_read[i],
+                ],
+                gamma,
+                tau,
+            )
+        })
+        .collect();
+        let read_leaves = DensePolynomial::new(read_fingerprints);
+
+        let init_fingerprints = (0..memory_size).into_par_iter().map(|i| {
+            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                &[
+                    F::from(i as u64),
+                    polynomials.v_init_final.opcode[i],
+                    polynomials.v_init_final.rd[i],
+                    polynomials.v_init_final.rs1[i],
+                    polynomials.v_init_final.rs2[i],
+                    polynomials.v_init_final.imm[i],
+                    F::zero(),
+                ],
+                gamma,
+                tau,
+            )
+        })
+        .collect();
+        let init_leaves = DensePolynomial::new(init_fingerprints);
+
+        let write_fingerprints = (0..num_ops).into_par_iter().map(|i| {
+            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                &[
+                    polynomials.a_read_write[i],
+                    polynomials.v_read_write.opcode[i],
+                    polynomials.v_read_write.rd[i],
+                    polynomials.v_read_write.rs1[i],
+                    polynomials.v_read_write.rs2[i],
+                    polynomials.v_read_write.imm[i],
+                    polynomials.t_read[i] + F::one(),
+                ],
+                gamma,
+                tau,
+            )
+        })
+        .collect();
+        let write_leaves = DensePolynomial::new(write_fingerprints);
+
+        let final_fingerprints = (0..memory_size).into_par_iter().map(|i| {
+            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                &[
+                    F::from(i as u64),
+                    polynomials.v_init_final.opcode[i],
+                    polynomials.v_init_final.rd[i],
+                    polynomials.v_init_final.rs1[i],
+                    polynomials.v_init_final.rs2[i],
+                    polynomials.v_init_final.imm[i],
+                    polynomials.t_final[i],
+                ],
+                gamma,
+                tau,
+            )
+        })
+        .collect();
+        let final_leaves = DensePolynomial::new(final_fingerprints);
 
         (
             vec![read_leaves, write_leaves],
