@@ -318,6 +318,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             assert_eq!(set_difference.len(), 0);
         }
 
+        let t_read_polys: [DensePolynomial<F>; 7] = t_read
+            .iter()
+            .map(|vals| DensePolynomial::from_u64(&vals))
+            .collect::<Vec<DensePolynomial<F>>>()
+            .try_into()
+            .unwrap();
+
         (
             Self {
                 _group: PhantomData,
@@ -327,7 +334,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 v_read: v_read.map(|vals| DensePolynomial::from_u64(&vals)),
                 v_write: v_write.map(|vals| DensePolynomial::from_u64(&vals)),
                 v_final: DensePolynomial::from_u64(&v_final),
-                t_read: t_read.clone().map(|vals| DensePolynomial::from_u64(&vals)),
+                t_read: t_read_polys,
                 t_write: t_write.map(|vals| DensePolynomial::from_u64(&vals)),
                 t_final: DensePolynomial::from_u64(&t_final),
             },
