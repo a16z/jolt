@@ -1,20 +1,30 @@
 use std::collections::HashMap;
-use common::{path::JoltPaths, field_conversion::{ff_to_ruints, ruint_to_ff, ff_to_ruint}};
-use spartan2::{
-  traits::{snark::RelaxedR1CSSNARKTrait, Group, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}},
-  SNARK, errors::SpartanError, 
+use common::{
+    path::JoltPaths,
+    field_conversion::{ff_to_ruints, ruint_to_ff, ff_to_ruint, ark_to_ff},
 };
-use bellpepper_core::{Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum};
+use spartan2::{
+    errors::SpartanError,
+    VerifierKey,
+    traits::{
+      snark::RelaxedR1CSSNARKTrait,
+        upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait},
+        Group,
+    },
+    SNARK,
+    provider::{
+        bn256_grumpkin::bn256::{self, Scalar as Spartan2Fr, Point as SpartanG1},
+        hyrax_pc::HyraxEvaluationEngine as SpartanHyraxEE,
+    },
+    spartan::upsnark::R1CSSNARK,
+};
+use bellpepper_core::{
+    Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
+};
 use ff::PrimeField;
 use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
-
-use ark_ff::PrimeField as arkPrimeField;
-use common::field_conversion::ark_to_ff; 
-// Exact instantiation of the field used
-use spartan2::provider::bn256_grumpkin::bn256;
-use bn256::Scalar as Spartan2Fr;
 
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
@@ -153,47 +163,50 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 }
 
 
-#[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
-pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
-  let num_steps = circuit.num_steps; 
-  let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
-
-  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
-
-  // produce a SNARK
-  let proof = SNARK::prove(&pk, circuit);
-  assert!(proof.is_ok());
-
-  // let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
-  // assert!(res.is_ok()); 
-
-  Ok(())
+pub struct R1CSProof  {
+  proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
+  vk: VerifierKey<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>>,
 }
 
-pub fn prove_r1cs<ArkF: arkPrimeField>(
-  W: usize, 
-  C: usize, 
-  TRACE_LEN: usize, 
-  inputs: Vec<Vec<ArkF>>) -> Result<(), SpartanError> {
+impl R1CSProof {
+  #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
+  pub fn prove<ArkF: ark_ff::PrimeField>(
+      W: usize, 
+      C: usize, 
+      TRACE_LEN: usize, 
+      inputs: Vec<Vec<ArkF>>
+  ) -> Result<Self, SpartanError> {
+      type G1 = SpartanG1;
+      type EE = SpartanHyraxEE<SpartanG1>;
+      type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+      type F = Spartan2Fr;
 
-  type G1 = bn256::Point;
-  type EE = spartan2::provider::hyrax_pc::HyraxEvaluationEngine<G1>;
-  type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+      let NUM_STEPS = TRACE_LEN;
 
-  let NUM_STEPS = TRACE_LEN; 
+      let inputs_ff = inputs
+          .into_par_iter()
+          .map(|input| input
+              .into_par_iter()
+              .map(|x| ark_to_ff(x))
+              .collect::<Vec<F>>()
+          ).collect::<Vec<Vec<F>>>();
 
-  let inputs_ff = inputs
-    .into_par_iter()
-    .map(|input| input
-        .into_par_iter()
-        .map(|x| ark_to_ff(x))
-        .collect::<Vec<Spartan2Fr>>()
-    ).collect::<Vec<Vec<Spartan2Fr>>>();
+      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
+      let num_steps = jolt_circuit.num_steps;
+      let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
-  let jolt_circuit = JoltCircuit::<Spartan2Fr>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
-  prove_jolt_circuit::<G1, S, Spartan2Fr>(jolt_circuit)
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
+
+      SNARK::prove(&pk, jolt_circuit).map(|snark| Self {
+        proof: snark,
+        vk
+      })
+  }
+
+  pub fn verify(&self) -> Result<(), SpartanError> {
+    SNARK::verify(&self.proof, &self.vk, &[])
+  }
 }
-
 
 mod test {
   use spartan2::{
@@ -202,12 +215,6 @@ mod test {
     SNARK,
   };
 
-  use super::{JoltCircuit, prove_jolt_circuit}; 
-
-  // #[test]
-  // fn test_jolt_snark() {
-  //   super::run_jolt_spartan();
-  // }
 
   #[test]
   fn test_all_zeros() {
