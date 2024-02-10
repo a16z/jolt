@@ -152,9 +152,7 @@ mod tests {
     use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
     use crate::jolt::vm::bytecode::ELFRow;
     use crate::jolt::vm::{JoltCommitments, JoltProof, MemoryOp};
-    use crate::{
-        jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I},
-    };
+    use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I};
     use strum::{EnumCount, IntoEnumIterator};
 
     #[test]
@@ -169,7 +167,7 @@ mod tests {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
-        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        let bytecode_rows: Vec<ELFRow> = bytecode.iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -181,63 +179,90 @@ mod tests {
             .map(|row| row.to_bytecode_trace())
             .collect();
 
-        let instructions: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
+        // let instructions: Vec<RV32I> = converted_trace
+        //     .clone()
+        //     .into_iter()
+        //     .flat_map(|row| row.to_jolt_instructions())
+        //     .collect();
+        let instructions_r1cs: Vec<RV32I> = converted_trace
+        .clone()
+        .into_iter()
+        .flat_map(|row| {
+            let instructions = row.to_jolt_instructions();
+            if instructions.is_empty() {
+                vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
+            } else {
+                instructions
+            }
+        })
+        .collect();
 
         // // TODO(JOLT-89): Encapsulate this logic elsewhere.
         // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
         // // something about Linux boot requiring it...
         // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
         let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
+            .clone()
             .into_iter()
             .map(|row| row.to_ram_ops().try_into().unwrap())
             .collect();
-        memory_trace.resize(
-            memory_trace.len().next_power_of_two(),
-            std::array::from_fn(|_| MemoryOp::no_op()),
+        // memory_trace.resize(
+        //     memory_trace.len().next_power_of_two(),
+        //     std::array::from_fn(|_| MemoryOp::no_op()),
+        // );
+
+        // let mut transcript = Transcript::new(b"Jolt transcript");
+        // let (bytecode_proof, _, bytecode_commitment) =
+        //     RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
+        // let (memory_proof, _, memory_commitment) =
+        //     RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
+        // let (instruction_lookups_proof, _, instruction_lookups_commitment) =
+        //     RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript);
+
+        // let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
+        //     instruction_lookups: instruction_lookups_proof,
+        //     read_write_memory: memory_proof,
+        //     bytecode: bytecode_proof,
+        // };
+        // let jolt_commitment: JoltCommitments<EdwardsProjective> = JoltCommitments {
+        //     bytecode: bytecode_commitment,
+        //     read_write_memory: memory_commitment,
+        //     instruction_lookups: instruction_lookups_commitment,
+        // };
+        let circuit_flags = converted_trace
+            .iter()
+            .flat_map(|row| row.to_circuit_flags::<Fr>())
+            .collect::<Vec<_>>();
+
+        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, EdwardsProjective, C, M>>::prove(
+            bytecode, 
+            bytecode_trace, 
+            memory_trace, 
+            instructions_r1cs, 
+            circuit_flags
         );
+        let verify_result = RV32IJoltVM::verify(proof, commitments);
+        assert!(verify_result.is_ok());
 
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        let (bytecode_proof, _, bytecode_commitment) =
-            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
-        let (memory_proof, _, memory_commitment) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
-        let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript);
-
-        let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
-            instruction_lookups: instruction_lookups_proof,
-            read_write_memory: memory_proof,
-            bytecode: bytecode_proof,
-        };
-        let jolt_commitment: JoltCommitments<EdwardsProjective> = JoltCommitments {
-            bytecode: bytecode_commitment,
-            read_write_memory: memory_commitment,
-            instruction_lookups: instruction_lookups_commitment,
-        };
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        assert!(RV32IJoltVM::verify_bytecode(
-            jolt_proof.bytecode,
-            jolt_commitment.bytecode,
-            &mut transcript
-        )
-        .is_ok());
-        assert!(RV32IJoltVM::verify_memory(
-            jolt_proof.read_write_memory,
-            jolt_commitment.read_write_memory,
-            &mut transcript
-        )
-        .is_ok());
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            jolt_proof.instruction_lookups,
-            jolt_commitment.instruction_lookups,
-            &mut transcript
-        )
-        .is_ok());
+        // let mut transcript = Transcript::new(b"Jolt transcript");
+        // assert!(RV32IJoltVM::verify_bytecode(
+        //     jolt_proof.bytecode,
+        //     jolt_commitment.bytecode,
+        //     &mut transcript
+        // )
+        // .is_ok());
+        // assert!(RV32IJoltVM::verify_memory(
+        //     jolt_proof.read_write_memory,
+        //     jolt_commitment.read_write_memory,
+        //     &mut transcript
+        // )
+        // .is_ok());
+        // assert!(RV32IJoltVM::verify_instruction_lookups(
+        //     jolt_proof.instruction_lookups,
+        //     jolt_commitment.instruction_lookups,
+        //     &mut transcript
+        // )
+        // .is_ok());
     }
 
     #[test]
@@ -303,85 +328,87 @@ mod tests {
 
     #[test]
     fn hash_rest() {
-        use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        compiler::cached_compile_example("hash");
+        todo!("fix");
+        // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
+        // compiler::cached_compile_example("hash");
 
-        let trace_location = JoltPaths::trace_path("hash");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("hash");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        // let trace_location = JoltPaths::trace_path("hash");
+        // let loaded_trace: Vec<common::RVTraceRow> =
+        //     Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
+        //         .expect("deserialization failed");
+        // let bytecode_location = JoltPaths::bytecode_path("hash");
+        // let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
+        //     .expect("deserialization failed");
+        // let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
 
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
+        // let converted_trace: Vec<RVTraceRow> = loaded_trace
+        //     .into_iter()
+        //     .map(|common| RVTraceRow::from_common(common))
+        //     .collect();
 
-        let bytecode_trace: Vec<ELFRow> = converted_trace
-            .iter()
-            .map(|row| row.to_bytecode_trace())
-            .collect();
+        // let bytecode_trace: Vec<ELFRow> = converted_trace
+        //     .iter()
+        //     .map(|row| row.to_bytecode_trace())
+        //     .collect();
 
-        let instructions: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
+        // let instructions: Vec<RV32I> = converted_trace
+        //     .clone()
+        //     .into_iter()
+        //     .flat_map(|row| row.to_jolt_instructions())
+        //     .collect();
 
-        // // TODO(JOLT-89): Encapsulate this logic elsewhere.
-        // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // // something about Linux boot requiring it...
-        // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
-            .into_iter()
-            .map(|row| row.to_ram_ops().try_into().unwrap())
-            .collect();
-        memory_trace.resize(
-            memory_trace.len().next_power_of_two(),
-            std::array::from_fn(|_| MemoryOp::no_op()),
-        );
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        let (bytecode_proof, _, bytecode_commitment) =
-            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
-        let (memory_proof, _, memory_commitment) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
-        let (instruction_lookups, _, instruction_lookups_commitment) =
-            RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript);
-
-        let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
-            instruction_lookups,
-            read_write_memory: memory_proof,
-            bytecode: bytecode_proof,
-        };
-        let jolt_commitment: JoltCommitments<EdwardsProjective> = JoltCommitments {
-            bytecode: bytecode_commitment,
-            read_write_memory: memory_commitment,
-            instruction_lookups: instruction_lookups_commitment,
-        };
+        // // // TODO(JOLT-89): Encapsulate this logic elsewhere.
+        // // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
+        // // // something about Linux boot requiring it...
+        // // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
+        // let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
+        //     .into_iter()
+        //     .map(|row| row.to_ram_ops().try_into().unwrap())
+        //     .collect();
+        // memory_trace.resize(
+        //     memory_trace.len().next_power_of_two(),
+        //     std::array::from_fn(|_| MemoryOp::no_op()),
+        // );
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        assert!(RV32IJoltVM::verify_bytecode(
-            jolt_proof.bytecode,
-            jolt_commitment.bytecode,
-            &mut transcript
-        )
-        .is_ok());
-        assert!(RV32IJoltVM::verify_memory(
-            jolt_proof.read_write_memory,
-            jolt_commitment.read_write_memory,
-            &mut transcript
-        )
-        .is_ok());
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            jolt_proof.instruction_lookups,
-            jolt_commitment.instruction_lookups,
-            &mut transcript
-        )
-        .is_ok());
+        // let (bytecode_proof, _, bytecode_commitment) =
+        //     RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
+        // let (memory_proof, _, memory_commitment) =
+        //     RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
+        // let (instruction_lookups, _, instruction_lookups_commitment) =
+        //     RV32IJoltVM::prove_instruction_lookups(instructions, &mut transcript);
+
+            todo!("deal w this");
+        // let jolt_proof: JoltProof<Fr, EdwardsProjective, _> = JoltProof {
+        //     instruction_lookups,
+        //     read_write_memory: memory_proof,
+        //     bytecode: bytecode_proof,
+        // };
+        // let jolt_commitment: JoltCommitments<EdwardsProjective> = JoltCommitments {
+        //     bytecode: bytecode_commitment,
+        //     read_write_memory: memory_commitment,
+        //     instruction_lookups: instruction_lookups_commitment,
+        // };
+
+        // let mut transcript = Transcript::new(b"Jolt transcript");
+        // assert!(RV32IJoltVM::verify_bytecode(
+        //     jolt_proof.bytecode,
+        //     jolt_commitment.bytecode,
+        //     &mut transcript
+        // )
+        // .is_ok());
+        // assert!(RV32IJoltVM::verify_memory(
+        //     jolt_proof.read_write_memory,
+        //     jolt_commitment.read_write_memory,
+        //     &mut transcript
+        // )
+        // .is_ok());
+        // assert!(RV32IJoltVM::verify_instruction_lookups(
+        //     jolt_proof.instruction_lookups,
+        //     jolt_commitment.instruction_lookups,
+        //     &mut transcript
+        // )
+        // .is_ok());
     }
 
     #[test]

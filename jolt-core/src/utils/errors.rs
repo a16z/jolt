@@ -11,6 +11,8 @@ pub enum ProofVerifyError {
     InternalError,
     #[error("Compressed group element failed to decompress: {0:?}")]
     DecompressionError([u8; 32]),
+    #[error("R1CS proof verification failed: {0}")]
+    SpartanError(String),
 }
 
 impl Default for ProofVerifyError {

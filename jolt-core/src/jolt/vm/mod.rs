@@ -1,6 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
+use circom_scotia::r1cs;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::any::TypeId;
@@ -13,8 +14,7 @@ use crate::{jolt::{
 }, poly::{hyrax::HyraxGenerators, pedersen::PedersenInit}};
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::structured_poly::BatchablePolynomials;
-use crate::r1cs::snark::prove_r1cs;
-use crate::r1cs::snark::JoltCircuit;
+use crate::r1cs::snark::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
 
@@ -27,7 +27,7 @@ use self::{
     instruction_lookups::InstructionPolynomials,
 };
 
-struct JoltProof<F, G, Subtables>
+pub struct JoltProof<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -36,7 +36,7 @@ where
     bytecode: BytecodeProof<F, G>,
     read_write_memory: ReadWriteMemoryProof<F, G>,
     instruction_lookups: InstructionLookupsProof<F, G, Subtables>,
-    // TODO: r1cs
+    r1cs: R1CSProof
 }
 
 pub struct JoltPolynomials<F, G>
@@ -61,27 +61,52 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
 
     fn prove(
         bytecode: Vec<ELFInstruction>,
-        mut bytecode_trace: Vec<ELFRow>,
+        bytecode_trace: Vec<ELFRow>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
+        circuit_flags: Vec<F>,
     ) -> (JoltProof<F, G, Self::Subtables>, JoltCommitments<G>) {
+        // TODO(sragss): Are these clones abundant?
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let mut bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
+        let bytecode_rows: Vec<ELFRow> = bytecode.iter().map(ELFRow::from).collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) =
-            Self::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
+            Self::prove_bytecode(bytecode_rows.clone(), bytecode_trace.clone(), &mut transcript);
+
+
+        // R1CS expects unpadded memory, memory proof expecs padded memory
+        let mut padded_memory_trace = memory_trace.clone();
+        padded_memory_trace.resize(memory_trace.len().next_power_of_two(), std::array::from_fn(|_| MemoryOp::no_op()));
+
         let (memory_proof, memory_polynomials, memory_commitment) =
-            Self::prove_memory(bytecode, memory_trace, &mut transcript);
+            Self::prove_memory(bytecode.clone(), padded_memory_trace, &mut transcript);
+        
+        // TODO(sragss): Theoretically these instructions could be unpadded
         let (
             instruction_lookups_proof,
             instruction_lookups_polynomials,
             instruction_lookups_commitment,
-        ) = Self::prove_instruction_lookups(instructions, &mut transcript);
-        todo!("r1cs");
+        ) = Self::prove_instruction_lookups(instructions.clone(), &mut transcript);
+
+        // TODO(sragss): 
+        // - The memory trace R1CS uses is unelongated (2-padded)
+        // - The memory trace used by prove_memory is elongated (2-padded)
+
+        let r1cs_proof = Self::prove_r1cs(
+            instructions, 
+            bytecode_rows, 
+            bytecode_trace, 
+            bytecode, 
+            memory_trace.into_iter().flatten().collect(),
+            circuit_flags, 
+            &mut transcript);
+
         let jolt_proof = JoltProof {
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_lookups_proof,
+            r1cs: r1cs_proof
         };
+        // TODO(sragss): I don't seem to need these polynomials.
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
@@ -111,7 +136,9 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             commitments.instruction_lookups,
             &mut transcript,
         )?;
-        todo!("r1cs");
+        proof.r1cs.verify().map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
@@ -223,7 +250,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         transcript: &mut Transcript,
-    ) {
+    ) -> R1CSProof {
         let N_FLAGS = 17;
         let TRACE_LEN = trace.len();
 
@@ -324,8 +351,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             circuit_flags_padded,
         ];
 
-        let res = prove_r1cs(32, C, PADDED_TRACE_LEN, inputs);
-        assert!(res.is_ok());
+        R1CSProof::prove(32, C, PADDED_TRACE_LEN, inputs).expect("R1CS proof failed")
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
