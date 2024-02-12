@@ -160,7 +160,7 @@ mod tests {
     // If multiple tests try to read the same trace artifacts simultaneously, they will fail
     lazy_static::lazy_static! {
         static ref FIB_FILE_LOCK: Mutex<()> = Mutex::new(());
-        static ref HASH_FILE_LOCK: Mutex<()> = Mutex::new(());
+        static ref SHA3_FILE_LOCK: Mutex<()> = Mutex::new(());
     }
 
     #[test]
@@ -327,15 +327,15 @@ mod tests {
     }
 
     #[test]
-    fn hash_r1cs() {
+    fn sha3_r1cs() {
         use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        compiler::cached_compile_example("hash");
+        compiler::cached_compile_example("sha3-ex");
 
-        let trace_location = JoltPaths::trace_path("hash");
+        let trace_location = JoltPaths::trace_path("sha3-ex");
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("hash");
+        let bytecode_location = JoltPaths::bytecode_path("sha3-ex");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
         let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
@@ -389,15 +389,15 @@ mod tests {
     }
 
     #[test]
-    fn hash_e2e() {
-        let _guard = HASH_FILE_LOCK.lock().unwrap();
-        compiler::cached_compile_example("hash");
+    fn sha3_e2e() {
+        let _guard = SHA3_FILE_LOCK.lock().unwrap();
+        compiler::cached_compile_example("sha3-ex");
 
-        let trace_location = JoltPaths::trace_path("hash");
+        let trace_location = JoltPaths::trace_path("sha3-ex");
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("hash");
+        let bytecode_location = JoltPaths::bytecode_path("sha3-ex");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
