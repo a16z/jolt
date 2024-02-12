@@ -25,7 +25,8 @@ members = [
     "common",
     "compiler",
     "examples/fibonacci",
-    "examples/hash",
+    "examples/sha2-ex",
+    "examples/sha3-ex",
     "integration-tests", 
 ]
 

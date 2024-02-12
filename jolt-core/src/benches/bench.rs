@@ -24,7 +24,8 @@ pub enum BenchType {
     ReadWriteMemory,
     InstructionLookups,
     Fibonacci,
-    Hash,
+    Sha2,
+    Sha3,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -42,7 +43,8 @@ pub fn benchmarks(
         BenchType::Bytecode => prove_bytecode(num_cycles, bytecode_size),
         BenchType::ReadWriteMemory => prove_memory(num_cycles, memory_size, bytecode_size),
         BenchType::InstructionLookups => prove_instruction_lookups(num_cycles),
-        BenchType::Hash => hash(),
+        BenchType::Sha2 => sha2(),
+        BenchType::Sha3 => sha3(),
         BenchType::Fibonacci => fibonacci(),
         _ => panic!("BenchType does not have a mapping"),
     }
@@ -167,17 +169,26 @@ fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     tasks
 }
 
-fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("sha2-ex")
+}
+
+fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("sha3-ex")
+}
+
+fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     use common::{path::JoltPaths, serializable::Serializable};
-    compiler::cached_compile_example("hash");
+    compiler::cached_compile_example(example_name);
 
+    let example_name = example_name.to_string();
     let task = move || {
-        let trace_location = JoltPaths::trace_path("hash");
+        let trace_location = JoltPaths::trace_path(&example_name);
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("hash");
+        let bytecode_location = JoltPaths::bytecode_path(&example_name);
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
@@ -225,7 +236,7 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
     };
     tasks.push((
-        tracing::info_span!("HashR1CS"),
+        tracing::info_span!("Example_E2E"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
