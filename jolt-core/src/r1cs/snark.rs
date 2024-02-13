@@ -192,7 +192,6 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
   type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
 
   let NUM_STEPS = TRACE_LEN; 
-  // let NUM_STEPS = 2; 
 
   let inputs_ff = inputs
     .into_par_iter()
