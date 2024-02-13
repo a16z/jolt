@@ -7,6 +7,8 @@ use crate::{
     utils::{errors::ProofVerifyError},
 };
 
+use super::hyrax::HyraxGenerators;
+
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
@@ -16,11 +18,18 @@ pub trait BatchablePolynomials {
     /// The batched commitment to these polynomials.
     type Commitment;
 
+    /// Generator for the commitment.
+    type Generators;
+
     /// Organizes polynomials into a batch, to be subsequently committed. Typically
     /// uses `DensePolynomial::merge` to combine polynomials of the same size.
     fn batch(&self) -> Self::BatchedPolynomials;
     /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment;
+    fn commit(batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment;
+
+    // TODO(sragss): Could also lump this into `batch() -> (Self::BatchedPolynomials, Vec<HyraxCommitment>)`
+    // TODO(sragss): Theoretically this can be done automatically from sizes, but idk how.
+    fn generators(&self) -> Self::Generators;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.

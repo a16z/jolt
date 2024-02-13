@@ -226,11 +226,10 @@ impl<F: PrimeField> DensePolynomial<F> {
         DensePolynomial::new(Z)
     }
 
-    pub fn combined_commit<G>(&self, label: &'static [u8]) -> BatchedPolynomialCommitment<G>
+    pub fn combined_commit<G>(&self, generators: HyraxGenerators<G>) -> BatchedPolynomialCommitment<G>
     where
         G: CurveGroup<ScalarField = F>,
     {
-        let generators = HyraxGenerators::new(self.num_vars, label);
         let joint_commitment = HyraxCommitment::commit(&self, &generators);
         BatchedPolynomialCommitment {
             generators,

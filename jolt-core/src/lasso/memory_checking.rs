@@ -504,11 +504,15 @@ mod tests {
         impl BatchablePolynomials for NormalMems {
             type Commitment = FakeType;
             type BatchedPolynomials = FakeType;
+            type Generators = FakeType;
 
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment {
+                unimplemented!()
+            }
+            fn generators(&self) -> Self::Generators {
                 unimplemented!()
             }
         }
@@ -704,11 +708,15 @@ mod tests {
         impl BatchablePolynomials for Polys {
             type Commitment = FakeType;
             type BatchedPolynomials = FakeType;
+            type Generators = FakeType;
 
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, _generator: Self::Generators) -> Self::Commitment {
+                unimplemented!()
+            }
+            fn generators(&self) -> Self::Generators {
                 unimplemented!()
             }
         }
@@ -950,11 +958,15 @@ mod tests {
         impl BatchablePolynomials for FlagPolys {
             type Commitment = FakeType;
             type BatchedPolynomials = FakeType;
+            type Generators = FakeType;
 
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, _generators: Self::Generators) -> Self::Commitment {
+                unimplemented!()
+            }
+            fn generators(&self) -> Self::Generators {
                 unimplemented!()
             }
         }
