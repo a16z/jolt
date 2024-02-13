@@ -10,10 +10,7 @@ use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
     },
     subprotocols::{
         batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
@@ -52,6 +49,7 @@ where
 {
     type BatchedPolynomials = BatchedSurgePolynomials<F>;
     type Commitment = SurgeCommitment<G>;
+    type Generators = [HyraxGenerators<G>; 3];
 
     #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
@@ -73,22 +71,36 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+    fn commit(batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment {
+        let [dim_read_generator, final_generator, E_generator] = generators;
+
         let dim_read_commitment = batched_polys
             .batched_dim_read
-            .combined_commit(b"BatchedSurgePolynomials.dim_read");
+            .combined_commit(dim_read_generator);
         let final_commitment = batched_polys
             .batched_final
-            .combined_commit(b"BatchedSurgePolynomials.final_cts");
+            .combined_commit(final_generator);
         let E_commitment = batched_polys
             .batched_E
-            .combined_commit(b"BatchedSurgePolynomials.E_poly");
+            .combined_commit(E_generator);
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_commitment,
         }
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn generators(&self) -> Self::Generators {
+        let dim_read_num_vars = (self.dim[0].len() * (self.dim.len() + self.read_cts.len())).log_2();
+        let final_num_vars = (self.final_cts[0].len() * (self.final_cts.len())).log_2();
+        let E_num_vars = (self.E_polys[0].len() * self.E_polys.len()).log_2();
+        [
+            HyraxGenerators::new(dim_read_num_vars, b"BatchedSurgePolynomials.dim_read"),
+            HyraxGenerators::new(final_num_vars, b"BatchedSurgePolynomials.final_cts"),
+            HyraxGenerators::new(E_num_vars, b"BatchedSurgePolynomials.E_poly"),
+        ]
     }
 }
 
@@ -556,7 +568,8 @@ where
 
         let polynomials = self.construct_polys();
         let batched_polys = polynomials.batch();
-        let commitment = SurgePolys::commit(&batched_polys);
+        let generators = polynomials.generators();
+        let commitment = SurgePolys::commit(&batched_polys, generators);
         let num_rounds = self.num_lookups.log_2();
         let instruction = Instruction::default();
 

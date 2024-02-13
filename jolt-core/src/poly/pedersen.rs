@@ -17,6 +17,7 @@ pub struct PedersenGenerators<G> {
 }
 
 impl<G: CurveGroup> PedersenGenerators<G> {
+    #[tracing::instrument(skip_all)]
     pub fn new(n: usize, label: &[u8]) -> Self {
         let mut shake = Shake256::default();
         shake.input(label);

@@ -150,7 +150,8 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     ) {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
         let batched_polys = polys.batch();
-        let commitment = BytecodePolynomials::commit(&batched_polys);
+        let generators = polys.generators();
+        let commitment = BytecodePolynomials::commit(&batched_polys, generators);
 
         let proof = polys.prove_memory_checking(&polys, &batched_polys, transcript);
         (proof, polys, commitment)
@@ -176,7 +177,8 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     ) {
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
-        let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys);
+        let generators = memory.generators();
+        let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys, generators);
 
         let memory_checking_proof =
             memory.prove_memory_checking(&memory, &batched_polys, transcript);

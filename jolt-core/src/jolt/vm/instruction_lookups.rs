@@ -107,6 +107,7 @@ where
 {
     type BatchedPolynomials = BatchedInstructionPolynomials<F>;
     type Commitment = InstructionCommitment<G>;
+    type Generators = [HyraxGenerators<G>; 3];
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
@@ -132,22 +133,36 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+    fn commit(batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment {
+        let [dim_read_generator, final_generator, E_flag_generator] = generators;
         let dim_read_commitment = batched_polys
             .batched_dim_read
-            .combined_commit(b"BatchedInstructionPolynomials.dim_read");
+            .combined_commit(dim_read_generator);
         let final_commitment = batched_polys
             .batched_final
-            .combined_commit(b"BatchedInstructionPolynomials.final_cts");
+            .combined_commit(final_generator);
         let E_flag_commitment = batched_polys
             .batched_E_flag
-            .combined_commit(b"BatchedInstructionPolynomials.E_flag");
+            .combined_commit(E_flag_generator);
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_flag_commitment,
         }
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn generators(&self) -> Self::Generators {
+        let dim_read_num_vars = (self.dim[0].len() * (self.dim.len() + self.read_cts.len())).log_2();
+        let final_num_vars = (self.final_cts[0].len() * self.final_cts.len()).log_2();
+        let E_flag_num_vars = (self.E_polys[0].len() * self.E_polys.len()).log_2() + (self.instruction_flag_polys[0].len() * self.instruction_flag_polys.len()).log_2();
+
+        [
+            HyraxGenerators::new(dim_read_num_vars, b"BatchedInstructionPolynomials.dim_read"),
+            HyraxGenerators::new(final_num_vars, b"BatchedInstructionPolynomials.final_cts"),
+            HyraxGenerators::new(E_flag_num_vars, b"BatchedInstructionPolynomials.E_flag_poly"),
+        ]
     }
 }
 
@@ -809,7 +824,8 @@ where
 
         let polynomials = self.polynomialize();
         let batched_polys = polynomials.batch();
-        let commitment = InstructionPolynomials::commit(&batched_polys);
+        let generators = polynomials.generators();
+        let commitment = InstructionPolynomials::commit(&batched_polys, generators);
 
         commitment
             .E_flag_commitment
