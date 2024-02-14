@@ -376,6 +376,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
             let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
 
+            // h/t https://abrams.cc/rust-dropping-things-in-another-thread
+            std::thread::spawn(move || drop(eq_evals));
+            std::thread::spawn(move || drop(evals));
+
             let evals = vec![
                 evals_combined_0,
                 e - evals_combined_0,
