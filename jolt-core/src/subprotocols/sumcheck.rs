@@ -376,6 +376,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
             let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
 
+            // h/t https://abrams.cc/rust-dropping-things-in-another-thread
+            std::thread::spawn(move || drop(eq_evals));
+            std::thread::spawn(move || drop(evals));
+
             let evals = vec![
                 evals_combined_0,
                 e - evals_combined_0,
@@ -415,6 +419,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         }
 
         let claims_prod = params.get_final_evals();
+
+        // h/t https://abrams.cc/rust-dropping-things-in-another-thread
+        std::thread::spawn(move || drop(params));
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -571,16 +578,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            let _span = trace_span!("binding");
+            let _span = trace_span!("binding (ones)");
             let _enter = _span.enter();
 
-            // params.apply_bound_poly_var_top(&r_j);
-            let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
-                .chain(params.poly_Bs.iter_mut())
-                .collect();
+            let poly_iter = params.poly_As.par_iter_mut()
+                .chain(params.poly_Bs.par_iter_mut());
 
             rayon::join(
-                || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j)),
+                || poly_iter.for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j)),
                 || params.poly_eq.bound_poly_var_top(&r_j)
             );
 
@@ -592,6 +597,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         }
 
         let claims_prod = params.get_final_evals();
+
+        // h/t https://abrams.cc/rust-dropping-things-in-another-thread
+        std::thread::spawn(move || drop(params));
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -791,11 +799,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
-        let _drop_span = trace_span!("drop_params");
-        let _drop_enter = _drop_span.enter();
-        drop(params);
-        drop(_drop_enter);
-        drop(_drop_span);
+        // h/t https://abrams.cc/rust-dropping-things-in-another-thread
+        std::thread::spawn(move || drop(params));
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
