@@ -160,8 +160,11 @@ impl<F: PrimeField> DensePolynomial<F> {
             }
 
             let m = *high - low;
-            let term = mul_0_1_optimized(r, &m);
-            self.Z[i] += term;
+            if m.is_one() {
+                self.Z[i] += r;
+            } else {
+                self.Z[i] += *r * m;
+            }
         }
         self.num_vars -= 1;
         self.len = n;
