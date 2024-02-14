@@ -11,10 +11,17 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
+const DEFAULT_SIZE: usize = 1 << 24;
+// TODO(sragss): Need to declare the types up-front.
+lazy_static::lazy_static! {
+    pub static ref PEDERSEN_GENERATOR: PedersenGenerators<ark_ec::bn::G1Projective> = PedersenGenerators::new(DEFAULT_SIZE, b"PedersenGeneratorDefault");
+}
+
 #[derive(Clone)]
 pub struct PedersenGenerators<G> {
     pub generators: Vec<G>,
 }
+
 
 impl<G: CurveGroup> PedersenGenerators<G> {
     #[tracing::instrument(skip_all)]
