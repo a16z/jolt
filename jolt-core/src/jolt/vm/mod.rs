@@ -227,7 +227,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
 
         let log_M = log2(M) as usize;
 
-        let [prog_a_rw, mut prog_v_rw, _] =
+        let [mut prog_a_rw, mut prog_v_rw, _] =
             BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
@@ -252,12 +252,12 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         prog_v_rw = new_prog_v_rw;
         /* End of transformation for single-step version */
 
-        let [memreg_a_rw, memreg_v_reads, memreg_v_writes, _] =
+        let [mut memreg_a_rw, mut memreg_v_reads, mut memreg_v_writes, _] =
             ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
 
         let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
         let _guard = span.enter();
-        let (chunks_x, chunks_y): (Vec<F>, Vec<F>) = instructions
+        let (mut chunks_x, mut chunks_y): (Vec<F>, Vec<F>) = instructions
             .iter()
             .flat_map(|op| {
                 let chunks_xy = op.operand_chunks(C, log_M);
@@ -268,7 +268,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
             .unzip();
 
-        let chunks_query = instructions
+        let mut chunks_query = instructions
             .iter()
             .flat_map(|op| op.to_indices(C, log_M))
             .map(|x| x as u64)
@@ -277,7 +277,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         drop(_guard);
         drop(span);
 
-        let lookup_outputs = Self::compute_lookup_outputs(&instructions);
+        let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
 
         // assert lengths
         assert_eq!(prog_a_rw.len(), TRACE_LEN);
@@ -291,6 +291,24 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         assert_eq!(lookup_outputs.len(), TRACE_LEN);
         assert_eq!(circuit_flags.len(), TRACE_LEN * N_FLAGS);
 
+        // let padded_trace_len = next power of 2 from trace_eln 
+        let PADDED_TRACE_LEN = TRACE_LEN.next_power_of_two();
+
+        // pad each of the above vectors to be of length PADDED_TRACE_LEN * their multiple 
+        prog_a_rw.resize(PADDED_TRACE_LEN, Default::default());
+        prog_v_rw.resize(PADDED_TRACE_LEN * 6, Default::default());
+        memreg_a_rw.resize(PADDED_TRACE_LEN * 7, Default::default());
+        memreg_v_reads.resize(PADDED_TRACE_LEN * 7, Default::default());
+        memreg_v_writes.resize(PADDED_TRACE_LEN * 7, Default::default());
+        chunks_x.resize(PADDED_TRACE_LEN * C, Default::default());
+        chunks_y.resize(PADDED_TRACE_LEN * C, Default::default());
+        chunks_query.resize(PADDED_TRACE_LEN * C, Default::default());
+        lookup_outputs.resize(PADDED_TRACE_LEN, Default::default());
+
+        let mut circuit_flags_padded = circuit_flags.clone();
+        circuit_flags_padded.extend(vec![F::from(0_u64); PADDED_TRACE_LEN * N_FLAGS - circuit_flags.len()]);
+        // circuit_flags.resize(PADDED_TRACE_LEN * N_FLAGS, Default::default());
+
         let inputs = vec![
             prog_a_rw,
             prog_v_rw,
@@ -301,10 +319,10 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags,
+            circuit_flags_padded,
         ];
 
-        let res = prove_r1cs(32, C, TRACE_LEN, inputs);
+        let res = prove_r1cs(32, C, PADDED_TRACE_LEN, inputs);
         assert!(res.is_ok());
     }
 

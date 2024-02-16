@@ -22,6 +22,21 @@ const NUM_CHUNKS: usize = 4;
 const NUM_FLAGS: usize = 17;
 const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
 
+#[tracing::instrument(skip_all, name = "JoltCircuit::assemble_by_segments")]
+fn reassemble_by_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
+  let mut result: Vec<Vec<F>> = vec![Vec::new(); jolt_witnesses[0].len()];
+  result[0] = vec![F::from(1)]; // start with [1]
+
+  for witness in &mut jolt_witnesses {
+    witness.remove(0); 
+    for (i, w) in witness.iter().enumerate() {
+        result[i + 1].push(*w);
+    }
+  }
+
+  result.into_iter().flatten().collect()
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
   num_steps: usize,
@@ -102,16 +117,12 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
       uint_jolt_witness.into_iter().map(|x| ruint_to_ff(x)).collect::<Vec<_>>()
     }).collect();
 
-    for i in 0..NUM_STEPS {
-      let witness = &jolt_witnesses[i];
-      let total_vars = cfg.r1cs.num_inputs + cfg.r1cs.num_aux;
-      (1..total_vars).for_each(|i| {
-          let f = witness[i];
-          let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
-      });
-    }
-    drop(_compute_witness_guard);
-    drop(compute_witness_span);
+    let witness_variable_wise = reassemble_by_segments(jolt_witnesses);
+
+    (1..witness_variable_wise.len()).for_each(|i| {
+        let f = witness_variable_wise[i];
+        let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
+    });
 
     Ok(())
   }
@@ -164,8 +175,8 @@ pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F:
   let proof = SNARK::prove(&pk, circuit);
   assert!(proof.is_ok());
 
-  // let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
-  // assert!(res.is_ok()); 
+  let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
+  assert!(res.is_ok()); 
 
   Ok(())
 }
@@ -181,6 +192,7 @@ pub fn prove_r1cs<ArkF: arkPrimeField>(
   type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
 
   let NUM_STEPS = TRACE_LEN; 
+  // let NUM_STEPS = 2; 
 
   let inputs_ff = inputs
     .into_par_iter()
