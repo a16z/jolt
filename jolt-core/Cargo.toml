@@ -66,7 +66,7 @@ compiler = { path = "../compiler" }
 
 witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 ruint = "1.11.1"
-spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "dedupe/variable-wise-uniformity"  }
+spartan2 = { git = "https://github.com/a16z/Spartan2.git" }
 
 
 [build-dependencies]
