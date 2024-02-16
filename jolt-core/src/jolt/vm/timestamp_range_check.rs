@@ -14,7 +14,7 @@ use crate::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
     },
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, pedersen::PedersenInit, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
     },
     subprotocols::{
         batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
@@ -168,14 +168,13 @@ where
 pub type RangeCheckCommitment<G> = BatchedPolynomialCommitment<G>;
 pub type BatchedRangeCheckPolynomials<F> = DensePolynomial<F>;
 
-impl<F, G> BatchablePolynomials for RangeCheckPolynomials<F, G>
+impl<F, G> BatchablePolynomials<G> for RangeCheckPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     type BatchedPolynomials = BatchedRangeCheckPolynomials<F>;
     type Commitment = RangeCheckCommitment<G>;
-    type Generators = [HyraxGenerators<G>; 1];
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
@@ -189,15 +188,13 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment {
-        let [generator] = generators;
-        batched_polys.combined_commit(generator)
+    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
+        batched_polys.combined_commit(initializer)
     }
 
-    #[tracing::instrument(skip_all)]
-    fn generators(&self) -> Self::Generators {
+    fn max_generator_size(&self) -> usize {
         let batch_num_vars = (self.read_cts_read_timestamp[0].len() * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
-        [HyraxGenerators::new(batch_num_vars, b"BatchedRangeCheckPolynomials")]
+        batch_num_vars
     }
 }
 
@@ -596,8 +593,8 @@ where
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
         let batched_range_check_polys = range_check_polys.batch();
-        let generators = range_check_polys.generators();
-        let range_check_commitment = RangeCheckPolynomials::commit(&batched_range_check_polys, generators);
+        let initializer: PedersenInit<G> = PedersenInit::new(range_check_polys.max_generator_size(), b"LassoV1");
+        let range_check_commitment = RangeCheckPolynomials::commit(&batched_range_check_polys, &initializer);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
@@ -844,8 +841,8 @@ mod tests {
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let generators = rw_memory.generators();
-        let commitments = ReadWriteMemory::commit(&batched_polys, generators);
+        let initializer: PedersenInit<EdwardsProjective> = PedersenInit::new(rw_memory.max_generator_size(), b"LassoV1");
+        let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,

@@ -4,6 +4,7 @@ use digest::{ExtendableOutput, Input};
 use rand_chacha::ChaCha20Rng;
 use sha3::Shake256;
 use std::io::Read;
+use crate::utils::math::Math;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -11,21 +12,18 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-const DEFAULT_SIZE: usize = 1 << 24;
-// TODO(sragss): Need to declare the types up-front.
-lazy_static::lazy_static! {
-    pub static ref PEDERSEN_GENERATOR: PedersenGenerators<ark_ec::bn::G1Projective> = PedersenGenerators::new(DEFAULT_SIZE, b"PedersenGeneratorDefault");
+use super::hyrax::matrix_dimensions;
+
+pub struct PedersenInit<G> {
+    pub generators: Vec<G>
 }
 
-#[derive(Clone)]
-pub struct PedersenGenerators<G> {
-    pub generators: Vec<G>,
-}
-
-
-impl<G: CurveGroup> PedersenGenerators<G> {
-    #[tracing::instrument(skip_all)]
-    pub fn new(n: usize, label: &[u8]) -> Self {
+impl<G: CurveGroup> PedersenInit<G> {
+    #[tracing::instrument]
+    pub fn new(max_num_vars: usize, label: &[u8]) -> Self {
+        // TODO(sragss): Realistically this needs to be moved upstream
+        // as it's a hyrax implementation detail.
+        let max_len = matrix_dimensions(max_num_vars).1.pow2();
         let mut shake = Shake256::default();
         shake.input(label);
         let mut buf = vec![];
@@ -38,14 +36,26 @@ impl<G: CurveGroup> PedersenGenerators<G> {
         let mut rng = ChaCha20Rng::from_seed(seed);
 
         let mut generators: Vec<G> = Vec::new();
-        for _ in 0..n {
+        for _ in 0..max_len {
             generators.push(G::rand(&mut rng));
         }
 
-        PedersenGenerators {
+        Self {
             generators,
         }
+
+    } 
+
+    pub fn sample(&self, n: usize) -> PedersenGenerators<G> {
+        assert!(self.generators.len() >= n, "Insufficient number of generators for sampling: required {}, available {}", n, self.generators.len());
+        let sample = self.generators[0..n].into();
+        PedersenGenerators { generators: sample }
     }
+}
+
+#[derive(Clone)]
+pub struct PedersenGenerators<G> {
+    pub generators: Vec<G>,
 }
 
 pub trait PedersenCommitment<G: CurveGroup>: Sized {

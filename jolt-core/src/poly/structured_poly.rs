@@ -7,29 +7,24 @@ use crate::{
     utils::{errors::ProofVerifyError},
 };
 
-use super::hyrax::HyraxGenerators;
+use super::{hyrax::HyraxGenerators, pedersen::PedersenInit};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
-pub trait BatchablePolynomials {
+pub trait BatchablePolynomials<G> {
     /// The batched form of these polynomials.
     type BatchedPolynomials;
     /// The batched commitment to these polynomials.
     type Commitment;
 
-    /// Generator for the commitment.
-    type Generators;
-
     /// Organizes polynomials into a batch, to be subsequently committed. Typically
     /// uses `DensePolynomial::merge` to combine polynomials of the same size.
     fn batch(&self) -> Self::BatchedPolynomials;
     /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
-    fn commit(batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment;
+    fn commit(batched_polys: &Self::BatchedPolynomials, initalizer: &PedersenInit<G>) -> Self::Commitment;
 
-    // TODO(sragss): Could also lump this into `batch() -> (Self::BatchedPolynomials, Vec<HyraxCommitment>)`
-    // TODO(sragss): Theoretically this can be done automatically from sizes, but idk how.
-    fn generators(&self) -> Self::Generators;
+    fn max_generator_size(&self) -> usize;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
@@ -40,7 +35,7 @@ pub trait StructuredOpeningProof<F, G, Polynomials>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials + ?Sized,
+    Polynomials: BatchablePolynomials<G> + ?Sized,
 {
     type Proof = BatchedPolynomialOpeningProof<G>;
 

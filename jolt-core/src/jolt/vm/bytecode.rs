@@ -8,6 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
+use crate::poly::pedersen::PedersenInit;
 use crate::utils::math::Math;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
@@ -427,14 +428,13 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     pub init_final_commitments: BatchedPolynomialCommitment<G>,
 }
 
-impl<F, G> BatchablePolynomials for BytecodePolynomials<F, G>
+impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     type BatchedPolynomials = BatchedBytecodePolynomials<F>;
     type Commitment = BytecodeCommitment<G>;
-    type Generators = [HyraxGenerators<G>; 2];
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
@@ -463,30 +463,24 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, generators: Self::Generators) -> Self::Commitment {
-        let [read_write_generator, init_final_generator] = generators;
+    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
         let read_write_commitments = batched_polys
             .combined_read_write
-            .combined_commit(read_write_generator);
+            .combined_commit(initializer);
         let init_final_commitments = batched_polys
             .combined_init_final
-            .combined_commit(init_final_generator);
+            .combined_commit(initializer);
 
         Self::Commitment {
             read_write_commitments,
             init_final_commitments,
         }
     }
-    
-    #[tracing::instrument(skip_all)]
-    fn generators(&self) -> Self::Generators {
+
+    fn max_generator_size(&self) -> usize {
         let read_write_num_vars = (self.a_read_write.len() * 7).log_2();
         let init_final_num_vars = (self.t_final.len() * 6).log_2();
-
-        [
-            HyraxGenerators::new(read_write_num_vars, b"BatchedBytecodePolynomials.read_write"),
-            HyraxGenerators::new(init_final_num_vars, b"BatchedBytecodePolynomials.init_final")
-        ]
+        std::cmp::max(read_write_num_vars, init_final_num_vars)
     }
 }
 
@@ -872,8 +866,8 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
 
         let batched_polys = polys.batch();
-        let generators = polys.generators();
-        let commitments = BytecodePolynomials::commit(&batched_polys, generators);
+        let initializer: PedersenInit<EdwardsProjective> = PedersenInit::new(1 << 10, b"test");
+        let commitments = BytecodePolynomials::commit(&batched_polys, &initializer);
         let proof = polys.prove_memory_checking(&polys, &batched_polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
@@ -899,8 +893,8 @@ mod tests {
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
-        let generators = polys.generators();
-        let commitments = BytecodePolynomials::commit(&batch, generators);
+        let initializer: PedersenInit<EdwardsProjective> = PedersenInit::new(1 << 8, b"test");
+        let commitments = BytecodePolynomials::commit(&batch, &initializer);
 
         let mut transcript = Transcript::new(b"test_transcript");
 

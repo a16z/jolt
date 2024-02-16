@@ -9,7 +9,8 @@ use crate::jolt::vm::read_write_memory::{
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
-use ark_curve25519::{EdwardsProjective, Fr};
+// use ark_curve25519::{EdwardsProjective, Fr};
+use ark_bn254::{G1Projective as EdwardsProjective, Fr};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
 use criterion::black_box;

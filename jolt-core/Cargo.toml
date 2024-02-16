@@ -68,6 +68,7 @@ witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 ruint = "1.11.1"
 spartan2 = { git = "https://github.com/a16z/Spartan2.git" }
 lazy_static = "1.4.0"
+ark-bn254 = "0.4.0"
 
 
 [build-dependencies]
