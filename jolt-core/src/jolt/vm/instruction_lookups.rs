@@ -78,10 +78,8 @@ pub struct BatchedInstructionPolynomials<F: PrimeField> {
     batched_dim_read: DensePolynomial<F>,
     /// final_cts_i polynomials, batched together.
     batched_final: DensePolynomial<F>,
-    /// E_i polynomials, batched together.
-    batched_E: DensePolynomial<F>,
-    /// flag polynomials, batched together.
-    batched_flag: DensePolynomial<F>,
+    /// E_i and flag polynomials, batched together.
+    batched_E_flag: DensePolynomial<F>,
 }
 
 /// Commitments to BatchedInstructionPolynomials.
@@ -90,18 +88,15 @@ pub struct InstructionCommitment<G: CurveGroup> {
     pub dim_read_commitment: BatchedPolynomialCommitment<G>,
     /// Commitment to final_cts_i polynomials.
     pub final_commitment: BatchedPolynomialCommitment<G>,
-    /// Commitment to E_i polynomials.
-    pub E_commitment: BatchedPolynomialCommitment<G>,
-    /// Commitment to flag polynomials.
-    pub instruction_flag_commitment: BatchedPolynomialCommitment<G>,
+    /// Commitment to E_i and flag polynomials.
+    pub E_flag_commitment: BatchedPolynomialCommitment<G>,
 }
 
 /// Contains generators used to commit to InstructionPolynomials.
 pub struct InstructionCommitmentGenerators<G: CurveGroup> {
     pub dim_read_commitment_gens: HyraxGenerators<G>,
     pub final_commitment_gens: HyraxGenerators<G>,
-    pub E_commitment_gens: HyraxGenerators<G>,
-    pub flag_commitment_gens: HyraxGenerators<G>,
+    pub E_flag_commitment_gens: HyraxGenerators<G>,
 }
 
 // TODO: macro?
@@ -115,23 +110,24 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let (batched_dim_read, (batched_final, batched_E, batched_flag)) = rayon::join(
+        let (batched_dim_read, (batched_final, batched_E_flag)) = rayon::join(
             || DensePolynomial::merge(self.dim.iter().chain(&self.read_cts)),
             || {
-                let batched_final = DensePolynomial::merge(&self.final_cts);
-                let (batched_E, batched_flag) = rayon::join(
-                    || DensePolynomial::merge(&self.E_polys),
-                    || DensePolynomial::merge(&self.instruction_flag_polys),
-                );
-                (batched_final, batched_E, batched_flag)
+                rayon::join(
+                    || DensePolynomial::merge(&self.final_cts),
+                    || {
+                        DensePolynomial::merge(
+                            self.E_polys.iter().chain(&self.instruction_flag_polys),
+                        )
+                    },
+                )
             },
         );
 
         Self::BatchedPolynomials {
             batched_dim_read,
             batched_final,
-            batched_E,
-            batched_flag,
+            batched_E_flag,
         }
     }
 
@@ -143,18 +139,14 @@ where
         let final_commitment = batched_polys
             .batched_final
             .combined_commit(b"BatchedInstructionPolynomials.final_cts");
-        let E_commitment = batched_polys
-            .batched_E
-            .combined_commit(b"BatchedInstructionPolynomials.E_poly");
-        let instruction_flag_commitment = batched_polys
-            .batched_flag
-            .combined_commit(b"BatchedInstructionPolynomials.flag");
+        let E_flag_commitment = batched_polys
+            .batched_E_flag
+            .combined_commit(b"BatchedInstructionPolynomials.E_flag");
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
-            E_commitment,
-            instruction_flag_commitment,
+            E_flag_commitment,
         }
     }
 }
@@ -171,20 +163,9 @@ where
     flag_openings: Vec<F>,
 }
 
-struct PrimarySumcheckOpeningProof<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
-    flag_opening_proof: BatchedPolynomialOpeningProof<G>,
-}
-
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
     StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F>
 {
-    type Proof = PrimarySumcheckOpeningProof<F, G>;
-
     fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
@@ -196,23 +177,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_E,
-            opening_point,
-            &openings.E_poly_openings,
-            transcript,
-        );
-        let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_flag,
-            opening_point,
-            &openings.flag_openings,
-            transcript,
-        );
+        let E_flag_openings: Vec<F> = [
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
 
-        PrimarySumcheckOpeningProof {
-            E_poly_opening_proof,
-            flag_opening_proof,
-        }
+        BatchedPolynomialOpeningProof::prove(
+            &polynomials.batched_E_flag,
+            opening_point,
+            &E_flag_openings,
+            transcript,
+        )
     }
 
     fn verify_openings(
@@ -222,20 +198,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        opening_proof.E_poly_opening_proof.verify(
-            opening_point,
-            &self.E_poly_openings,
-            &commitment.E_commitment,
-            transcript,
-        )?;
-        opening_proof.flag_opening_proof.verify(
-            opening_point,
-            &self.flag_openings,
-            &commitment.instruction_flag_commitment,
-            transcript,
-        )?;
+        let E_flag_openings: Vec<F> = [
+            self.E_poly_openings.as_slice(),
+            self.flag_openings.as_slice(),
+        ]
+        .concat();
 
-        Ok(())
+        opening_proof.verify(
+            opening_point,
+            &E_flag_openings,
+            &commitment.E_flag_commitment,
+            transcript,
+        )
     }
 }
 
@@ -259,8 +233,7 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
-    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
-    flag_opening_proof: BatchedPolynomialOpeningProof<G>,
+    E_flag_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
@@ -312,13 +285,11 @@ where
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        let mut dim_read_openings = [
+        let dim_read_openings: Vec<F> = [
             openings.dim_openings.as_slice(),
             openings.read_openings.as_slice(),
         ]
-        .concat()
-        .to_vec();
-        dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
+        .concat();
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
@@ -326,23 +297,23 @@ where
             &dim_read_openings,
             transcript,
         );
-        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_E,
+
+        let E_flag_openings: Vec<F> = [
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
+
+        let E_flag_opening_proof = BatchedPolynomialOpeningProof::prove(
+            &polynomials.batched_E_flag,
             &opening_point,
-            &openings.E_poly_openings,
-            transcript,
-        );
-        let flag_opening_proof = BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_flag,
-            &opening_point,
-            &openings.flag_openings,
+            &E_flag_openings,
             transcript,
         );
 
         InstructionReadWriteOpeningProof {
             dim_read_opening_proof,
-            E_poly_opening_proof,
-            flag_opening_proof,
+            E_flag_opening_proof,
         }
     }
 
@@ -353,10 +324,8 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let mut dim_read_openings = [self.dim_openings.as_slice(), self.read_openings.as_slice()]
-            .concat()
-            .to_vec();
-        dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
+        let dim_read_openings: Vec<F> =
+            [self.dim_openings.as_slice(), self.read_openings.as_slice()].concat();
 
         openings_proof.dim_read_opening_proof.verify(
             opening_point,
@@ -365,20 +334,18 @@ where
             transcript,
         )?;
 
-        openings_proof.E_poly_opening_proof.verify(
-            opening_point,
-            &self.E_poly_openings,
-            &commitment.E_commitment,
-            transcript,
-        )?;
+        let E_flag_openings: Vec<F> = [
+            self.E_poly_openings.as_slice(),
+            self.flag_openings.as_slice(),
+        ]
+        .concat();
 
-        openings_proof.flag_opening_proof.verify(
+        openings_proof.E_flag_opening_proof.verify(
             opening_point,
-            &self.flag_openings,
-            &commitment.instruction_flag_commitment,
+            &E_flag_openings,
+            &commitment.E_flag_commitment,
             transcript,
-        )?;
-        Ok(())
+        )
     }
 }
 
@@ -782,7 +749,7 @@ pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     num_rounds: usize,
     claimed_evaluation: F,
     openings: PrimarySumcheckOpenings<F>,
-    opening_proof: PrimarySumcheckOpeningProof<F, G>,
+    opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
 pub struct InstructionLookups<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
@@ -845,8 +812,8 @@ where
         let commitment = InstructionPolynomials::commit(&batched_polys);
 
         commitment
-            .E_commitment
-            .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+            .E_flag_commitment
+            .append_to_transcript(b"E_flag_commitment", transcript);
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -855,7 +822,8 @@ where
         );
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
-        let sumcheck_claim = Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq_evals);
+        let sumcheck_claim =
+            Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq_evals);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -919,8 +887,8 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         commitment
-            .E_commitment
-            .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+            .E_flag_commitment
+            .append_to_transcript(b"E_flag_commitment", transcript);
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -979,7 +947,9 @@ where
         let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
             .map(|op| Self::instruction_to_memory_indices(&op))
             .collect();
-        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0..Self::NUM_MEMORIES).into_par_iter()
+        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
+            ..Self::NUM_MEMORIES)
+            .into_par_iter()
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
