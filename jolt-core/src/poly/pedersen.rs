@@ -46,7 +46,7 @@ pub trait PedersenCommitment<G: CurveGroup>: Sized {
 }
 
 impl<G: CurveGroup> PedersenCommitment<G> for G::ScalarField {
-    #[tracing::instrument(skip_all, name = "PedersenCommitment.commit")]
+    #[tracing::instrument(skip_all, name = "PedersenCommitment::commit")]
     fn commit(&self, gens: &PedersenGenerators<G>) -> G {
         assert_eq!(gens.generators.len(), 1);
         gens.generators[0] * self
@@ -54,6 +54,6 @@ impl<G: CurveGroup> PedersenCommitment<G> for G::ScalarField {
 
     fn commit_vector(inputs: &[Self], bases: &[G::Affine]) -> G {
         assert_eq!(bases.len(), inputs.len());
-        VariableBaseMSM::msm(&bases, &inputs).unwrap()
+        VariableBaseMSM::msm_u64(&bases, &inputs).unwrap()
     }
 }

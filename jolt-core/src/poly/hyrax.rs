@@ -137,9 +137,9 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
 
         // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
         let homomorphically_derived_commitment: G =
-            VariableBaseMSM::msm(&G::normalize_batch(&commitment.row_commitments), &L).unwrap();
+            VariableBaseMSM::msm_u64(&G::normalize_batch(&commitment.row_commitments), &L).unwrap();
 
-        let product_commitment = VariableBaseMSM::msm(
+        let product_commitment = VariableBaseMSM::msm_u64(
             &G::normalize_batch(&gens.gens.generators),
             &self.vector_matrix_product,
         )

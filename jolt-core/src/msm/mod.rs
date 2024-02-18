@@ -1,135 +1,94 @@
 use ark_ec::{CurveGroup, ScalarMul};
-/// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
-/// known small element sized MSMs.
 use ark_ff::{prelude::*, PrimeField};
-use ark_std::{borrow::Borrow, iterable::Iterable, vec::Vec};
+use ark_std::cmp::Ordering;
+use ark_std::vec::Vec;
 use rayon::prelude::*;
+use tracing::trace_span;
 
 #[cfg(not(feature = "ark-msm"))]
 impl<G: CurveGroup> VariableBaseMSM for G {}
 
+/// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
+/// known small element sized MSMs.
 pub trait VariableBaseMSM: ScalarMul {
-    /// Computes an inner product between the [`PrimeField`] elements in `scalars`
-    /// and the corresponding group elements in `bases`.
-    ///
-    /// If the elements have different length, it will chop the slices to the
-    /// shortest length between `scalars.len()` and `bases.len()`.
-    ///
-    /// Reference: [`VariableBaseMSM::msm`]
-    fn msm_unchecked(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Self {
-        let bigints = ark_std::cfg_into_iter!(scalars)
-            .map(|s| s.into_bigint())
-            .collect::<Vec<_>>();
-        Self::msm_bigint(bases, &bigints)
-    }
-
-    /// Performs multi-scalar multiplication.
-    ///
-    /// # Warning
-    ///
-    /// This method checks that `bases` and `scalars` have the same length.
-    /// If they are unequal, it returns an error containing
-    /// the shortest length over which the MSM can be performed.
-    fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
+    fn msm_u64(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
         (bases.len() == scalars.len())
-            .then(|| Self::msm_unchecked(bases, scalars))
+            .then(|| {
+                let max_num_bits = scalars
+                    .par_iter()
+                    .map(|s| s.into_bigint().num_bits())
+                    .max()
+                    .unwrap();
+
+                match max_num_bits {
+                    0 => Self::zero(),
+                    1 => {
+                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                        msm_binary(bases, &scalars_u64)
+                    }
+                    2..=10 => {
+                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                        msm_small(bases, &scalars_u64, max_num_bits as usize)
+                    }
+                    11..=64 => {
+                        let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
+                        if Self::NEGATION_IS_CHEAP {
+                            msm_u64_wnaf(bases, &scalars_u64, max_num_bits as usize)
+                        } else {
+                            msm_u64(bases, &scalars_u64, max_num_bits as usize)
+                        }
+                    }
+                    _ => {
+                        let scalars = scalars
+                            .par_iter()
+                            .map(|s| s.into_bigint())
+                            .collect::<Vec<_>>();
+                        if Self::NEGATION_IS_CHEAP {
+                            msm_bigint_wnaf(bases, &scalars, max_num_bits as usize)
+                        } else {
+                            msm_bigint(bases, &scalars, max_num_bits as usize)
+                        }
+                    }
+                }
+            })
             .ok_or_else(|| bases.len().min(scalars.len()))
     }
+}
 
-    /// Optimized implementation of multi-scalar multiplication.
-    fn msm_bigint(
-        bases: &[Self::MulBase],
-        bigints: &[<Self::ScalarField as PrimeField>::BigInt],
-    ) -> Self {
-        if Self::NEGATION_IS_CHEAP {
-            msm_bigint_wnaf(bases, bigints)
-        } else {
-            msm_bigint(bases, bigints)
-        }
-    }
-
-    /// Streaming multi-scalar multiplication algorithm with hard-coded chunk
-    /// size.
-    fn msm_chunks<I: ?Sized, J>(bases_stream: &J, scalars_stream: &I) -> Self
-    where
-        I: Iterable,
-        I::Item: Borrow<Self::ScalarField>,
-        J: Iterable,
-        J::Item: Borrow<Self::MulBase>,
-    {
-        assert!(scalars_stream.len() <= bases_stream.len());
-
-        // remove offset
-        let bases_init = bases_stream.iter();
-        let mut scalars = scalars_stream.iter();
-
-        // align the streams
-        // TODO: change `skip` to `advance_by` once rust-lang/rust#7774 is fixed.
-        // See <https://github.com/rust-lang/rust/issues/77404>
-        let mut bases = bases_init.skip(bases_stream.len() - scalars_stream.len());
-        let step: usize = 1 << 20;
-        let mut result = Self::zero();
-        for _ in 0..(scalars_stream.len() + step - 1) / step {
-            let bases_step = (&mut bases)
-                .take(step)
-                .map(|b| *b.borrow())
-                .collect::<Vec<_>>();
-            let scalars_step = (&mut scalars)
-                .take(step)
-                .map(|s| s.borrow().into_bigint())
-                .collect::<Vec<_>>();
-            result += Self::msm_bigint(bases_step.as_slice(), scalars_step.as_slice());
-        }
-        result
-    }
+fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarField]) -> Vec<u64> {
+    field_elements
+        .par_iter()
+        .map(|s| {
+            let bigint = s.into_bigint();
+            let limbs: &[u64] = bigint.as_ref();
+            limbs[0]
+        })
+        .collect::<Vec<_>>()
 }
 
 // Compute msm using windowed non-adjacent form
 fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
-    bigints: &[<V::ScalarField as PrimeField>::BigInt],
+    scalars: &[<V::ScalarField as PrimeField>::BigInt],
+    max_num_bits: usize,
 ) -> V {
-    let mut max_num_bits = 1usize;
-    for bigint in bigints {
-        if bigint.num_bits() as usize > max_num_bits {
-            max_num_bits = bigint.num_bits() as usize;
-        }
-
-        // Hack for early exit
-        if max_num_bits > 60 {
-            max_num_bits = V::ScalarField::MODULUS_BIT_SIZE as usize;
-            break;
-        }
-    }
-
-    let size = ark_std::cmp::min(bases.len(), bigints.len());
-    let scalars = &bigints[..size];
-    let bases = &bases[..size];
-
-    let c = if size < 32 {
+    let c = if bases.len() < 32 {
         3
     } else {
-        ln_without_floats(size) + 2
+        ln_without_floats(bases.len()) + 2
     };
 
     let num_bits = max_num_bits;
     let digits_count = (num_bits + c - 1) / c;
-    #[cfg(feature = "multicore")]
     let scalar_digits = scalars
         .into_par_iter()
-        .flat_map_iter(|s| make_digits(s, c, num_bits))
-        .collect::<Vec<_>>();
-    #[cfg(not(feature = "multicore"))]
-    let scalar_digits = scalars
-        .iter()
-        .flat_map(|s| make_digits(s, c, num_bits))
+        .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
         .collect::<Vec<_>>();
     let zero = V::zero();
     let window_sums: Vec<_> = ark_std::cfg_into_iter!(0..digits_count)
         .map(|i| {
             let mut buckets = vec![zero; 1 << c];
             for (digits, base) in scalar_digits.chunks(digits_count).zip(bases) {
-                use ark_std::cmp::Ordering;
                 // digits is the digits thing of the first scalar?
                 let scalar = digits[i];
                 match 0.cmp(&scalar) {
@@ -169,37 +128,21 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
 /// Optimized implementation of multi-scalar multiplication.
 fn msm_bigint<V: VariableBaseMSM>(
     bases: &[V::MulBase],
-    bigints: &[<V::ScalarField as PrimeField>::BigInt],
+    scalars: &[<V::ScalarField as PrimeField>::BigInt],
+    max_num_bits: usize,
 ) -> V {
-    let size = ark_std::cmp::min(bases.len(), bigints.len());
-    let scalars = &bigints[..size];
-    let bases = &bases[..size];
     let scalars_and_bases_iter = scalars.iter().zip(bases).filter(|(s, _)| !s.is_zero());
 
-    let c = if size < 32 {
+    let c = if bases.len() < 32 {
         3
     } else {
-        ln_without_floats(size) + 2
+        ln_without_floats(bases.len()) + 2
     };
 
-    let mut max_num_bits = 1usize;
-    for bigint in bigints {
-        if bigint.num_bits() as usize > max_num_bits {
-            max_num_bits = bigint.num_bits() as usize;
-        }
-
-        // Hack
-        if max_num_bits > 60 {
-            max_num_bits = V::ScalarField::MODULUS_BIT_SIZE as usize;
-            break;
-        }
-    }
-
-    let num_bits = max_num_bits;
     let one = V::ScalarField::one().into_bigint();
 
     let zero = V::zero();
-    let window_starts = (0..num_bits).step_by(c);
+    let window_starts = (0..max_num_bits).step_by(c);
 
     // Each window is of size `c`.
     // We divide up the bits 0..num_bits into windows of size `c`, and
@@ -277,7 +220,11 @@ fn msm_bigint<V: VariableBaseMSM>(
 }
 
 // From: https://github.com/arkworks-rs/gemini/blob/main/src/kzg/msm/variable_base.rs#L20
-fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> impl Iterator<Item = i64> + '_ {
+fn make_digits_bigint(
+    a: &impl BigInteger,
+    w: usize,
+    num_bits: usize,
+) -> impl Iterator<Item = i64> + '_ {
     let scalar = a.as_ref();
     let radix: u64 = 1 << w;
     let window_mask: u64 = radix - 1;
@@ -317,6 +264,230 @@ fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> impl Iterator<
     })
 }
 
+// Compute msm using windowed non-adjacent form
+#[tracing::instrument(skip_all, name = "msm_u64_wnaf")]
+fn msm_u64_wnaf<V: VariableBaseMSM>(
+    bases: &[V::MulBase],
+    scalars: &[u64],
+    max_num_bits: usize,
+) -> V {
+    let c = if bases.len() < 32 {
+        3
+    } else {
+        ln_without_floats(bases.len()) + 2
+    };
+
+    let _span = trace_span!("msm_u64_wnaf: make digits");
+    let _enter = _span.enter();
+    let digits_count = (max_num_bits + c - 1) / c;
+    let scalar_digits = scalars
+        .into_par_iter()
+        .flat_map_iter(|s| make_digits_u64(*s, c, max_num_bits))
+        .collect::<Vec<_>>();
+    let zero = V::zero();
+    drop(_enter);
+    drop(_span);
+
+    let _span = trace_span!("msm_u64_wnaf: compute window sums");
+    let _enter = _span.enter();
+    let window_sums: Vec<_> = (0..digits_count)
+        .into_par_iter()
+        .map(|i| {
+            let _span = trace_span!("msm_u64_wnaf: compute buckets");
+            let _enter = _span.enter();
+            let mut buckets = vec![zero; 1 << c];
+            for (digits, base) in scalar_digits.chunks(digits_count).zip(bases) {
+                // digits is the digits thing of the first scalar?
+                let scalar = digits[i];
+                match 0.cmp(&scalar) {
+                    Ordering::Less => buckets[(scalar - 1) as usize] += base,
+                    Ordering::Greater => buckets[(-scalar - 1) as usize] -= base,
+                    Ordering::Equal => (),
+                }
+            }
+            drop(_enter);
+            drop(_span);
+
+            let _span = trace_span!("msm_u64_wnaf: sum buckets");
+            let _enter = _span.enter();
+            let mut running_sum = V::zero();
+            let mut res = V::zero();
+            buckets.iter().rev().for_each(|b| {
+                running_sum += b;
+                res += &running_sum;
+            });
+            drop(_enter);
+            drop(_span);
+            res
+        })
+        .collect();
+    drop(_enter);
+    drop(_span);
+
+    // We store the sum for the lowest window.
+    let lowest = *window_sums.first().unwrap();
+
+    // We're traversing windows from high to low.
+    let result = lowest
+        + window_sums[1..]
+            .iter()
+            .rev()
+            .fold(zero, |mut total, sum_i| {
+                total += sum_i;
+                for _ in 0..c {
+                    total.double_in_place();
+                }
+                total
+            });
+    result
+}
+
+/// Optimized implementation of multi-scalar multiplication.
+fn msm_u64<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bits: usize) -> V {
+    let c = if bases.len() < 32 {
+        3
+    } else {
+        ln_without_floats(bases.len()) + 2
+    };
+
+    let zero = V::zero();
+
+    let scalars_and_bases_iter = scalars.iter().zip(bases).filter(|(s, _base)| !s.is_zero());
+    let window_starts = (0..max_num_bits).into_par_iter().step_by(c);
+
+    // Each window is of size `c`.
+    // We divide up the bits 0..num_bits into windows of size `c`, and
+    // in parallel process each such window.
+    let window_sums: Vec<_> = window_starts
+        .map(|w_start| {
+            let mut res = zero;
+            // We don't need the "zero" bucket, so we only have 2^c - 1 buckets.
+            let mut buckets = vec![zero; (1 << c) - 1];
+            // This clone is cheap, because the iterator contains just a
+            // pointer and an index into the original vectors.
+            scalars_and_bases_iter.clone().for_each(|(&scalar, base)| {
+                if scalar == 1 {
+                    // We only process unit scalars once in the first window.
+                    if w_start == 0 {
+                        res += base;
+                    }
+                } else {
+                    let mut scalar = scalar;
+
+                    // We right-shift by w_start, thus getting rid of the
+                    // lower bits.
+                    scalar >>= w_start;
+
+                    // We mod the remaining bits by 2^{window size}, thus taking `c` bits.
+                    scalar %= (1 << c);
+
+                    // If the scalar is non-zero, we update the corresponding
+                    // bucket.
+                    // (Recall that `buckets` doesn't have a zero bucket.)
+                    if scalar != 0 {
+                        buckets[(scalar - 1) as usize] += base;
+                    }
+                }
+            });
+
+            // Compute sum_{i in 0..num_buckets} (sum_{j in i..num_buckets} bucket[j])
+            // This is computed below for b buckets, using 2b curve additions.
+            //
+            // We could first normalize `buckets` and then use mixed-addition
+            // here, but that's slower for the kinds of groups we care about
+            // (Short Weierstrass curves and Twisted Edwards curves).
+            // In the case of Short Weierstrass curves,
+            // mixed addition saves ~4 field multiplications per addition.
+            // However normalization (with the inversion batched) takes ~6
+            // field multiplications per element,
+            // hence batch normalization is a slowdown.
+
+            // `running_sum` = sum_{j in i..num_buckets} bucket[j],
+            // where we iterate backward from i = num_buckets to 0.
+            let mut running_sum = V::zero();
+            buckets.into_iter().rev().for_each(|b| {
+                running_sum += &b;
+                res += &running_sum;
+            });
+            res
+        })
+        .collect();
+
+    // We store the sum for the lowest window.
+    let lowest = *window_sums.first().unwrap();
+
+    // We're traversing windows from high to low.
+    lowest
+        + window_sums[1..]
+            .iter()
+            .rev()
+            .fold(zero, |mut total, sum_i| {
+                total += sum_i;
+                for _ in 0..c {
+                    total.double_in_place();
+                }
+                total
+            })
+}
+
+#[tracing::instrument(skip_all, name = "msm_binary")]
+fn msm_binary<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64]) -> V {
+    scalars
+        .iter()
+        .zip(bases)
+        .filter(|(&scalar, _base)| scalar != 0)
+        .map(|(_scalar, base)| base)
+        .fold(V::zero(), |sum, base| sum + base)
+}
+
+#[tracing::instrument(skip_all, name = "msm_small")]
+fn msm_small<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bits: usize) -> V {
+    let num_buckets: usize = 1 << max_num_bits;
+    // Assign things to buckets based on the scalar
+    let mut buckets: Vec<V> = vec![V::zero(); num_buckets];
+    scalars
+        .iter()
+        .zip(bases)
+        .filter(|(&scalar, _base)| scalar != 0)
+        .for_each(|(&scalar, base)| {
+            buckets[scalar as usize] += base;
+        });
+
+    let mut result = V::zero();
+    let mut running_sum = V::zero();
+    buckets.iter().skip(1).rev().for_each(|bucket| {
+        running_sum += bucket;
+        result += running_sum;
+    });
+    result
+}
+
+fn make_digits_u64(scalar: u64, w: usize, num_bits: usize) -> impl Iterator<Item = i64> {
+    let radix: u64 = 1 << w;
+    let window_mask: u64 = radix - 1;
+    let mut carry = 0u64;
+
+    let digits_count = (num_bits + w - 1) / w;
+    (0..digits_count).into_iter().map(move |i| {
+        // Construct a buffer of bits of the scalar, starting at `bit_offset`.
+        let bit_offset = i * w;
+        let bit_idx = bit_offset % 64;
+        // Read the bits from the scalar
+        let bit_buf = scalar >> bit_idx;
+        // Read the actual coefficient value from the window
+        let coef = carry + (bit_buf & window_mask); // coef = [0, 2^r)
+
+        // Recenter coefficients from [0,2^w) to [-2^w/2, 2^w/2)
+        carry = (coef + radix / 2) >> w;
+        let mut digit = (coef as i64) - (carry << w) as i64;
+
+        if i == digits_count - 1 {
+            digit += (carry << w) as i64;
+        }
+        digit
+    })
+}
+
 /// The result of this function is only approximately `ln(a)`
 /// [`Explanation of usage`]
 ///
@@ -324,85 +495,4 @@ fn make_digits(a: &impl BigInteger, w: usize, num_bits: usize) -> impl Iterator<
 fn ln_without_floats(a: usize) -> usize {
     // log2(a) * ln(2)
     (ark_std::log2(a) * 69 / 100) as usize
-}
-
-/// Special MSM where all scalar values are 0 / 1 – does not verify.
-pub(crate) fn flags_msm<G: CurveGroup>(scalars: &[G::ScalarField], bases: &[G::Affine]) -> G {
-    assert_eq!(scalars.len(), bases.len());
-    let result = scalars
-        .into_iter()
-        .enumerate()
-        .filter(|(_index, scalar)| !scalar.is_zero())
-        .map(|(index, _scalar)| bases[index])
-        .sum();
-
-    result
-}
-
-pub(crate) fn sm_msm<V: VariableBaseMSM>(
-    scalars: &[<V::ScalarField as PrimeField>::BigInt],
-    bases: &[V::MulBase],
-) -> V {
-    assert_eq!(scalars.len(), bases.len());
-    let num_buckets: usize = 1 << 16; // TODO(sragss): This should be passed in / dependent on M = N^{1/C}
-
-    // #[cfg(test)]
-    // scalars.for_each(|scalar| {
-    //     assert!(scalar < V::ScalarField::from(num_buckets as u64).into_bigint())
-    // });
-
-    // Assign things to buckets based on the scalar
-    let mut buckets: Vec<V> = vec![V::zero(); num_buckets];
-    scalars.into_iter().enumerate().for_each(|(index, scalar)| {
-        let bucket_index: u64 = scalar.as_ref()[0];
-        buckets[bucket_index as usize] += bases[index];
-    });
-
-    let mut result = V::zero();
-    let mut running_sum = V::zero();
-    buckets
-        .into_iter()
-        .skip(1)
-        .enumerate()
-        .rev()
-        .for_each(|(index, bucket)| {
-            running_sum += bucket;
-            result += running_sum;
-        });
-    result
-}
-
-#[cfg(test)]
-mod tests {
-
-    use ark_std::test_rng;
-
-    use super::*;
-
-    #[test]
-    fn sm_msm_parity() {
-        use ark_curve25519::{EdwardsAffine as G1Affine, EdwardsProjective as G1Projective, Fr};
-        let mut rng = test_rng();
-        let bases = vec![
-            G1Affine::rand(&mut rng),
-            G1Affine::rand(&mut rng),
-            G1Affine::rand(&mut rng),
-        ];
-        let scalars = vec![Fr::from(3), Fr::from(2), Fr::from(1)];
-        let expected_result = bases[0] + bases[0] + bases[0] + bases[1] + bases[1] + bases[2];
-        assert_eq!(bases[0] + bases[0] + bases[0], bases[0] * scalars[0]);
-        let expected_result_b =
-            bases[0] * scalars[0] + bases[1] * scalars[1] + bases[2] * scalars[2];
-        assert_eq!(expected_result, expected_result_b);
-
-        let calc_result_a: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        assert_eq!(calc_result_a, expected_result);
-
-        let scalars_bigint: Vec<_> = scalars
-            .into_iter()
-            .map(|scalar| scalar.into_bigint())
-            .collect();
-        let calc_result_b: G1Projective = sm_msm(&scalars_bigint, &bases);
-        assert_eq!(calc_result_b, expected_result);
-    }
 }

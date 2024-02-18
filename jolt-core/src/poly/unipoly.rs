@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-
-use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
@@ -85,11 +83,6 @@ impl<F: PrimeField> UniPoly<F> {
         CompressedUniPoly {
             coeffs_except_linear_term,
         }
-    }
-
-    pub fn commit<G: CurveGroup<ScalarField = F>>(&self, gens: &PedersenGenerators<G>) -> G {
-        let gens = CurveGroup::normalize_batch(&gens.generators);
-        PedersenCommitment::commit_vector(&self.coeffs, &gens)
     }
 }
 
