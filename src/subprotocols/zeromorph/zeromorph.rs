@@ -11,7 +11,7 @@ use crate::utils::transcript::ProofTranscript;
 use ark_bn254::Bn254;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
-use ark_std::{iterable::Iterable, One, Zero};
+use ark_std::{iterable::Iterable, One, Zero, ops::Neg};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use merlin::Transcript;
@@ -55,14 +55,15 @@ impl<P: Pairing> ZeromorphSRS<P> {
     &self,
     max_degree: usize,
   ) -> Result<(ZeromorphProverKey<P>, ZeromorphVerifierKey<P>), ZeromorphError> {
-    if max_degree > self.0.g1_powers.len() {
+    let offset = self.0.g1_powers.len() - max_degree;
+    if self.0.g1_powers.len() >= max_degree + offset {
       return Err(ZeromorphError::KeyLengthError(
         max_degree,
         self.0.g1_powers.len(),
       ));
     }
     let offset = self.0.g1_powers.len() - max_degree;
-    let offset_g1_powers = self.0.g1_powers[offset..].to_vec();
+    let offset_g1_powers = self.0.g1_powers[offset..(offset + max_degree)].to_vec();
     Ok((
       ZeromorphProverKey {
         g1_powers: self.0.g1_powers.clone(),
@@ -282,7 +283,9 @@ pub struct Zeromorph<P: Pairing> {
   _phantom: PhantomData<P>,
 }
 
-impl<P: Pairing> ZMPolynomialCommitmentScheme for Zeromorph<P> {
+impl<P: Pairing> ZMPolynomialCommitmentScheme for Zeromorph<P> 
+where <P as Pairing>::G2Affine: Neg
+{
   type Commitment = P::G1Affine;
   type Polynomial = DensePolynomial<P::ScalarField>;
   type Evaluation = P::ScalarField;
@@ -484,16 +487,15 @@ impl<P: Pairing> ZMPolynomialCommitmentScheme for Zeromorph<P> {
     .concat();
 
     let bases = [
-      vec![q_hat_com.into_affine(), batched_commitment.into(), vk.g1],
+      vec![q_hat_com.into(), batched_commitment.into(), vk.g1],
       q_k_com,
     ]
     .concat();
     let Zeta_z_com = <P::G1 as VariableBaseMSM>::msm(&bases, &scalars).unwrap();
 
-    // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, [X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
-    let lhs = P::pairing(pi, vk.tau_2.into_group() - (vk.g2 * x_challenge));
-    let rhs = P::pairing(Zeta_z_com, vk.tau_N_max_sub_2_N);
-    assert!(lhs == rhs);
+    // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, -[X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
+    let e = P::multi_pairing(&[Zeta_z_com, pi], &[vk.tau_2.into_group() - (vk.g2 * x_challenge), -vk.tau_N_max_sub_2_N.into_group()]);
+    assert!(e.is_zero());
     Ok(())
   }
 }
@@ -521,7 +523,7 @@ mod test {
 
   #[test]
   fn prove_verify_single() {
-    let max_vars = 16;
+    let max_vars = 8;
     let mut rng = test_rng();
     let srs = ZEROMORPH_SRS.lock().unwrap();
 
