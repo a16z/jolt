@@ -26,25 +26,36 @@ use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
+use ark_ff::PrimeField as arkPrimeField;
+use common::field_conversion::ark_to_ff; 
+// Exact instantiation of the field used
+use spartan2::provider::bn256_grumpkin::bn256;
+use bn256::Scalar as Spartan2Fr;
+
+use crate::utils;
+
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
 const NUM_CHUNKS: usize = 4;
 const NUM_FLAGS: usize = 17;
 const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
 
+/// Remap [[1, a1, a2, a3], [1, b1, b2, b3], ...]  -> [1, a1, b1, ..., a2, b2, ..., a3, b3, ...]
 #[tracing::instrument(skip_all, name = "JoltCircuit::assemble_by_segments")]
-fn reassemble_by_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
-  let mut result: Vec<Vec<F>> = vec![Vec::new(); jolt_witnesses[0].len()];
-  result[0] = vec![F::from(1)]; // start with [1]
+fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
+  let num_steps = jolt_witnesses.len();
+  let num_vars = jolt_witnesses[0].len();
 
-  for witness in &mut jolt_witnesses {
-    witness.remove(0); 
-    for (i, w) in witness.iter().enumerate() {
-        result[i + 1].push(*w);
-    }
-  }
+  let mut e2e: Vec<F> = (0..(num_vars-1)).into_par_iter().flat_map(|var_index| {
+    (0..num_steps).into_iter().map(|step_index| {
+      jolt_witnesses[step_index][var_index + 1]
+    }).collect::<Vec<F>>()
+  }).collect();
 
-  result.into_iter().flatten().collect()
+  let _span = tracing::span!(tracing::Level::TRACE, "inserting into e2e");
+  let _enter = _span.enter();
+  e2e.insert(0, F::from(1));
+  e2e
 }
 
 #[derive(Clone, Debug, Default)]
@@ -111,7 +122,8 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let wtns_mapping = witness::get_input_mapping(&variable_names, &graph);
 
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
-      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().map(|v| ff_to_ruint(v.clone())).collect()).collect::<Vec<_>>();
+      // TODO(sragss): Conversion should be smarter (cached: 0, 1, 2^n)
+      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().map(|v| ff_to_ruint(v)).collect()).collect::<Vec<_>>();
       step_inputs.push(vec![U256::from(i as u64), ff_to_ruint(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
 
       let input_map: HashMap<String, Vec<U256>> = variable_names
@@ -120,11 +132,14 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
         .map(|(name, input)| (name.to_owned(), input))
         .collect();
 
+      // TODO(sragss): Could reuse the inputs buffer between parallel chunks
       let mut inputs_buffer = witness::get_inputs_buffer(wtns_buffer_size);
       witness::populate_inputs(&input_map, &wtns_mapping, &mut inputs_buffer);
       let uint_jolt_witness = witness::graph::evaluate(&graph.nodes, &inputs_buffer, &graph.signals);
 
-      uint_jolt_witness.into_iter().map(|x| ruint_to_ff(x)).collect::<Vec<_>>()
+      let jolt_witnesses = uint_jolt_witness.into_iter().map(|x| ruint_to_ff(x)).collect::<Vec<_>>();
+
+      jolt_witnesses
     }).collect();
 
     let witness_variable_wise = reassemble_by_segments(jolt_witnesses);
@@ -133,6 +148,8 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
         let f = witness_variable_wise[i];
         let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
     });
+    utils::thread::drop_in_background_thread(witness_variable_wise);
+    utils::thread::drop_in_background_thread(inputs_chunked);
 
     Ok(())
   }

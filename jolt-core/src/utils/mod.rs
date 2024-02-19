@@ -16,6 +16,7 @@ pub mod gaussian_elimination;
 pub mod instruction_utils;
 pub mod math;
 pub mod transcript;
+pub mod thread;
 
 /// Converts an integer value to a bitvector (all values {0,1}) of field elements.
 /// Note: ordering has the MSB in the highest index. All of the following represent the integer 1:
