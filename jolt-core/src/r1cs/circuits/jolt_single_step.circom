@@ -50,9 +50,6 @@ template if_else() {
     signal a <== in[1];
     signal b <== in[2];
 
-    // signal _please_help_me_god <== (1-zero_for_a) * a;
-    // out <== _please_help_me_god + (zero_for_a) * b;
-
     out <-- (1-zero_for_a) * a + zero_for_a * b;
     zero_for_a * (b-a) === out - a; 
 }
@@ -62,32 +59,24 @@ template combine_chunks(N, L) {
     signal input in[N];
     signal output out;
 
-    signal combine[N];
+    var combine = 0; 
     for (var i=0; i<N; i++) {
-        if (i==0) {
-            combine[i] <==  (1 << ((N-1-i)*L)) * in[i];
-        } else {
-            combine[i] <== combine[i-1] + (1 << ((N-1-i)*L)) * in[i];
-        }
+        combine += (1 << ((N-1-i)*L)) * in[i];
     }
     
-    out <== combine[N-1];
+    out <== combine;
 }
 
 template combine_chunks_le(N, L) {
     signal input in[N];
     signal output out;
 
-    signal combine[N];
+    var combine = 0; 
     for (var i=0; i<N; i++) {
-        if (i==0) {
-            combine[i] <==  (1 << (i*L)) * in[i];
-        } else {
-            combine[i] <== combine[i-1] + (1 << (i*L)) * in[i];
-        }
+        combine += (1 << (i*L)) * in[i];
     }
     
-    out <== combine[N-1];
+    out <== combine;
 }
 
 template prodZeroTest(N) {
@@ -193,7 +182,7 @@ template JoltStep() {
     signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
 
     /* Verify all 4 (or 8) addresses involved. The starting should be rs1_val + immediate. 
-    Note: The following are optimized in circom and do not add superfluous wires or constraints 
+    TODO(arasuarun): simplify below
     */
     signal is_load_store_instr <== is_load_instr + is_store_instr;
     signal immediate_absolute <== if_else()([sign_imm_flag, immediate, ALL_ONES() - immediate + 1]);
@@ -209,7 +198,7 @@ template JoltStep() {
         (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
-    /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
+    /* As "loads" are memory reads, we ensure that memreg_v_reads[3..] === memreg_v_writes[3..]
     */
     for (var i=0; i<MOPS()-3; i++) {
         (memreg_v_reads[3+i] - memreg_v_writes[3+i]) * is_load_instr === 0;
