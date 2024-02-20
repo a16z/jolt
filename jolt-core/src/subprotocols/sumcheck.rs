@@ -4,6 +4,7 @@
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -474,9 +475,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                     // In the case of a flagged tree, the majority of the leaves will be 1s, optimize for this case.
                     let (eval_point_0, eval_point_2, eval_point_3) = (0..len)
-                        .map(|mle_index| {
+                        .into_par_iter()
+                        .flat_map(|mle_index| {
                             let low = mle_index;
                             let high = len + mle_index;
+
 
                             // Optimized version of the product for the high probability that A[low], A[high], B[low], B[high] == 1
 
@@ -485,43 +488,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             let b_low_one = poly_B[low].is_one();
                             let b_high_one = poly_B[high].is_one();
 
-                            let eval_point_0: F = if a_low_one && b_low_one {
-                                eq_evals[low].0
-                            } 
-                            else if a_low_one {
-                                poly_B[low] * eq_evals[low].0
-                            } 
-                            else if b_low_one {
-                                poly_A[low] * eq_evals[low].0
-                            } 
-                            else {
-                                poly_A[low] * poly_B[low] * eq_evals[low].0
-                            };
-
-                            let m_a_zero = a_low_one && a_high_one;
-                            let m_b_zero = b_low_one && b_high_one;
-
-                            let (eval_point_2, eval_point_3) = if m_a_zero && m_b_zero {
-                                (eq_evals[low].1, eq_evals[low].2)
-                            } 
-                            else if m_a_zero {
-                                let m_b = poly_B[high] - poly_B[low];
-                                let point_2_B = poly_B[high] + m_b;
-                                let point_3_B = point_2_B + m_b;
-
-                                let eval_point_2 = eq_evals[low].1 * point_2_B;
-                                let eval_point_3 = eq_evals[low].2 * point_3_B;
-                                (eval_point_2, eval_point_3)
-                            } else if m_b_zero {
-                                let m_a = poly_A[high] - poly_A[low];
-                                let point_2_A = poly_A[high] + m_a;
-                                let point_3_A = point_2_A + m_a;
-
-                                let eval_point_2 = eq_evals[low].1 * point_2_A;
-                                let eval_point_3 = eq_evals[low].2 * point_3_A;
-                                (eval_point_2, eval_point_3)
-                            } 
-                            else {
+                            // TODO(sragss): Actually execute the computation.
+                            if a_low_one && b_low_one && a_high_one && b_high_one {
+                                None
+                            } else {
+                                let eval_point_0 = poly_A[low] * poly_B[low] * eq_evals[low].0;
                                 let m_a = poly_A[high] - poly_A[low];
                                 let m_b = poly_B[high] - poly_B[low];
 
@@ -531,23 +502,21 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                                 let point_2_B = poly_B[high] + m_b;
                                 let point_3_B = point_2_B + m_b;
 
-                                let eval_point_2 = eq_evals[low].1 * point_2_A * point_2_B;
-                                let eval_point_3 = eq_evals[low].2 * point_3_A * point_3_B;
-                                (eval_point_2, eval_point_3)
-                            };
-
-                            (eval_point_0, eval_point_2, eval_point_3)
+                                let eval_point_2 = eq_evals[low].1 * mul_0_1_optimized(&point_2_A, &point_2_B);
+                                let eval_point_3 = eq_evals[low].2 * mul_0_1_optimized(&point_3_A, &point_3_B);
+                                Some((eval_point_0, eval_point_2, eval_point_3))
+                            }
                         })
                         // For parallel
-                        // .reduce(
-                        //     || (F::zero(), F::zero(), F::zero()),
-                        //     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        // );
-                        // For normal
-                        .fold(
-                            (F::zero(), F::zero(), F::zero()),
+                        .reduce(
+                            || (F::zero(), F::zero(), F::zero()),
                             |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
                         );
+                        // For normal
+                        // .fold(
+                        //     (F::zero(), F::zero(), F::zero()),
+                        //     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+                        // );
 
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
