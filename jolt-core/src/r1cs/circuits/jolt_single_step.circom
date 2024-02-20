@@ -50,8 +50,8 @@ template if_else() {
     signal a <== in[1];
     signal b <== in[2];
 
-    signal _please_help_me_god <== (1-zero_for_a) * a;
-    out <== _please_help_me_god + (zero_for_a) * b;
+    out <-- (1-zero_for_a) * a + zero_for_a * b;
+    zero_for_a * (b-a) === out - a; 
 }
 
 // big-endian 
@@ -59,38 +59,29 @@ template combine_chunks(N, L) {
     signal input in[N];
     signal output out;
 
-    signal combine[N];
+    var combine = 0; 
     for (var i=0; i<N; i++) {
-        if (i==0) {
-            combine[i] <==  (1 << ((N-1-i)*L)) * in[i];
-        } else {
-            combine[i] <== combine[i-1] + (1 << ((N-1-i)*L)) * in[i];
-        }
+        combine += (1 << ((N-1-i)*L)) * in[i];
     }
     
-    out <== combine[N-1];
+    out <== combine;
 }
 
 template combine_chunks_le(N, L) {
     signal input in[N];
     signal output out;
 
-    signal combine[N];
+    var combine = 0; 
     for (var i=0; i<N; i++) {
-        if (i==0) {
-            combine[i] <==  (1 << (i*L)) * in[i];
-        } else {
-            combine[i] <== combine[i-1] + (1 << (i*L)) * in[i];
-        }
+        combine += (1 << (i*L)) * in[i];
     }
     
-    out <== combine[N-1];
+    out <== combine;
 }
 
 template prodZeroTest(N) {
     signal input in[N];
     signal prod[N];
-    signal output out; 
 
     for (var i=0; i<N; i++) {
         if (i==0) {
@@ -101,7 +92,6 @@ template prodZeroTest(N) {
     }
     
     0 === prod[N-1];
-    out <== 0; 
 }
 
 // One CPU step of jolt 
@@ -191,15 +181,13 @@ template JoltStep() {
     signal mem_v_bytes[MOPS()-3] <== subarray(3, MOPS()-3, MOPS())(memreg_v_writes);
     signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
 
-    /* Verify all 4 (or 8) addresses involved. The starting should be rs1_val + immediate
+    /* Verify all 4 (or 8) addresses involved. The starting should be rs1_val + immediate. 
+    TODO(arasuarun): simplify below
     */
-
     signal is_load_store_instr <== is_load_instr + is_store_instr;
-
     signal immediate_absolute <== if_else()([sign_imm_flag, immediate, ALL_ONES() - immediate + 1]);
     signal sign_of_immediate <== 1-2*sign_imm_flag;
     signal immediate_signed <== sign_of_immediate * immediate_absolute;
-
     signal _load_store_addr <== rs1_val + immediate_signed;
     signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
@@ -210,7 +198,7 @@ template JoltStep() {
         (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
-    /* As "loads" are memory reads, we ensure that memreg_v_reads[2..10] === memreg_v_writes[2..10]
+    /* As "loads" are memory reads, we ensure that memreg_v_reads[3..] === memreg_v_writes[3..]
     */
     for (var i=0; i<MOPS()-3; i++) {
         (memreg_v_reads[3+i] - memreg_v_writes[3+i]) * is_load_instr === 0;
@@ -277,10 +265,14 @@ template JoltStep() {
     // lui doesn't need a lookup and simply requires the lookup_output to be set to immediate 
     // so it can be stored in the destination register. 
 
-    signal rd_val <== memreg_v_writes[2]; 
+    signal rd_val <== memreg_v_writes[2];
     is_load_instr * (rd_val - load_or_store_value) === 0;
-    signal _rd_val_test1 <== prodZeroTest(3)([rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]);
-    signal _rd_val_test2 <== prodZeroTest(3)([rd, is_jump_instr, (rd_val - (prog_a_rw+4))]);
+
+    component rd_test_lookup = prodZeroTest(3);
+    rd_test_lookup.in <== [rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]; 
+    component rd_test_jump = prodZeroTest(3); 
+    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
+
     // TODO: LUI - add another flag for lui (again)
     // is_lui * (rd_val - immediate) === 0;
 
