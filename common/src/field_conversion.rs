@@ -49,7 +49,7 @@ pub fn ff_to_ruints<FF: GenericPrimeField<Repr = [u8; 32]>>(ff: Vec<FF>) -> Vec<
     ff.into_iter().map(|f| ff_to_ruint(f)).collect()
 }
 
-pub fn ark_to_spartan_unsafe<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]> + SerdeObject>(ark: AF) -> FF {
+pub fn ark_to_spartan_unsafe<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(ark: AF) -> FF {
     assert_eq!(std::mem::size_of::<AF>(), 32);
     let ff: FF;
     unsafe {

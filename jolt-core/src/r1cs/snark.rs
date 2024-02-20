@@ -1,25 +1,9 @@
 use std::collections::HashMap;
-use common::{
-    path::JoltPaths,
-    field_conversion::{ff_to_ruints, ruint_to_ff, ff_to_ruint, ark_to_ff},
-};
+
+use common::{path::JoltPaths, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
 use spartan2::{
-    errors::SpartanError,
-    VerifierKey,
-    traits::{
-      snark::RelaxedR1CSSNARKTrait,
-        upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait},
-        Group,
-    },
-    SNARK,
-    provider::{
-        bn256_grumpkin::bn256::{self, Scalar as Spartan2Fr, Point as SpartanG1},
-        hyrax_pc::HyraxEvaluationEngine as SpartanHyraxEE,
-    },
-    spartan::upsnark::R1CSSNARK,
-};
-use bellpepper_core::{
-    Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
+  traits::{snark::RelaxedR1CSSNARKTrait, Group, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}},
+  SNARK, errors::SpartanError, 
 };
 use ff::PrimeField;
 use ruint::aliases::U256;
@@ -27,10 +11,9 @@ use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
 use ark_ff::PrimeField as arkPrimeField;
-use common::field_conversion::ark_to_ff; 
-// Exact instantiation of the field used
 use spartan2::provider::bn256_grumpkin::bn256;
 use bn256::Scalar as Spartan2Fr;
+use ark_std::{Zero, One};
 
 use crate::utils;
 
@@ -147,22 +130,24 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let _compute_witness_guard = compute_witness_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       // TODO(sragss): Conversion should be smarter (cached: 0, 1, 2^n)
-      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(ff_to_ruint_cached).collect()).collect();
+      // TODO(sragss): Collect less times.
+      let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(spartan_to_ark_unsafe).collect()).collect();
 
-      step_inputs.push(vec![U256::from(i as u64), ff_to_ruint_cached(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
+      step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
 
-      let input_map: HashMap<String, Vec<U256>> = variable_names
+      let input_map: HashMap<String, Vec<ark_bn254::Fr>> = variable_names
         .iter()
         .zip(step_inputs.into_iter())
         .map(|(name, input)| (name.to_owned(), input))
         .collect();
 
       // TODO(sragss): Could reuse the inputs buffer between parallel chunks
-      let mut inputs_buffer = witness::get_inputs_buffer(wtns_buffer_size);
-      witness::populate_inputs(&input_map, &wtns_mapping, &mut inputs_buffer);
-      let uint_jolt_witness = witness::graph::evaluate(&graph.nodes, &inputs_buffer, &graph.signals);
+      let mut inputs_buffer = vec![ark_bn254::Fr::zero(); wtns_buffer_size];
+      inputs_buffer[0] = ark_bn254::Fr::one();
+      witness::populate_inputs_fr(&input_map, &wtns_mapping, &mut inputs_buffer);
+      let ark_jolt_witness = witness::graph::evaluate_fr(&graph.nodes, &inputs_buffer, &graph.signals);
 
-      let jolt_witnesses = uint_jolt_witness.into_iter().map(ruint_to_ff_cached).collect::<Vec<_>>();
+      let jolt_witnesses = ark_jolt_witness.into_iter().map(ark_to_spartan_unsafe).collect::<Vec<_>>();
 
       jolt_witnesses
     }).collect();
@@ -249,9 +234,24 @@ impl R1CSProof {
               .collect::<Vec<F>>()
           ).collect::<Vec<Vec<F>>>();
 
+<<<<<<< HEAD
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
+=======
+  let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
+  let _enter = span.enter();
+  let inputs_ff = inputs
+    .into_par_iter()
+    .map(|input| input
+        .into_par_iter()
+        .map(|x| {
+            ark_to_spartan_unsafe(x)
+        })
+        .collect::<Vec<Spartan2Fr>>()
+    ).collect::<Vec<Vec<Spartan2Fr>>>();
+  drop(_enter);
+>>>>>>> 5772512 (Snark: move to unsafe, inplace conversions, move to Fr witness generator)
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
 
