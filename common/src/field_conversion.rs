@@ -2,6 +2,7 @@ use ark_bn254::Fr as ArkFr;
 use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
 
 use ff::PrimeField as GenericPrimeField;
+use halo2curves::serde::SerdeObject;
 use spartan2::provider::bn256_grumpkin::bn256::Scalar as Spartan2Fr;
 
 pub fn ark_to_spartan<ArkF: ArkPrimeField>(ark: ArkF) -> Spartan2Fr {
@@ -48,6 +49,36 @@ pub fn ff_to_ruints<FF: GenericPrimeField<Repr = [u8; 32]>>(ff: Vec<FF>) -> Vec<
     ff.into_iter().map(|f| ff_to_ruint(f)).collect()
 }
 
+pub fn ark_to_spartan_unsafe<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]> + SerdeObject>(ark: AF) -> FF {
+    assert_eq!(std::mem::size_of::<AF>(), 32);
+    let ff: FF;
+    unsafe {
+        let inner = access_ark_private(&ark);
+        ff = std::mem::transmute_copy(&inner);
+    }
+    ff
+}
+
+pub fn spartan_to_ark_unsafe<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ff: FF) -> AF {
+    assert_eq!(std::mem::size_of::<FF>(), 32);
+    let ark: AF;
+    unsafe {
+        let inner = access_spartan_private(&ff);
+        ark = std::mem::transmute_copy(&inner);
+    }
+    ark
+}
+
+
+unsafe fn access_ark_private<AF: ArkPrimeField>(value: &AF) -> [u8; 32] {
+    let ptr = value as *const AF as *const [u8; 32];
+    *ptr
+}
+
+unsafe fn access_spartan_private<FF: GenericPrimeField<Repr = [u8; 32]>>(value: &FF) -> [u8; 32] {
+    let ptr = value as *const FF as *const [u8; 32];
+    *ptr
+}
 
 #[cfg(test)]
 mod tests {
@@ -135,4 +166,24 @@ mod tests {
             assert_eq!(spartan_value, new_spartan_value);
         }
     }
+
+    #[test]
+    fn unsafe_roundtrip_test() {
+        for _ in 0..100_000 {
+            let spartan_value = random_spartan();
+            let new_spartan_value = ark_to_spartan_unsafe(spartan_to_ark_unsafe::<Spartan2Fr, ArkFr>(spartan_value));
+            assert_eq!(spartan_value, new_spartan_value);
+        }
+
+        let ark_value = ArkFr::from(-1);
+        let new_ark_value = spartan_to_ark_unsafe(ark_to_spartan_unsafe::<ArkFr, Spartan2Fr>(ark_value));
+        assert_eq!(ark_value, new_ark_value);
+
+        for _ in 0..100_000 {
+            let ark_value = random_ark();
+            let new_ark_value = spartan_to_ark_unsafe(ark_to_spartan_unsafe::<ArkFr, Spartan2Fr>(ark_value));
+            assert_eq!(ark_value, new_ark_value);
+        }
+    }
+
 }
