@@ -127,7 +127,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
 
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       // TODO(sragss): Conversion should be smarter (cached: 0, 1, 2^n)
-      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().map(|v| ff_to_ruint(v.clone())).collect()).collect::<Vec<_>>();
+      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(ff_to_ruint).collect()).collect();
       step_inputs.push(vec![U256::from(i as u64), ff_to_ruint(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
 
       let input_map: HashMap<String, Vec<U256>> = variable_names
