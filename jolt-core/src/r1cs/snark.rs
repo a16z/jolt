@@ -93,7 +93,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
-    let cfg: CircomConfig<F> = CircomConfig::new(wtns_path.clone(), r1cs_path.clone()).unwrap();
+    let cfg: CircomConfig<F> = CircomConfig::new(wtns_path, r1cs_path).unwrap();
 
     let variable_names: Vec<String> = vec![
       "prog_a_rw".to_string(), 
@@ -118,17 +118,38 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
       .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
       .collect();
 
-    let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
-    let _compute_witness_guard = compute_witness_span.enter();
 
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
     let wtns_buffer_size = witness::get_inputs_size(&graph);
     let wtns_mapping = witness::get_input_mapping(&variable_names, &graph);
 
+    let ruint_one = U256::from(1);
+    let ff_to_ruint_cached = |v: F| -> U256 {
+      if v == F::ZERO {
+        U256::ZERO
+      } else if v == F::ONE {
+        ruint_one
+      } else {
+        ff_to_ruint(v)
+      }
+    };
+    let ruint_to_ff_cached = |v: U256| -> F {
+      if v == U256::ZERO {
+        F::ZERO
+      } else if v == ruint_one {
+        F::ONE
+      } else {
+        ruint_to_ff(v)
+      }
+    };
+
+    let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
+    let _compute_witness_guard = compute_witness_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       // TODO(sragss): Conversion should be smarter (cached: 0, 1, 2^n)
-      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(ff_to_ruint).collect()).collect();
-      step_inputs.push(vec![U256::from(i as u64), ff_to_ruint(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
+      let mut step_inputs: Vec<Vec<U256>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(ff_to_ruint_cached).collect()).collect();
+
+      step_inputs.push(vec![U256::from(i as u64), ff_to_ruint_cached(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
 
       let input_map: HashMap<String, Vec<U256>> = variable_names
         .iter()
@@ -141,10 +162,11 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
       witness::populate_inputs(&input_map, &wtns_mapping, &mut inputs_buffer);
       let uint_jolt_witness = witness::graph::evaluate(&graph.nodes, &inputs_buffer, &graph.signals);
 
-      let jolt_witnesses = uint_jolt_witness.into_iter().map(|x| ruint_to_ff(x)).collect::<Vec<_>>();
+      let jolt_witnesses = uint_jolt_witness.into_iter().map(ruint_to_ff_cached).collect::<Vec<_>>();
 
       jolt_witnesses
     }).collect();
+    drop(_compute_witness_guard);
 
     let witness_variable_wise = reassemble_by_segments(jolt_witnesses);
 
