@@ -64,10 +64,10 @@ zeroize = { version = "1", default-features = false }
 common = { path = "../common" }
 compiler = { path = "../compiler" }
 
-witness = { git = "https://github.com/philsippl/circom-witness-rs" }
+# witness = { git = "https://github.com/philsippl/circom-witness-rs" }
+witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval" }
 ruint = "1.11.1"
 spartan2 = { git = "https://github.com/a16z/Spartan2.git" }
-lazy_static = "1.4.0"
 ark-bn254 = "0.4.0"
 
 
