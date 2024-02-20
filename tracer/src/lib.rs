@@ -2,7 +2,7 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use common::{self, constants::RAM_START_ADDRESS, serializable::Serializable};
+use common::{self, constants::RAM_START_ADDRESS, serializable::Serializable, RV32IM};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
@@ -40,6 +40,22 @@ pub fn run_tracer_with_paths(
     }
 
     let rows = trace(&elf_location);
+
+    use std::collections::HashMap;
+
+    let mut instruction_count: HashMap<RV32IM, usize> = HashMap::new();
+    for row in &rows {
+        *instruction_count.entry(row.instruction.opcode).or_insert(0) += 1;
+    }
+
+    // Sort the instruction count by value in descending order and print them
+    let mut instruction_count_vec: Vec<_> = instruction_count.iter().collect();
+    instruction_count_vec.sort_by(|a, b| b.1.cmp(a.1));
+    println!("Trace instruction counts:");
+    for (opcode, count) in instruction_count_vec {
+        println!("- {:?}: {}", opcode, count);
+    }
+
     rows.serialize_to_file(&trace_destination)?;
     println!(
         "Wrote {} rows to         {}.",

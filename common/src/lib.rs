@@ -41,7 +41,7 @@ pub enum MemoryState {
 }
 
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize, Hash)]
 #[repr(u8)]
 pub enum RV32IM {
     ADD,

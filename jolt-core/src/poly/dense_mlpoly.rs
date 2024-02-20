@@ -149,6 +149,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
         let n = self.len() / 2;
 
