@@ -467,15 +467,16 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
                 .into_par_iter()
-                .with_max_len(4)
                 .map(|batch_index| {
                     let poly_A = &params.poly_As[batch_index];
                     let poly_B = &params.poly_Bs[batch_index];
                     let len = poly_A.len() / 2;
 
                     // In the case of a flagged tree, the majority of the leaves will be 1s, optimize for this case.
+                    let _span = trace_span!("eval_loop_inner");
+                    let _enter = _span.enter();
                     let (eval_point_0, eval_point_2, eval_point_3) = (0..len)
-                        .into_par_iter()
+                        .into_iter()
                         .flat_map(|mle_index| {
                             let low = mle_index;
                             let high = len + mle_index;
@@ -492,7 +493,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             if a_low_one && b_low_one && a_high_one && b_high_one {
                                 None
                             } else {
-                                let eval_point_0 = poly_A[low] * poly_B[low] * eq_evals[low].0;
+                                let eval_point_0 = eq_evals[low].0 * mul_0_1_optimized(&poly_A[low], &poly_B[low]);
                                 let m_a = poly_A[high] - poly_A[low];
                                 let m_b = poly_B[high] - poly_B[low];
 
@@ -508,15 +509,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                             }
                         })
                         // For parallel
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        );
-                        // For normal
-                        // .fold(
-                        //     (F::zero(), F::zero(), F::zero()),
+                        // .reduce(
+                        //     || (F::zero(), F::zero(), F::zero()),
                         //     |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
                         // );
+                        // For normal
+                        .fold(
+                            (F::zero(), F::zero(), F::zero()),
+                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
+                        );
 
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
