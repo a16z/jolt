@@ -866,7 +866,7 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
 
         let batched_polys = polys.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(1 << 10, b"test");
+        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(10, b"test");
         let commitments = BytecodePolynomials::commit(&batched_polys, &initializer);
         let proof = polys.prove_memory_checking(&polys, &batched_polys, &mut transcript);
 
@@ -893,7 +893,7 @@ mod tests {
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(1 << 8, b"test");
+        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(8, b"test");
         let commitments = BytecodePolynomials::commit(&batch, &initializer);
 
         let mut transcript = Transcript::new(b"test_transcript");
