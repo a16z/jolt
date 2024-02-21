@@ -66,30 +66,26 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         instructions: Vec<Self::InstructionSet>,
         circuit_flags: Vec<F>,
     ) -> (JoltProof<F, G, Self::Subtables>, JoltCommitments<G>) {
-        // TODO(sragss): Are these clones abundant?
         let mut transcript = Transcript::new(b"Jolt transcript");
         let bytecode_rows: Vec<ELFRow> = bytecode.iter().map(ELFRow::from).collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) =
             Self::prove_bytecode(bytecode_rows.clone(), bytecode_trace.clone(), &mut transcript);
 
 
-        // R1CS expects unpadded memory, memory proof expecs padded memory
+        // - prove_r1cs() memory_trace R1CS is not 2-padded
+        // - prove_memory() memory_trace    is 2-padded
         let mut padded_memory_trace = memory_trace.clone();
         padded_memory_trace.resize(memory_trace.len().next_power_of_two(), std::array::from_fn(|_| MemoryOp::no_op()));
 
         let (memory_proof, memory_polynomials, memory_commitment) =
             Self::prove_memory(bytecode.clone(), padded_memory_trace, &mut transcript);
         
-        // TODO(sragss): Theoretically these instructions could be unpadded
         let (
             instruction_lookups_proof,
             instruction_lookups_polynomials,
             instruction_lookups_commitment,
         ) = Self::prove_instruction_lookups(instructions.clone(), &mut transcript);
 
-        // TODO(sragss): 
-        // - The memory trace R1CS uses is unelongated (2-padded)
-        // - The memory trace used by prove_memory is elongated (2-padded)
 
         let r1cs_proof = Self::prove_r1cs(
             instructions, 
@@ -106,8 +102,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             instruction_lookups: instruction_lookups_proof,
             r1cs: r1cs_proof
         };
-        // TODO(sragss): I don't seem to need these polynomials.
-        let jolt_polynomials = JoltPolynomials {
+        let _jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
             instruction_lookups: instruction_lookups_polynomials,
