@@ -3,6 +3,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
 use super::hyrax::{HyraxCommitment, HyraxGenerators};
+use super::pedersen::PedersenInit;
 use crate::subprotocols::batched_commitment::BatchedPolynomialCommitment;
 use crate::utils::math::Math;
 use ark_ec::CurveGroup;
@@ -226,11 +227,11 @@ impl<F: PrimeField> DensePolynomial<F> {
         DensePolynomial::new(Z)
     }
 
-    pub fn combined_commit<G>(&self, label: &'static [u8]) -> BatchedPolynomialCommitment<G>
+    pub fn combined_commit<G>(&self, initializer: &PedersenInit<G>) -> BatchedPolynomialCommitment<G>
     where
         G: CurveGroup<ScalarField = F>,
     {
-        let generators = HyraxGenerators::new(self.num_vars, label);
+        let generators = HyraxGenerators::new(self.get_num_vars(), initializer);
         let joint_commitment = HyraxCommitment::commit(&self, &generators);
         BatchedPolynomialCommitment {
             generators,
@@ -316,7 +317,8 @@ pub mod bench {
         log_size: usize,
     ) -> (HyraxGenerators<EdwardsProjective>, DensePolynomial<Fr>) {
         let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
-        let gens = HyraxGenerators::new(log_size, b"test_gens");
+        let initializer = HyraxGenerators::new_initializer(1 << log_size, b"test_gens");
+        let gens = HyraxGenerators::new(log_size, &initializer);
         let poly = DensePolynomial::new(evals.clone());
         (gens, poly)
     }

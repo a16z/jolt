@@ -61,7 +61,7 @@ impl<F: PrimeField> MultisetHashes<F> {
 pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
     G: CurveGroup,
-    Polynomials: BatchablePolynomials + ?Sized,
+    Polynomials: BatchablePolynomials<G> + ?Sized,
     ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
     InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
@@ -86,7 +86,7 @@ pub trait MemoryCheckingProver<F, G, Polynomials>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials + std::marker::Sync,
+    Polynomials: BatchablePolynomials<G> + std::marker::Sync,
     Self: std::marker::Sync,
 {
     type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
@@ -321,7 +321,7 @@ pub trait MemoryCheckingVerifier<F, G, Polynomials>:
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials + std::marker::Sync,
+    Polynomials: BatchablePolynomials<G> + std::marker::Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
@@ -460,6 +460,8 @@ where
 mod tests {
     use std::collections::HashSet;
 
+    use crate::poly::pedersen::PedersenInit;
+
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
     use ark_ff::Field;
@@ -501,14 +503,17 @@ mod tests {
             }
         }
 
-        impl BatchablePolynomials for NormalMems {
+        impl BatchablePolynomials<EdwardsProjective> for NormalMems {
             type Commitment = FakeType;
             type BatchedPolynomials = FakeType;
 
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
+                unimplemented!()
+            }
+            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
                 unimplemented!()
             }
         }
@@ -701,14 +706,17 @@ mod tests {
             }
         }
 
-        impl BatchablePolynomials for Polys {
+        impl BatchablePolynomials<EdwardsProjective> for Polys {
             type Commitment = FakeType;
             type BatchedPolynomials = FakeType;
 
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, _generator: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
+                unimplemented!()
+            }
+            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
                 unimplemented!()
             }
         }
@@ -947,14 +955,17 @@ mod tests {
             }
         }
 
-        impl BatchablePolynomials for FlagPolys {
+        impl BatchablePolynomials<EdwardsProjective> for FlagPolys {
             type Commitment = FakeType;
             type BatchedPolynomials = FakeType;
 
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, _initializer: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
+                unimplemented!()
+            }
+            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
                 unimplemented!()
             }
         }

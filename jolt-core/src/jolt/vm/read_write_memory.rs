@@ -15,15 +15,12 @@ use crate::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
     },
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, pedersen::PedersenInit, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
     },
     subprotocols::batched_commitment::{
         BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
     },
-    utils::{errors::ProofVerifyError, mul_0_optimized},
+    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
 use common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
@@ -497,7 +494,7 @@ pub struct MemoryCommitment<G: CurveGroup> {
     pub init_final_commitments: BatchedPolynomialCommitment<G>,
 }
 
-impl<F, G> BatchablePolynomials for ReadWriteMemory<F, G>
+impl<F, G> BatchablePolynomials<G> for ReadWriteMemory<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -525,18 +522,24 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
         let read_write_commitments = batched_polys
             .batched_read_write
-            .combined_commit(b"BatchedMemoryPolynomials.batched_read_write");
+            .combined_commit(initializer);
         let init_final_commitments = batched_polys
             .batched_init_final
-            .combined_commit(b"BatchedMemoryPolynomials.batched_init_final");
+            .combined_commit(initializer);
 
         Self::Commitment {
             read_write_commitments,
             init_final_commitments,
         }
+    }
+
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let read_write_num_vars = batched_polys.batched_read_write.get_num_vars();
+        let init_final_num_vars = batched_polys.batched_init_final.get_num_vars();
+        std::cmp::max(read_write_num_vars, init_final_num_vars)
     }
 }
 
@@ -909,7 +912,8 @@ mod tests {
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let commitments = ReadWriteMemory::commit(&batched_polys);
+        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(18, b"test");
+        let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
 
         let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &mut transcript);
 

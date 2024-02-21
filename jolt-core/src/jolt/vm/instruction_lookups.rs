@@ -13,6 +13,7 @@ use rayon::prelude::*;
 
 use crate::lasso::memory_checking::MultisetHashes;
 use crate::poly::hyrax::HyraxGenerators;
+use crate::poly::pedersen::PedersenInit;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     jolt::{
@@ -100,7 +101,7 @@ pub struct InstructionCommitmentGenerators<G: CurveGroup> {
 }
 
 // TODO: macro?
-impl<F, G> BatchablePolynomials for InstructionPolynomials<F, G>
+impl<F, G> BatchablePolynomials<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -132,22 +133,30 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
         let dim_read_commitment = batched_polys
             .batched_dim_read
-            .combined_commit(b"BatchedInstructionPolynomials.dim_read");
+            .combined_commit(initializer);
         let final_commitment = batched_polys
             .batched_final
-            .combined_commit(b"BatchedInstructionPolynomials.final_cts");
+            .combined_commit(initializer);
         let E_flag_commitment = batched_polys
             .batched_E_flag
-            .combined_commit(b"BatchedInstructionPolynomials.E_flag");
+            .combined_commit(initializer);
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_flag_commitment,
         }
+    }
+
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let dim_read_num_vars = batched_polys.batched_dim_read.get_num_vars();
+        let final_num_vars = batched_polys.batched_final.get_num_vars();
+        let E_flag_num_vars = batched_polys.batched_E_flag.get_num_vars();
+
+        std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_flag_num_vars)
     }
 }
 
@@ -809,7 +818,8 @@ where
 
         let polynomials = self.polynomialize();
         let batched_polys = polynomials.batch();
-        let commitment = InstructionPolynomials::commit(&batched_polys);
+        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(InstructionPolynomials::<F,G>::max_generator_size(&batched_polys), b"LassoV1");
+        let commitment = InstructionPolynomials::commit(&batched_polys, &initializer);
 
         commitment
             .E_flag_commitment

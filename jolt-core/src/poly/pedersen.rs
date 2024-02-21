@@ -11,13 +11,13 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-#[derive(Clone)]
-pub struct PedersenGenerators<G> {
-    pub generators: Vec<G>,
+pub struct PedersenInit<G> {
+    pub generators: Vec<G>
 }
 
-impl<G: CurveGroup> PedersenGenerators<G> {
-    pub fn new(n: usize, label: &[u8]) -> Self {
+impl<G: CurveGroup> PedersenInit<G> {
+    #[tracing::instrument]
+    pub fn new(len: usize, label: &[u8]) -> Self {
         let mut shake = Shake256::default();
         shake.input(label);
         let mut buf = vec![];
@@ -30,14 +30,26 @@ impl<G: CurveGroup> PedersenGenerators<G> {
         let mut rng = ChaCha20Rng::from_seed(seed);
 
         let mut generators: Vec<G> = Vec::new();
-        for _ in 0..n {
+        for _ in 0..len{
             generators.push(G::rand(&mut rng));
         }
 
-        PedersenGenerators {
+        Self {
             generators,
         }
+
+    } 
+
+    pub fn sample(&self, n: usize) -> PedersenGenerators<G> {
+        assert!(self.generators.len() >= n, "Insufficient number of generators for sampling: required {}, available {}", n, self.generators.len());
+        let sample = self.generators[0..n].into();
+        PedersenGenerators { generators: sample }
     }
+}
+
+#[derive(Clone)]
+pub struct PedersenGenerators<G> {
+    pub generators: Vec<G>,
 }
 
 pub trait PedersenCommitment<G: CurveGroup>: Sized {

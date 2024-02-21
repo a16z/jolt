@@ -10,10 +10,7 @@ use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, pedersen::PedersenInit, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
     },
     subprotocols::{
         batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
@@ -45,7 +42,7 @@ pub struct SurgeCommitment<G: CurveGroup> {
     pub E_commitment: BatchedPolynomialCommitment<G>,
 }
 
-impl<F, G> BatchablePolynomials for SurgePolys<F, G>
+impl<F, G> BatchablePolynomials<G> for SurgePolys<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -73,22 +70,30 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
+    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
         let dim_read_commitment = batched_polys
             .batched_dim_read
-            .combined_commit(b"BatchedSurgePolynomials.dim_read");
+            .combined_commit(initializer);
         let final_commitment = batched_polys
             .batched_final
-            .combined_commit(b"BatchedSurgePolynomials.final_cts");
+            .combined_commit(initializer);
         let E_commitment = batched_polys
             .batched_E
-            .combined_commit(b"BatchedSurgePolynomials.E_poly");
+            .combined_commit(initializer);
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_commitment,
         }
+    }
+
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let dim_read_num_vars = batched_polys.batched_dim_read.get_num_vars();
+        let final_num_vars = batched_polys.batched_final.get_num_vars();
+        let E_num_vars = batched_polys.batched_E.get_num_vars();
+
+        std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_num_vars)
     }
 }
 
@@ -554,9 +559,11 @@ where
     pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G, Instruction, C> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
+        // TODO(sragss): Move upstream
         let polynomials = self.construct_polys();
         let batched_polys = polynomials.batch();
-        let commitment = SurgePolys::commit(&batched_polys);
+        let initializer = HyraxGenerators::new_initializer(SurgePolys::<F,G>::max_generator_size(&batched_polys), b"LassoV1");
+        let commitment = SurgePolys::commit(&batched_polys, &initializer);
         let num_rounds = self.num_lookups.log_2();
         let instruction = Instruction::default();
 
@@ -568,7 +575,7 @@ where
             b"primary_sumcheck",
             num_rounds,
         );
-        let eq = DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
+        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
         let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq, self.M);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
