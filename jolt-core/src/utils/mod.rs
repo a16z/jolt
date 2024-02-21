@@ -65,24 +65,19 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
 
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
-    assert_eq!(a.len(), b.len());
-
-    let dot_product = (0..a.len()).into_par_iter().map(|i| a[i] * b[i]).sum();
-
-    dot_product
+    a.par_iter()
+        .zip_eq(b.par_iter())
+        .map(|(a_i, b_i)| *a_i * b_i)
+        .sum()
 }
 
 /// Compute dotproduct optimized for values being 0 / 1
 #[tracing::instrument(skip_all)]
 pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
-    assert_eq!(a.len(), b.len());
-
-    let dot_product = (0..a.len())
-        .into_par_iter()
-        .map(|i| mul_0_1_optimized(&a[i], &b[i]))
-        .sum();
-
-    dot_product
+    a.par_iter()
+        .zip_eq(b.par_iter())
+        .map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i))
+        .sum()
 }
 
 #[inline(always)]

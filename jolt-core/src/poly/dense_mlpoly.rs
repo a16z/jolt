@@ -76,12 +76,32 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let n = self.len() / 2;
+        let (left, right) = self.Z.split_at_mut(n);
 
-        for i in 0..n {
-            // let low' = low + r * (high - low)
-            let m = self.Z[i + n] - self.Z[i];
-            self.Z[i] += *r * m;
-        }
+        left.iter_mut().zip(right.iter()).for_each(|(a, b)| {
+            *a += *r * (*b - *a);
+        });
+
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
+        let n = self.len() / 2;
+        let (left, right) = self.Z.split_at_mut(n);
+
+        left.iter_mut()
+            .zip(right.iter())
+            .filter(|(&mut a, &b)| a != b)
+            .for_each(|(a, b)| {
+                let m = *b - *a;
+                if m.is_one() {
+                    *a += *r;
+                } else {
+                    *a += *r * m;
+                }
+            });
+
         self.num_vars -= 1;
         self.len = n;
     }
@@ -148,27 +168,6 @@ impl<F: PrimeField> DensePolynomial<F> {
             len,
             Z: new_evals,
         }
-    }
-
-    pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
-        let n = self.len() / 2;
-
-        for i in 0..n {
-            let low = &self.Z[i];
-            let high = &self.Z[i + n];
-            if high == low {
-                continue;
-            }
-
-            let m = *high - low;
-            if m.is_one() {
-                self.Z[i] += r;
-            } else {
-                self.Z[i] += *r * m;
-            }
-        }
-        self.num_vars -= 1;
-        self.len = n;
     }
 
     pub fn bound_poly_var_bot(&mut self, r: &F) {
