@@ -87,12 +87,13 @@ mod tests {
     use super::*;
 
     fn random_spartan() -> Spartan2Fr {
-        let random = [rand::random::<u64>(); 4];
+        let rand_vec: Vec<u64> = std::iter::repeat_with(|| rand::random::<u64>()).take(4).collect();
+        let random: [u64; 4] = rand_vec.try_into().unwrap();
         Spartan2Fr::from_raw(random)
     }
 
     fn random_ark() -> ArkFr {
-        let random = [rand::random::<u8>(); 32];
+        let random: Vec<u8> = std::iter::repeat_with(|| rand::random::<u8>()).take(32).collect();
         ArkFr::from_be_bytes_mod_order(&random)
     }
 
