@@ -9,8 +9,7 @@ use crate::jolt::vm::read_write_memory::{
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
-// use ark_curve25519::{EdwardsProjective, Fr};
-use ark_bn254::{G1Projective as EdwardsProjective, Fr};
+use ark_bn254::{G1Projective, Fr};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
 use criterion::black_box;
@@ -76,11 +75,11 @@ fn prove_e2e_except_r1cs(
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let _: (_, BytecodePolynomials<Fr, EdwardsProjective>, _) =
+        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
-        let _: (_, ReadWriteMemory<Fr, EdwardsProjective>, _) =
+        let _: (_, ReadWriteMemory<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
-        let _: (_, InstructionPolynomials<Fr, EdwardsProjective>, _) =
+        let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript);
     });
     vec![(
@@ -105,7 +104,7 @@ fn prove_bytecode(
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let _: (_, BytecodePolynomials<Fr, EdwardsProjective>, _) =
+        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
     });
     vec![(tracing::info_span!("prove_bytecode"), work)]
@@ -129,7 +128,7 @@ fn prove_memory(
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let _: (_, ReadWriteMemory<Fr, EdwardsProjective>, _) =
+        let _: (_, ReadWriteMemory<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
     });
     vec![(tracing::info_span!("prove_memory"), work)]
@@ -145,7 +144,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
 
     let work = Box::new(|| {
         let mut transcript = Transcript::new(b"example");
-        let _: (_, InstructionPolynomials<Fr, EdwardsProjective>, _) =
+        let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript);
     });
     vec![(tracing::info_span!("prove_instruction_lookups"), work)]
@@ -218,7 +217,7 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         // TODO(sragss): Swap this to &Vec<Instructions> to avoid clone
-        <RV32IJoltVM as Jolt<'_, Fr, EdwardsProjective, C, M>>::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, Fr, G1Projective, C, M>>::prove_r1cs(
             instructions_r1cs.clone(),
             bytecode_rows,
             bytecode_trace.clone(),
@@ -248,19 +247,19 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         let (bytecode_proof, _, bytecode_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_bytecode(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_bytecode(
                 bytecode_rows,
                 bytecode_trace,
                 &mut transcript,
             );
         let (memory_proof, _, memory_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_memory(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_memory(
                 bytecode,
                 memory_trace,
                 &mut transcript,
             );
         let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_instruction_lookups(
                 instructions_r1cs,
                 &mut transcript,
             );
@@ -343,7 +342,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -396,19 +395,19 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let mut transcript = Transcript::new(b"Jolt transcript");
         let (bytecode_proof, _, bytecode_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_bytecode(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_bytecode(
                 bytecode_rows,
                 bytecode_trace,
                 &mut transcript,
             );
         let (memory_proof, _, memory_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_memory(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_memory(
                 bytecode,
                 memory_trace,
                 &mut transcript,
             );
         let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_instruction_lookups(
                 instructions,
                 &mut transcript,
             );
