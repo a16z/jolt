@@ -151,10 +151,10 @@ where
         }
     }
 
-    fn max_generator_size(&self) -> usize {
-        let dim_read_num_vars = (self.dim[0].len() * (self.dim.len() + self.read_cts.len())).log_2();
-        let final_num_vars = (self.final_cts[0].len() * self.final_cts.len()).log_2();
-        let E_flag_num_vars = (self.E_polys[0].len() * self.E_polys.len() + self.instruction_flag_polys[0].len() * self.instruction_flag_polys.len()).log_2();
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let dim_read_num_vars = batched_polys.batched_dim_read.get_num_vars();
+        let final_num_vars = batched_polys.batched_final.get_num_vars();
+        let E_flag_num_vars = batched_polys.batched_E_flag.get_num_vars();
 
         std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_flag_num_vars)
     }
@@ -818,7 +818,7 @@ where
 
         let polynomials = self.polynomialize();
         let batched_polys = polynomials.batch();
-        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(polynomials.max_generator_size(), b"LassoV1");
+        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(InstructionPolynomials::<F,G>::max_generator_size(&batched_polys), b"LassoV1");
         let commitment = InstructionPolynomials::commit(&batched_polys, &initializer);
 
         commitment

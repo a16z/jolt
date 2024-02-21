@@ -477,9 +477,9 @@ where
         }
     }
 
-    fn max_generator_size(&self) -> usize {
-        let read_write_num_vars = (self.a_read_write.len() * 7).log_2();
-        let init_final_num_vars = (self.t_final.len() * 6).log_2();
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let read_write_num_vars = batched_polys.combined_read_write.get_num_vars();
+        let init_final_num_vars = batched_polys.combined_init_final.get_num_vars();
         std::cmp::max(read_write_num_vars, init_final_num_vars)
     }
 }
