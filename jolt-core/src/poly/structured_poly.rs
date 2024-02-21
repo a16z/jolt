@@ -24,7 +24,7 @@ pub trait BatchablePolynomials<G> {
     /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
     fn commit(batched_polys: &Self::BatchedPolynomials, initalizer: &PedersenInit<G>) -> Self::Commitment;
 
-    fn max_generator_size(&self) -> usize;
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.

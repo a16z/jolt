@@ -536,9 +536,9 @@ where
         }
     }
 
-    fn max_generator_size(&self) -> usize {
-        let read_write_num_vars = (self.a_read_write[0].len() * MEMORY_OPS_PER_INSTRUCTION * 5).log_2();
-        let init_final_num_vars = (self.v_init.len() * 3).log_2();
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let read_write_num_vars = batched_polys.batched_read_write.get_num_vars();
+        let init_final_num_vars = batched_polys.batched_init_final.get_num_vars();
         std::cmp::max(read_write_num_vars, init_final_num_vars)
     }
 }
@@ -912,7 +912,7 @@ mod tests {
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(12, b"test");
+        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(18, b"test");
         let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
 
         let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &mut transcript);

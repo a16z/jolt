@@ -192,8 +192,8 @@ where
         batched_polys.combined_commit(initializer)
     }
 
-    fn max_generator_size(&self) -> usize {
-        let batch_num_vars = (self.read_cts_read_timestamp[0].len() * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
+    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
+        let batch_num_vars = batched_polys.get_num_vars();
         batch_num_vars
     }
 }
@@ -593,7 +593,7 @@ where
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
         let batched_range_check_polys = range_check_polys.batch();
-        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(range_check_polys.max_generator_size(), b"LassoV1");
+        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(RangeCheckPolynomials::<F, G>::max_generator_size(&batched_range_check_polys), b"LassoV1");
         let range_check_commitment = RangeCheckPolynomials::commit(&batched_range_check_polys, &initializer);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
@@ -841,7 +841,7 @@ mod tests {
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(rw_memory.max_generator_size(), b"LassoV1");
+        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(ReadWriteMemory::<Fr, EdwardsProjective>::max_generator_size(&batched_polys), b"LassoV1");
         let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(

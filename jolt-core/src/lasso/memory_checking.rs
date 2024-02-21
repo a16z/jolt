@@ -513,7 +513,7 @@ mod tests {
             fn commit(_batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
                 unimplemented!()
             }
-            fn max_generator_size(&self) -> usize {
+            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
                 unimplemented!()
             }
         }
@@ -716,7 +716,7 @@ mod tests {
             fn commit(_batched_polys: &Self::BatchedPolynomials, _generator: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
                 unimplemented!()
             }
-            fn max_generator_size(&self) -> usize {
+            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
                 unimplemented!()
             }
         }
@@ -965,7 +965,7 @@ mod tests {
             fn commit(_batched_polys: &Self::BatchedPolynomials, _initializer: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
                 unimplemented!()
             }
-            fn max_generator_size(&self) -> usize {
+            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
                 unimplemented!()
             }
         }
