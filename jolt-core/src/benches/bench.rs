@@ -13,7 +13,6 @@ use ark_bn254::{G1Projective, Fr};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
 use criterion::black_box;
-use itertools::Itertools;
 use merlin::Transcript;
 use rand_core::SeedableRng;
 
@@ -25,7 +24,8 @@ pub enum BenchType {
     ReadWriteMemory,
     InstructionLookups,
     Fibonacci,
-    Hash,
+    Sha2,
+    Sha3,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -43,7 +43,8 @@ pub fn benchmarks(
         BenchType::Bytecode => prove_bytecode(num_cycles, bytecode_size),
         BenchType::ReadWriteMemory => prove_memory(num_cycles, memory_size, bytecode_size),
         BenchType::InstructionLookups => prove_instruction_lookups(num_cycles),
-        BenchType::Hash => hash(),
+        BenchType::Sha2 => sha2(),
+        BenchType::Sha3 => sha3(),
         BenchType::Fibonacci => fibonacci(),
         _ => panic!("BenchType does not have a mapping"),
     }
@@ -56,9 +57,9 @@ fn prove_e2e_except_r1cs(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-    let memory_size = memory_size.unwrap_or(1 << 22); // 4,194,304 = 4 MB
-    let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
-    let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
+    let memory_size = memory_size.unwrap_or(1 << 22);      // 4,194,304 = 4 MB
+    let bytecode_size = bytecode_size.unwrap_or(1 << 16);  // 65,536 = 64 kB
+    let num_cycles = num_cycles.unwrap_or(1 << 16);        // 65,536
 
     let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
         .take(num_cycles)
@@ -168,20 +169,28 @@ fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     tasks
 }
 
-fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("sha2-ex")
+}
+
+fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("sha3-ex")
+}
+
+fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     use common::{path::JoltPaths, serializable::Serializable};
-    compiler::cached_compile_example("hash");
+    compiler::cached_compile_example(example_name);
 
+    let example_name = example_name.to_string();
     let task = move || {
-        let trace_location = JoltPaths::trace_path("hash");
+        let trace_location = JoltPaths::trace_path(&example_name);
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("hash");
+        let bytecode_location = JoltPaths::bytecode_path(&example_name);
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
-        let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -194,7 +203,8 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .collect();
 
         let instructions_r1cs: Vec<RV32I> = converted_trace
-            .iter()
+            .clone()
+            .into_iter()
             .flat_map(|row| {
                 let instructions = row.to_jolt_instructions();
                 if instructions.is_empty() {
@@ -205,82 +215,28 @@ fn hash() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             })
             .collect();
 
-        let memory_trace_r1cs = converted_trace
-            .iter()
-            .flat_map(|row| row.to_ram_ops())
-            .collect_vec();
-
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
+            .clone()
+            .into_iter()
+            .map(|row| row.to_ram_ops().try_into().unwrap())
+            .collect();
         let circuit_flags = converted_trace
             .iter()
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        // TODO(sragss): Swap this to &Vec<Instructions> to avoid clone
-        <RV32IJoltVM as Jolt<'_, Fr, G1Projective, C, M>>::prove_r1cs(
-            instructions_r1cs.clone(),
-            bytecode_rows,
-            bytecode_trace.clone(),
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
             bytecode,
-            memory_trace_r1cs,
+            bytecode_trace,
+            memory_trace,
+            instructions_r1cs,
             circuit_flags,
-            &mut transcript,
         );
 
-        let bytecode_location = JoltPaths::bytecode_path("hash");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
-
-        // // TODO(JOLT-89): Encapsulate this logic elsewhere.
-        // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // // something about Linux boot requiring it...
-        // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
-            .into_iter()
-            .map(|row| row.to_ram_ops().try_into().unwrap())
-            .collect();
-        memory_trace.resize(
-            memory_trace.len().next_power_of_two(),
-            std::array::from_fn(|_| MemoryOp::no_op()),
-        );
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        let (bytecode_proof, _, bytecode_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_bytecode(
-                bytecode_rows,
-                bytecode_trace,
-                &mut transcript,
-            );
-        let (memory_proof, _, memory_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_memory(
-                bytecode,
-                memory_trace,
-                &mut transcript,
-            );
-        let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_instruction_lookups(
-                instructions_r1cs,
-                &mut transcript,
-            );
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        assert!(
-            RV32IJoltVM::verify_bytecode(bytecode_proof, bytecode_commitment, &mut transcript)
-                .is_ok()
-        );
-        assert!(
-            RV32IJoltVM::verify_memory(memory_proof, memory_commitment, &mut transcript).is_ok()
-        );
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            instruction_lookups_proof,
-            instruction_lookups_commitment,
-            &mut transcript
-        )
-        .is_ok());
+        assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
     };
     tasks.push((
-        tracing::info_span!("HashR1CS"),
+        tracing::info_span!("Example_E2E"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 
@@ -291,6 +247,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let task = || {
         use common::{path::JoltPaths, serializable::Serializable};
+
         compiler::cached_compile_example("fibonacci");
 
         let trace_location = JoltPaths::trace_path("fibonacci");
@@ -300,7 +257,6 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
-        let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
 
         let converted_trace: Vec<RVTraceRow> = loaded_trace
             .into_iter()
@@ -325,107 +281,27 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             })
             .collect();
 
-        let memory_trace_r1cs = converted_trace
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
             .clone()
             .into_iter()
-            .flat_map(|row| row.to_ram_ops())
-            .collect_vec();
 
-        let circuit_flags = converted_trace
-            .clone()
-            .iter()
-            .flat_map(|row| {
-                let flags: Vec<Fr> = row.to_circuit_flags();
-                // flags.reverse();
-                flags.into_iter()
-            })
-            .collect::<Vec<_>>();
-
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
-            instructions_r1cs,
-            bytecode_rows,
-            bytecode_trace,
-            bytecode,
-            memory_trace_r1cs,
-            circuit_flags,
-            &mut transcript,
-        );
-
-        // use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-        compiler::cached_compile_example("fibonacci");
-
-        let trace_location = JoltPaths::trace_path("fibonacci");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-        let bytecode_rows = bytecode.iter().map(ELFRow::from).collect();
-
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
-
-        let bytecode_trace: Vec<ELFRow> = converted_trace
-            .iter()
-            .map(|row| row.to_bytecode_trace())
-            .collect();
-
-        let instructions: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
-            .flat_map(|row| row.to_jolt_instructions())
-            .collect();
-
-        // // TODO(JOLT-89): Encapsulate this logic elsewhere.
-        // // Emulator sets register 0xb to 0x1020 upon initialization for some reason,
-        // // something about Linux boot requiring it...
-        // let mut memory_trace: Vec<MemoryOp> = vec![MemoryOp::Write(11, 4128)];
-        let mut memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
-            .into_iter()
             .map(|row| row.to_ram_ops().try_into().unwrap())
             .collect();
-        memory_trace.resize(
-            memory_trace.len().next_power_of_two(),
-            std::array::from_fn(|_| MemoryOp::no_op()),
+        let circuit_flags = converted_trace
+            .iter()
+            .flat_map(|row| row.to_circuit_flags::<Fr>())
+            .collect::<Vec<_>>();
+
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
+            bytecode,
+            bytecode_trace,
+            memory_trace,
+            instructions_r1cs,
+            circuit_flags,
         );
 
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        let (bytecode_proof, _, bytecode_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_bytecode(
-                bytecode_rows,
-                bytecode_trace,
-                &mut transcript,
-            );
-        let (memory_proof, _, memory_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_memory(
-                bytecode,
-                memory_trace,
-                &mut transcript,
-            );
-        let (instruction_lookups_proof, _, instruction_lookups_commitment) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_instruction_lookups(
-                instructions,
-                &mut transcript,
-            );
 
-        let mut transcript = Transcript::new(b"Jolt transcript");
-        assert!(
-            RV32IJoltVM::verify_bytecode(bytecode_proof, bytecode_commitment, &mut transcript)
-                .is_ok()
-        );
-        assert!(
-            RV32IJoltVM::verify_memory(memory_proof, memory_commitment, &mut transcript).is_ok()
-        );
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            instruction_lookups_proof,
-            instruction_lookups_commitment,
-            &mut transcript
-        )
-        .is_ok());
+        assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
     };
     tasks.push((
         tracing::info_span!("FibonacciR1CS"),
