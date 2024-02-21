@@ -2,8 +2,22 @@ use std::collections::HashMap;
 
 use common::{path::JoltPaths, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
 use spartan2::{
-  traits::{snark::RelaxedR1CSSNARKTrait, Group, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}},
-  SNARK, errors::SpartanError, 
+  errors::SpartanError,
+  VerifierKey,
+  traits::{
+    snark::RelaxedR1CSSNARKTrait,
+      upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait},
+      Group,
+  },
+  SNARK,
+  provider::{
+      bn256_grumpkin::bn256::{self, Scalar as Spartan2Fr, Point as SpartanG1},
+      hyrax_pc::HyraxEvaluationEngine as SpartanHyraxEE,
+  },
+  spartan::upsnark::R1CSSNARK,
+};
+use bellpepper_core::{
+  Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
 };
 use ff::PrimeField;
 use ruint::aliases::U256;
@@ -11,8 +25,6 @@ use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
 use ark_ff::PrimeField as arkPrimeField;
-use spartan2::provider::bn256_grumpkin::bn256;
-use bn256::Scalar as Spartan2Fr;
 use ark_std::{Zero, One};
 
 use crate::utils;
@@ -96,6 +108,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let NUM_STEPS = self.num_steps;
 
     // for variable [v], step_inputs[v][j] is the variable input for step j
+    // TODO(sragss): Improve
     let inputs_chunked : Vec<Vec<_>> = self.inputs
       .into_par_iter()
       .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
@@ -105,26 +118,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
     let wtns_buffer_size = witness::get_inputs_size(&graph);
     let wtns_mapping = witness::get_input_mapping(&variable_names, &graph);
-
-    let ruint_one = U256::from(1);
-    let ff_to_ruint_cached = |v: F| -> U256 {
-      if v == F::ZERO {
-        U256::ZERO
-      } else if v == F::ONE {
-        ruint_one
-      } else {
-        ff_to_ruint(v)
-      }
-    };
-    let ruint_to_ff_cached = |v: U256| -> F {
-      if v == U256::ZERO {
-        F::ZERO
-      } else if v == ruint_one {
-        F::ONE
-      } else {
-        ruint_to_ff(v)
-      }
-    };
 
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
@@ -226,32 +219,23 @@ impl R1CSProof {
 
       let NUM_STEPS = TRACE_LEN;
 
-      let inputs_ff = inputs
-          .into_par_iter()
-          .map(|input| input
-              .into_par_iter()
-              .map(|x| ark_to_ff(x))
-              .collect::<Vec<F>>()
-          ).collect::<Vec<Vec<F>>>();
 
-<<<<<<< HEAD
+    let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
+    let _enter = span.enter();
+    let inputs_ff = inputs
+      .into_par_iter()
+      .map(|input| input
+          .into_par_iter()
+          .map(|x| {
+              ark_to_spartan_unsafe(x)
+          })
+          .collect::<Vec<Spartan2Fr>>()
+      ).collect::<Vec<Vec<Spartan2Fr>>>();
+      drop(_enter);
+
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
-=======
-  let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
-  let _enter = span.enter();
-  let inputs_ff = inputs
-    .into_par_iter()
-    .map(|input| input
-        .into_par_iter()
-        .map(|x| {
-            ark_to_spartan_unsafe(x)
-        })
-        .collect::<Vec<Spartan2Fr>>()
-    ).collect::<Vec<Vec<Spartan2Fr>>>();
-  drop(_enter);
->>>>>>> 5772512 (Snark: move to unsafe, inplace conversions, move to Fr witness generator)
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
 
