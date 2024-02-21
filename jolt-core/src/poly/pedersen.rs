@@ -4,7 +4,6 @@ use digest::{ExtendableOutput, Input};
 use rand_chacha::ChaCha20Rng;
 use sha3::Shake256;
 use std::io::Read;
-use crate::utils::math::Math;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -12,18 +11,13 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-use super::hyrax::matrix_dimensions;
-
 pub struct PedersenInit<G> {
     pub generators: Vec<G>
 }
 
 impl<G: CurveGroup> PedersenInit<G> {
     #[tracing::instrument]
-    pub fn new(max_num_vars: usize, label: &[u8]) -> Self {
-        // TODO(sragss): Realistically this needs to be moved upstream
-        // as it's a hyrax implementation detail.
-        let max_len = matrix_dimensions(max_num_vars).1.pow2();
+    pub fn new(len: usize, label: &[u8]) -> Self {
         let mut shake = Shake256::default();
         shake.input(label);
         let mut buf = vec![];
@@ -36,7 +30,7 @@ impl<G: CurveGroup> PedersenInit<G> {
         let mut rng = ChaCha20Rng::from_seed(seed);
 
         let mut generators: Vec<G> = Vec::new();
-        for _ in 0..max_len {
+        for _ in 0..len{
             generators.push(G::rand(&mut rng));
         }
 

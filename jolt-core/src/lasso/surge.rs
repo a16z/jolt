@@ -562,7 +562,7 @@ where
         // TODO(sragss): Move upstream
         let polynomials = self.construct_polys();
         let batched_polys = polynomials.batch();
-        let initializer = PedersenInit::new(polynomials.max_generator_size(), b"LassoV1");
+        let initializer = HyraxGenerators::new_initializer(polynomials.max_generator_size(), b"LassoV1");
         let commitment = SurgePolys::commit(&batched_polys, &initializer);
         let num_rounds = self.num_lookups.log_2();
         let instruction = Instruction::default();

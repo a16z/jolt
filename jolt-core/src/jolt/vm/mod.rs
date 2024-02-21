@@ -10,7 +10,7 @@ use crate::{jolt::{
     instruction::{JoltInstruction, Opcode},
     subtable::LassoSubtable,
     vm::timestamp_range_check::TimestampValidityProof,
-}, poly::pedersen::PedersenInit};
+}, poly::{hyrax::HyraxGenerators, pedersen::PedersenInit}};
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::prove_r1cs;
@@ -150,7 +150,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     ) {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
         let batched_polys = polys.batch();
-        let initializer: PedersenInit<G> = PedersenInit::new(polys.max_generator_size(), b"LassoV1");
+        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(polys.max_generator_size(), b"LassoV1");
         let commitment = BytecodePolynomials::commit(&batched_polys, &initializer);
 
         let proof = polys.prove_memory_checking(&polys, &batched_polys, transcript);
@@ -177,7 +177,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     ) {
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
-        let initializer: PedersenInit<G> = PedersenInit::new(memory.max_generator_size(), b"LassoV1");
+        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(memory.max_generator_size(), b"LassoV1");
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys, &initializer);
 
         let memory_checking_proof =

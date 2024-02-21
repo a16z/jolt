@@ -33,6 +33,11 @@ impl<G: CurveGroup> HyraxGenerators<G> {
         let gens = initializer.sample(right.pow2());
         HyraxGenerators { gens }
     }
+
+    pub fn new_initializer(num_vars: usize, label: &[u8]) -> PedersenInit<G> {
+        let max_len = matrix_dimensions(num_vars).1.pow2();
+        PedersenInit::new(max_len, label)
+    }
 }
 
 pub struct HyraxCommitment<G: CurveGroup> {

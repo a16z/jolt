@@ -317,7 +317,7 @@ pub mod bench {
         log_size: usize,
     ) -> (HyraxGenerators<EdwardsProjective>, DensePolynomial<Fr>) {
         let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
-        let initializer = PedersenInit::new(1 << log_size, b"test_gens");
+        let initializer = HyraxGenerators::new_initializer(1 << log_size, b"test_gens");
         let gens = HyraxGenerators::new(log_size, &initializer);
         let poly = DensePolynomial::new(evals.clone());
         (gens, poly)

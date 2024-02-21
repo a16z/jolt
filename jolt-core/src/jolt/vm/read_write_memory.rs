@@ -912,7 +912,7 @@ mod tests {
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let initializer: PedersenInit<EdwardsProjective> = PedersenInit::new(1 << 12, b"test");
+        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initalizer(1 << 12, b"test");
         let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
 
         let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &mut transcript);

@@ -818,7 +818,7 @@ where
 
         let polynomials = self.polynomialize();
         let batched_polys = polynomials.batch();
-        let initializer: PedersenInit<G> = PedersenInit::new(polynomials.max_generator_size(), b"LassoV1");
+        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(polynomials.max_generator_size(), b"LassoV1");
         let commitment = InstructionPolynomials::commit(&batched_polys, &initializer);
 
         commitment
