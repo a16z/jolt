@@ -59,6 +59,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
+    #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         bytecode: Vec<ELFInstruction>,
         bytecode_trace: Vec<ELFRow>,
