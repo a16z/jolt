@@ -107,13 +107,12 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let TRACE_LEN = self.inputs[0].len();
     let NUM_STEPS = self.num_steps;
 
+    // TODO(sragss / arasuarun): Current chunking strategy is a mess and unnecessary. Can be handled with better indexing.
     // for variable [v], step_inputs[v][j] is the variable input for step j
-    // TODO(sragss): Improve
     let inputs_chunked : Vec<Vec<_>> = self.inputs
       .into_par_iter()
       .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
       .collect();
-
 
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
     let wtns_buffer_size = witness::get_inputs_size(&graph);
@@ -122,8 +121,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
-      // TODO(sragss): Conversion should be smarter (cached: 0, 1, 2^n)
-      // TODO(sragss): Collect less times.
       let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(spartan_to_ark_unsafe).collect()).collect();
 
       step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
