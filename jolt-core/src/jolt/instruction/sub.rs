@@ -101,4 +101,26 @@ mod test {
             );
         }
     }
+
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
+
+    #[test]
+    fn u64_parity() {
+        let concrete_instruction = SUBInstruction::<32>(0, 0);
+        lookup_entry_u64_parity_random::<Fr, SUBInstruction::<32>>(100, concrete_instruction);
+
+        // Test edge-cases
+        let u32_max: u64 = ((1u64 << 32u64 - 1) as u32) as u64;
+        let instructions = vec![
+            SUBInstruction::<32>(100, 0),
+            SUBInstruction::<32>(0, 100),
+            SUBInstruction::<32>(1 , 0),
+            SUBInstruction::<32>(0, u32_max),
+            SUBInstruction::<32>(u32_max, 0),
+            SUBInstruction::<32>(u32_max, u32_max),
+            SUBInstruction::<32>(u32_max, 1 << 8),
+            SUBInstruction::<32>(1 << 8, u32_max),
+        ];
+        lookup_entry_u64_parity::<Fr, _>(instructions);
+    }
 }

@@ -103,4 +103,26 @@ mod test {
             assert_eq!(SLTInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
         }
     }
+
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
+
+    #[test]
+    fn u64_parity() {
+        let concrete_instruction = SLTInstruction(0, 0);
+        lookup_entry_u64_parity_random::<Fr, SLTInstruction>(100, concrete_instruction);
+
+        // Test edge-cases
+        let u32_max: u64 = ((1u64 << 32u64 - 1) as u32) as u64;
+        let instructions = vec![
+            SLTInstruction(100, 0),
+            SLTInstruction(0, 100),
+            SLTInstruction(1 , 0),
+            SLTInstruction(0, u32_max),
+            SLTInstruction(u32_max, 0),
+            SLTInstruction(u32_max, u32_max),
+            SLTInstruction(u32_max, 1 << 8),
+            SLTInstruction(1 << 8, u32_max),
+        ];
+        lookup_entry_u64_parity::<Fr, _>(instructions);
+    }
 }

@@ -71,4 +71,26 @@ mod test {
             assert_eq!(BNEInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
         }
     }
+
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
+
+    #[test]
+    fn u64_parity() {
+        let concrete_instruction = BNEInstruction(0, 0);
+        lookup_entry_u64_parity_random::<Fr, BNEInstruction>(100, concrete_instruction);
+
+        // Test edge-cases
+        let u32_max: u64 = ((1u64 << 32u64 - 1) as u32) as u64;
+        let instructions = vec![
+            BNEInstruction(100, 0),
+            BNEInstruction(0, 100),
+            BNEInstruction(1 , 0),
+            BNEInstruction(0, u32_max),
+            BNEInstruction(u32_max, 0),
+            BNEInstruction(u32_max, u32_max),
+            BNEInstruction(u32_max, 1 << 8),
+            BNEInstruction(1 << 8, u32_max),
+        ];
+        lookup_entry_u64_parity::<Fr, _>(instructions);
+    }
 }

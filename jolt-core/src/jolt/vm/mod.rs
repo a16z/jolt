@@ -300,7 +300,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
             .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
             .unzip();
 
-        let chunks_query = instructions
+        let mut chunks_query = instructions
             .par_iter()
             .flat_map(|op| op.to_indices(C, log_M))
             .map(|x| x as u64)

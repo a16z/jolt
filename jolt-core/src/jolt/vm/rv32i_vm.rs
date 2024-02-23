@@ -27,7 +27,7 @@ macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
         #[repr(u8)]
-        #[derive(Copy, Clone, EnumIter, EnumCountMacro)]
+        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro)]
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl Opcode for $enum_name {}

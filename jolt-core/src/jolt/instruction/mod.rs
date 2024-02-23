@@ -7,9 +7,10 @@ use std::marker::Sync;
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::index_to_field_bitvector;
 use crate::utils::instruction_utils::chunk_operand;
+use std::fmt::Debug;
 
 #[enum_dispatch]
-pub trait JoltInstruction: Sync + Clone {
+pub trait JoltInstruction: Sync + Clone + Debug {
     fn operands(&self) -> [u64; 2];
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
