@@ -487,7 +487,7 @@ where
             .flat_map_iter(|(subtable_index, subtable)| {
                 let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
-                        let a = &F::from(i as u64);
+                        let a = &F::from_u64(i as u64).unwrap();
                         let v = &subtable[i];
                         // let t = F::zero();
                         // Compute h(a,v,t) where t == 0

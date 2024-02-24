@@ -13,7 +13,7 @@ pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: us
 
     let mut sum = F::zero();
     let mut weight = F::one();
-    let shift = F::from(1u64 << operand_bits);
+    let shift = F::from_u64(1u64 << operand_bits).unwrap();
     for i in 0..C {
         sum += weight * vals[C - i - 1];
         weight *= shift;

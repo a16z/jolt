@@ -42,7 +42,7 @@ impl<F: PrimeField> LassoSubtable<F> for LtuSubtable<F> {
         let mut eq_term = F::one();
         for i in 0..b {
             result += (F::one() - x[i]) * y[i] * eq_term;
-            eq_term *= F::one() - x[i] - y[i] + F::from(2u64) * x[i] * y[i];
+            eq_term *= F::one() - x[i] - y[i] + F::from_u64(2u64).unwrap() * x[i] * y[i];
         }
         result
     }

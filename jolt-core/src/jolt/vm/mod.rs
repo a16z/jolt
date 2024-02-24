@@ -310,12 +310,17 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
         let span = tracing::span!(tracing::Level::INFO, "pack_flags");
         let _enter = span.enter();
-        let precomputed_powers: Vec<F> = (0..N_FLAGS).map(|i| F::from(2u64.pow(i as u32))).collect();
-        let packed_flags: Vec<F> = circuit_flags.par_chunks(N_FLAGS).map(|x| {
-            x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
-                packed + *flag * precomputed_powers[N_FLAGS - 1 - i]
+        let precomputed_powers: Vec<F> = (0..N_FLAGS)
+            .map(|i| F::from_u64(2u64.pow(i as u32)).unwrap())
+            .collect();
+        let packed_flags: Vec<F> = circuit_flags
+            .par_chunks(N_FLAGS)
+            .map(|x| {
+                x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
+                    packed + *flag * precomputed_powers[N_FLAGS - 1 - i]
+                })
             })
-        }).collect();
+            .collect();
         prog_v_rw.extend(packed_flags);
         drop(_enter);
         drop(span);
@@ -349,7 +354,12 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
                 let [chunks_x, chunks_y] = op.operand_chunks(C, log_M);
                 chunks_x.into_iter().zip(chunks_y.into_iter())
             })
-            .map(|(x, y)| (F::from(x as u64), F::from(y as u64)))
+            .map(|(x, y)| {
+                (
+                    F::from_u64(x as u64).unwrap(),
+                    F::from_u64(y as u64).unwrap(),
+                )
+            })
             .unzip();
 
         let mut chunks_query = instructions
@@ -391,7 +401,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
 
         let mut circuit_flags_padded = circuit_flags.clone();
         circuit_flags_padded.extend(vec![
-            F::from(0_u64);
+            F::zero();
             PADDED_TRACE_LEN * N_FLAGS - circuit_flags.len()
         ]);
         // circuit_flags.resize(PADDED_TRACE_LEN * N_FLAGS, Default::default());

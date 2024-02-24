@@ -79,8 +79,8 @@ mod test {
     #[test]
     fn srl_instruction_e2e() {
         let mut rng = test_rng();
-        const C: usize = 3;
-        const M: usize = 1 << 22;
+        const C: usize = 4;
+        const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
         for _ in 0..256 {

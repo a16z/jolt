@@ -366,7 +366,7 @@ where
                     .map(|i| {
                         // 0 * gamma^2 +
                         mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
-                            + F::from(i as u64)
+                            + F::from_u64(i as u64).unwrap()
                             - *tau
                     })
                     .collect();

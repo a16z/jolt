@@ -453,8 +453,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         drop(_enter);
         drop(span);
 
-        let to_f_vec =
-            |v: &Vec<u64>| -> Vec<F> { v.into_par_iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
+        // create a closure to convert u64 to F vector
+        let to_f_vec = |v: &Vec<u64>| -> Vec<F> {
+            v.par_iter()
+                .map(|i| F::from_u64(*i).unwrap())
+                .collect::<Vec<F>>()
+        };
 
         let un_remap_address = |a: &Vec<u64>| {
             a.iter()
@@ -786,14 +790,14 @@ where
 
         let init_fingerprints = (0..self.memory_size)
             .into_par_iter()
-            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from(i as u64) - *tau)
+            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
             .collect();
         let final_fingerprints = (0..self.memory_size)
             .into_par_iter()
             .map(|i| {
                 mul_0_optimized(&polynomials.t_final[i], &gamma_squared)
                     + mul_0_optimized(&polynomials.v_final[i], gamma)
-                    + F::from(i as u64)
+                    + F::from_u64(i as u64).unwrap()
                     - *tau
             })
             .collect();

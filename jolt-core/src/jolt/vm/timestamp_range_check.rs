@@ -329,7 +329,8 @@ where
                 let read_fingerprints_0: Vec<F> = (0..M)
                     .into_par_iter()
                     .map(|j| {
-                        let read_timestamp = F::from(polynomials.read_timestamps[i][j]);
+                        let read_timestamp =
+                            F::from_u64(polynomials.read_timestamps[i][j]).unwrap();
                         polynomials.read_cts_read_timestamp[i][j] * gamma_squared
                             + read_timestamp * gamma
                             + read_timestamp
@@ -345,7 +346,7 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let global_minus_read =
-                            F::from(j as u64 - polynomials.read_timestamps[i][j]);
+                            F::from_u64(j as u64 - polynomials.read_timestamps[i][j]).unwrap();
                         polynomials.read_cts_global_minus_read[i][j] * gamma_squared
                             + global_minus_read * gamma
                             + global_minus_read
@@ -369,7 +370,7 @@ where
         let init_fingerprints = (0..M)
             .into_par_iter()
             .map(|i| {
-                let index = F::from(i as u64);
+                let index = F::from_u64(i as u64).unwrap();
                 // 0 * gamma^2 +
                 index * gamma + index - tau
             })

@@ -179,11 +179,11 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         let mut imms = Vec::with_capacity(len);
 
         for row in elf {
-            opcodes.push(F::from(row.opcode));
-            rds.push(F::from(row.rd));
-            rs1s.push(F::from(row.rs1));
-            rs2s.push(F::from(row.rs2));
-            imms.push(F::from(row.imm));
+            opcodes.push(F::from_u64(row.opcode).unwrap());
+            rds.push(F::from_u64(row.rd).unwrap());
+            rs1s.push(F::from_u64(row.rs1).unwrap());
+            rs2s.push(F::from_u64(row.rs2).unwrap());
+            imms.push(F::from_u64(row.imm).unwrap());
         }
         // Padding
         for _ in elf.len()..len {
@@ -232,11 +232,11 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
         for row in elf {
-            opcodes.push(F::from(row.opcode));
-            rds.push(F::from(row.rd));
-            rs1s.push(F::from(row.rs1));
-            rs2s.push(F::from(row.rs2));
-            imms.push(F::from(row.imm));
+            opcodes.push(F::from_u64(row.opcode).unwrap());
+            rds.push(F::from_u64(row.rd).unwrap());
+            rs1s.push(F::from_u64(row.rs1).unwrap());
+            rs2s.push(F::from_u64(row.rs2).unwrap());
+            imms.push(F::from_u64(row.imm).unwrap());
             // circuit_flags.push(row.circuit_flags_packed::<F>());
         }
 
@@ -345,8 +345,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
 
         // create a closure to convert usize to F vector
-        let to_f_vec =
-            |vec: &Vec<usize>| -> Vec<F> { vec.iter().map(|x| F::from(*x as u64)).collect() };
+        let to_f_vec = |vec: &Vec<usize>| -> Vec<F> {
+            vec.iter()
+                .map(|x| F::from_u64(*x as u64).unwrap())
+                .collect()
+        };
 
         let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
 
@@ -547,7 +550,7 @@ where
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
                     &[
-                        F::from(i as u64),
+                        F::from_u64(i as u64).unwrap(),
                         polynomials.v_init_final.opcode[i],
                         polynomials.v_init_final.rd[i],
                         polynomials.v_init_final.rs1[i],
@@ -587,7 +590,7 @@ where
             .map(|i| {
                 <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
                     &[
-                        F::from(i as u64),
+                        F::from_u64(i as u64).unwrap(),
                         polynomials.v_init_final.opcode[i],
                         polynomials.v_init_final.rd[i],
                         polynomials.v_init_final.rs1[i],
