@@ -43,7 +43,7 @@ impl JoltInstruction for BGEInstruction {
     }
 
     fn lookup_entry_u64(&self) -> u64 {
-        (self.0 >= self.1).into()
+        ((self.0 as i32) >= (self.1 as i32)).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
