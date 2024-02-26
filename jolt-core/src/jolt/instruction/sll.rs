@@ -58,6 +58,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry_u64(&self) -> u64 {
+        // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
         (self.0 as u32).checked_shl(self.1 as u32 % WORD_SIZE as u32).unwrap_or(0).into()
     }
 
@@ -74,11 +75,12 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::SLLInstruction;
 
     #[test]
-    fn sll_instruction_e2e() {
+    fn sll_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
@@ -86,22 +88,20 @@ mod test {
 
         for _ in 0..8 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
+            let instruction = SLLInstruction::<WORD_SIZE>(x as u64, y as u64);
 
-            // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
-            let entry = x.checked_shl(y % WORD_SIZE as u32).unwrap_or(0);
+            let expected = instruction.lookup_entry_u64();
 
             jolt_instruction_test!(
-                SLLInstruction::<WORD_SIZE>(x as u64, y as u64),
-                entry.into()
+                instruction,
+                expected.into()
             );
             assert_eq!(
-                SLLInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                entry.into()
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
     }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     #[test]
     fn u64_parity() {
