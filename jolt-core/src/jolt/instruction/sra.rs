@@ -89,16 +89,16 @@ mod test {
 
         for _ in 0..8 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-
-            let entry: i32 = (x as i32).checked_shr(y % WORD_SIZE as u32).unwrap_or(0);
+            let instruction = SRAInstruction::<WORD_SIZE>(x as u64, y as u64);
+            let output = instruction.lookup_entry_u64();
 
             jolt_instruction_test!(
-                SRAInstruction::<WORD_SIZE>(x as u64, y as u64),
-                (entry as u32).into()
+                instruction,
+                (output as u32).into()
             );
             assert_eq!(
-                SRAInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (entry as u32).into()
+                instruction.lookup_entry::<Fr>(C, M),
+                (output as u32).into()
             );
         }
     }
