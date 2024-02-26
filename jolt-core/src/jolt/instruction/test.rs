@@ -59,9 +59,9 @@ where
     F: PrimeField,
     I: JoltInstruction 
 {
-    for instruction in instructions {
+    for (index, instruction) in instructions.into_iter().enumerate() {
         let fr = instruction.lookup_entry::<F>(TEST_C, TEST_M);
         let u = instruction.lookup_entry_u64();
-        assert_eq!(fr, F::from(u), "Entries did not match for {instruction:?}");
+        assert_eq!(fr, F::from(u), "[{index}] Entries did not match for {instruction:?}. Left: lookup_entry(), Right: lookup_entry_u64()");
     }
 }
