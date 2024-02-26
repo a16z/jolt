@@ -77,11 +77,12 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::SRAInstruction;
 
     #[test]
-    fn sra_instruction_e2e() {
+    fn sra_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
@@ -90,20 +91,18 @@ mod test {
         for _ in 0..8 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
             let instruction = SRAInstruction::<WORD_SIZE>(x as u64, y as u64);
-            let output = instruction.lookup_entry_u64();
+            let expected = instruction.lookup_entry_u64();
 
             jolt_instruction_test!(
                 instruction,
-                (output as u32).into()
+                expected.into()
             );
             assert_eq!(
                 instruction.lookup_entry::<Fr>(C, M),
-                (output as u32).into()
+                expected.into()
             );
         }
     }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     #[test]
     fn u64_parity() {

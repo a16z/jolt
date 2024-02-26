@@ -55,21 +55,24 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::SLTUInstruction;
 
     #[test]
-    fn sltu_instruction_e2e() {
+    fn sltu_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            jolt_instruction_test!(SLTUInstruction(x, y), (x < y).into());
+            let instruction = SLTUInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
             assert_eq!(
-                SLTUInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x < y).into()
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
         for _ in 0..256 {
@@ -78,8 +81,6 @@ mod test {
             assert_eq!(SLTUInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
         }
     }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     #[test]
     fn u64_parity() {
