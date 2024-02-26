@@ -59,8 +59,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry_u64(&self) -> u64 {
-        // TODO(sragss): Not sure this is correct.
-        (self.0 as i32).checked_shr(self.1 as u32).unwrap_or(0) as u64
+        let x = self.0 as i32;
+        let y = (self.1 as u32 % (WORD_SIZE as u32));
+        x.checked_shr(y).unwrap_or(0) as u64
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -113,13 +114,13 @@ mod test {
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             SRAInstruction::<32>(100, 0),
-            SRAInstruction::<32>(0, 100),
-            SRAInstruction::<32>(1 , 0),
-            SRAInstruction::<32>(0, u32_max),
+            SRAInstruction::<32>(0, 2),
+            SRAInstruction::<32>(1 , 2),
+            SRAInstruction::<32>(0, 32),
             SRAInstruction::<32>(u32_max, 0),
-            SRAInstruction::<32>(u32_max, u32_max),
+            SRAInstruction::<32>(u32_max, 31),
             SRAInstruction::<32>(u32_max, 1 << 8),
-            SRAInstruction::<32>(1 << 8, u32_max),
+            SRAInstruction::<32>(1 << 8, 1 << 16),
         ];
         lookup_entry_u64_parity::<Fr, _>(instructions);
     }
