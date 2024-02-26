@@ -55,7 +55,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry_u64(&self) -> u64 {
-        (self.0 as u32).checked_shr(self.1 as u32).unwrap_or(0).into()
+        let x = self.0 as u32;
+        let y = (self.1 % WORD_SIZE as u64) as u32;
+        x.checked_shr(y).unwrap_or(0).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
