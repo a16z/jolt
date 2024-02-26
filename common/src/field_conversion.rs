@@ -51,6 +51,7 @@ pub fn ff_to_ruints<FF: GenericPrimeField<Repr = [u8; 32]>>(ff: Vec<FF>) -> Vec<
 
 pub fn ark_to_spartan_unsafe<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(ark: AF) -> FF {
     assert_eq!(std::mem::size_of::<AF>(), 32);
+    assert_eq!(std::mem::size_of::<FF>(), 32);
     let ff: FF;
     unsafe {
         let inner = access_ark_private(&ark);
@@ -61,6 +62,7 @@ pub fn ark_to_spartan_unsafe<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8
 
 pub fn spartan_to_ark_unsafe<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrimeField>(ff: FF) -> AF {
     assert_eq!(std::mem::size_of::<FF>(), 32);
+    assert_eq!(std::mem::size_of::<AF>(), 32);
     let ark: AF;
     unsafe {
         let inner = access_spartan_private(&ff);
