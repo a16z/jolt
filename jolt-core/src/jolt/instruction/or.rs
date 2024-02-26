@@ -47,26 +47,47 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
+    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::ORInstruction;
 
     #[test]
-    fn or_instruction_e2e() {
+    fn or_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let x = rng.next_u32() as u64;
+            let y = rng.next_u32() as u64;
+            let instruction = ORInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
+            assert_eq!(
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
+            );
+        }
+    }
+
+    #[test]
+    fn or_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(ORInstruction(x, y), (x | y).into());
+            let x = rng.next_u64();
+            let y = rng.next_u64();
+            let instruction = ORInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
             assert_eq!(
-                ORInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x | y).into()
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
     }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     #[test]
     fn u64_parity() {
