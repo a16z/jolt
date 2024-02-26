@@ -70,8 +70,8 @@ mod test {
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let x = rng.next_u64() as i64;
-            let y = rng.next_u64() as i64;
+            let x = rng.next_u32();
+            let y = rng.next_u32();
 
             let instruction = BGEInstruction(x as u64, y as u64);
             let expected = instruction.lookup_entry_u64();
@@ -83,7 +83,7 @@ mod test {
             );
         }
         for _ in 0..256 {
-            let x = rng.next_u64() as i64;
+            let x = rng.next_u32();
             jolt_instruction_test!(BGEInstruction(x as u64, x as u64), Fr::one());
             assert_eq!(
                 BGEInstruction(x as u64, x as u64).lookup_entry::<Fr>(C, M),
