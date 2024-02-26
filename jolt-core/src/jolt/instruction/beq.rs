@@ -80,7 +80,7 @@ mod test {
         lookup_entry_u64_parity_random::<Fr, BEQInstruction>(100, concrete_instruction);
 
         // Test edge-cases
-        let u32_max: u64 = ((1u64 << 32u64 - 1) as u32) as u64;
+        let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             BEQInstruction(100, 0),
             BEQInstruction(0, 100),

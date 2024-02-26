@@ -108,11 +108,11 @@ mod test {
 
     #[test]
     fn u64_parity() {
-        // let concrete_instruction = SLTInstruction(0, 0);
-        // lookup_entry_u64_parity_random::<Fr, SLTInstruction>(100, concrete_instruction);
+        let concrete_instruction = SLTInstruction(0, 0);
+        lookup_entry_u64_parity_random::<Fr, SLTInstruction>(100, concrete_instruction);
 
         // Test edge-cases
-        let u32_max: u64 = (((1u64 << 32u64) - 1) as u32) as u64;
+        let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             SLTInstruction(100, 0),
             SLTInstruction(0, 100),
