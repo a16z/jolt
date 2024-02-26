@@ -63,7 +63,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
     }
 
     fn lookup_entry_u64(&self) -> u64 {
-        self.0.overflowing_sub(self.1).0.into()
+        (self.0 as u32).overflowing_sub(self.1 as u32).0.into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
