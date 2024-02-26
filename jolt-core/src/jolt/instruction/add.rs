@@ -82,31 +82,53 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-
+    use crate::{
+        jolt::instruction::{JoltInstruction, test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity}},
+        jolt_instruction_test,
+    };
     use super::ADDInstruction;
 
+    #[test]
+    fn add_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = ADDInstruction::<32>(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(
+                instruction,
+                expected.into()
+            );
+            assert_eq!(
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
+            );
+        }
+    }
 
     #[test]
-    fn add_instruction_e2e() {
+    fn add_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = ADDInstruction::<64>(x, y);
+            let expected = instruction.lookup_entry_u64();
             jolt_instruction_test!(
-                ADDInstruction::<64>(x as u64, y as u64),
-                (x.overflowing_add(y)).0.into()
+                instruction,
+                expected.into()
             );
             assert_eq!(
-                ADDInstruction::<64>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x.overflowing_add(y)).0.into()
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
     }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     #[test]
     fn u64_parity() {
