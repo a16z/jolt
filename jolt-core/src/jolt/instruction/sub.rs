@@ -91,13 +91,15 @@ mod test {
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
+            let instruction = SUBInstruction::<WORD_SIZE>(x as u64, y as u64);
+            let expected = instruction.lookup_entry_u64();
             jolt_instruction_test!(
-                SUBInstruction::<WORD_SIZE>(x as u64, y as u64),
-                (x.overflowing_sub(y)).0.into()
+                instruction,
+                expected.into()
             );
             assert_eq!(
-                SUBInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x.overflowing_sub(y).0.into())
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
     }

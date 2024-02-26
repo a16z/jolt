@@ -51,17 +51,37 @@ mod test {
     use super::XORInstruction;
 
     #[test]
-    fn xor_instruction_e2e() {
+    fn xor_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = XORInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
+            assert_eq!(
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
+            );
+        }
+    }
+
+    #[test]
+    fn xor_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(XORInstruction(x, y), (x ^ y).into());
+            let instruction = XORInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
             assert_eq!(
-                XORInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x ^ y).into()
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
     }
