@@ -52,23 +52,50 @@ mod test {
     use super::BNEInstruction;
 
     #[test]
-    fn bne_instruction_e2e() {
+    fn bne_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = BNEInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
+            assert_eq!(
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
+            );
+        }
+        for _ in 0..256 {
+            let x = rng.next_u32() as u64;
+            let instruction = BNEInstruction(x, x);
+            jolt_instruction_test!(instruction, Fr::zero());
+            assert_eq!(instruction.lookup_entry::<Fr>(C, M), Fr::zero());
+        }
+    }
+
+    #[test]
+    fn bne_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(BNEInstruction(x, y), (x != y).into());
+            let instruction = BNEInstruction(x, y);
+            let expected = instruction.lookup_entry_u64();
+            jolt_instruction_test!(instruction, expected.into());
             assert_eq!(
-                BNEInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x != y).into()
+                instruction.lookup_entry::<Fr>(C, M),
+                expected.into()
             );
         }
         for _ in 0..256 {
             let x = rng.next_u64();
-            jolt_instruction_test!(BNEInstruction(x, x), Fr::zero());
-            assert_eq!(BNEInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
+            let instruction = BNEInstruction(x, x);
+            jolt_instruction_test!(instruction, Fr::zero());
+            assert_eq!(instruction.lookup_entry::<Fr>(C, M), Fr::zero());
         }
     }
 
