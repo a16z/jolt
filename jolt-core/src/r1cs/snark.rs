@@ -25,9 +25,10 @@ use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
 use ark_ff::PrimeField as arkPrimeField;
+use ark_ec::CurveGroup as arkGroup;
 use ark_std::{Zero, One};
 
-use crate::utils;
+use crate::{poly::pedersen::PedersenGenerators, utils};
 
 use spartan2::traits::commitment::CommitmentEngineTrait;
 
@@ -224,7 +225,7 @@ pub fn precommit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeFie
   let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
     .into_par_iter()
     .map(|i| {
-      G::CE::commit(&ck, &w_segments[i]) // WARNING:
+      G::CE::commit(&ck, &w_segments[i]) 
     }).collect();
 
   Ok((ck, w_segments, commitments))
@@ -236,16 +237,15 @@ pub struct R1CSProof  {
 }
 
 impl R1CSProof {
-
-
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-  pub fn prove<ArkF: ark_ff::PrimeField>(
+  pub fn prove<ArkF: ark_ff::PrimeField, ArkG: ark_ec::CurveGroup>(
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
-      inputs: Vec<Vec<ArkF>>
+      inputs: Vec<Vec<ArkF>>, 
+      _generators: &PedersenGenerators<ArkG>,
   ) -> Result<Self, SpartanError> {
-    Self::prove_precommitted(W, C, TRACE_LEN, inputs) 
+    Self::prove_precommitted(W, C, TRACE_LEN, inputs)
   }
 
   pub fn prove_uniform<ArkF: ark_ff::PrimeField>(
@@ -325,16 +325,17 @@ impl R1CSProof {
     
       // produce a SNARK
       let proof = SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comms); 
-
+      
       proof.map(|snark| Self {
         proof: snark,
         vk
-      })
+      }) 
   }
 
 
   pub fn verify(&self) -> Result<(), SpartanError> {
-    SNARK::verify(&self.proof, &self.vk, &[])
+    // SNARK::verify(&self.proof, &self.vk, &[])
+    SNARK::verify_precommitted(&self.proof, &self.vk, &[])
   }
 }
 
