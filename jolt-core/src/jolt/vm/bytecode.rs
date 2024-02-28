@@ -223,28 +223,37 @@ impl<F: PrimeField> FiveTuplePoly<F> {
     fn from_elf_r1cs(elf: &Vec<ELFRow>) -> Vec<F> {
         let len = elf.len();
 
-        let mut opcodes = Vec::with_capacity(len);
-        let mut rds = Vec::with_capacity(len);
-        let mut rs1s = Vec::with_capacity(len);
-        let mut rs2s = Vec::with_capacity(len);
-        let mut imms = Vec::with_capacity(len);
+        // pack: [opcode_1, ..., opcode_len, rd_1, ... rd_len, .... imm_1, ... imm_len]
+        let mut packed = vec![F::zero(); 5 * len];
+
+        let opcode_index = |index: usize| -> usize {
+            index
+        };
+        let rs1_index = |index: usize| -> usize {
+            len + index
+        };
+        let rs2_index = |index: usize| -> usize {
+            2*len + index
+        };
+        let rd_index = |index: usize| -> usize {
+            3*len + index
+        };
+        let imm_index = |index: usize| -> usize {
+            4*len + index
+        };
+        
         // TODO(arasuarun): handle circuit flags here and not in prove_r1cs()
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
-        for row in elf {
-            opcodes.push(F::from_u64(row.opcode).unwrap());
-            rds.push(F::from_u64(row.rd).unwrap());
-            rs1s.push(F::from_u64(row.rs1).unwrap());
-            rs2s.push(F::from_u64(row.rs2).unwrap());
-            imms.push(F::from_u64(row.imm).unwrap());
-            // circuit_flags.push(row.circuit_flags_packed::<F>());
+        for (index, row) in elf.iter().enumerate() {
+            packed[opcode_index(index)] = F::from(row.opcode);
+            packed[rs1_index(index)] = F::from(row.rs1);
+            packed[rs2_index(index)] = F::from(row.rs2);
+            packed[rd_index(index)] = F::from(row.rd);
+            packed[imm_index(index)] = F::from(row.imm);
         }
 
-        [
-            opcodes, rs1s, rs2s, rds, imms,
-            // circuit_flags,
-        ]
-        .concat()
+        packed
     }
 }
 
