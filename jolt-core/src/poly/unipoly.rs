@@ -33,7 +33,7 @@ impl<F: PrimeField> UniPoly<F> {
 
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
         let n = evals.len();
-        let xs: Vec<F> = (0..n).map(|x| F::from(x as u64)).collect();
+        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64).unwrap()).collect();
 
         let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
         for i in 0..n {

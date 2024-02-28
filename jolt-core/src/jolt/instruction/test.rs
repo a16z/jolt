@@ -7,6 +7,8 @@
 /// 4. Checks that the result equals the expected value, given by the `lookup_output`
 macro_rules! jolt_instruction_test {
     ($instr:expr) => {
+        use ark_ff::PrimeField;
+        
         let materialized_subtables: Vec<_> = $instr
             .subtables::<Fr>(C)
             .iter()
@@ -23,7 +25,7 @@ macro_rules! jolt_instruction_test {
         }
 
         let actual = $instr.combine_lookups(&subtable_values, C, M);
-        let expected = Fr::from($instr.lookup_entry());
+        let expected = Fr::from_u64($instr.lookup_entry()).unwrap();
 
         assert_eq!(actual, expected, "{:?}", $instr);
     };

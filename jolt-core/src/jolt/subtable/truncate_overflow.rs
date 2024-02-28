@@ -31,7 +31,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F>
         let mut entries: Vec<F> = Vec::with_capacity(M);
         for idx in 0..M {
             let (_, lower_bits) = split_bits(idx, cutoff);
-            let row = F::from(lower_bits as u64);
+            let row = F::from_u64(lower_bits as u64).unwrap();
             entries.push(row);
         }
         entries
@@ -43,7 +43,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F>
 
         let mut result = F::zero();
         for i in 0..cutoff {
-            result += F::from(1u64 << i) * point[point.len() - 1 - i];
+            result += F::from_u64(1u64 << i).unwrap() * point[point.len() - 1 - i];
         }
         result
     }

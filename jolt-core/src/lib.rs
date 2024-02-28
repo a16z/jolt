@@ -6,6 +6,7 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 #![feature(iter_next_chunk)]
+#![allow(long_running_const_eval)]
 
 pub mod benches;
 pub mod jolt;

@@ -42,7 +42,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
                 .checked_shr(suffix_length as u32)
                 .unwrap_or(0);
 
-            entries.push(F::from(row as u64));
+            entries.push(F::from_u64(row as u64).unwrap());
         }
         entries
     }
@@ -64,7 +64,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
             let k_bits = (k as usize)
                 .get_bits(log_WORD_SIZE)
                 .iter()
-                .map(|bit| F::from(*bit as u64))
+                .map(|bit| F::from_u64(*bit as u64).unwrap())
                 .collect::<Vec<F>>(); // big-endian
 
             let mut eq_term = F::one();
@@ -84,7 +84,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
 
             let shift_x_by_k = (0..m_prime)
                 .enumerate()
-                .map(|(j, _)| F::from(1_u64 << (j + k)) * x[b - 1 - j])
+                .map(|(j, _)| F::from_u64(1_u64 << (j + k)).unwrap() * x[b - 1 - j])
                 .fold(F::zero(), |acc, val| acc + val);
 
             result += eq_term * shift_x_by_k;

@@ -9,7 +9,7 @@ use crate::jolt::vm::read_write_memory::{
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
-use ark_bn254::{G1Projective, Fr};
+use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::ELFInstruction;
 use criterion::black_box;
@@ -57,9 +57,9 @@ fn prove_e2e_except_r1cs(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-    let memory_size = memory_size.unwrap_or(1 << 22);      // 4,194,304 = 4 MB
-    let bytecode_size = bytecode_size.unwrap_or(1 << 16);  // 65,536 = 64 kB
-    let num_cycles = num_cycles.unwrap_or(1 << 16);        // 65,536
+    let memory_size = memory_size.unwrap_or(1 << 22); // 4,194,304 = 4 MB
+    let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
+    let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
     let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
         .take(num_cycles)
@@ -74,14 +74,20 @@ fn prove_e2e_except_r1cs(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let work = Box::new(|| {
-        let mut transcript = Transcript::new(b"example");
-        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
+    let generators = RV32IJoltVM::preprocess(bytecode_size, memory_size, num_cycles);
+    let mut transcript = Transcript::new(b"example");
+
+    let work = Box::new(move || {
+        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) = RV32IJoltVM::prove_bytecode(
+            bytecode_rows,
+            bytecode_trace,
+            &generators,
+            &mut transcript,
+        );
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &generators, &mut transcript);
         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript);
+            RV32IJoltVM::prove_instruction_lookups(ops, &generators, &mut transcript);
     });
     vec![(
         tracing::info_span!("prove_bytecode + prove_memory + prove_instruction_lookups"),
@@ -103,10 +109,16 @@ fn prove_bytecode(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let work = Box::new(|| {
-        let mut transcript = Transcript::new(b"example");
-        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_bytecode(bytecode_rows, bytecode_trace, &mut transcript);
+    let generators = RV32IJoltVM::preprocess(bytecode_size, 1, num_cycles);
+    let mut transcript = Transcript::new(b"example");
+
+    let work = Box::new(move || {
+        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) = RV32IJoltVM::prove_bytecode(
+            bytecode_rows,
+            bytecode_trace,
+            &generators,
+            &mut transcript,
+        );
     });
     vec![(tracing::info_span!("prove_bytecode"), work)]
 }
@@ -127,10 +139,12 @@ fn prove_memory(
         .collect();
     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
 
-    let work = Box::new(|| {
+    let generators = RV32IJoltVM::preprocess(bytecode_size, memory_size, num_cycles);
+
+    let work = Box::new(move || {
         let mut transcript = Transcript::new(b"example");
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_memory(bytecode, memory_trace, &mut transcript);
+            RV32IJoltVM::prove_memory(bytecode, memory_trace, &generators, &mut transcript);
     });
     vec![(tracing::info_span!("prove_memory"), work)]
 }
@@ -143,10 +157,12 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
         .take(num_cycles)
         .collect();
 
-    let work = Box::new(|| {
-        let mut transcript = Transcript::new(b"example");
+    let generators = RV32IJoltVM::preprocess(1, 1, num_cycles);
+    let mut transcript = Transcript::new(b"example");
+
+    let work = Box::new(move || {
         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_instruction_lookups(ops, &mut transcript);
+            RV32IJoltVM::prove_instruction_lookups(ops, &generators, &mut transcript);
     });
     vec![(tracing::info_span!("prove_instruction_lookups"), work)]
 }
@@ -225,13 +241,17 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
-            bytecode,
-            bytecode_trace,
-            memory_trace,
-            instructions_r1cs,
-            circuit_flags,
-        );
+        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
+
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
+                bytecode,
+                bytecode_trace,
+                memory_trace,
+                instructions_r1cs,
+                circuit_flags,
+                generators,
+            );
 
         assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
     };
@@ -284,7 +304,6 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
             .clone()
             .into_iter()
-
             .map(|row| row.to_ram_ops().try_into().unwrap())
             .collect();
         let circuit_flags = converted_trace
@@ -292,14 +311,17 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
-            bytecode,
-            bytecode_trace,
-            memory_trace,
-            instructions_r1cs,
-            circuit_flags,
-        );
+        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
 
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
+                bytecode,
+                bytecode_trace,
+                memory_trace,
+                instructions_r1cs,
+                circuit_flags,
+                generators,
+            );
 
         assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
     };

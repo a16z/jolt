@@ -11,12 +11,13 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-pub struct PedersenInit<G> {
-    pub generators: Vec<G>
+#[derive(Clone)]
+pub struct PedersenGenerators<G: CurveGroup> {
+    pub generators: Vec<G>,
 }
 
-impl<G: CurveGroup> PedersenInit<G> {
-    #[tracing::instrument]
+impl<G: CurveGroup> PedersenGenerators<G> {
+    #[tracing::instrument(skip_all, name = "PedersenGenerators::new")]
     pub fn new(len: usize, label: &[u8]) -> Self {
         let mut shake = Shake256::default();
         shake.input(label);
@@ -30,26 +31,25 @@ impl<G: CurveGroup> PedersenInit<G> {
         let mut rng = ChaCha20Rng::from_seed(seed);
 
         let mut generators: Vec<G> = Vec::new();
-        for _ in 0..len{
+        for _ in 0..len {
             generators.push(G::rand(&mut rng));
         }
 
-        Self {
-            generators,
-        }
-
-    } 
-
-    pub fn sample(&self, n: usize) -> PedersenGenerators<G> {
-        assert!(self.generators.len() >= n, "Insufficient number of generators for sampling: required {}, available {}", n, self.generators.len());
-        let sample = self.generators[0..n].into();
-        PedersenGenerators { generators: sample }
+        Self { generators }
     }
-}
 
-#[derive(Clone)]
-pub struct PedersenGenerators<G> {
-    pub generators: Vec<G>,
+    pub fn clone_n(&self, n: usize) -> PedersenGenerators<G> {
+        assert!(
+            self.generators.len() >= n,
+            "Insufficient number of generators for clone_n: required {}, available {}",
+            n,
+            self.generators.len()
+        );
+        let slice = &self.generators[..n];
+        PedersenGenerators {
+            generators: slice.into(),
+        }
+    }
 }
 
 pub trait PedersenCommitment<G: CurveGroup>: Sized {

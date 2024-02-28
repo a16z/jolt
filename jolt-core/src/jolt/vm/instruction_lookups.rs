@@ -1,19 +1,18 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::interleave;
+use itertools::{interleave, max};
 use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 use std::any::TypeId;
 use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::trace_span;
 
-use rayon::prelude::*;
-
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::HyraxGenerators;
-use crate::poly::pedersen::PedersenInit;
+use crate::poly::hyrax::{matrix_dimensions, HyraxGenerators};
+use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     jolt::{
@@ -52,11 +51,11 @@ where
     /// `m` (# lookups).
     pub dim: Vec<DensePolynomial<F>>,
 
-    /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
     pub read_cts: Vec<DensePolynomial<F>>,
 
-    /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// final access counts to the memory. Each `DensePolynomial` has size M, AKA subtable size.
     pub final_cts: Vec<DensePolynomial<F>>,
 
@@ -133,30 +132,19 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
-        let dim_read_commitment = batched_polys
-            .batched_dim_read
-            .combined_commit(initializer);
-        let final_commitment = batched_polys
-            .batched_final
-            .combined_commit(initializer);
-        let E_flag_commitment = batched_polys
-            .batched_E_flag
-            .combined_commit(initializer);
+    fn commit(
+        batched_polys: &Self::BatchedPolynomials,
+        generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment {
+        let dim_read_commitment = batched_polys.batched_dim_read.combined_commit(generators);
+        let final_commitment = batched_polys.batched_final.combined_commit(generators);
+        let E_flag_commitment = batched_polys.batched_E_flag.combined_commit(generators);
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_flag_commitment,
         }
-    }
-
-    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
-        let dim_read_num_vars = batched_polys.batched_dim_read.get_num_vars();
-        let final_num_vars = batched_polys.batched_final.get_num_vars();
-        let E_flag_num_vars = batched_polys.batched_E_flag.get_num_vars();
-
-        std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_flag_num_vars)
     }
 }
 
@@ -499,7 +487,7 @@ where
             .flat_map_iter(|(subtable_index, subtable)| {
                 let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
-                        let a = &F::from(i as u64);
+                        let a = &F::from_u64(i as u64).unwrap();
                         let v = &subtable[i];
                         // let t = F::zero();
                         // Compute h(a,v,t) where t == 0
@@ -808,6 +796,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
         &self,
+        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
         InstructionLookupsProof<F, G, Subtables>,
@@ -818,8 +807,7 @@ where
 
         let polynomials = self.polynomialize();
         let batched_polys = polynomials.batch();
-        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(InstructionPolynomials::<F,G>::max_generator_size(&batched_polys), b"LassoV1");
-        let commitment = InstructionPolynomials::commit(&batched_polys, &initializer);
+        let commitment = InstructionPolynomials::commit(&batched_polys, generators);
 
         commitment
             .E_flag_commitment
@@ -1437,6 +1425,18 @@ where
             subtable_lookup_indices.push(access_sequence);
         }
         subtable_lookup_indices
+    }
+
+    /// Computes the maximum number of group generators needed to commit to instruction
+    /// lookup polynomials using Hyrax, given the maximum trace length.
+    pub fn num_generators(max_trace_length: usize) -> usize {
+        let dim_read_num_vars = (max_trace_length * (C + Self::NUM_MEMORIES)).log_2();
+        let final_num_vars = (M * Self::NUM_MEMORIES).log_2();
+        let E_flag_num_vars =
+            (max_trace_length * (Self::NUM_MEMORIES + Self::NUM_INSTRUCTIONS)).log_2();
+
+        let max_num_vars = max([dim_read_num_vars, final_num_vars, E_flag_num_vars]).unwrap();
+        matrix_dimensions(max_num_vars).1.pow2()
     }
 
     /// Maps an index [0, NUM_MEMORIES) -> [0, NUM_SUBTABLES)

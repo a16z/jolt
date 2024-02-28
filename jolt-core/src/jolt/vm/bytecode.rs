@@ -7,9 +7,8 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
-use crate::poly::pedersen::PedersenInit;
-use crate::utils::math::Math;
+use crate::poly::hyrax::matrix_dimensions;
+use crate::poly::pedersen::PedersenGenerators;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
 use common::{to_ram_address, ELFInstruction};
@@ -26,7 +25,7 @@ use crate::{
     subprotocols::batched_commitment::{
         BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
     },
-    utils::{errors::ProofVerifyError, is_power_of_two},
+    utils::{errors::ProofVerifyError, is_power_of_two, math::Math},
 };
 
 pub type BytecodeProof<F, G> = MemoryCheckingProof<
@@ -180,11 +179,11 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         let mut imms = Vec::with_capacity(len);
 
         for row in elf {
-            opcodes.push(F::from(row.opcode));
-            rds.push(F::from(row.rd));
-            rs1s.push(F::from(row.rs1));
-            rs2s.push(F::from(row.rs2));
-            imms.push(F::from(row.imm));
+            opcodes.push(F::from_u64(row.opcode).unwrap());
+            rds.push(F::from_u64(row.rd).unwrap());
+            rs1s.push(F::from_u64(row.rs1).unwrap());
+            rs2s.push(F::from_u64(row.rs2).unwrap());
+            imms.push(F::from_u64(row.imm).unwrap());
         }
         // Padding
         for _ in elf.len()..len {
@@ -233,11 +232,11 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
         for row in elf {
-            opcodes.push(F::from(row.opcode));
-            rds.push(F::from(row.rd));
-            rs1s.push(F::from(row.rs1));
-            rs2s.push(F::from(row.rs2));
-            imms.push(F::from(row.imm));
+            opcodes.push(F::from_u64(row.opcode).unwrap());
+            rds.push(F::from_u64(row.rd).unwrap());
+            rs1s.push(F::from_u64(row.rs1).unwrap());
+            rs2s.push(F::from_u64(row.rs2).unwrap());
+            imms.push(F::from_u64(row.imm).unwrap());
             // circuit_flags.push(row.circuit_flags_packed::<F>());
         }
 
@@ -346,8 +345,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
 
         // create a closure to convert usize to F vector
-        let to_f_vec =
-            |vec: &Vec<usize>| -> Vec<F> { vec.iter().map(|x| F::from(*x as u64)).collect() };
+        let to_f_vec = |vec: &Vec<usize>| -> Vec<F> {
+            vec.iter()
+                .map(|x| F::from_u64(*x as u64).unwrap())
+                .collect()
+        };
 
         let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
 
@@ -406,6 +408,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             trace.push(ELFRow::no_op(no_op_address));
         }
     }
+
+    /// Computes the maximum number of group generators needed to commit to bytecode
+    /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
+    pub fn num_generators(max_bytecode_size: usize, max_trace_length: usize) -> usize {
+        // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
+        let read_write_num_vars = (max_trace_length * 7).log_2();
+        // t_final, v_init_final (opcode, rs1, rs2, rd, imm)
+        let init_final_num_vars = (max_bytecode_size * 6).log_2();
+        let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
+        matrix_dimensions(max_num_vars).1.pow2()
+    }
 }
 
 pub struct BatchedBytecodePolynomials<F: PrimeField> {
@@ -463,24 +476,21 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
+    fn commit(
+        batched_polys: &Self::BatchedPolynomials,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment {
         let read_write_commitments = batched_polys
             .combined_read_write
-            .combined_commit(initializer);
+            .combined_commit(pedersen_generators);
         let init_final_commitments = batched_polys
             .combined_init_final
-            .combined_commit(initializer);
+            .combined_commit(pedersen_generators);
 
         Self::Commitment {
             read_write_commitments,
             init_final_commitments,
         }
-    }
-
-    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
-        let read_write_num_vars = batched_polys.combined_read_write.get_num_vars();
-        let init_final_num_vars = batched_polys.combined_init_final.get_num_vars();
-        std::cmp::max(read_write_num_vars, init_final_num_vars)
     }
 }
 
@@ -515,76 +525,84 @@ where
         let num_ops = polynomials.a_read_write.len();
         let memory_size = polynomials.v_init_final.opcode.len();
 
-        let read_fingerprints = (0..num_ops).into_par_iter().map(|i| {
-            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                &[
-                    polynomials.a_read_write[i],
-                    polynomials.v_read_write.opcode[i],
-                    polynomials.v_read_write.rd[i],
-                    polynomials.v_read_write.rs1[i],
-                    polynomials.v_read_write.rs2[i],
-                    polynomials.v_read_write.imm[i],
-                    polynomials.t_read[i],
-                ],
-                gamma,
-                tau,
-            )
-        })
-        .collect();
+        let read_fingerprints = (0..num_ops)
+            .into_par_iter()
+            .map(|i| {
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                    &[
+                        polynomials.a_read_write[i],
+                        polynomials.v_read_write.opcode[i],
+                        polynomials.v_read_write.rd[i],
+                        polynomials.v_read_write.rs1[i],
+                        polynomials.v_read_write.rs2[i],
+                        polynomials.v_read_write.imm[i],
+                        polynomials.t_read[i],
+                    ],
+                    gamma,
+                    tau,
+                )
+            })
+            .collect();
         let read_leaves = DensePolynomial::new(read_fingerprints);
 
-        let init_fingerprints = (0..memory_size).into_par_iter().map(|i| {
-            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                &[
-                    F::from(i as u64),
-                    polynomials.v_init_final.opcode[i],
-                    polynomials.v_init_final.rd[i],
-                    polynomials.v_init_final.rs1[i],
-                    polynomials.v_init_final.rs2[i],
-                    polynomials.v_init_final.imm[i],
-                    F::zero(),
-                ],
-                gamma,
-                tau,
-            )
-        })
-        .collect();
+        let init_fingerprints = (0..memory_size)
+            .into_par_iter()
+            .map(|i| {
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                    &[
+                        F::from_u64(i as u64).unwrap(),
+                        polynomials.v_init_final.opcode[i],
+                        polynomials.v_init_final.rd[i],
+                        polynomials.v_init_final.rs1[i],
+                        polynomials.v_init_final.rs2[i],
+                        polynomials.v_init_final.imm[i],
+                        F::zero(),
+                    ],
+                    gamma,
+                    tau,
+                )
+            })
+            .collect();
         let init_leaves = DensePolynomial::new(init_fingerprints);
 
-        let write_fingerprints = (0..num_ops).into_par_iter().map(|i| {
-            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                &[
-                    polynomials.a_read_write[i],
-                    polynomials.v_read_write.opcode[i],
-                    polynomials.v_read_write.rd[i],
-                    polynomials.v_read_write.rs1[i],
-                    polynomials.v_read_write.rs2[i],
-                    polynomials.v_read_write.imm[i],
-                    polynomials.t_read[i] + F::one(),
-                ],
-                gamma,
-                tau,
-            )
-        })
-        .collect();
+        let write_fingerprints = (0..num_ops)
+            .into_par_iter()
+            .map(|i| {
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                    &[
+                        polynomials.a_read_write[i],
+                        polynomials.v_read_write.opcode[i],
+                        polynomials.v_read_write.rd[i],
+                        polynomials.v_read_write.rs1[i],
+                        polynomials.v_read_write.rs2[i],
+                        polynomials.v_read_write.imm[i],
+                        polynomials.t_read[i] + F::one(),
+                    ],
+                    gamma,
+                    tau,
+                )
+            })
+            .collect();
         let write_leaves = DensePolynomial::new(write_fingerprints);
 
-        let final_fingerprints = (0..memory_size).into_par_iter().map(|i| {
-            <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
-                &[
-                    F::from(i as u64),
-                    polynomials.v_init_final.opcode[i],
-                    polynomials.v_init_final.rd[i],
-                    polynomials.v_init_final.rs1[i],
-                    polynomials.v_init_final.rs2[i],
-                    polynomials.v_init_final.imm[i],
-                    polynomials.t_final[i],
-                ],
-                gamma,
-                tau,
-            )
-        })
-        .collect();
+        let final_fingerprints = (0..memory_size)
+            .into_par_iter()
+            .map(|i| {
+                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                    &[
+                        F::from_u64(i as u64).unwrap(),
+                        polynomials.v_init_final.opcode[i],
+                        polynomials.v_init_final.rd[i],
+                        polynomials.v_init_final.rs1[i],
+                        polynomials.v_init_final.rs2[i],
+                        polynomials.v_init_final.imm[i],
+                        polynomials.t_final[i],
+                    ],
+                    gamma,
+                    tau,
+                )
+            })
+            .collect();
         let final_leaves = DensePolynomial::new(final_fingerprints);
 
         (
@@ -866,8 +884,8 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
 
         let batched_polys = polys.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(10, b"test");
-        let commitments = BytecodePolynomials::commit(&batched_polys, &initializer);
+        let generators = PedersenGenerators::new(10, b"test");
+        let commitments = BytecodePolynomials::commit(&batched_polys, &generators);
         let proof = polys.prove_memory_checking(&polys, &batched_polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
@@ -893,8 +911,8 @@ mod tests {
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(8, b"test");
-        let commitments = BytecodePolynomials::commit(&batch, &initializer);
+        let generators = PedersenGenerators::new(8, b"test");
+        let commitments = BytecodePolynomials::commit(&batch, &generators);
 
         let mut transcript = Transcript::new(b"test_transcript");
 

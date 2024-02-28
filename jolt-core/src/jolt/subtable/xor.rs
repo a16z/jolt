@@ -26,7 +26,7 @@ impl<F: PrimeField> LassoSubtable<F> for XorSubtable<F> {
         // Materialize table entries in order where (x | y) ranges 0..M
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
-            let row = F::from((x ^ y) as u64);
+            let row = F::from_u64((x ^ y) as u64).unwrap();
             entries.push(row);
         }
         entries
@@ -42,7 +42,7 @@ impl<F: PrimeField> LassoSubtable<F> for XorSubtable<F> {
         for i in 0..b {
             let x = x[b - i - 1];
             let y = y[b - i - 1];
-            result += F::from(1u64 << i) * ((F::one() - x) * y + x * (F::one() - y));
+            result += F::from_u64(1u64 << i).unwrap() * ((F::one() - x) * y + x * (F::one() - y));
         }
         result
     }

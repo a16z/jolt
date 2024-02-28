@@ -3,7 +3,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
 use super::hyrax::{HyraxCommitment, HyraxGenerators};
-use super::pedersen::PedersenInit;
+use super::pedersen::PedersenGenerators;
 use crate::subprotocols::batched_commitment::BatchedPolynomialCommitment;
 use crate::utils::math::Math;
 use ark_ec::CurveGroup;
@@ -226,11 +226,14 @@ impl<F: PrimeField> DensePolynomial<F> {
         DensePolynomial::new(Z)
     }
 
-    pub fn combined_commit<G>(&self, initializer: &PedersenInit<G>) -> BatchedPolynomialCommitment<G>
+    pub fn combined_commit<G>(
+        &self,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> BatchedPolynomialCommitment<G>
     where
         G: CurveGroup<ScalarField = F>,
     {
-        let generators = HyraxGenerators::new(self.get_num_vars(), initializer);
+        let generators = HyraxGenerators::new(self.get_num_vars(), pedersen_generators);
         let joint_commitment = HyraxCommitment::commit(&self, &generators);
         BatchedPolynomialCommitment {
             generators,
@@ -238,16 +241,22 @@ impl<F: PrimeField> DensePolynomial<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
     pub fn from_usize(Z: &[usize]) -> Self {
         DensePolynomial::new(
             (0..Z.len())
-                .map(|i| F::from(Z[i] as u64))
+                .map(|i| F::from_u64(Z[i] as u64).unwrap())
                 .collect::<Vec<F>>(),
         )
     }
 
+    #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
     pub fn from_u64(Z: &[u64]) -> Self {
-        DensePolynomial::new((0..Z.len()).map(|i| F::from(Z[i])).collect::<Vec<F>>())
+        DensePolynomial::new(
+            (0..Z.len())
+                .map(|i| F::from_u64(Z[i]).unwrap())
+                .collect::<Vec<F>>(),
+        )
     }
 }
 
@@ -316,8 +325,9 @@ pub mod bench {
         log_size: usize,
     ) -> (HyraxGenerators<EdwardsProjective>, DensePolynomial<Fr>) {
         let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
-        let initializer = HyraxGenerators::new_initializer(1 << log_size, b"test_gens");
-        let gens = HyraxGenerators::new(log_size, &initializer);
+
+        let pedersen_generators = PedersenGenerators::new(1 << log_size, b"test_gens");
+        let gens = HyraxGenerators::new(log_size, &pedersen_generators);
         let poly = DensePolynomial::new(evals.clone());
         (gens, poly)
     }

@@ -1,21 +1,25 @@
-use std::cmp::max;
-use std::marker::PhantomData;
-
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::cmp::max;
 #[cfg(test)]
 use std::collections::HashSet;
+use std::marker::PhantomData;
 
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
     },
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, pedersen::PedersenInit, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        hyrax::matrix_dimensions,
+        identity_poly::IdentityPolynomial,
+        pedersen::PedersenGenerators,
+        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::batched_commitment::{
         BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
@@ -449,8 +453,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         drop(_enter);
         drop(span);
 
-        let to_f_vec =
-            |v: &Vec<u64>| -> Vec<F> { v.into_par_iter().map(|i| F::from(*i)).collect::<Vec<F>>() };
+        // create a closure to convert u64 to F vector
+        let to_f_vec = |v: &Vec<u64>| -> Vec<F> {
+            v.par_iter()
+                .map(|i| F::from_u64(*i).unwrap())
+                .collect::<Vec<F>>()
+        };
 
         let un_remap_address = |a: &Vec<u64>| {
             a.iter()
@@ -470,6 +478,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             to_f_vec(&v_write),
             to_f_vec(&t_read),
         ]
+    }
+
+    /// Computes the maximum number of group generators needed to commit to read-write
+    /// memory polynomials using Hyrax, given the maximum memory address and maximum trace length.
+    pub fn num_generators(max_memory_address: usize, max_trace_length: usize) -> usize {
+        // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 } x { a_read, a_write, v_read, v_write, t_read_write }
+        let read_write_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 5).log_2();
+        // v_init, v_final, t_final
+        let init_final_num_vars = (max_memory_address * 3).log_2();
+        let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
+        matrix_dimensions(max_num_vars).1.pow2()
     }
 }
 
@@ -520,24 +539,21 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
+    fn commit(
+        batched_polys: &Self::BatchedPolynomials,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment {
         let read_write_commitments = batched_polys
             .batched_read_write
-            .combined_commit(initializer);
+            .combined_commit(pedersen_generators);
         let init_final_commitments = batched_polys
             .batched_init_final
-            .combined_commit(initializer);
+            .combined_commit(pedersen_generators);
 
         Self::Commitment {
             read_write_commitments,
             init_final_commitments,
         }
-    }
-
-    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
-        let read_write_num_vars = batched_polys.batched_read_write.get_num_vars();
-        let init_final_num_vars = batched_polys.batched_init_final.get_num_vars();
-        std::cmp::max(read_write_num_vars, init_final_num_vars)
     }
 }
 
@@ -774,14 +790,14 @@ where
 
         let init_fingerprints = (0..self.memory_size)
             .into_par_iter()
-            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from(i as u64) - *tau)
+            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
             .collect();
         let final_fingerprints = (0..self.memory_size)
             .into_par_iter()
             .map(|i| {
                 mul_0_optimized(&polynomials.t_final[i], &gamma_squared)
                     + mul_0_optimized(&polynomials.v_final[i], gamma)
-                    + F::from(i as u64)
+                    + F::from_u64(i as u64).unwrap()
                     - *tau
             })
             .collect();
@@ -910,8 +926,8 @@ mod tests {
         let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(18, b"test");
-        let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
+        let generators = PedersenGenerators::new(1 << 10, b"test");
+        let commitments = ReadWriteMemory::commit(&batched_polys, &generators);
 
         let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &mut transcript);
 

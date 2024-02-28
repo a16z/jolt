@@ -1,25 +1,25 @@
-use std::marker::{PhantomData, Sync};
-
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use std::marker::{PhantomData, Sync};
 
 use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, pedersen::PedersenInit, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        hyrax::matrix_dimensions,
+        identity_poly::IdentityPolynomial,
+        pedersen::PedersenGenerators,
+        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
         batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
         sumcheck::SumcheckInstanceProof,
     },
-    utils::{
-        errors::ProofVerifyError, math::Math, mul_0_1_optimized, 
-        transcript::ProofTranscript,
-    },
+    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
 pub struct SurgePolys<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -70,30 +70,23 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
+    fn commit(
+        batched_polys: &Self::BatchedPolynomials,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment {
         let dim_read_commitment = batched_polys
             .batched_dim_read
-            .combined_commit(initializer);
+            .combined_commit(pedersen_generators);
         let final_commitment = batched_polys
             .batched_final
-            .combined_commit(initializer);
-        let E_commitment = batched_polys
-            .batched_E
-            .combined_commit(initializer);
+            .combined_commit(pedersen_generators);
+        let E_commitment = batched_polys.batched_E.combined_commit(pedersen_generators);
 
         Self::Commitment {
             dim_read_commitment,
             final_commitment,
             E_commitment,
         }
-    }
-
-    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
-        let dim_read_num_vars = batched_polys.batched_dim_read.get_num_vars();
-        let final_num_vars = batched_polys.batched_final.get_num_vars();
-        let E_num_vars = batched_polys.batched_E.get_num_vars();
-
-        std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_num_vars)
     }
 }
 
@@ -373,7 +366,7 @@ where
                     .map(|i| {
                         // 0 * gamma^2 +
                         mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
-                            + F::from(i as u64)
+                            + F::from_u64(i as u64).unwrap()
                             - *tau
                     })
                     .collect();
@@ -520,6 +513,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::new")]
+    // TODO(moodlezoup): we can turn M back into a const generic
     pub fn new(ops: Vec<Instruction>, M: usize) -> Self {
         let num_lookups = ops.len().next_power_of_two();
         let instruction = Instruction::default();
@@ -555,6 +549,18 @@ where
         b"Surge"
     }
 
+    /// Computes the maximum number of group generators needed to commit to Surge polynomials
+    /// using Hyrax, given `M` and the maximum number of lookups.
+    pub fn num_generators(M: usize, max_num_lookups: usize) -> usize {
+        let dim_read_num_vars = (max_num_lookups * 2 * C).log_2();
+        let final_num_vars = (M * C).log_2();
+        let E_num_vars = (max_num_lookups * Self::num_memories()).log_2();
+
+        let max_num_vars =
+            std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_num_vars);
+        matrix_dimensions(max_num_vars).1.pow2()
+    }
+
     #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G, Instruction, C> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
@@ -562,8 +568,9 @@ where
         // TODO(sragss): Move upstream
         let polynomials = self.construct_polys();
         let batched_polys = polynomials.batch();
-        let initializer = HyraxGenerators::new_initializer(SurgePolys::<F,G>::max_generator_size(&batched_polys), b"LassoV1");
-        let commitment = SurgePolys::commit(&batched_polys, &initializer);
+        let pedersen_generators =
+            PedersenGenerators::new(Self::num_generators(self.M, self.num_lookups), b"LassoV1");
+        let commitment = SurgePolys::commit(&batched_polys, &pedersen_generators);
         let num_rounds = self.num_lookups.log_2();
         let instruction = Instruction::default();
 
@@ -575,7 +582,8 @@ where
             b"primary_sumcheck",
             num_rounds,
         );
-        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
+        let eq: DensePolynomial<F> =
+            DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
         let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq, self.M);
 
         <Transcript as ProofTranscript<G>>::append_scalar(

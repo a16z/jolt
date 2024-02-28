@@ -2,17 +2,16 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 
+use super::pedersen::PedersenGenerators;
 use crate::{
     subprotocols::batched_commitment::BatchedPolynomialOpeningProof,
-    utils::{errors::ProofVerifyError},
+    utils::errors::ProofVerifyError,
 };
-
-use super::{hyrax::HyraxGenerators, pedersen::PedersenInit};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
-pub trait BatchablePolynomials<G> {
+pub trait BatchablePolynomials<G: CurveGroup> {
     /// The batched form of these polynomials.
     type BatchedPolynomials;
     /// The batched commitment to these polynomials.
@@ -22,9 +21,10 @@ pub trait BatchablePolynomials<G> {
     /// uses `DensePolynomial::merge` to combine polynomials of the same size.
     fn batch(&self) -> Self::BatchedPolynomials;
     /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
-    fn commit(batched_polys: &Self::BatchedPolynomials, initalizer: &PedersenInit<G>) -> Self::Commitment;
-
-    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize;
+    fn commit(
+        batched_polys: &Self::BatchedPolynomials,
+        generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.

@@ -143,19 +143,19 @@ where
 mod tests {
     use ark_curve25519::{EdwardsProjective, Fr};
     use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+    use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
     use itertools::Itertools;
     use merlin::Transcript;
     use rand_core::SeedableRng;
     use std::collections::HashSet;
-    use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
 
     use crate::jolt::instruction::{add::ADDInstruction, JoltInstruction};
     use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
     use crate::jolt::vm::bytecode::ELFRow;
-    use crate::jolt::vm::MemoryOp;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I};
-    use strum::{EnumCount, IntoEnumIterator};
+    use crate::jolt::vm::MemoryOp;
     use std::sync::Mutex;
+    use strum::{EnumCount, IntoEnumIterator};
 
     // If multiple tests try to read the same trace artifacts simultaneously, they will fail
     lazy_static::lazy_static! {
@@ -173,9 +173,12 @@ mod tests {
 
         let mut prover_transcript = Transcript::new(b"example");
 
+        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
+
         let (proof, _, commitment) =
             <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
                 ops,
+                &generators,
                 &mut prover_transcript,
             );
         let mut verifier_transcript = Transcript::new(b"example");
@@ -293,17 +296,17 @@ mod tests {
             .collect();
 
         let instructions_r1cs: Vec<RV32I> = converted_trace
-        .clone()
-        .into_iter()
-        .flat_map(|row| {
-            let instructions = row.to_jolt_instructions();
-            if instructions.is_empty() {
-                vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
-            } else {
-                instructions
-            }
-        })
-        .collect();
+            .clone()
+            .into_iter()
+            .flat_map(|row| {
+                let instructions = row.to_jolt_instructions();
+                if instructions.is_empty() {
+                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
+                } else {
+                    instructions
+                }
+            })
+            .collect();
 
         let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
             .clone()
@@ -315,12 +318,14 @@ mod tests {
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
+        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, EdwardsProjective, C, M>>::prove(
-            bytecode, 
-            bytecode_trace, 
-            memory_trace, 
-            instructions_r1cs, 
-            circuit_flags
+            bytecode,
+            bytecode_trace,
+            memory_trace,
+            instructions_r1cs,
+            circuit_flags,
+            generators,
         );
         let verify_result = RV32IJoltVM::verify(proof, commitments);
         assert!(verify_result.is_ok());
@@ -350,7 +355,7 @@ mod tests {
             .map(|row| row.to_bytecode_trace())
             .collect();
 
-        // R1CS expects a single lookup instruction per 
+        // R1CS expects a single lookup instruction per
         let instructions_r1cs: Vec<RV32I> = converted_trace
             .clone()
             .into_iter()
@@ -436,13 +441,16 @@ mod tests {
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove(
-            bytecode,
-            bytecode_trace,
-            memory_trace,
-            instructions_r1cs,
-            circuit_flags,
-        );
+        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove(
+                bytecode,
+                bytecode_trace,
+                memory_trace,
+                instructions_r1cs,
+                circuit_flags,
+                generators,
+            );
 
         assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
     }
