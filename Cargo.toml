@@ -33,12 +33,13 @@ members = [
 [profile.release]
 debug = 1
 codegen-units = 1
-lto = "fat"
-
-[profile.build-fast]
-inherits = "release"
-incremental = true
 lto = "off"
+incremental = true
+
+[profile.extra-fast]
+inherits = "release"
+lto = "fat"
+incremental = false
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
