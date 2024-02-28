@@ -16,7 +16,7 @@ pub fn cached_compile_example(example_name: &str) {
 pub fn compile_example(example_name: &str) {
     // Cargo Build
     let cargo_build_status = std::process::Command::new("cargo")
-        .args(&["build", "-p", example_name, "--release"])
+        .args(&["build", "--profile", "guest", "-p", example_name])
         .output()
         .expect("Failed to execute command");
     if !cargo_build_status.status.success() {

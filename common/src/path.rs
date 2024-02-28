@@ -19,7 +19,7 @@ pub mod JoltPaths {
     }
     pub fn elf_path(program_name: &str) -> PathBuf {
         target_dir().join(format!(
-            "riscv32i-unknown-none-elf/release/{}",
+            "riscv32i-unknown-none-elf/guest/{}",
             program_name
         ))
     }
