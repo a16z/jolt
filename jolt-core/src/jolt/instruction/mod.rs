@@ -35,24 +35,8 @@ pub trait JoltInstruction: Sync + Clone + Debug {
     /// Converts the instruction operand(s) in their native word-sized representation into a Vec
     /// of subtable lookups indices. The returned Vec is length `C`, with elements in [0, `log_M`).
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
-    fn lookup_entry<F: PrimeField>(&self, C: usize, M: usize) -> F {
-        let log_M = log2(M) as usize;
-
-        let subtable_lookup_indices = self.to_indices(C, log2(M) as usize);
-
-        let subtable_lookup_values: Vec<F> = self
-            .subtables::<F>(C)
-            .iter()
-            .flat_map(|subtable| {
-                subtable_lookup_indices.iter().map(|&lookup_index| {
-                    subtable.evaluate_mle(&index_to_field_bitvector(lookup_index, log_M))
-                })
-            })
-            .collect();
-
-        self.combine_lookups(&subtable_lookup_values, C, M)
-    }
-    fn lookup_entry_u64(&self) -> u64;
+    /// Computes the output lookup entry for this instruction as a u64.
+    fn lookup_entry(&self) -> u64;
     fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
         assert!(log_M % 2 == 0, "log_M must be even for operand_chunks to work");
         self.operands()

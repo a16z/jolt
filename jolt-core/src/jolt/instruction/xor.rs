@@ -30,7 +30,7 @@ impl JoltInstruction for XORInstruction {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         (self.0 ^ self.1).into()
     }
 
@@ -59,12 +59,22 @@ mod test {
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
             let instruction = XORInstruction(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            XORInstruction(100, 0),
+            XORInstruction(0, 100),
+            XORInstruction(1 , 0),
+            XORInstruction(0, u32_max),
+            XORInstruction(u32_max, 0),
+            XORInstruction(u32_max, u32_max),
+            XORInstruction(u32_max, 1 << 8),
+            XORInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 
@@ -77,34 +87,7 @@ mod test {
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
             let instruction = XORInstruction(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
-    }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
-
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = XORInstruction(0, 0);
-        lookup_entry_u64_parity_random::<Fr, XORInstruction>(100, concrete_instruction);
-
-        // Test edge-cases
-        let u32_max: u64 = u32::MAX as u64;
-        let instructions = vec![
-            XORInstruction(100, 0),
-            XORInstruction(0, 100),
-            XORInstruction(1 , 0),
-            XORInstruction(0, u32_max),
-            XORInstruction(u32_max, 0),
-            XORInstruction(u32_max, u32_max),
-            XORInstruction(u32_max, 1 << 8),
-            XORInstruction(1 << 8, u32_max),
-        ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
     }
 }

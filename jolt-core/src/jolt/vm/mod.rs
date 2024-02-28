@@ -361,7 +361,7 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
     fn compute_lookup_outputs(instructions: &Vec<Self::InstructionSet>) -> Vec<F> {
         instructions
             .par_iter()
-            .map(|op| F::from(op.lookup_entry_u64()))
+            .map(|op| F::from(op.lookup_entry()))
             .collect()
     }
 }

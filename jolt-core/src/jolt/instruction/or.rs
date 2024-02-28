@@ -30,7 +30,7 @@ impl JoltInstruction for ORInstruction {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         (self.0 | self.1).into()
     }
 
@@ -47,7 +47,6 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::ORInstruction;
 
@@ -61,12 +60,22 @@ mod test {
             let x = rng.next_u32() as u64;
             let y = rng.next_u32() as u64;
             let instruction = ORInstruction(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            ORInstruction(100, 0),
+            ORInstruction(0, 100),
+            ORInstruction(1 , 0),
+            ORInstruction(0, u32_max),
+            ORInstruction(u32_max, 0),
+            ORInstruction(u32_max, u32_max),
+            ORInstruction(u32_max, 1 << 8),
+            ORInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 
@@ -80,32 +89,7 @@ mod test {
             let x = rng.next_u64();
             let y = rng.next_u64();
             let instruction = ORInstruction(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
-    }
-
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = ORInstruction(0, 0);
-        lookup_entry_u64_parity_random::<Fr, ORInstruction>(100, concrete_instruction);
-
-        // Test edge-cases
-        let u32_max: u64 = u32::MAX as u64;
-        let instructions = vec![
-            ORInstruction(100, 0),
-            ORInstruction(0, 100),
-            ORInstruction(1 , 0),
-            ORInstruction(0, u32_max),
-            ORInstruction(u32_max, 0),
-            ORInstruction(u32_max, u32_max),
-            ORInstruction(u32_max, 1 << 8),
-            ORInstruction(1 << 8, u32_max),
-        ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
     }
 }

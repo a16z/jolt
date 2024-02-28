@@ -62,7 +62,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
         )
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         (self.0 as u32).overflowing_sub(self.1 as u32).0.into()
     }
 
@@ -92,26 +92,9 @@ mod test {
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
             let instruction = SUBInstruction::<WORD_SIZE>(x as u64, y as u64);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(
-                instruction,
-                expected.into()
-            );
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
-    }
 
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
-
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = SUBInstruction::<32>(0, 0);
-        lookup_entry_u64_parity_random::<Fr, SUBInstruction::<32>>(100, concrete_instruction);
-
-        // Test edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             SUBInstruction::<32>(100, 0),
@@ -123,6 +106,8 @@ mod test {
             SUBInstruction::<32>(u32_max, 1 << 8),
             SUBInstruction::<32>(1 << 8, u32_max),
         ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
     }
 }

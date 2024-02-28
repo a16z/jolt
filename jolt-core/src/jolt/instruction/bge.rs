@@ -42,7 +42,7 @@ impl JoltInstruction for BGEInstruction {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         ((self.0 as i32) >= (self.1 as i32)).into()
     }
 
@@ -55,11 +55,10 @@ impl JoltInstruction for BGEInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::BGEInstruction;
 
@@ -69,35 +68,23 @@ mod test {
         const C: usize = 4;
         const M: usize = 1 << 16;
 
+        // Random
         for _ in 0..256 {
             let x = rng.next_u32();
             let y = rng.next_u32();
 
             let instruction = BGEInstruction(x as u64, y as u64);
-            let expected = instruction.lookup_entry_u64();
 
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
+
+        // Ones
         for _ in 0..256 {
             let x = rng.next_u32();
-            jolt_instruction_test!(BGEInstruction(x as u64, x as u64), Fr::one());
-            assert_eq!(
-                BGEInstruction(x as u64, x as u64).lookup_entry::<Fr>(C, M),
-                Fr::one()
-            );
+            jolt_instruction_test!(BGEInstruction(x as u64, x as u64));
         }
-    }
 
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = BGEInstruction(0, 0);
-        lookup_entry_u64_parity_random::<Fr, BGEInstruction>(100, concrete_instruction);
-
-        // Test edge-cases
+        // Edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             BGEInstruction(100, 0),
@@ -109,6 +96,8 @@ mod test {
             BGEInstruction(u32_max, 1 << 8),
             BGEInstruction(1 << 8, u32_max),
         ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
     }
 }

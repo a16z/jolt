@@ -57,7 +57,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
         (self.0 as u32).checked_shl(self.1 as u32 % WORD_SIZE as u32).unwrap_or(0).into()
     }
@@ -75,7 +75,6 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::SLLInstruction;
 
@@ -86,29 +85,12 @@ mod test {
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
-        for _ in 0..8 {
+        for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
             let instruction = SLLInstruction::<WORD_SIZE>(x as u64, y as u64);
-
-            let expected = instruction.lookup_entry_u64();
-
-            jolt_instruction_test!(
-                instruction,
-                expected.into()
-            );
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
-    }
 
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = SLLInstruction::<32>(0, 0);
-        lookup_entry_u64_parity_random::<Fr, SLLInstruction::<32>>(100, concrete_instruction);
-
-        // Test edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             SLLInstruction::<32>(100, 0),
@@ -120,6 +102,8 @@ mod test {
             SLLInstruction::<32>(u32_max, 1 << 8),
             SLLInstruction::<32>(1 << 8, u32_max),
         ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
     }
 }

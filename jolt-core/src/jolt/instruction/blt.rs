@@ -61,7 +61,7 @@ impl JoltInstruction for BLTInstruction {
         chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         assert!(((self.0 | self.1) >> 32) == 0, "Only 32-bit implemented");
 
         ((self.0 as i32) < (self.1 as i32)).into()
@@ -76,11 +76,10 @@ impl JoltInstruction for BLTInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One, Zero};
+    use ark_std::{test_rng, Zero};
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
 
     use super::BLTInstruction;
 
@@ -94,29 +93,12 @@ mod test {
             let x = rng.next_u32();
             let y = rng.next_u32();
             let instruction = BLTInstruction(x as u64, y as u64);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
         for _ in 0..256 {
             let x = rng.next_u32();
-            jolt_instruction_test!(BLTInstruction(x as u64, x as u64), Fr::zero());
-            assert_eq!(
-                BLTInstruction(x as u64, x as u64).lookup_entry::<Fr>(C, M),
-                Fr::zero()
-            );
+            jolt_instruction_test!(BLTInstruction(x as u64, x as u64));
         }
-    }
-
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = BLTInstruction(0, 0);
-        lookup_entry_u64_parity_random::<Fr, BLTInstruction>(100, concrete_instruction);
-
-        // Test edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
             BLTInstruction(100, 0),
@@ -128,6 +110,8 @@ mod test {
             BLTInstruction(u32_max, 1 << 8),
             BLTInstruction(1 << 8, u32_max),
         ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
     }
 }

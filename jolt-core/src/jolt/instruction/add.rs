@@ -60,7 +60,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         if WORD_SIZE == 32 {
             (self.0 as u32).overflowing_add(self.1 as u32).0.into()
         } else if WORD_SIZE == 64 {
@@ -83,7 +83,7 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{
-        jolt::instruction::{JoltInstruction, test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity}},
+        jolt::instruction::JoltInstruction,
         jolt_instruction_test,
     };
     use super::ADDInstruction;
@@ -97,15 +97,22 @@ mod test {
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
             let instruction = ADDInstruction::<32>(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(
-                instruction,
-                expected.into()
-            );
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            ADDInstruction::<32>(100, 0),
+            ADDInstruction::<32>(0, 100),
+            ADDInstruction::<32>(1 , 0),
+            ADDInstruction::<32>(0, u32_max),
+            ADDInstruction::<32>(u32_max, 0),
+            ADDInstruction::<32>(u32_max, u32_max),
+            ADDInstruction::<32>(u32_max, 1 << 8),
+            ADDInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 
@@ -118,35 +125,7 @@ mod test {
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
             let instruction = ADDInstruction::<64>(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(
-                instruction,
-                expected.into()
-            );
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
-    }
-
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = ADDInstruction::<32>(0, 0);
-        lookup_entry_u64_parity_random::<Fr, ADDInstruction<32>>(100, concrete_instruction);
-
-        // Test edge-cases
-        let u32_max: u64 = u32::MAX as u64;
-        let instructions = vec![
-            ADDInstruction::<32>(100, 0),
-            ADDInstruction::<32>(0, 100),
-            ADDInstruction::<32>(1 , 0),
-            ADDInstruction::<32>(0, u32_max),
-            ADDInstruction::<32>(u32_max, 0),
-            ADDInstruction::<32>(u32_max, u32_max),
-            ADDInstruction::<32>(u32_max, 1 << 8),
-            ADDInstruction::<32>(1 << 8, u32_max),
-        ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
     }
 }

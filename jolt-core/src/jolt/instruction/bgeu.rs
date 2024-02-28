@@ -32,7 +32,7 @@ impl JoltInstruction for BGEUInstruction {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
-    fn lookup_entry_u64(&self) -> u64 {
+    fn lookup_entry(&self) -> u64 {
         (self.0 >= self.1).into()
     }
 
@@ -58,21 +58,34 @@ mod test {
         const C: usize = 4;
         const M: usize = 1 << 16;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
             let instruction = BGEUInstruction(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
+
+        // Ones
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
             let instruction = BGEUInstruction(x, x);
-            jolt_instruction_test!(instruction, Fr::one());
-            assert_eq!(instruction.lookup_entry::<Fr>(C, M), Fr::one());
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge-cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            BGEUInstruction(100, 0),
+            BGEUInstruction(0, 100),
+            BGEUInstruction(1 , 0),
+            BGEUInstruction(0, u32_max),
+            BGEUInstruction(u32_max, 0),
+            BGEUInstruction(u32_max, u32_max),
+            BGEUInstruction(u32_max, 1 << 8),
+            BGEUInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 
@@ -85,40 +98,12 @@ mod test {
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
             let instruction = BGEUInstruction(x, y);
-            let expected = instruction.lookup_entry_u64();
-            jolt_instruction_test!(instruction, expected.into());
-            assert_eq!(
-                instruction.lookup_entry::<Fr>(C, M),
-                expected.into()
-            );
+            jolt_instruction_test!(instruction);
         }
         for _ in 0..256 {
             let x = rng.next_u64();
             let instruction = BGEUInstruction(x, x);
-            jolt_instruction_test!(instruction, Fr::one());
-            assert_eq!(instruction.lookup_entry::<Fr>(C, M), Fr::one());
+            jolt_instruction_test!(instruction);
         }
-    }
-
-    use crate::jolt::instruction::test::{lookup_entry_u64_parity_random, lookup_entry_u64_parity};
-
-    #[test]
-    fn u64_parity() {
-        let concrete_instruction = BGEUInstruction(0, 0);
-        lookup_entry_u64_parity_random::<Fr, BGEUInstruction>(100, concrete_instruction);
-
-        // Test edge-cases
-        let u32_max: u64 = u32::MAX as u64;
-        let instructions = vec![
-            BGEUInstruction(100, 0),
-            BGEUInstruction(0, 100),
-            BGEUInstruction(1 , 0),
-            BGEUInstruction(0, u32_max),
-            BGEUInstruction(u32_max, 0),
-            BGEUInstruction(u32_max, u32_max),
-            BGEUInstruction(u32_max, 1 << 8),
-            BGEUInstruction(1 << 8, u32_max),
-        ];
-        lookup_entry_u64_parity::<Fr, _>(instructions);
     }
 }
