@@ -14,7 +14,12 @@ use crate::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
     },
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxGenerators, identity_poly::IdentityPolynomial, pedersen::PedersenInit, structured_poly::{BatchablePolynomials, StructuredOpeningProof}
+        dense_mlpoly::DensePolynomial,
+        eq_poly::EqPolynomial,
+        hyrax::matrix_dimensions,
+        identity_poly::IdentityPolynomial,
+        pedersen::PedersenGenerators,
+        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
         batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
@@ -22,9 +27,7 @@ use crate::{
             BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
         },
     },
-    utils::{
-        errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript
-    },
+    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
 use super::read_write_memory::{
@@ -188,13 +191,11 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<G>) -> Self::Commitment {
-        batched_polys.combined_commit(initializer)
-    }
-
-    fn max_generator_size(batched_polys: &Self::BatchedPolynomials) -> usize {
-        let batch_num_vars = batched_polys.get_num_vars();
-        batch_num_vars
+    fn commit(
+        batched_polys: &Self::BatchedPolynomials,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment {
+        batched_polys.combined_commit(pedersen_generators)
     }
 }
 
@@ -588,13 +589,14 @@ where
         memory_polynomials: &ReadWriteMemory<F, G>,
         batched_memory_polynomials: &BatchedMemoryPolynomials<F>,
         memory_commitment: &MemoryCommitment<G>,
+        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
         let batched_range_check_polys = range_check_polys.batch();
-        let initializer: PedersenInit<G> = HyraxGenerators::new_initializer(RangeCheckPolynomials::<F, G>::max_generator_size(&batched_range_check_polys), b"LassoV1");
-        let range_check_commitment = RangeCheckPolynomials::commit(&batched_range_check_polys, &initializer);
+        let range_check_commitment =
+            RangeCheckPolynomials::commit(&batched_range_check_polys, &generators);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
@@ -810,6 +812,13 @@ where
         Ok(())
     }
 
+    /// Computes the maximum number of group generators needed to commit to timestamp
+    /// range-check polynomials using Hyrax, given the maximum trace length.
+    pub fn num_generators(max_trace_length: usize) -> usize {
+        let batch_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
+        matrix_dimensions(batch_num_vars).1.pow2()
+    }
+
     fn protocol_name() -> &'static [u8] {
         b"Timestamp validity proof memory checking"
     }
@@ -841,14 +850,18 @@ mod tests {
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let initializer: PedersenInit<EdwardsProjective> = HyraxGenerators::new_initializer(ReadWriteMemory::<Fr, EdwardsProjective>::max_generator_size(&batched_polys), b"LassoV1");
-        let commitments = ReadWriteMemory::commit(&batched_polys, &initializer);
+        let generators = PedersenGenerators::new(
+            1 << 10,
+            b"Test generators",
+        );
+        let commitments = ReadWriteMemory::commit(&batched_polys, &generators);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,
             &rw_memory,
             &batched_polys,
             &commitments,
+            &generators,
             &mut transcript,
         );
 

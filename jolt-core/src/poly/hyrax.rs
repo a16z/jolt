@@ -1,7 +1,6 @@
-use crate::poly::eq_poly::EqPolynomial;
-
 use super::dense_mlpoly::DensePolynomial;
-use super::pedersen::{PedersenCommitment, PedersenGenerators, PedersenInit};
+use super::pedersen::{PedersenCommitment, PedersenGenerators};
+use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -28,15 +27,10 @@ pub struct HyraxGenerators<G: CurveGroup> {
 
 impl<G: CurveGroup> HyraxGenerators<G> {
     // the number of variables in the multilinear polynomial
-    pub fn new(num_vars: usize, initializer: &PedersenInit<G>) -> Self {
+    pub fn new(num_vars: usize, pedersen_generators: &PedersenGenerators<G>) -> Self {
         let (_left, right) = matrix_dimensions(num_vars);
-        let gens = initializer.sample(right.pow2());
+        let gens = pedersen_generators.clone_n(right.pow2());
         HyraxGenerators { gens }
-    }
-
-    pub fn new_initializer(num_vars: usize, label: &[u8]) -> PedersenInit<G> {
-        let max_len = matrix_dimensions(num_vars).1.pow2();
-        PedersenInit::new(max_len, label)
     }
 }
 
@@ -210,8 +204,8 @@ mod tests {
         let eval = poly.evaluate(&r);
         assert_eq!(eval, G::ScalarField::from(28u64));
 
-        let initializer = PedersenInit::new(1 << 8, b"test-two");
-        let gens = HyraxGenerators::<G>::new(poly.get_num_vars(), &initializer);
+        let pedersen_generators = PedersenGenerators::new(1 << 8, b"test-two");
+        let gens = HyraxGenerators::<G>::new(poly.get_num_vars(), &pedersen_generators);
         let poly_commitment = HyraxCommitment::commit(&poly, &gens);
 
         let mut prover_transcript = Transcript::new(b"example");

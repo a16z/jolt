@@ -460,7 +460,7 @@ where
 mod tests {
     use std::collections::HashSet;
 
-    use crate::poly::pedersen::PedersenInit;
+    use crate::poly::pedersen::PedersenGenerators;
 
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
@@ -510,10 +510,7 @@ mod tests {
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials, initializer: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
-                unimplemented!()
-            }
-            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, generators: &PedersenGenerators<EdwardsProjective>) -> Self::Commitment {
                 unimplemented!()
             }
         }
@@ -713,10 +710,7 @@ mod tests {
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials, _generator: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
-                unimplemented!()
-            }
-            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, generators: &PedersenGenerators<EdwardsProjective>) -> Self::Commitment {
                 unimplemented!()
             }
         }
@@ -962,10 +956,7 @@ mod tests {
             fn batch(&self) -> Self::BatchedPolynomials {
                 unimplemented!()
             }
-            fn commit(_batched_polys: &Self::BatchedPolynomials, _initializer: &PedersenInit<EdwardsProjective>) -> Self::Commitment {
-                unimplemented!()
-            }
-            fn max_generator_size(_batched_polys: &Self::BatchedPolynomials) -> usize {
+            fn commit(_batched_polys: &Self::BatchedPolynomials, generators: &PedersenGenerators<EdwardsProjective>) -> Self::Commitment {
                 unimplemented!()
             }
         }
