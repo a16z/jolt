@@ -208,11 +208,11 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 // pub fn precommit<G: Group>(jolt_circuit: JoltCircuit<Spartan2Fr>) -> Result<(), SpartanError> {
 pub fn precommit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: JoltCircuit<F>) -> Result<(<<G as Group>::CE as CommitmentEngineTrait<G>>::CommitmentKey, Vec<Vec<F>>, Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
   let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
-  let old_w_segments = get_segments(jolt_witnesses); 
+  let w_segments = get_segments(jolt_witnesses); 
 
-  // w_segments but the last three are combined into one 
-  let last_three_combined = old_w_segments[old_w_segments.len()-3..].concat();
-  let w_segments = [&old_w_segments[..old_w_segments.len()-3], &[last_three_combined]].concat();
+  // // w_segments but the last three are combined into one 
+  // let last_three_combined = old_w_segments[old_w_segments.len()-3..].concat();
+  // let w_segments = [&old_w_segments[..old_w_segments.len()-3], &[last_three_combined]].concat();
 
   let N_SEGMENTS = w_segments.len();
 
@@ -230,57 +230,25 @@ pub fn precommit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeFie
   Ok((ck, w_segments, commitments))
 }
 
-#[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
-pub fn prove_jolt_circuit_precommitted<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<(), SpartanError> {
-  let num_steps = circuit.num_steps; 
-  let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
-
-  let (ck, w_segments, comms) = precommit::<G, S, F>(circuit.clone()).unwrap();
-  
-  let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, ck).unwrap();
-
-  // produce a SNARK
-  let proof = SNARK::prove_precommitted(&pk, circuit, w_segments, comms);
-  assert!(proof.is_ok());
-
-  let res = SNARK::verify_precommitted(&proof.unwrap(), &vk, &[]); 
-  assert!(res.is_ok()); 
-
-  Ok(())
-}
-
-<<<<<<< HEAD
-=======
-// #[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
-// pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<R1CSProof, SpartanError> {
-//   let num_steps = circuit.num_steps; 
-//   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
-
-//   let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
-
-//   // produce a SNARK
-//   let proof = SNARK::prove(&pk, circuit);
-//   assert!(proof.is_ok());
-
-//   let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
-//   assert!(res.is_ok()); 
-
-
-//   Ok(R1CSProof{
-//     proof: proof.unwrap(),
-//     vk: vk,
-//   })
-// }
-
->>>>>>> 7634815 (finished merge with jolt)
 pub struct R1CSProof  {
   proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
   vk: VerifierKey<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>>,
 }
 
 impl R1CSProof {
+
+
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
   pub fn prove<ArkF: ark_ff::PrimeField>(
+      W: usize, 
+      C: usize, 
+      TRACE_LEN: usize, 
+      inputs: Vec<Vec<ArkF>>
+  ) -> Result<Self, SpartanError> {
+    Self::prove_precommitted(W, C, TRACE_LEN, inputs) 
+  }
+
+  pub fn prove_uniform<ArkF: ark_ff::PrimeField>(
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
@@ -313,7 +281,52 @@ impl R1CSProof {
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
 
+
       SNARK::prove(&pk, jolt_circuit).map(|snark| Self {
+        proof: snark,
+        vk
+      })
+  }
+
+  pub fn prove_precommitted<ArkF: ark_ff::PrimeField>(
+      W: usize, 
+      C: usize, 
+      TRACE_LEN: usize, 
+      inputs: Vec<Vec<ArkF>>
+  ) -> Result<Self, SpartanError> {
+
+    type G1 = SpartanG1;
+    type EE = SpartanHyraxEE<SpartanG1>;
+    type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+    type F = Spartan2Fr;
+
+    let NUM_STEPS = TRACE_LEN;
+
+    let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
+    let _enter = span.enter();
+    let inputs_ff = inputs
+      .into_par_iter()
+      .map(|input| input
+          .into_par_iter()
+          .map(|x| {
+              ark_to_spartan_unsafe(x)
+          })
+          .collect::<Vec<Spartan2Fr>>()
+      ).collect::<Vec<Vec<Spartan2Fr>>>();
+      drop(_enter);
+
+      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
+      let num_steps = jolt_circuit.num_steps;
+      let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
+
+      let (ck, w_segments, comms) = precommit::<G1, S, F>(jolt_circuit.clone()).unwrap();
+  
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, ck).unwrap();
+    
+      // produce a SNARK
+      let proof = SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comms); 
+
+      proof.map(|snark| Self {
         proof: snark,
         vk
       })
