@@ -61,7 +61,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
             let k_bits = (k as usize)
                 .get_bits(log_WORD_SIZE)
                 .iter()
-                .map(|bit| F::from(*bit))
+                .map(|bit| if *bit { F::one() } else { F::zero() })
                 .collect::<Vec<F>>(); // big-endian
 
             let mut eq_term = F::one();

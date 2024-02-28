@@ -64,7 +64,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
             let k_bits = (k as usize)
                 .get_bits(log_WORD_SIZE)
                 .iter()
-                .map(|bit| F::from(*bit))
+                .map(|bit| if *bit { F::one() } else { F::zero() })
                 .collect::<Vec<F>>(); // big-endian
 
             let mut eq_term = F::one();
