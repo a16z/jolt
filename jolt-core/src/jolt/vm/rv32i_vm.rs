@@ -141,7 +141,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use common::constants::MEMORY_OPS_PER_INSTRUCTION;
     use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
     use itertools::Itertools;
@@ -176,7 +176,7 @@ mod tests {
         let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
 
         let (proof, _, commitment) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_instruction_lookups(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_instruction_lookups(
                 ops,
                 &generators,
                 &mut prover_transcript,
@@ -193,11 +193,11 @@ mod tests {
     #[test]
     fn instruction_set_subtables() {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::InstructionSet::iter()
+        for instruction in <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::InstructionSet::iter()
         {
             for subtable in instruction.subtables::<Fr>(C) {
                 // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::from(
+                let _ = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::Subtables::from(
                     subtable.subtable_id(),
                 );
                 subtable_set.insert(subtable.subtable_id());
@@ -205,7 +205,7 @@ mod tests {
         }
         assert_eq!(
             subtable_set.len(),
-            <RV32IJoltVM as Jolt<_, EdwardsProjective, C, M>>::Subtables::COUNT,
+            <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::Subtables::COUNT,
             "Unused enum variants in Subtables"
         );
     }
@@ -260,7 +260,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -319,7 +319,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, EdwardsProjective, C, M>>::prove(
+        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
             bytecode,
             bytecode_trace,
             memory_trace,
@@ -327,8 +327,12 @@ mod tests {
             circuit_flags,
             generators,
         );
-        let verify_result = RV32IJoltVM::verify(proof, commitments);
-        assert!(verify_result.is_ok());
+        let verification_result = RV32IJoltVM::verify(proof, commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
     }
 
     #[test]
@@ -382,7 +386,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
-        <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove_r1cs(
+        <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -443,7 +447,7 @@ mod tests {
 
         let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<'_, _, EdwardsProjective, C, M>>::prove(
+            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
                 bytecode,
                 bytecode_trace,
                 memory_trace,
@@ -452,6 +456,11 @@ mod tests {
                 generators,
             );
 
-        assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
+        let verification_result = RV32IJoltVM::verify(jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
     }
 }

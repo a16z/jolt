@@ -252,8 +252,12 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
                 circuit_flags,
                 generators,
             );
-
-        assert!(RV32IJoltVM::verify(jolt_proof, jolt_commitments).is_ok());
+        let verification_result = RV32IJoltVM::verify(jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
     };
     tasks.push((
         tracing::info_span!("Example_E2E"),
