@@ -37,6 +37,10 @@ impl JoltInstruction for BLTUInstruction {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
+    
+    fn lookup_entry(&self) -> u64 {
+        (self.0 < self.1).into()
+    }
 
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
@@ -47,7 +51,7 @@ impl JoltInstruction for BLTUInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One, Zero};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
@@ -55,22 +59,46 @@ mod test {
     use super::BLTUInstruction;
 
     #[test]
-    fn bltu_instruction_e2e() {
+    fn bltu_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let x = rng.next_u32() as u64;
+            let y = rng.next_u32() as u64;
+            let instruction = BLTUInstruction(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Test edge-cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            BLTUInstruction(100, 0),
+            BLTUInstruction(0, 100),
+            BLTUInstruction(1 , 0),
+            BLTUInstruction(0, u32_max),
+            BLTUInstruction(u32_max, 0),
+            BLTUInstruction(u32_max, u32_max),
+            BLTUInstruction(u32_max, 1 << 8),
+            BLTUInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn bltu_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(BLTUInstruction(x, y), (x < y).into());
-            assert_eq!(
-                BLTUInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x < y).into()
-            );
-        }
-        for _ in 0..256 {
             let x = rng.next_u64();
-            jolt_instruction_test!(BLTUInstruction(x, x), Fr::zero());
+            let y = rng.next_u64();
+            let instruction = BLTUInstruction(x, y);
+            jolt_instruction_test!(instruction);
         }
     }
 }

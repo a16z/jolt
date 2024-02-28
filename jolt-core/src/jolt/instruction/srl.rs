@@ -54,6 +54,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn lookup_entry(&self) -> u64 {
+        let x = self.0 as u32;
+        let y = (self.1 % WORD_SIZE as u64) as u32;
+        x.checked_shr(y).unwrap_or(0).into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -77,19 +83,24 @@ mod test {
         const M: usize = 1 << 22;
         const WORD_SIZE: usize = 32;
 
-        for _ in 0..8 {
+        for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-
-            let entry: u64 = x.checked_shr(y % WORD_SIZE as u32).unwrap_or(0) as u64;
-
-            jolt_instruction_test!(
-                SRLInstruction::<WORD_SIZE>(x as u64, y as u64),
-                entry.into()
-            );
-            assert_eq!(
-                SRLInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                entry.into()
-            );
+            let instruction = SRLInstruction::<WORD_SIZE>(x as u64, y as u64);
+            jolt_instruction_test!(instruction);
+        }
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SRLInstruction::<32>(100, 0),
+            SRLInstruction::<32>(0, 100),
+            SRLInstruction::<32>(1 , 0),
+            SRLInstruction::<32>(0, u32_max),
+            SRLInstruction::<32>(u32_max, 0),
+            SRLInstruction::<32>(u32_max, u32_max),
+            SRLInstruction::<32>(u32_max, 1 << 8),
+            SRLInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

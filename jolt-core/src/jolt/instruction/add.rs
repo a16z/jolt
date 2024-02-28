@@ -60,6 +60,16 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         add_and_chunk_operands(self.0 as u128, self.1 as u128, C, log_M)
     }
 
+    fn lookup_entry(&self) -> u64 {
+        if WORD_SIZE == 32 {
+            (self.0 as u32).overflowing_add(self.1 as u32).0.into()
+        } else if WORD_SIZE == 64 {
+            self.0.overflowing_add(self.1).0
+        } else {
+            panic!("only implemented for u32 / u64")
+        }
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -72,26 +82,50 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-
+    use crate::{
+        jolt::instruction::JoltInstruction,
+        jolt_instruction_test,
+    };
     use super::ADDInstruction;
 
     #[test]
-    fn add_instruction_e2e() {
+    fn add_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = ADDInstruction::<32>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            ADDInstruction::<32>(100, 0),
+            ADDInstruction::<32>(0, 100),
+            ADDInstruction::<32>(1 , 0),
+            ADDInstruction::<32>(0, u32_max),
+            ADDInstruction::<32>(u32_max, 0),
+            ADDInstruction::<32>(u32_max, u32_max),
+            ADDInstruction::<32>(u32_max, 1 << 8),
+            ADDInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn add_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            jolt_instruction_test!(
-                ADDInstruction::<64>(x as u64, y as u64),
-                (x.overflowing_add(y)).0.into()
-            );
-            assert_eq!(
-                ADDInstruction::<64>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x.overflowing_add(y)).0.into()
-            );
+            let instruction = ADDInstruction::<64>(x, y);
+            jolt_instruction_test!(instruction);
         }
     }
 }

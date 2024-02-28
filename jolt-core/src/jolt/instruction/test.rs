@@ -4,9 +4,9 @@
 /// 1. Materializes each subtable in `subtables`
 /// 2. Converts operands to subtable lookup indices using `to_indices`
 /// 3. Combines the looked-up subtable entries using `combine_lookups`
-/// 4. Checks that the result equals the expected value, given by the RHS expression
+/// 4. Checks that the result equals the expected value, given by the `lookup_output`
 macro_rules! jolt_instruction_test {
-    ($instr:expr, $expected_value:expr) => {
+    ($instr:expr) => {
         let materialized_subtables: Vec<_> = $instr
             .subtables::<Fr>(C)
             .iter()
@@ -23,7 +23,7 @@ macro_rules! jolt_instruction_test {
         }
 
         let actual = $instr.combine_lookups(&subtable_values, C, M);
-        let expected = $expected_value;
+        let expected = Fr::from($instr.lookup_entry());
 
         assert_eq!(actual, expected, "{:?}", $instr);
     };

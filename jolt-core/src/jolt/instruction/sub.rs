@@ -62,6 +62,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
         )
     }
 
+    fn lookup_entry(&self) -> u64 {
+        (self.0 as u32).overflowing_sub(self.1 as u32).0.into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -87,14 +91,23 @@ mod test {
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-            jolt_instruction_test!(
-                SUBInstruction::<WORD_SIZE>(x as u64, y as u64),
-                (x.overflowing_sub(y)).0.into()
-            );
-            assert_eq!(
-                SUBInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x.overflowing_sub(y).0.into())
-            );
+            let instruction = SUBInstruction::<WORD_SIZE>(x as u64, y as u64);
+            jolt_instruction_test!(instruction);
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SUBInstruction::<32>(100, 0),
+            SUBInstruction::<32>(0, 100),
+            SUBInstruction::<32>(1 , 0),
+            SUBInstruction::<32>(0, u32_max),
+            SUBInstruction::<32>(u32_max, 0),
+            SUBInstruction::<32>(u32_max, u32_max),
+            SUBInstruction::<32>(u32_max, 1 << 8),
+            SUBInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

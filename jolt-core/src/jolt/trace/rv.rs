@@ -346,7 +346,7 @@ impl RVTraceRow {
                 // Assert instruction correctness
                 let lookups = self.to_jolt_instructions();
                 assert_eq!(lookups.len(), 1);
-                let expected_result: Fr = lookups[0].lookup_entry(C, M);
+                let expected_result: Fr = Fr::from(lookups[0].lookup_entry());
                 let bigint = expected_result.into_bigint();
                 let expected_result: u64 = bigint.0[0];
 
@@ -382,7 +382,7 @@ impl RVTraceRow {
                     assert!(lookups.len() == 1);
                     if lookups.len() == 1 && self.rd.unwrap() != 0 {
                         assert_eq!(lookups.len(), 1, "{self:?}");
-                        let expected_result: Fr = lookups[0].lookup_entry(C, M);
+                        let expected_result: Fr = Fr::from(lookups[0].lookup_entry());
                         let bigint = expected_result.into_bigint();
                         let expected_result: u64 = bigint.0[0];
 

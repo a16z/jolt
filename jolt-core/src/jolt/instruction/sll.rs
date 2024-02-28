@@ -57,6 +57,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn lookup_entry(&self) -> u64 {
+        // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
+        (self.0 as u32).checked_shl(self.1 as u32 % WORD_SIZE as u32).unwrap_or(0).into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -74,26 +79,31 @@ mod test {
     use super::SLLInstruction;
 
     #[test]
-    fn sll_instruction_e2e() {
+    fn sll_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
-        for _ in 0..8 {
+        for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
+            let instruction = SLLInstruction::<WORD_SIZE>(x as u64, y as u64);
+            jolt_instruction_test!(instruction);
+        }
 
-            // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
-            let entry = x.checked_shl(y % WORD_SIZE as u32).unwrap_or(0);
-
-            jolt_instruction_test!(
-                SLLInstruction::<WORD_SIZE>(x as u64, y as u64),
-                entry.into()
-            );
-            assert_eq!(
-                SLLInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                entry.into()
-            );
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SLLInstruction::<32>(100, 0),
+            SLLInstruction::<32>(0, 100),
+            SLLInstruction::<32>(1 , 0),
+            SLLInstruction::<32>(0, u32_max),
+            SLLInstruction::<32>(u32_max, 0),
+            SLLInstruction::<32>(u32_max, u32_max),
+            SLLInstruction::<32>(u32_max, 1 << 8),
+            SLLInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

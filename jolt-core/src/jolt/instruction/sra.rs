@@ -58,6 +58,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         chunk_and_concatenate_for_shift(self.0, self.1, C, log_M)
     }
 
+    fn lookup_entry(&self) -> u64 {
+        let x = self.0 as i32;
+        let y = (self.1 as u32 % (WORD_SIZE as u32));
+        (x.checked_shr(y).unwrap_or(0) as u32).into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -75,25 +81,30 @@ mod test {
     use super::SRAInstruction;
 
     #[test]
-    fn sra_instruction_e2e() {
+    fn sra_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
         const WORD_SIZE: usize = 32;
 
-        for _ in 0..8 {
+        for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-
-            let entry: i32 = (x as i32).checked_shr(y % WORD_SIZE as u32).unwrap_or(0);
-
-            jolt_instruction_test!(
-                SRAInstruction::<WORD_SIZE>(x as u64, y as u64),
-                (entry as u32).into()
-            );
-            assert_eq!(
-                SRAInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (entry as u32).into()
-            );
+            let instruction = SRAInstruction::<WORD_SIZE>(x as u64, y as u64);
+            jolt_instruction_test!(instruction);
+        }
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SRAInstruction::<32>(100, 0),
+            SRAInstruction::<32>(0, 2),
+            SRAInstruction::<32>(1 , 2),
+            SRAInstruction::<32>(0, 32),
+            SRAInstruction::<32>(u32_max, 0),
+            SRAInstruction::<32>(u32_max, 31),
+            SRAInstruction::<32>(u32_max, 1 << 8),
+            SRAInstruction::<32>(1 << 8, 1 << 16),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

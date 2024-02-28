@@ -61,6 +61,10 @@ impl JoltInstruction for SLTInstruction {
         chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
     }
 
+    fn lookup_entry(&self) -> u64 {
+        ((self.0 as i32) < (self.1 as i32)).into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -70,33 +74,38 @@ impl JoltInstruction for SLTInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One, Zero};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-
+    
     use super::SLTInstruction;
 
     #[test]
-    fn slt_instruction_e2e() {
+    fn slt_instruction_32_e2e() {
         let mut rng = test_rng();
-        const C: usize = 8;
+        const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let x = rng.next_u64() as i64;
-            let y = rng.next_u64() as i64;
-
-            jolt_instruction_test!(SLTInstruction(x as u64, y as u64), (x < y).into());
-            assert_eq!(
-                SLTInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x < y).into()
-            );
+            let x = rng.next_u32() as u64;
+            let y = rng.next_u32() as u64;
+            let instruction = SLTInstruction(x, y);
+            jolt_instruction_test!(instruction);
         }
-        for _ in 0..256 {
-            let x = rng.next_u64() as u64;
-            jolt_instruction_test!(SLTInstruction(x, x), Fr::zero());
-            assert_eq!(SLTInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SLTInstruction(100, 0),
+            SLTInstruction(0, 100),
+            SLTInstruction(1, 0),
+            SLTInstruction(0, u32_max),
+            SLTInstruction(u32_max, 0),
+            SLTInstruction(u32_max, u32_max),
+            SLTInstruction(u32_max, 1 << 8),
+            SLTInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

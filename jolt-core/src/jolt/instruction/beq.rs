@@ -31,6 +31,10 @@ impl JoltInstruction for BEQInstruction {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
+    fn lookup_entry(&self) -> u64 {
+        (self.0 == self.1).into()
+    }
+
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
@@ -40,7 +44,7 @@ impl JoltInstruction for BEQInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
@@ -48,23 +52,45 @@ mod test {
     use super::BEQInstruction;
 
     #[test]
-    fn beq_instruction_e2e() {
+    fn beq_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        // Random
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = BEQInstruction(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Test edge-cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            BEQInstruction(100, 0),
+            BEQInstruction(0, 100),
+            BEQInstruction(1 , 0),
+            BEQInstruction(0, u32_max),
+            BEQInstruction(u32_max, 0),
+            BEQInstruction(u32_max, u32_max),
+            BEQInstruction(u32_max, 1 << 8),
+            BEQInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn beq_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(BEQInstruction(x, y), (x == y).into());
-            assert_eq!(
-                BEQInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x == y).into()
-            );
-        }
-        for _ in 0..256 {
-            let x = rng.next_u64();
-            jolt_instruction_test!(BEQInstruction(x, x), Fr::one());
-            assert_eq!(BEQInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::one());
+            let instruction = BEQInstruction(x, y);
+            jolt_instruction_test!(instruction);
         }
     }
 }
