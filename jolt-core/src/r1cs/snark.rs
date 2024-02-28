@@ -165,7 +165,6 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     drop(_allocate_vars_guard);
 
     utils::thread::drop_in_background_thread(witness_variable_wise);
-    utils::thread::drop_in_background_thread(inputs_chunked);
 
     Ok(())
   }
@@ -250,6 +249,30 @@ pub fn prove_jolt_circuit_precommitted<G: Group<Scalar = F>, S: PrecommittedSNAR
   Ok(())
 }
 
+<<<<<<< HEAD
+=======
+// #[tracing::instrument(skip_all, name = "JoltSkeleton::prove_jolt_circuit")]
+// pub fn prove_jolt_circuit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(circuit: JoltCircuit<F>) -> Result<R1CSProof, SpartanError> {
+//   let num_steps = circuit.num_steps; 
+//   let skeleton_circuit = JoltSkeleton::<G::Scalar>::from_num_steps(num_steps);
+
+//   let (pk, vk) = SNARK::<G, S, JoltSkeleton<<G as Group>::Scalar>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
+
+//   // produce a SNARK
+//   let proof = SNARK::prove(&pk, circuit);
+//   assert!(proof.is_ok());
+
+//   let res = SNARK::verify(&proof.unwrap(), &vk, &[]); 
+//   assert!(res.is_ok()); 
+
+
+//   Ok(R1CSProof{
+//     proof: proof.unwrap(),
+//     vk: vk,
+//   })
+// }
+
+>>>>>>> 7634815 (finished merge with jolt)
 pub struct R1CSProof  {
   proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
   vk: VerifierKey<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>>,
@@ -263,13 +286,13 @@ impl R1CSProof {
       TRACE_LEN: usize, 
       inputs: Vec<Vec<ArkF>>
   ) -> Result<Self, SpartanError> {
-      type G1 = SpartanG1;
-      type EE = SpartanHyraxEE<SpartanG1>;
-      type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
-      type F = Spartan2Fr;
 
-      let NUM_STEPS = TRACE_LEN;
+    type G1 = SpartanG1;
+    type EE = SpartanHyraxEE<SpartanG1>;
+    type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
+    type F = Spartan2Fr;
 
+    let NUM_STEPS = TRACE_LEN;
 
     let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
     let _enter = span.enter();
@@ -288,13 +311,14 @@ impl R1CSProof {
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
-      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_uniform(skeleton_circuit, num_steps).unwrap();
 
       SNARK::prove(&pk, jolt_circuit).map(|snark| Self {
         proof: snark,
         vk
       })
   }
+
 
   pub fn verify(&self) -> Result<(), SpartanError> {
     SNARK::verify(&self.proof, &self.vk, &[])
