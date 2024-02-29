@@ -1,7 +1,9 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use enum_dispatch::enum_dispatch;
+use fixedbitset::*;
 use rand::prelude::StdRng;
+use std::ops::Range;
 use std::marker::Sync;
 
 use crate::jolt::subtable::LassoSubtable;
@@ -38,10 +40,13 @@ pub trait JoltInstruction: Sync + Clone + Debug {
     /// Computes the output lookup entry for this instruction as a u64.
     fn lookup_entry(&self) -> u64;
     fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
-        assert!(log_M % 2 == 0, "log_M must be even for operand_chunks to work");
+        assert!(
+            log_M % 2 == 0,
+            "log_M must be even for operand_chunks to work"
+        );
         self.operands()
             .iter()
-            .map(|&operand| chunk_operand(operand, C, log_M/2))
+            .map(|&operand| chunk_operand(operand, C, log_M / 2))
             .collect::<Vec<Vec<u64>>>()
             .try_into()
             .unwrap()
@@ -53,6 +58,35 @@ pub trait Opcode {
     /// Converts a variant of an instruction set enum into its canonical "opcode" value.
     fn to_opcode(&self) -> u8 {
         unsafe { *<*const _>::from(self).cast::<u8>() }
+    }
+}
+
+pub struct SubtableIndices {
+    bitset: FixedBitSet,
+}
+
+impl SubtableIndices {
+    pub fn union_with(&mut self, other: &Self) {
+        self.bitset.union_with(&other.bitset);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.bitset.ones()
+    }
+}
+
+impl From<usize> for SubtableIndices {
+    fn from(index: usize) -> Self {
+        let mut bitset = FixedBitSet::new();
+        bitset.grow_and_insert(index);
+        SubtableIndices { bitset }
+    }
+}
+
+impl From<Range<usize>> for SubtableIndices {
+    fn from(range: Range<usize>) -> Self {
+        let bitset = FixedBitSet::from_iter(range);   
+        SubtableIndices { bitset }
     }
 }
 
