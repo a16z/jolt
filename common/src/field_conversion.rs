@@ -1,10 +1,13 @@
 use ark_bn254::Fr as ArkFr;
+use ark_ec::{AffineRepr, CurveConfig};
+use ark_ec::short_weierstrass::SWCurveConfig;
 use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
-
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ff::PrimeField as GenericPrimeField;
-use halo2curves::serde::SerdeObject;
-use spartan2::provider::bn256_grumpkin::bn256::Scalar as Spartan2Fr;
+use halo2curves::CurveAffine;
 
+use spartan2::provider::bn256_grumpkin::bn256::Scalar as Spartan2Fr;
+use spartan2::provider::bn256_grumpkin::bn256::Affine as Spartan2Affine;
 pub fn ark_to_spartan<ArkF: ArkPrimeField>(ark: ArkF) -> Spartan2Fr {
     let bigint: <ArkF as ArkPrimeField>::BigInt = ark.into_bigint();
     let bytes = bigint.to_bytes_le();
@@ -70,6 +73,57 @@ pub fn spartan_to_ark_unsafe<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrim
     }
     ark
 }
+pub trait IntoArk: CurveAffine {
+    type ArkConfig: SWCurveConfig;
+
+    fn to_ark(&self) -> ark_ec::short_weierstrass::Affine<Self::ArkConfig> {
+        if self.coordinates().is_some().into() {
+            let point = self.coordinates().unwrap();
+            let x = <Self::ArkConfig as CurveConfig>::BaseField::deserialize_uncompressed(
+                point.x().to_repr().as_ref(),
+            )
+                .unwrap();
+            let y = <Self::ArkConfig as CurveConfig>::BaseField::deserialize_uncompressed(
+                point.y().to_repr().as_ref(),
+            )
+                .unwrap();
+            ark_ec::short_weierstrass::Affine::<Self::ArkConfig>::new(x, y)
+        } else {
+            ark_ec::short_weierstrass::Affine::<Self::ArkConfig>::identity()
+        }
+    }
+}
+
+
+
+pub trait FromArk: CurveAffine {
+    type ArkConfig: SWCurveConfig;
+
+    fn from_ark(arg: ark_ec::short_weierstrass::Affine<Self::ArkConfig>) -> Self {
+        match arg.xy() {
+            None => Self::identity(),
+            Some((x, y)) => {
+                let [x, y] = [x,y].map(|ark_f| {
+                    let mut ff_repr = <<Self as CurveAffine>::Base as GenericPrimeField>::Repr::default();
+                    let ff_bytes = ff_repr.as_mut();
+                    ark_f.serialize_compressed(ff_bytes).unwrap();
+                    ff_repr
+                });
+                Self::from_xy(
+                    <Self as CurveAffine>::Base::from_repr(x).unwrap(),
+                    <Self as CurveAffine>::Base::from_repr(y).unwrap(),
+                ).unwrap()
+            }
+        }
+    }
+}
+
+impl IntoArk for Spartan2Affine {
+    type ArkConfig = ark_bn254::g1::Config;
+}
+impl FromArk for Spartan2Affine {
+    type ArkConfig = ark_bn254::g1::Config;
+}
 
 
 unsafe fn access_ark_private<AF: ArkPrimeField>(value: &AF) -> [u8; 32] {
@@ -84,18 +138,18 @@ unsafe fn access_spartan_private<FF: GenericPrimeField<Repr = [u8; 32]>>(value: 
 
 #[cfg(test)]
 mod tests {
-    use ark_std::rand;
+    use ark_std::{rand, test_rng, UniformRand};
 
     use super::*;
 
     fn random_spartan() -> Spartan2Fr {
-        let rand_vec: Vec<u64> = std::iter::repeat_with(|| rand::random::<u64>()).take(4).collect();
+        let rand_vec: Vec<u64> = std::iter::repeat_with(rand::random::<u64>).take(4).collect();
         let random: [u64; 4] = rand_vec.try_into().unwrap();
         Spartan2Fr::from_raw(random)
     }
 
     fn random_ark() -> ArkFr {
-        let random: Vec<u8> = std::iter::repeat_with(|| rand::random::<u8>()).take(32).collect();
+        let random: Vec<u8> = std::iter::repeat_with(rand::random::<u8>).take(32).collect();
         ArkFr::from_be_bytes_mod_order(&random)
     }
 
@@ -165,6 +219,24 @@ mod tests {
             let spartan_value = random_spartan();
             let new_spartan_value =
                 ark_to_ff::<Spartan2Fr, ArkFr>(ff_to_ark::<Spartan2Fr, ArkFr>(spartan_value));
+
+            assert_eq!(spartan_value, new_spartan_value);
+        }
+    }
+
+    #[test]
+    fn test_conversion_ark_and_spartan() {
+        for _ in 0..10 {
+
+            let ark_value= ark_bn254::G1Affine::rand(&mut test_rng());
+            let spartan_curve = Spartan2Affine::from_ark(ark_value);
+            let new_ark_value = spartan_curve.to_ark();
+
+            assert_eq!(ark_value, new_ark_value);
+        }
+        for _ in 0..10 {
+            let spartan_value = Spartan2Affine::random(test_rng());
+            let new_spartan_value = Spartan2Affine::from_ark(spartan_value.to_ark());
 
             assert_eq!(spartan_value, new_spartan_value);
         }
