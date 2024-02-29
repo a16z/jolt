@@ -14,12 +14,13 @@ use crate::jolt::instruction::{
     blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, or::ORInstruction,
     sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
     srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+    SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
     gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
     or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
-    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, LassoSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, LassoSubtable, SubtableId,
 };
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
@@ -58,8 +59,8 @@ macro_rules! subtable_enum {
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
         pub enum $enum_name<F: PrimeField> { $($alias($struct)),+ }
-        impl<F: PrimeField> From<TypeId> for $enum_name<F> {
-          fn from(subtable_id: TypeId) -> Self {
+        impl<F: PrimeField> From<SubtableId> for $enum_name<F> {
+          fn from(subtable_id: SubtableId) -> Self {
             $(
               if subtable_id == TypeId::of::<$struct>() {
                 $enum_name::from(<$struct>::new())
@@ -197,7 +198,7 @@ mod tests {
         let mut subtable_set: HashSet<_> = HashSet::new();
         for instruction in <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::InstructionSet::iter()
         {
-            for subtable in instruction.subtables::<Fr>(C) {
+            for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
                 let _ = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::Subtables::from(
                     subtable.subtable_id(),

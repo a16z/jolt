@@ -3,11 +3,10 @@ use ark_std::log2;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
 use rand::prelude::StdRng;
-use std::ops::Range;
 use std::marker::Sync;
+use std::ops::Range;
 
 use crate::jolt::subtable::LassoSubtable;
-use crate::utils::index_to_field_bitvector;
 use crate::utils::instruction_utils::chunk_operand;
 use std::fmt::Debug;
 
@@ -33,7 +32,11 @@ pub trait JoltInstruction: Sync + Clone + Debug {
     fn g_poly_degree(&self, C: usize) -> usize;
     /// Returns a Vec of the unique subtable types used by this instruction. For some instructions,
     /// e.g. SLL, the list of subtables depends on the dimension `C`.
-    fn subtables<F: PrimeField>(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
     /// Converts the instruction operand(s) in their native word-sized representation into a Vec
     /// of subtable lookups indices. The returned Vec is length `C`, with elements in [0, `log_M`).
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
@@ -61,11 +64,18 @@ pub trait Opcode {
     }
 }
 
+#[derive(Clone)]
 pub struct SubtableIndices {
     bitset: FixedBitSet,
 }
 
 impl SubtableIndices {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            bitset: FixedBitSet::with_capacity(capacity),
+        }
+    }
+
     pub fn union_with(&mut self, other: &Self) {
         self.bitset.union_with(&other.bitset);
     }
@@ -83,14 +93,14 @@ impl From<usize> for SubtableIndices {
     fn from(index: usize) -> Self {
         let mut bitset = FixedBitSet::new();
         bitset.grow_and_insert(index);
-        SubtableIndices { bitset }
+        Self { bitset }
     }
 }
 
 impl From<Range<usize>> for SubtableIndices {
     fn from(range: Range<usize>) -> Self {
-        let bitset = FixedBitSet::from_iter(range);   
-        SubtableIndices { bitset }
+        let bitset = FixedBitSet::from_iter(range);
+        Self { bitset }
     }
 }
 

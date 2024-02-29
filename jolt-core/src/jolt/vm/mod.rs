@@ -21,7 +21,7 @@ use crate::utils::errors::ProofVerifyError;
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction};
 
 use self::instruction_lookups::{
-    InstructionCommitment, InstructionLookups, InstructionLookupsProof,
+    InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
 use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory, ReadWriteMemoryProof};
 use self::{
@@ -29,26 +29,27 @@ use self::{
     instruction_lookups::InstructionPolynomials,
 };
 
-pub struct JoltProof<F, G, Subtables>
+pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
     Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     bytecode: BytecodeProof<F, G>,
     read_write_memory: ReadWriteMemoryProof<F, G>,
-    instruction_lookups: InstructionLookupsProof<F, G, Subtables>,
+    instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
     r1cs: R1CSProof,
 }
 
-pub struct JoltPolynomials<F, G>
+pub struct JoltPolynomials<const C: usize, F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     pub bytecode: BytecodePolynomials<F, G>,
     pub read_write_memory: ReadWriteMemory<F, G>,
-    pub instruction_lookups: InstructionPolynomials<F, G>,
+    pub instruction_lookups: InstructionPolynomials<C, F, G>,
 }
 
 pub struct JoltCommitments<G: CurveGroup> {
@@ -78,14 +79,16 @@ where
             ReadWriteMemory::<F, G>::num_generators(max_memory_address, max_trace_length);
         let timestamp_range_check_generators =
             TimestampValidityProof::<F, G>::num_generators(max_trace_length);
-        let num_instruction_lookup_generators = InstructionLookups::<
+        let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::<
             F,
             G,
             Self::InstructionSet,
             Self::Subtables,
             C,
             M,
-        >::num_generators(max_trace_length);
+        >::preprocess();
+        let num_instruction_lookup_generators =
+            instruction_lookups_preprocessing.num_generators(max_trace_length);
 
         let max_num_generators = max([
             num_bytecode_generators,
@@ -111,7 +114,10 @@ where
         instructions: Vec<Self::InstructionSet>,
         circuit_flags: Vec<F>,
         generators: PedersenGenerators<G>,
-    ) -> (JoltProof<F, G, Self::Subtables>, JoltCommitments<G>) {
+    ) -> (
+        JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
+        JoltCommitments<G>,
+    ) {
         let mut transcript = Transcript::new(b"Jolt transcript");
         let bytecode_rows: Vec<ELFRow> = bytecode.iter().map(ELFRow::from).collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
@@ -172,7 +178,7 @@ where
     }
 
     fn verify(
-        proof: JoltProof<F, G, Self::Subtables>,
+        proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = Transcript::new(b"Jolt transcript");
@@ -201,22 +207,39 @@ where
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
-        InstructionLookupsProof<F, G, Self::Subtables>,
-        InstructionPolynomials<F, G>,
+        JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
+        InstructionPolynomials<C, F, G>,
         InstructionCommitment<G>,
     ) {
-        let instruction_lookups =
-            InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::new(ops);
-        instruction_lookups.prove_lookups(generators, transcript)
+        let instruction_lookups = InstructionLookupsPreprocessing::<
+            F,
+            G,
+            Self::InstructionSet,
+            Self::Subtables,
+            C,
+            M,
+        >::preprocess();
+        instruction_lookups.prove_lookups(ops, generators, transcript)
     }
 
     fn verify_instruction_lookups(
-        proof: InstructionLookupsProof<F, G, Self::Subtables>,
+        proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitment: InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        InstructionLookups::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
-            proof, commitment, transcript,
+        let instruction_lookups = InstructionLookupsPreprocessing::<
+            F,
+            G,
+            Self::InstructionSet,
+            Self::Subtables,
+            C,
+            M,
+        >::preprocess();
+        InstructionLookupsPreprocessing::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
+            instruction_lookups,
+            proof,
+            commitment,
+            transcript,
         )
     }
 

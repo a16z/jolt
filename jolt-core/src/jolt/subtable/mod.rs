@@ -9,7 +9,7 @@ pub trait LassoSubtable<F: PrimeField>: 'static + Sync {
     /// The `Jolt` trait has associated enum types `InstructionSet` and `Subtables`.
     /// This function is used to resolve the many-to-many mapping between `InstructionSet` variants
     /// and `Subtables` variants,
-    fn subtable_id(&self) -> TypeId {
+    fn subtable_id(&self) -> SubtableId {
         TypeId::of::<Self>()
     }
     /// Fully materializes a subtable of size `M`, reprensented as a Vec of length `M`.
@@ -18,6 +18,8 @@ pub trait LassoSubtable<F: PrimeField>: 'static + Sync {
     /// interpreted to be of size log_2(M), where M is the size of the subtable.
     fn evaluate_mle(&self, point: &[F]) -> F;
 }
+
+pub type SubtableId = TypeId;
 
 pub mod and;
 pub mod eq;

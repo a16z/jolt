@@ -6,6 +6,7 @@ use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
+use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::matrix_dimensions;
 use crate::poly::pedersen::PedersenGenerators;
@@ -226,22 +227,12 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         // pack: [opcode_1, ..., opcode_len, rd_1, ... rd_len, .... imm_1, ... imm_len]
         let mut packed = vec![F::zero(); 5 * len];
 
-        let opcode_index = |index: usize| -> usize {
-            index
-        };
-        let rs1_index = |index: usize| -> usize {
-            len + index
-        };
-        let rs2_index = |index: usize| -> usize {
-            2*len + index
-        };
-        let rd_index = |index: usize| -> usize {
-            3*len + index
-        };
-        let imm_index = |index: usize| -> usize {
-            4*len + index
-        };
-        
+        let opcode_index = |index: usize| -> usize { index };
+        let rs1_index = |index: usize| -> usize { len + index };
+        let rs2_index = |index: usize| -> usize { 2 * len + index };
+        let rd_index = |index: usize| -> usize { 3 * len + index };
+        let imm_index = |index: usize| -> usize { 4 * len + index };
+
         // TODO(arasuarun): handle circuit flags here and not in prove_r1cs()
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
@@ -503,7 +494,8 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, BytecodePolynomials<F, G>> for BytecodePolynomials<F, G>
+impl<F, G> MemoryCheckingProver<F, G, BytecodePolynomials<F, G>, NoPreprocessing>
+    for BytecodeProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -526,7 +518,7 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]
     fn compute_leaves(
-        &self,
+        _: &NoPreprocessing,
         polynomials: &BytecodePolynomials<F, G>,
         gamma: &F,
         tau: &F,
@@ -537,7 +529,7 @@ where
         let read_fingerprints = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                Self::fingerprint(
                     &[
                         polynomials.a_read_write[i],
                         polynomials.v_read_write.opcode[i],
@@ -557,7 +549,7 @@ where
         let init_fingerprints = (0..memory_size)
             .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                Self::fingerprint(
                     &[
                         F::from_u64(i as u64).unwrap(),
                         polynomials.v_init_final.opcode[i],
@@ -577,7 +569,7 @@ where
         let write_fingerprints = (0..num_ops)
             .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                Self::fingerprint(
                     &[
                         polynomials.a_read_write[i],
                         polynomials.v_read_write.opcode[i],
@@ -597,7 +589,7 @@ where
         let final_fingerprints = (0..memory_size)
             .into_par_iter()
             .map(|i| {
-                <Self as MemoryCheckingProver<F, G, BytecodePolynomials<F, G>>>::fingerprint(
+                Self::fingerprint(
                     &[
                         F::from_u64(i as u64).unwrap(),
                         polynomials.v_init_final.opcode[i],
@@ -625,12 +617,16 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, BytecodePolynomials<F, G>> for BytecodePolynomials<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, BytecodePolynomials<F, G>, NoPreprocessing>
+    for BytecodeProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn read_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write_opening,
             openings.v_read_write_openings[0], // opcode
@@ -641,7 +637,10 @@ where
             openings.t_read_opening,
         ]]
     }
-    fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn write_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write_opening,
             openings.v_read_write_openings[0], // opcode
@@ -652,7 +651,10 @@ where
             openings.t_read_opening + F::one(),
         ]]
     }
-    fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn init_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_init_final.unwrap(),
             openings.v_init_final[0], // opcode
@@ -663,7 +665,10 @@ where
             F::zero(),
         ]]
     }
-    fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn final_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_init_final.unwrap(),
             openings.v_init_final[0], // opcode
@@ -863,7 +868,8 @@ mod tests {
             BytecodePolynomials::new(program, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_write_leaves, init_final_leaves) = polys.compute_leaves(&polys, &gamma, &tau);
+        let (read_write_leaves, init_final_leaves) =
+            BytecodeProof::compute_leaves(&NoPreprocessing, &polys, &gamma, &tau);
         let init_leaves = &init_final_leaves[0];
         let read_leaves = &read_write_leaves[0];
         let write_leaves = &read_write_leaves[1];
@@ -895,11 +901,21 @@ mod tests {
         let batched_polys = polys.batch();
         let generators = PedersenGenerators::new(10, b"test");
         let commitments = BytecodePolynomials::commit(&batched_polys, &generators);
-        let proof = polys.prove_memory_checking(&polys, &batched_polys, &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(
+            &NoPreprocessing,
+            &polys,
+            &batched_polys,
+            &mut transcript,
+        );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        BytecodePolynomials::verify_memory_checking(proof, &commitments, &mut transcript)
-            .expect("proof should verify");
+        BytecodeProof::verify_memory_checking(
+            &NoPreprocessing,
+            proof,
+            &commitments,
+            &mut transcript,
+        )
+        .expect("proof should verify");
     }
 
     #[test]
@@ -925,11 +941,17 @@ mod tests {
 
         let mut transcript = Transcript::new(b"test_transcript");
 
-        let proof = polys.prove_memory_checking(&polys, &batch, &mut transcript);
+        let proof =
+            BytecodeProof::prove_memory_checking(&NoPreprocessing, &polys, &batch, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        BytecodePolynomials::verify_memory_checking(proof, &commitments, &mut transcript)
-            .expect("should verify");
+        BytecodeProof::verify_memory_checking(
+            &NoPreprocessing,
+            proof,
+            &commitments,
+            &mut transcript,
+        )
+        .expect("should verify");
     }
 
     #[test]
