@@ -1,5 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use common::field_conversion::{FromArk, IntoSpartan};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use std::any::TypeId;
@@ -132,6 +133,7 @@ impl<F, G> Jolt<'_, F, G, C, M> for RV32IJoltVM
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    G::Affine: IntoSpartan
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;

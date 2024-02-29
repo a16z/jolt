@@ -1,5 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_std::rand::SeedableRng;
+use common::field_conversion::IntoSpartan;
 use digest::{ExtendableOutput, Input};
 use rand_chacha::ChaCha20Rng;
 use sha3::Shake256;
@@ -38,6 +39,7 @@ impl<G: CurveGroup> PedersenGenerators<G> {
         Self { generators }
     }
 
+
     pub fn clone_n(&self, n: usize) -> PedersenGenerators<G> {
         assert!(
             self.generators.len() >= n,
@@ -49,6 +51,15 @@ impl<G: CurveGroup> PedersenGenerators<G> {
         PedersenGenerators {
             generators: slice.into(),
         }
+    }
+}
+
+impl<G: CurveGroup> PedersenGenerators<G> where G::Affine: IntoSpartan {
+    pub fn into_spartan(&self) -> Vec<<G::Affine as IntoSpartan>::SpartanAffine> {
+        self.generators.iter().map(|g1: &G| {
+            let g1_affine: G::Affine = (*g1).into();
+            g1_affine.to_spartan()
+        }).collect()
     }
 }
 
