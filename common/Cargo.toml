@@ -10,6 +10,8 @@ strum_macros = "0.25.3"
 ark-bn254 = "0.4.0"
 ark-ff = "0.4.2"
 ark-std = "0.4.0"
+ark-ec = "0.4.2"
+ark-serialize = "0.4.2"
 bellpepper-core = "0.4.0"
 ff = "0.13.0"
 spartan2 = { git = "https://github.com/a16z/Spartan2"}
