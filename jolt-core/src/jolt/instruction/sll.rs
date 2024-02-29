@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
@@ -34,7 +34,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
             Box::new(SllSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SllSubtable::<F, 1, WORD_SIZE>::new()),
@@ -49,7 +53,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         ];
         subtables.truncate(C);
         subtables.reverse();
-        subtables
+        
+        let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
+        subtables.into_iter().zip(indices).collect()
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -59,7 +65,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
 
     fn lookup_entry(&self) -> u64 {
         // SLL is specified to ignore all but the last 5 bits of y: https://jemu.oscc.cc/SLL
-        (self.0 as u32).checked_shl(self.1 as u32 % WORD_SIZE as u32).unwrap_or(0).into()
+        (self.0 as u32)
+            .checked_shl(self.1 as u32 % WORD_SIZE as u32)
+            .unwrap_or(0)
+            .into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -95,7 +104,7 @@ mod test {
         let instructions = vec![
             SLLInstruction::<32>(100, 0),
             SLLInstruction::<32>(0, 100),
-            SLLInstruction::<32>(1 , 0),
+            SLLInstruction::<32>(1, 0),
             SLLInstruction::<32>(0, u32_max),
             SLLInstruction::<32>(u32_max, 0),
             SLLInstruction::<32>(u32_max, u32_max),

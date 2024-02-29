@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
@@ -34,9 +34,13 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-            Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
+            // Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 2, WORD_SIZE>::new()),
@@ -48,9 +52,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
             Box::new(SrlSubtable::<F, 8, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 9, WORD_SIZE>::new()),
         ];
-        subtables.truncate(C + 1);
+        subtables.truncate(C);
         subtables.reverse();
-        subtables
+        let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
+        let mut subtables_and_indices: Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> =
+            subtables.into_iter().zip(indices).collect();
+
+        subtables_and_indices.push((
+            Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
+            SubtableIndices::from(0),
+        ));
+
+        subtables_and_indices
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -96,7 +109,7 @@ mod test {
         let instructions = vec![
             SRAInstruction::<32>(100, 0),
             SRAInstruction::<32>(0, 2),
-            SRAInstruction::<32>(1 , 2),
+            SRAInstruction::<32>(1, 2),
             SRAInstruction::<32>(0, 32),
             SRAInstruction::<32>(u32_max, 0),
             SRAInstruction::<32>(u32_max, 31),

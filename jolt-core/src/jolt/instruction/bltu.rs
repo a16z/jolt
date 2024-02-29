@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
@@ -30,8 +30,15 @@ impl JoltInstruction for BLTUInstruction {
         C
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
-        vec![Box::new(LtuSubtable::new()), Box::new(EqSubtable::new())]
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        vec![
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {

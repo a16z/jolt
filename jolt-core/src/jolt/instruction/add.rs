@@ -1,8 +1,9 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
+use fixedbitset::FixedBitSet;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
@@ -48,10 +49,21 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![
-            Box::new(IdentitySubtable::new()),
-            Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+            (
+                Box::new(IdentitySubtable::new()),
+                SubtableIndices::from(0..msb_chunk_index + 1),
+            ),
+            (
+                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+                SubtableIndices::from(msb_chunk_index + 1..C),
+            ),
         ]
     }
 
@@ -82,11 +94,8 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{
-        jolt::instruction::JoltInstruction,
-        jolt_instruction_test,
-    };
     use super::ADDInstruction;
+    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
     fn add_instruction_32_e2e() {
@@ -104,7 +113,7 @@ mod test {
         let instructions = vec![
             ADDInstruction::<32>(100, 0),
             ADDInstruction::<32>(0, 100),
-            ADDInstruction::<32>(1 , 0),
+            ADDInstruction::<32>(1, 0),
             ADDInstruction::<32>(0, u32_max),
             ADDInstruction::<32>(u32_max, 0),
             ADDInstruction::<32>(u32_max, u32_max),

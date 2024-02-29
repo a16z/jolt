@@ -33,7 +33,7 @@ pub trait JoltInstruction: Sync + Clone + Debug {
     fn g_poly_degree(&self, C: usize) -> usize;
     /// Returns a Vec of the unique subtable types used by this instruction. For some instructions,
     /// e.g. SLL, the list of subtables depends on the dimension `C`.
-    fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;
+    fn subtables<F: PrimeField>(&self, C: usize, M: usize) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
     /// Converts the instruction operand(s) in their native word-sized representation into a Vec
     /// of subtable lookups indices. The returned Vec is length `C`, with elements in [0, `log_M`).
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
@@ -72,6 +72,10 @@ impl SubtableIndices {
 
     pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.bitset.ones()
+    }
+
+    pub fn len(&self) -> usize {
+        self.bitset.count_ones(..)
     }
 }
 

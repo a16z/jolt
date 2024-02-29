@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -46,14 +46,18 @@ impl JoltInstruction for SLTInstruction {
         C + 1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            Box::new(GtMSBSubtable::new()),
-            Box::new(EqMSBSubtable::new()),
-            Box::new(LtuSubtable::new()),
-            Box::new(EqSubtable::new()),
-            Box::new(LtAbsSubtable::new()),
-            Box::new(EqAbsSubtable::new()),
+            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
     }
 
@@ -78,7 +82,7 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-    
+
     use super::SLTInstruction;
 
     #[test]

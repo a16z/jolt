@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::{slt::SLTInstruction, JoltInstruction};
+use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -27,14 +27,18 @@ impl JoltInstruction for BGEInstruction {
         C + 1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            Box::new(GtMSBSubtable::new()),
-            Box::new(EqMSBSubtable::new()),
-            Box::new(LtuSubtable::new()),
-            Box::new(EqSubtable::new()),
-            Box::new(LtAbsSubtable::new()),
-            Box::new(EqAbsSubtable::new()),
+            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
     }
 
@@ -89,7 +93,7 @@ mod test {
         let instructions = vec![
             BGEInstruction(100, 0),
             BGEInstruction(0, 100),
-            BGEInstruction(1 , 0),
+            BGEInstruction(1, 0),
             BGEInstruction(0, u32_max),
             BGEInstruction(u32_max, 0),
             BGEInstruction(u32_max, u32_max),
