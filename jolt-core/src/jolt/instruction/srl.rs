@@ -13,7 +13,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         assert!(C <= 10);
         assert!(vals.len() == C);
         vals.iter().sum()
