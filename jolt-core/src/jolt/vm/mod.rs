@@ -34,13 +34,14 @@ use self::{
     instruction_lookups::InstructionPolynomials,
 };
 
+#[derive(Clone)]
 pub struct JoltPreprocessing<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    generators: PedersenGenerators<G>,
-    instruction_lookups: InstructionLookupsPreprocessing<F>,
+    pub generators: PedersenGenerators<G>,
+    pub instruction_lookups: InstructionLookupsPreprocessing<F>,
 }
 
 pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
@@ -56,14 +57,14 @@ where
     r1cs: R1CSProof,
 }
 
-pub struct JoltPolynomials<const C: usize, F, G>
+pub struct JoltPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     pub bytecode: BytecodePolynomials<F, G>,
     pub read_write_memory: ReadWriteMemory<F, G>,
-    pub instruction_lookups: InstructionPolynomials<C, F, G>,
+    pub instruction_lookups: InstructionPolynomials<F, G>,
 }
 
 pub struct JoltCommitments<G: CurveGroup> {
@@ -136,8 +137,7 @@ where
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
         circuit_flags: Vec<F>,
-        preprocessing: InstructionLookupsPreprocessing<F>,
-        generators: PedersenGenerators<G>,
+        preprocessing: JoltPreprocessing<F, G>,
     ) -> (
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<G>,
@@ -147,7 +147,7 @@ where
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             bytecode_rows.clone(),
             bytecode_trace.clone(),
-            &generators,
+            &preprocessing.generators,
             &mut transcript,
         );
 
@@ -162,7 +162,7 @@ where
         let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
             bytecode.clone(),
             padded_memory_trace,
-            &generators,
+            &preprocessing.generators,
             &mut transcript,
         );
 
@@ -171,9 +171,9 @@ where
             instruction_lookups_polynomials,
             instruction_lookups_commitment,
         ) = Self::prove_instruction_lookups(
-            &preprocessing,
+            &preprocessing.instruction_lookups,
             instructions.clone(),
-            &generators,
+            &preprocessing.generators,
             &mut transcript,
         );
 
@@ -240,7 +240,7 @@ where
         transcript: &mut Transcript,
     ) -> (
         InstructionLookupsProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
-        InstructionPolynomials<C, F, G>,
+        InstructionPolynomials<F, G>,
         InstructionCommitment<G>,
     ) {
         InstructionLookupsProof::prove_lookups(preprocessing, ops, generators, transcript)

@@ -40,7 +40,7 @@ use crate::{
 };
 
 /// All polynomials associated with Jolt instruction lookups.
-pub struct InstructionPolynomials<const C: usize, F, G>
+pub struct InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -100,7 +100,7 @@ pub struct InstructionCommitmentGenerators<G: CurveGroup> {
 }
 
 // TODO: macro?
-impl<const C: usize, F, G> BatchablePolynomials<G> for InstructionPolynomials<C, F, G>
+impl<F, G> BatchablePolynomials<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -162,13 +162,13 @@ where
     flag_openings: Vec<F>,
 }
 
-impl<const C: usize, F, G> StructuredOpeningProof<F, G, InstructionPolynomials<C, F, G>>
+impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
     for PrimarySumcheckOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    fn open(_polynomials: &InstructionPolynomials<C, F, G>, _opening_point: &Vec<F>) -> Self {
+    fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
@@ -238,7 +238,7 @@ where
     E_flag_opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
-impl<const C: usize, F, G> StructuredOpeningProof<F, G, InstructionPolynomials<C, F, G>>
+impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
     for InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
@@ -247,7 +247,7 @@ where
     type Proof = InstructionReadWriteOpeningProof<F, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<C, F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
@@ -365,7 +365,7 @@ where
     v_init_final: Option<Vec<F>>,
 }
 
-impl<const C: usize, F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<C, F, G>>
+impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
     for InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
@@ -373,7 +373,7 @@ where
     Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<C, F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let final_openings = polynomials
@@ -431,7 +431,7 @@ where
 }
 
 impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
-    MemoryCheckingProver<F, G, InstructionPolynomials<C, F, G>, InstructionLookupsPreprocessing<F>>
+    MemoryCheckingProver<F, G, InstructionPolynomials<F, G>, InstructionLookupsPreprocessing<F>>
     for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
@@ -455,7 +455,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
     fn compute_leaves(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        polynomials: &InstructionPolynomials<C, F, G>,
+        polynomials: &InstructionPolynomials<F, G>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
@@ -629,7 +629,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        polynomials: &InstructionPolynomials<C, F, G>,
+        polynomials: &InstructionPolynomials<F, G>,
         read_write_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
         assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
@@ -699,7 +699,7 @@ impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
     MemoryCheckingVerifier<
         F,
         G,
-        InstructionPolynomials<C, F, G>,
+        InstructionPolynomials<F, G>,
         InstructionLookupsPreprocessing<F>,
     > for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
@@ -781,7 +781,7 @@ where
     /// Memory checking proof, showing that E_i polynomials are well-formed.
     memory_checking: MemoryCheckingProof<
         G,
-        InstructionPolynomials<C, F, G>,
+        InstructionPolynomials<F, G>,
         InstructionReadWriteOpenings<F>,
         InstructionFinalOpenings<F, Subtables>,
     >,
@@ -795,6 +795,7 @@ pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
+#[derive(Clone)]
 pub struct InstructionLookupsPreprocessing<F: PrimeField> {
     subtable_indices: Vec<SubtableIndices>,
     subtable_to_memory_indices: Vec<Vec<usize>>,
@@ -871,7 +872,7 @@ where
         transcript: &mut Transcript,
     ) -> (
         InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-        InstructionPolynomials<C, F, G>,
+        InstructionPolynomials<F, G>,
         InstructionCommitment<G>,
     ) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
@@ -1021,7 +1022,7 @@ where
     fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<InstructionSet>,
-    ) -> InstructionPolynomials<C, F, G> {
+    ) -> InstructionPolynomials<F, G> {
         let m: usize = ops.len().next_power_of_two();
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
