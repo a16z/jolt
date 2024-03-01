@@ -18,24 +18,24 @@ impl JoltInstruction for BLTInstruction {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
-        debug_assert!(vals.len() % C == 0);
-        let mut vals_by_subtable = vals.chunks_exact(C);
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values(vals, C, M);
 
-        let gt_msb = vals_by_subtable.next().unwrap();
-        let eq_msb = vals_by_subtable.next().unwrap();
-        let ltu = vals_by_subtable.next().unwrap();
-        let eq = vals_by_subtable.next().unwrap();
-        let lt_abs = vals_by_subtable.next().unwrap();
-        let eq_abs = vals_by_subtable.next().unwrap();
+        let gt_msb = vals_by_subtable[0];
+        let eq_msb = vals_by_subtable[1];
+        let ltu = vals_by_subtable[2];
+        let eq = vals_by_subtable[3];
+        let lt_abs = vals_by_subtable[4];
+        let eq_abs = vals_by_subtable[5];
 
         // Accumulator for LTU(x_{<s}, y_{<s})
         let mut ltu_sum = lt_abs[0];
         // Accumulator for EQ(x_{<s}, y_{<s})
         let mut eq_prod = eq_abs[0];
-        for i in 1..C {
-            ltu_sum += ltu[i] * eq_prod;
-            eq_prod *= eq[i];
+
+        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
+            ltu_sum += *ltu_i * eq_prod;
+            eq_prod *= eq_i;
         }
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
@@ -80,7 +80,7 @@ impl JoltInstruction for BLTInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, Zero};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};

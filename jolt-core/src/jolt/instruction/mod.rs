@@ -54,6 +54,17 @@ pub trait JoltInstruction: Sync + Clone + Debug {
             .unwrap()
     }
     fn random(&self, rng: &mut StdRng) -> Self;
+
+    fn slice_values<'a, F: PrimeField>(&self, vals: &'a [F], C: usize, M: usize) -> Vec<&'a [F]> {
+        let mut offset = 0;
+        let mut slices = vec![];
+        for (_, indices) in self.subtables::<F>(C, M) {
+            slices.push(&vals[offset..offset + indices.len()]);
+            offset += indices.len();
+        }
+        assert_eq!(offset, vals.len());
+        slices
+    }
 }
 
 pub trait Opcode {
@@ -85,6 +96,10 @@ impl SubtableIndices {
 
     pub fn len(&self) -> usize {
         self.bitset.count_ones(..)
+    }
+
+    pub fn contains(&self, index: usize) -> bool {
+        self.bitset.contains(index)
     }
 }
 

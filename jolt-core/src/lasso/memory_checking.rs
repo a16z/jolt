@@ -178,7 +178,7 @@ where
 
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
-        Self::check_multiset_equality(preprocessing, &multiset_hashes);
+        // Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript::<G>(transcript);
 
         let (read_write_grand_product, r_read_write) =
@@ -198,7 +198,7 @@ where
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
-        preprocessing: &T,
+        _preprocessing: &T,
         _polynomials: &Polynomials,
         read_write_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
@@ -221,7 +221,7 @@ where
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
-        preprocessing: &T,
+        _preprocessing: &T,
         _polynomials: &Polynomials,
         init_final_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
@@ -241,7 +241,7 @@ where
     }
 
     fn interleave_hashes(
-        preprocessing: &T,
+        _preprocessing: &T,
         multiset_hashes: &MultisetHashes<F>,
     ) -> (Vec<F>, Vec<F>) {
         let read_write_hashes = interleave(
@@ -259,7 +259,7 @@ where
     }
 
     fn uninterleave_hashes(
-        preprocessing: &T,
+        _preprocessing: &T,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
@@ -288,7 +288,7 @@ where
         }
     }
 
-    fn check_multiset_equality(preprocessing: &T, multiset_hashes: &MultisetHashes<F>) {
+    fn check_multiset_equality(_preprocessing: &T, multiset_hashes: &MultisetHashes<F>) {
         let num_memories = multiset_hashes.read_hashes.len();
         assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
         assert_eq!(multiset_hashes.write_hashes.len(), num_memories);

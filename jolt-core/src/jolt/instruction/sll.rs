@@ -18,16 +18,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         assert!(C <= 10);
-        assert!(vals.len() == C * C);
-
-        let mut subtable_vals = vals.chunks_exact(C);
-        let mut vals_filtered: Vec<F> = Vec::with_capacity(C);
-        for i in 0..C {
-            let subtable_val = subtable_vals.next().unwrap();
-            vals_filtered.extend_from_slice(&subtable_val[i..i + 1]);
-        }
-
-        concatenate_lookups(&vals_filtered, C, (log2(M) / 2) as usize)
+        concatenate_lookups(vals, C, (log2(M) / 2) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -53,7 +44,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         ];
         subtables.truncate(C);
         subtables.reverse();
-        
+
         let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
         subtables.into_iter().zip(indices).collect()
     }

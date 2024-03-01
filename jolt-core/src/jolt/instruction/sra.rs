@@ -13,21 +13,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         assert!(C <= 10);
-        assert!(vals.len() == (C + 1) * C);
-
-        let mut subtable_vals = vals.chunks_exact(C);
-        let mut vals_filtered: Vec<F> = Vec::with_capacity(C);
-        for i in 0..C {
-            let subtable_val = subtable_vals.next().unwrap();
-            vals_filtered.extend_from_slice(&subtable_val[i..i + 1]);
-        }
-
-        // SRASign subtable applied to the most significant index
-        vals_filtered.extend_from_slice(&subtable_vals.next().unwrap()[0..1]);
-
-        vals_filtered.iter().sum()
+        assert_eq!(vals.len(), C + 1);
+        vals.iter().sum()
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -40,7 +29,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-            // Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 2, WORD_SIZE>::new()),
@@ -73,7 +61,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
 
     fn lookup_entry(&self) -> u64 {
         let x = self.0 as i32;
-        let y = (self.1 as u32 % (WORD_SIZE as u32));
+        let y = self.1 as u32 % (WORD_SIZE as u32);
         (x.checked_shr(y).unwrap_or(0) as u32).into()
     }
 

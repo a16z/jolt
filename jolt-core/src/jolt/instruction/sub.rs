@@ -19,26 +19,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        // The first C are from Identity and the last C are from TruncateOverflow
-        assert!(vals.len() == 2 * C);
-
-        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-
-        let mut vals_by_subtable = vals.chunks_exact(C);
-        let identity = vals_by_subtable.next().unwrap();
-        let truncate_overflow = vals_by_subtable.next().unwrap();
-
+        assert!(vals.len() == C);
         // The output is the TruncateOverflow(most significant chunk) || Identity of other chunks
-        concatenate_lookups(
-            [
-                &truncate_overflow[0..=msb_chunk_index],
-                &identity[msb_chunk_index + 1..C],
-            ]
-            .concat()
-            .as_slice(),
-            C,
-            log2(M) as usize,
-        )
+        concatenate_lookups(vals, C, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -53,12 +36,12 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
         let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![
             (
-                Box::new(IdentitySubtable::new()),
-                SubtableIndices::from(msb_chunk_index + 1..C),
-            ),
-            (
                 Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
                 SubtableIndices::from(0..msb_chunk_index + 1),
+            ),
+            (
+                Box::new(IdentitySubtable::new()),
+                SubtableIndices::from(msb_chunk_index + 1..C),
             ),
         ]
     }

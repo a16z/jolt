@@ -18,13 +18,17 @@ impl JoltInstruction for SLTUInstruction {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values(vals, C, M);
+        let ltu = vals_by_subtable[0];
+        let eq = vals_by_subtable[1];
+
         let mut sum = F::zero();
         let mut eq_prod = F::one();
 
         for i in 0..C {
-            sum += vals[i] * eq_prod;
-            eq_prod *= vals[C + i];
+            sum += ltu[i] * eq_prod;
+            eq_prod *= eq[i];
         }
         sum
     }
@@ -61,7 +65,7 @@ impl JoltInstruction for SLTUInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, Zero};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
