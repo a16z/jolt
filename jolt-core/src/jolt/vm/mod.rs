@@ -472,7 +472,7 @@ where
             circuit_flags_padded,
         ];
 
-        R1CSProof::prove(32, C, PADDED_TRACE_LEN, inputs).expect("R1CS proof failed")
+        R1CSProof::prove::<F, G>(32, C, PADDED_TRACE_LEN, inputs).expect("R1CS proof failed")
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]

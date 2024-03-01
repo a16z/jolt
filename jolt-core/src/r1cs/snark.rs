@@ -243,7 +243,7 @@ impl R1CSProof {
       C: usize, 
       TRACE_LEN: usize, 
       inputs: Vec<Vec<ArkF>>, 
-      _generators: &PedersenGenerators<ArkG>,
+//      _generators: &PedersenGenerators<ArkG>,
   ) -> Result<Self, SpartanError> {
     Self::prove_precommitted(W, C, TRACE_LEN, inputs)
   }
