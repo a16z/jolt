@@ -18,7 +18,7 @@ use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION, ELFInstruction};
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction};
 
 use self::instruction_lookups::{
     InstructionCommitment, InstructionLookups, InstructionLookupsProof,
@@ -57,7 +57,10 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub instruction_lookups: InstructionCommitment<G>,
 }
 
-pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
+pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize>
+where
+    G::Affine: IntoSpartan,
+{
     type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
@@ -92,7 +95,12 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
         ])
         .unwrap();
 
-        PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators")
+        let lasso_generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
+
+        // TODO(arasuarun): Use these
+        let spartan_generators: Vec<<G::Affine as IntoSpartan>::SpartanAffine> = lasso_generators.into_spartan();
+
+        lasso_generators
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]

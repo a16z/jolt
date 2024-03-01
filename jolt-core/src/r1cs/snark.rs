@@ -37,7 +37,7 @@ const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM
 
 /// Remap [[1, a1, a2, a3], [1, b1, b2, b3], ...]  -> [1, a1, b1, ..., a2, b2, ..., a3, b3, ...]
 #[tracing::instrument(skip_all, name = "JoltCircuit::reassemble_by_segments")]
-fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
+fn reassemble_by_segments<F: ff::PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
   let num_steps = jolt_witnesses.len();
   let num_vars = jolt_witnesses[0].len() - 1;
 
@@ -58,7 +58,7 @@ fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> 
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
+pub struct JoltCircuit<F: ff::PrimeField<Repr=[u8; 32]>> {
   num_steps: usize,
   inputs: Vec<Vec<F>>,
   // prog_a_rw: Vec<F>, 
@@ -73,7 +73,7 @@ pub struct JoltCircuit<F: PrimeField<Repr=[u8; 32]>> {
   // op_flags: Vec<F>,  
 }
 
-impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
+impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
   pub fn new_from_inputs(W: usize, c: usize, num_steps: usize, PC_START_ADDR: F, inputs: Vec<Vec<F>>) -> Self {
     JoltCircuit{
       num_steps: num_steps,
@@ -82,7 +82,7 @@ impl<F: PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
   }
 }
 
-impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
+impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
   #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     let r1cs_path = JoltPaths::r1cs_path();
@@ -161,12 +161,12 @@ impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct JoltSkeleton<F: PrimeField<Repr = [u8; 32]>> {
+pub struct JoltSkeleton<F: ff::PrimeField<Repr = [u8; 32]>> {
   num_steps: usize,
   _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField<Repr = [u8; 32]>> JoltSkeleton<F> {
+impl<F: ff::PrimeField<Repr = [u8; 32]>> JoltSkeleton<F> {
   pub fn from_num_steps(num_steps: usize) -> Self {
     JoltSkeleton::<F>{
       num_steps: num_steps,
@@ -175,7 +175,7 @@ impl<F: PrimeField<Repr = [u8; 32]>> JoltSkeleton<F> {
   }
 }
 
-impl<F: PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
+impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
   #[tracing::instrument(skip_all, name = "JoltSkeleton::synthesize")]
   fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
     let circuit_dir = JoltPaths::circuit_artifacts_path();
