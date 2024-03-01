@@ -8,17 +8,22 @@ use rayon::prelude::*;
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
-use crate::jolt::{
-    instruction::{JoltInstruction, Opcode},
-    subtable::LassoSubtable,
-    vm::timestamp_range_check::TimestampValidityProof,
-};
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction};
+use crate::{
+    jolt::{
+        instruction::{JoltInstruction, Opcode},
+        subtable::LassoSubtable,
+        vm::timestamp_range_check::TimestampValidityProof,
+    },
+    lasso::memory_checking::NoPreprocessing,
+};
+use common::{
+    constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction,
+};
 
 use self::instruction_lookups::{
     InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
@@ -28,6 +33,15 @@ use self::{
     bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, ELFRow},
     instruction_lookups::InstructionPolynomials,
 };
+
+pub struct JoltPreprocessing<F, G>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
+    generators: PedersenGenerators<G>,
+    instruction_lookups: InstructionLookupsPreprocessing<F>,
+}
 
 pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
 where
@@ -70,7 +84,7 @@ where
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> PedersenGenerators<G> {
+    ) -> JoltPreprocessing<F, G> {
         // TODO(moodlezoup): move more stuff into preprocessing
 
         let num_bytecode_generators =
@@ -79,16 +93,22 @@ where
             ReadWriteMemory::<F, G>::num_generators(max_memory_address, max_trace_length);
         let timestamp_range_check_generators =
             TimestampValidityProof::<F, G>::num_generators(max_trace_length);
-        let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::<
+        let preprocessing = InstructionLookupsPreprocessing::preprocess::<
+            C,
+            M,
+            Self::InstructionSet,
+            Self::Subtables,
+        >();
+        let num_instruction_lookup_generators = InstructionLookupsProof::<
+            C,
+            M,
             F,
             G,
             Self::InstructionSet,
             Self::Subtables,
-            C,
-            M,
-        >::preprocess();
-        let num_instruction_lookup_generators =
-            instruction_lookups_preprocessing.num_generators(max_trace_length);
+        >::num_generators(
+            &preprocessing, max_trace_length
+        );
 
         let max_num_generators = max([
             num_bytecode_generators,
@@ -97,13 +117,16 @@ where
             num_instruction_lookup_generators,
         ])
         .unwrap();
-
-        let lasso_generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
+        let generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
 
         // TODO(arasuarun): Use these
-        let spartan_generators: Vec<<G::Affine as IntoSpartan>::SpartanAffine> = lasso_generators.into_spartan();
+        let spartan_generators: Vec<<G::Affine as IntoSpartan>::SpartanAffine> =
+            generators.into_spartan();
 
-        lasso_generators
+        JoltPreprocessing {
+            generators,
+            instruction_lookups: preprocessing,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
@@ -113,6 +136,7 @@ where
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
         circuit_flags: Vec<F>,
+        preprocessing: InstructionLookupsPreprocessing<F>,
         generators: PedersenGenerators<G>,
     ) -> (
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
@@ -146,7 +170,12 @@ where
             instruction_lookups_proof,
             instruction_lookups_polynomials,
             instruction_lookups_commitment,
-        ) = Self::prove_instruction_lookups(instructions.clone(), &generators, &mut transcript);
+        ) = Self::prove_instruction_lookups(
+            &preprocessing,
+            instructions.clone(),
+            &generators,
+            &mut transcript,
+        );
 
         let r1cs_proof = Self::prove_r1cs(
             instructions,
@@ -178,6 +207,7 @@ where
     }
 
     fn verify(
+        preprocessing: JoltPreprocessing<F, G>,
         proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {
@@ -189,6 +219,7 @@ where
             &mut transcript,
         )?;
         Self::verify_instruction_lookups(
+            &preprocessing.instruction_lookups,
             proof.instruction_lookups,
             commitments.instruction_lookups,
             &mut transcript,
@@ -203,44 +234,25 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
     fn prove_instruction_lookups(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: Vec<Self::InstructionSet>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
-        JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
+        InstructionLookupsProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         InstructionPolynomials<C, F, G>,
         InstructionCommitment<G>,
     ) {
-        let instruction_lookups = InstructionLookupsPreprocessing::<
-            F,
-            G,
-            Self::InstructionSet,
-            Self::Subtables,
-            C,
-            M,
-        >::preprocess();
-        instruction_lookups.prove_lookups(ops, generators, transcript)
+        InstructionLookupsProof::prove_lookups(preprocessing, ops, generators, transcript)
     }
 
     fn verify_instruction_lookups(
-        proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        proof: InstructionLookupsProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitment: InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let instruction_lookups = InstructionLookupsPreprocessing::<
-            F,
-            G,
-            Self::InstructionSet,
-            Self::Subtables,
-            C,
-            M,
-        >::preprocess();
-        InstructionLookupsPreprocessing::<F, G, Self::InstructionSet, Self::Subtables, C, M>::verify(
-            instruction_lookups,
-            proof,
-            commitment,
-            transcript,
-        )
+        InstructionLookupsProof::verify(preprocessing, proof, commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_bytecode")]
@@ -258,7 +270,12 @@ where
         let batched_polys = polys.batch();
         let commitment = BytecodePolynomials::commit(&batched_polys, &generators);
 
-        let proof = polys.prove_memory_checking(&polys, &batched_polys, transcript);
+        let proof = BytecodeProof::prove_memory_checking(
+            &NoPreprocessing,
+            &polys,
+            &batched_polys,
+            transcript,
+        );
         (proof, polys, commitment)
     }
 
@@ -267,7 +284,7 @@ where
         commitment: BytecodeCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        BytecodePolynomials::verify_memory_checking(proof, &commitment, transcript)
+        BytecodeProof::verify_memory_checking(&NoPreprocessing, proof, &commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
@@ -285,8 +302,12 @@ where
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys, &generators);
 
-        let memory_checking_proof =
-            memory.prove_memory_checking(&memory, &batched_polys, transcript);
+        let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
+            &NoPreprocessing,
+            &memory,
+            &batched_polys,
+            transcript,
+        );
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,
@@ -312,7 +333,8 @@ where
         commitment: MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        ReadWriteMemory::verify_memory_checking(
+        ReadWriteMemoryProof::verify_memory_checking(
+            &NoPreprocessing,
             proof.memory_checking_proof,
             &commitment,
             transcript,

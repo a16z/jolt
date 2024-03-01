@@ -430,13 +430,9 @@ where
     }
 }
 
-impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingProver<
-        F,
-        G,
-        InstructionPolynomials<C, F, G>,
-        InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
-    > for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
+impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
+    MemoryCheckingProver<F, G, InstructionPolynomials<C, F, G>, InstructionLookupsPreprocessing<F>>
+    for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -458,7 +454,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
     fn compute_leaves(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         polynomials: &InstructionPolynomials<C, F, G>,
         gamma: &F,
         tau: &F,
@@ -531,7 +527,7 @@ where
     }
 
     fn interleave_hashes(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) -> (Vec<F>, Vec<F>) {
         // R W R W R W ...
@@ -557,7 +553,7 @@ where
     }
 
     fn uninterleave_hashes(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
@@ -596,7 +592,7 @@ where
     }
 
     fn check_multiset_equality(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         multiset_hashes: &MultisetHashes<F>,
     ) {
         assert_eq!(multiset_hashes.init_hashes.len(), Self::NUM_SUBTABLES);
@@ -632,7 +628,7 @@ where
     /// Overrides default implementation to handle flags
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         polynomials: &InstructionPolynomials<C, F, G>,
         read_write_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
@@ -704,7 +700,7 @@ impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
         F,
         G,
         InstructionPolynomials<C, F, G>,
-        InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        InstructionLookupsPreprocessing<F>,
     > for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
@@ -713,7 +709,7 @@ where
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
 {
     fn read_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let subtable_flags = Self::subtable_flags(&openings.flag_openings);
@@ -731,7 +727,7 @@ where
             .collect()
     }
     fn write_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
         Self::read_tuples(preprocessing, openings)
@@ -740,7 +736,7 @@ where
             .collect()
     }
     fn init_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::InitFinalOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
@@ -751,7 +747,7 @@ where
             .collect()
     }
     fn final_tuples(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::InitFinalOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
@@ -799,20 +795,7 @@ pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
-pub struct InstructionLookupsPreprocessing<
-    F,
-    InstructionSet,
-    Subtables,
-    const C: usize,
-    const M: usize,
-> where
-    F: PrimeField,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
-{
-    _field: PhantomData<F>,
-    _instructions: PhantomData<InstructionSet>,
-    _subtables: PhantomData<Subtables>,
+pub struct InstructionLookupsPreprocessing<F: PrimeField> {
     subtable_indices: Vec<SubtableIndices>,
     subtable_to_memory_indices: Vec<Vec<usize>>,
     instruction_to_memory_indices: Vec<Vec<usize>>, //
@@ -823,22 +806,17 @@ pub struct InstructionLookupsPreprocessing<
     num_memories: usize,
 }
 
-impl<F, InstructionSet, Subtables, const C: usize, const M: usize>
-    InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>
-where
-    F: PrimeField,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
-{
-    const NUM_SUBTABLES: usize = Subtables::COUNT;
-    const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
-
+impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
-    pub fn preprocess() -> Self {
-        let materialized_subtables = Self::materialize_subtables();
+    pub fn preprocess<const C: usize, const M: usize, InstructionSet, Subtables>() -> Self
+    where
+        InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+        Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+    {
+        let materialized_subtables = Self::materialize_subtables::<M, Subtables>();
 
         let mut subtable_indices: Vec<SubtableIndices> =
-            vec![SubtableIndices::with_capacity(C); Self::NUM_SUBTABLES];
+            vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
         for instruction in InstructionSet::iter() {
             for (subtable, indices) in instruction.subtables::<F>(C, M) {
                 subtable_indices[Subtables::from(subtable.subtable_id()).into()]
@@ -854,9 +832,6 @@ where
         // TODO(moodlezoup)
 
         Self {
-            _field: PhantomData,
-            _instructions: PhantomData,
-            _subtables: PhantomData,
             subtable_indices,
             num_memories,
             materialized_subtables,
@@ -865,7 +840,10 @@ where
 
     /// Materializes all subtables used by this Jolt instance.
     #[tracing::instrument(skip_all)]
-    fn materialize_subtables() -> Vec<Vec<F>> {
+    fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<F>>
+    where
+        Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount,
+    {
         let mut subtables = Vec::with_capacity(Subtables::COUNT);
         for subtable in Subtables::iter() {
             subtables.push(subtable.materialize(M));
@@ -887,7 +865,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: Vec<InstructionSet>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
@@ -974,7 +952,7 @@ where
     }
 
     pub fn verify(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         proof: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
         commitment: InstructionCommitment<G>,
         transcript: &mut Transcript,
@@ -1041,7 +1019,7 @@ where
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
     fn polynomialize(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<InstructionSet>,
     ) -> InstructionPolynomials<C, F, G> {
         let m: usize = ops.len().next_power_of_two();
@@ -1145,7 +1123,7 @@ where
     /// - `transcript`: Fiat-shamir transcript.
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         _claim: &F,
         num_rounds: usize,
         eq_poly: &mut DensePolynomial<F>,
@@ -1238,7 +1216,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop")]
     fn primary_sumcheck_inner_loop(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         eq_poly: &DensePolynomial<F>,
         flag_polys: &Vec<DensePolynomial<F>>,
         memory_polys: &Vec<DensePolynomial<F>>,
@@ -1366,7 +1344,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_sumcheck_claim")]
     fn compute_sumcheck_claim(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<InstructionSet>,
         E_polys: &Vec<DensePolynomial<F>>,
         eq_evals: &Vec<F>,
@@ -1402,7 +1380,7 @@ where
     /// where `vals` corresponds to E_1, ..., E_\alpha,
     /// and `flags` corresponds to the flag_i's
     fn combine_lookups(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         vals: &[F],
         flags: &[F],
     ) -> F {
@@ -1506,7 +1484,7 @@ where
     /// Computes the maximum number of group generators needed to commit to instruction
     /// lookup polynomials using Hyrax, given the maximum trace length.
     pub fn num_generators(
-        preprocessing: &InstructionLookupsPreprocessing<F, InstructionSet, Subtables, C, M>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
     ) -> usize {
         let dim_read_num_vars = (max_trace_length * (C + preprocessing.num_memories)).log_2();
