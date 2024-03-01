@@ -1,6 +1,6 @@
 use ark_bn254::Fr as ArkFr;
 use ark_ec::short_weierstrass::SWCurveConfig;
-use ark_ec::{AffineRepr, CurveConfig};
+use ark_ec::CurveConfig;
 use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ff::PrimeField as GenericPrimeField;
@@ -101,30 +101,6 @@ pub trait IntoArk: CurveAffine {
     }
 }
 
-pub trait FromArk: halo2curves::CurveAffine {
-    type ArkConfig: SWCurveConfig;
-
-    fn from_ark(arg: ark_ec::short_weierstrass::Affine<Self::ArkConfig>) -> Self {
-        match arg.xy() {
-            None => Self::identity(),
-            Some((x, y)) => {
-                let [x, y] = [x, y].map(|ark_f| {
-                    let mut ff_repr =
-                        <<Self as CurveAffine>::Base as GenericPrimeField>::Repr::default();
-                    let ff_bytes = ff_repr.as_mut();
-                    ark_f.serialize_compressed(ff_bytes).unwrap();
-                    ff_repr
-                });
-                Self::from_xy(
-                    <Self as CurveAffine>::Base::from_repr(x).unwrap(),
-                    <Self as CurveAffine>::Base::from_repr(y).unwrap(),
-                )
-                .unwrap()
-            }
-        }
-    }
-}
-
 /// Transforms an `ark_ec` elliptic curve point into `halo2curves` format for Spartan compatibility.
 ///
 /// Serializes `ark_ec` point coordinates and deserializes them into `SpartanAffine` points.
@@ -155,9 +131,7 @@ pub trait IntoSpartan: ark_ec::AffineRepr {
 impl IntoArk for Spartan2Affine {
     type ArkConfig = ark_bn254::g1::Config;
 }
-impl FromArk for Spartan2Affine {
-    type ArkConfig = ark_bn254::g1::Config;
-}
+
 impl IntoSpartan for ark_bn254::G1Affine {
     type SpartanAffine = halo2curves::bn256::G1Affine;
 }
@@ -267,15 +241,15 @@ mod tests {
     #[test]
     fn test_conversion_ark_and_spartan() {
         for _ in 0..10 {
-            let ark_value = ark_bn254::G1Affine::rand(&mut test_rng());
-            let spartan_curve = Spartan2Affine::from_ark(ark_value);
+            let ark_value: ark_bn254::G1Affine = ark_bn254::G1Affine::rand(&mut test_rng());
+            let spartan_curve = ark_value.to_spartan();
             let new_ark_value = spartan_curve.to_ark();
 
             assert_eq!(ark_value, new_ark_value);
         }
         for _ in 0..10 {
             let spartan_value = Spartan2Affine::random(test_rng());
-            let new_spartan_value = Spartan2Affine::from_ark(spartan_value.to_ark());
+            let new_spartan_value = spartan_value.to_ark().to_spartan();
 
             assert_eq!(spartan_value, new_spartan_value);
         }

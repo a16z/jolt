@@ -18,7 +18,7 @@ use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::{FromArk, IntoSpartan}, ELFInstruction};
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction};
 
 use self::instruction_lookups::{
     InstructionCommitment, InstructionLookups, InstructionLookupsProof,

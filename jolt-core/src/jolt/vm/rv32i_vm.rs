@@ -1,6 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use common::field_conversion::{FromArk, IntoSpartan};
+use common::field_conversion::IntoSpartan;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use std::any::TypeId;
