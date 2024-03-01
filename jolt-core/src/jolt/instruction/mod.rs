@@ -1,5 +1,4 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
 use rand::prelude::StdRng;

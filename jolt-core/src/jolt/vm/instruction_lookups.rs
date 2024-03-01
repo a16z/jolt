@@ -1,7 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::{interleave, max};
+use itertools::{interleave, max, Itertools};
 use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
@@ -162,8 +162,7 @@ where
     flag_openings: Vec<F>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for PrimarySumcheckOpenings<F>
+impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -696,12 +695,8 @@ where
 }
 
 impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingVerifier<
-        F,
-        G,
-        InstructionPolynomials<F, G>,
-        InstructionLookupsPreprocessing<F>,
-    > for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
+    MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>, InstructionLookupsPreprocessing<F>>
+    for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -797,12 +792,11 @@ pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 
 #[derive(Clone)]
 pub struct InstructionLookupsPreprocessing<F: PrimeField> {
-    subtable_indices: Vec<SubtableIndices>,
-    subtable_to_memory_indices: Vec<Vec<usize>>,
+    subtable_to_memory_indices: Vec<Vec<usize>>,    //
     instruction_to_memory_indices: Vec<Vec<usize>>, //
     memory_to_subtable_index: Vec<usize>,           //
-    memory_to_instruction_indices: Vec<Vec<usize>>,
-    memory_to_dimension_index: Vec<usize>, //
+    memory_to_dimension_index: Vec<usize>,          //
+    memory_to_instruction_indices: Vec<Vec<usize>>, // ?
     materialized_subtables: Vec<Vec<F>>,
     num_memories: usize,
 }
@@ -825,17 +819,45 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
             }
         }
 
-        let mut num_memories = 0;
-        for v in subtable_indices.iter() {
-            num_memories += v.len();
+        let mut subtable_to_memory_indices = Vec::with_capacity(Subtables::COUNT);
+        let mut memory_to_subtable_index = vec![];
+        let mut memory_to_dimension_index = vec![];
+
+        let mut memory_index = 0;
+        for (subtable_index, dimension_indices) in subtable_indices.iter().enumerate() {
+            subtable_to_memory_indices
+                .push((memory_index..memory_index + dimension_indices.len()).collect_vec());
+            memory_to_subtable_index.extend(vec![subtable_index; dimension_indices.len()]);
+            memory_to_dimension_index.extend(dimension_indices.iter());
+            memory_index += dimension_indices.len();
+        }
+        let num_memories = memory_index;
+
+        let mut instruction_to_memory_indices = vec![vec![]; InstructionSet::COUNT];
+        let mut memory_to_instruction_indices = vec![vec![]; num_memories];
+        for instruction in InstructionSet::iter() {
+            for (subtable, _) in instruction.subtables::<F>(C, M) {
+                let subtable_memory_indices =
+                    &subtable_to_memory_indices[Subtables::from(subtable.subtable_id()).into()];
+                instruction_to_memory_indices[instruction.to_opcode() as usize]
+                    .extend(subtable_memory_indices);
+                for memory_index in subtable_memory_indices {
+                    memory_to_instruction_indices[*memory_index]
+                        .push(instruction.to_opcode() as usize);
+                }
+            }
         }
 
         // TODO(moodlezoup)
 
         Self {
-            subtable_indices,
             num_memories,
             materialized_subtables,
+            subtable_to_memory_indices,
+            memory_to_subtable_index,
+            memory_to_dimension_index,
+            memory_to_instruction_indices,
+            instruction_to_memory_indices,
         }
     }
 
@@ -1040,8 +1062,8 @@ where
                 let mut subtable_lookups = vec![F::zero(); m];
 
                 for (j, op) in ops.iter().enumerate() {
-                    let memories_used: Vec<usize> =
-                        preprocessing.instruction_to_memory_indices[op.to_opcode() as usize];
+                    let memories_used =
+                        &preprocessing.instruction_to_memory_indices[op.to_opcode() as usize];
                     if memories_used.contains(&memory_index) {
                         let memory_address = access_sequence[j];
                         debug_assert!(memory_address < M);
@@ -1288,7 +1310,7 @@ where
                 for instruction in InstructionSet::iter() {
                     let instruction_index = instruction.to_opcode() as usize;
                     let memory_indices =
-                        preprocessing.instruction_to_memory_indices[instruction_index];
+                        &preprocessing.instruction_to_memory_indices[instruction_index];
 
                     for eval_index in 0..num_eval_points {
                         let flag_eval = multi_flag_evals[eval_index][instruction_index];
@@ -1392,10 +1414,10 @@ where
         for instruction in InstructionSet::iter() {
             let instruction_index = instruction.to_opcode() as usize;
             let memory_indices =
-                preprocessing.instruction_to_memory_indices[instruction.to_opcode() as usize];
+                &preprocessing.instruction_to_memory_indices[instruction.to_opcode() as usize];
             let mut filtered_operands = Vec::with_capacity(memory_indices.len());
             for index in memory_indices {
-                filtered_operands.push(vals[index]);
+                filtered_operands.push(vals[*index]);
             }
             sum += flags[instruction_index] * instruction.combine_lookups(&filtered_operands, C, M);
         }

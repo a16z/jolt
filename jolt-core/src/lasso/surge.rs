@@ -410,7 +410,7 @@ where
     Instruction: JoltInstruction + Default + Sync,
 {
     fn read_tuples(
-        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
@@ -425,7 +425,7 @@ where
             .collect()
     }
     fn write_tuples(
-        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
@@ -440,7 +440,7 @@ where
             .collect()
     }
     fn init_tuples(
-        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         openings: &Self::InitFinalOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
@@ -457,7 +457,7 @@ where
             .collect()
     }
     fn final_tuples(
-        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         openings: &Self::InitFinalOpenings,
     ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
@@ -602,7 +602,7 @@ where
         );
         let eq: DensePolynomial<F> =
             DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
-        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq, M);
+        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -663,7 +663,6 @@ where
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         proof: SurgeProof<F, G, Instruction, C, M>,
         transcript: &mut Transcript,
-        M: usize,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
         let instruction = Instruction::default();
@@ -797,11 +796,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(
-        polys: &SurgePolys<F, G>,
-        eq: &DensePolynomial<F>,
-        M: usize,
-    ) -> F {
+    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, G>, eq: &DensePolynomial<F>) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -850,7 +845,7 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        SurgeProof::verify(&preprocessing, proof, &mut transcript, M).expect("should work");
+        SurgeProof::verify(&preprocessing, proof, &mut transcript).expect("should work");
     }
 
     #[test]
@@ -874,6 +869,6 @@ mod tests {
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        SurgeProof::verify(&preprocessing, proof, &mut transcript, M).expect("should work");
+        SurgeProof::verify(&preprocessing, proof, &mut transcript).expect("should work");
     }
 }
