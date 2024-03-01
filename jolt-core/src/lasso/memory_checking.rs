@@ -178,7 +178,7 @@ where
 
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
-        // Self::check_multiset_equality(preprocessing, &multiset_hashes);
+        Self::check_multiset_equality(preprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript::<G>(transcript);
 
         let (read_write_grand_product, r_read_write) =
@@ -529,14 +529,14 @@ mod tests {
             }
             fn commit(
                 _batched_polys: &Self::BatchedPolynomials,
-                generators: &PedersenGenerators<EdwardsProjective>,
+                _generators: &PedersenGenerators<EdwardsProjective>,
             ) -> Self::Commitment {
                 unimplemented!()
             }
         }
 
         struct TestProver {}
-        impl MemoryCheckingProver<Fr, EdwardsProjective, NormalMems, ()> for TestProver {
+        impl MemoryCheckingProver<Fr, EdwardsProjective, NormalMems, NoPreprocessing> for TestProver {
             type ReadWriteOpenings = FakeOpeningProof;
             type InitFinalOpenings = FakeOpeningProof;
 
@@ -544,7 +544,7 @@ mod tests {
 
             #[rustfmt::skip]
             fn compute_leaves(
-                &self,
+                _: &NoPreprocessing,
                 polynomials: &NormalMems,
                 gamma: &Fr,
                 tau: &Fr,
@@ -643,9 +643,8 @@ mod tests {
 
         // Prove
         let mut transcript = Transcript::new(b"test_transcript");
-        let prover = TestProver {};
         let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
-            prover.prove_grand_products(&polys, &mut transcript);
+            TestProver::prove_grand_products(&NoPreprocessing, &polys, &mut transcript);
 
         // Verify
         let mut transcript = Transcript::new(b"test_transcript");
@@ -663,7 +662,7 @@ mod tests {
         );
         multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
-            prover.interleave_hashes(&multiset_hashes);
+            TestProver::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
@@ -732,14 +731,14 @@ mod tests {
             }
             fn commit(
                 _batched_polys: &Self::BatchedPolynomials,
-                generators: &PedersenGenerators<EdwardsProjective>,
+                _generators: &PedersenGenerators<EdwardsProjective>,
             ) -> Self::Commitment {
                 unimplemented!()
             }
         }
 
         struct TestProver {}
-        impl MemoryCheckingProver<Fr, EdwardsProjective, Polys, ()> for TestProver {
+        impl MemoryCheckingProver<Fr, EdwardsProjective, Polys, NoPreprocessing> for TestProver {
             type ReadWriteOpenings = FakeOpeningProof;
             type InitFinalOpenings = FakeOpeningProof;
 
@@ -747,7 +746,7 @@ mod tests {
 
             #[rustfmt::skip]
             fn compute_leaves(
-                &self,
+                _: &NoPreprocessing,
                 polynomials: &Polys,
                 gamma: &Fr,
                 tau: &Fr,
@@ -877,11 +876,10 @@ mod tests {
             t_1_finals,
         };
 
-        let prover = TestProver {};
-
         // Check leaves match
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
-        let (read_write_leaves, init_final_leaves) = prover.compute_leaves(&polys, gamma, tau);
+        let (read_write_leaves, init_final_leaves) =
+            TestProver::compute_leaves(&NoPreprocessing, &polys, gamma, tau);
 
         [0, 1].into_iter().for_each(|i| {
             let read_leaves = &read_write_leaves[2 * i];
@@ -897,7 +895,7 @@ mod tests {
         // Prove
         let mut transcript = Transcript::new(b"test_transcript");
         let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
-            prover.prove_grand_products(&polys, &mut transcript);
+            TestProver::prove_grand_products(&NoPreprocessing, &polys, &mut transcript);
 
         // Verify
         let mut transcript = Transcript::new(b"test_transcript");
@@ -915,7 +913,7 @@ mod tests {
         );
         multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
-            prover.interleave_hashes(&multiset_hashes);
+            TestProver::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
@@ -981,14 +979,14 @@ mod tests {
             }
             fn commit(
                 _batched_polys: &Self::BatchedPolynomials,
-                generators: &PedersenGenerators<EdwardsProjective>,
+                _generators: &PedersenGenerators<EdwardsProjective>,
             ) -> Self::Commitment {
                 unimplemented!()
             }
         }
 
         struct TestProver {}
-        impl MemoryCheckingProver<Fr, EdwardsProjective, FlagPolys, ()> for TestProver {
+        impl MemoryCheckingProver<Fr, EdwardsProjective, FlagPolys, NoPreprocessing> for TestProver {
             type ReadWriteOpenings = FakeOpeningProof;
             type InitFinalOpenings = FakeOpeningProof;
 
@@ -996,7 +994,7 @@ mod tests {
 
             #[rustfmt::skip]
             fn compute_leaves(
-                &self,
+                _: &NoPreprocessing,
                 polynomials: &FlagPolys,
                 gamma: &Fr,
                 tau: &Fr,
@@ -1068,7 +1066,7 @@ mod tests {
 
             // Override read_write_grand product to call BatchedGrandProductCircuit::new_batch_flags and insert our additional toggling layer.
             fn read_write_grand_product(
-                &self,
+                _: &NoPreprocessing,
                 polynomials: &FlagPolys,
                 read_write_leaves: Vec<DensePolynomial<Fr>>,
             ) -> (BatchedGrandProductCircuit<Fr>, Vec<Fr>) {
@@ -1198,12 +1196,10 @@ mod tests {
             flags_1,
         };
 
-        let prover = TestProver {};
-
         // Prove
         let mut transcript = Transcript::new(b"test_transcript");
         let (proof_rw, proof_if, multiset_hashes, r_rw, r_if) =
-            prover.prove_grand_products(&polys, &mut transcript);
+            TestProver::prove_grand_products(&NoPreprocessing, &polys, &mut transcript);
 
         // Verify
         let mut transcript = Transcript::new(b"test_transcript");
@@ -1221,7 +1217,7 @@ mod tests {
         );
         multiset_hashes.append_to_transcript::<EdwardsProjective>(&mut transcript);
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
-            prover.interleave_hashes(&multiset_hashes);
+            TestProver::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
         let (_claims_rw, r_rw_verify) = proof_rw
             .verify::<EdwardsProjective, _>(&interleaved_read_write_hashes, &mut transcript);
