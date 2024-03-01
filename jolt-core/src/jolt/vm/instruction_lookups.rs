@@ -636,15 +636,16 @@ where
         let _span = trace_span!("InstructionLookups: construct circuits");
         let _enter = _span.enter();
 
-        let subtable_flag_polys = Self::subtable_flag_polys(&polynomials.instruction_flag_polys);
+        let memory_flag_polys =
+            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_polys);
 
         let read_write_circuits = read_write_leaves
             .par_iter()
             .enumerate()
             .map(|(i, leaves_poly)| {
                 // Split while cloning to save on future cloning in GrandProductCircuit
-                let subtable_index = preprocessing.memory_to_subtable_index[i / 2];
-                let flag: &DensePolynomial<F> = &subtable_flag_polys[subtable_index];
+                let memory_index = i / 2;
+                let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
                 let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(&leaves_poly, &flag);
                 GrandProductCircuit::new_split(
                     DensePolynomial::new(toggled_leaves_l),
@@ -672,13 +673,13 @@ where
 
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
         let expanded_flag_map: Vec<usize> = (0..2 * preprocessing.num_memories)
-            .map(|i| preprocessing.memory_to_subtable_index[i / 2])
+            .map(|i| i / 2)
             .collect();
 
-        // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
+        // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
         let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
             read_write_circuits,
-            subtable_flag_polys,
+            memory_flag_polys,
             expanded_flag_map,
             read_write_leaves,
         );
@@ -707,16 +708,15 @@ where
         preprocessing: &InstructionLookupsPreprocessing<F>,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        let subtable_flags = Self::subtable_flags(&openings.flag_openings);
+        let memory_flags = Self::memory_flags(preprocessing, &openings.flag_openings);
         (0..preprocessing.num_memories)
             .map(|memory_index| {
-                let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                 (
                     openings.dim_openings[dim_index],
                     openings.E_poly_openings[memory_index],
                     openings.read_openings[memory_index],
-                    Some(subtable_flags[subtable_index]),
+                    Some(memory_flags[memory_index]),
                 )
             })
             .collect()
@@ -1418,54 +1418,47 @@ where
         sum
     }
 
-    // TODO(moodlezoup): fn memory_flags(instruction_flags: &Vec<F>) -> Vec<F>
-
-    /// Converts instruction flag values into subtable flag vales. A subtable flag value
-    /// can be computed by summing over the instructions that use that subtable: if a given execution step
-    /// accesses the subtable, it must be executing exactly one of those instructions.
-    fn subtable_flags(instruction_flags: &Vec<F>) -> Vec<F> {
-        let mut subtable_flags = vec![F::zero(); Self::NUM_SUBTABLES];
-        for (i, instruction) in InstructionSet::iter().enumerate() {
-            let instruction_subtables: Vec<Subtables> = instruction
-                .subtables::<F>(C, M)
-                .iter()
-                .map(|(subtable, _)| Subtables::from(subtable.subtable_id()))
-                .collect();
-            for subtable in instruction_subtables {
-                let subtable_index: usize = subtable.into();
-                subtable_flags[subtable_index] += &instruction_flags[i];
+    /// Converts instruction flag values into memory flag values. A memory flag value
+    /// can be computed by summing over the instructions that use that memory: if a given execution step
+    /// accesses the memory, it must be executing exactly one of those instructions.
+    fn memory_flags(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        instruction_flags: &Vec<F>,
+    ) -> Vec<F> {
+        let mut memory_flags = vec![F::zero(); preprocessing.num_memories];
+        for instruction_index in 0..Self::NUM_INSTRUCTIONS {
+            for memory_index in &preprocessing.instruction_to_memory_indices[instruction_index] {
+                memory_flags[*memory_index] += instruction_flags[instruction_index];
             }
         }
-        subtable_flags
+        memory_flags
     }
 
-    /// Converts instruction flag polynomials into subtable flag polynomials. A subtable flag polynomial
-    /// can be computed by summing over the instructions that use that subtable: if a given execution step
-    /// accesses the subtable, it must be executing exactly one of those instructions.
-    fn subtable_flag_polys(
+    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
+    /// can be computed by summing over the instructions that use that memory: if a given execution step
+    /// accesses the memory, it must be executing exactly one of those instructions.
+    #[tracing::instrument(skip_all)]
+    fn memory_flag_polys(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         instruction_flag_polys: &Vec<DensePolynomial<F>>,
     ) -> Vec<DensePolynomial<F>> {
         let m = instruction_flag_polys[0].len();
-        let subtable_flag_polys = (0..Self::NUM_SUBTABLES)
+        let memory_flag_polys = (0..preprocessing.num_memories)
             .into_par_iter()
-            .map(|subtable_index| {
-                let mut subtable_poly = DensePolynomial::new(vec![F::zero(); m]);
-                for (i, instruction) in InstructionSet::iter().enumerate() {
-                    if instruction
-                        .subtables::<F>(C, M)
-                        .iter()
-                        .any(|(subtable, _)| {
-                            Subtables::from(subtable.subtable_id()).into() == subtable_index
-                        })
+            .map(|memory_index| {
+                let mut memory_flag_poly = DensePolynomial::new(vec![F::zero(); m]);
+                for instruction_index in 0..Self::NUM_INSTRUCTIONS {
+                    if preprocessing.instruction_to_memory_indices[instruction_index]
+                        .contains(&memory_index)
                     {
                         // TODO(JOLT-81): Do not DensePolynomial<F>::add_assign to compute this value.
-                        subtable_poly += &instruction_flag_polys[i];
+                        memory_flag_poly += &instruction_flag_polys[instruction_index];
                     }
                 }
-                subtable_poly
+                memory_flag_poly
             })
             .collect();
-        subtable_flag_polys
+        memory_flag_polys
     }
 
     /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression
