@@ -70,6 +70,10 @@ where
     ///
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
     pub instruction_flag_polys: Vec<DensePolynomial<F>>,
+
+    /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
+    /// construction of the memory flag polynomials in `read_write_grand_product`. 
+    instruction_flag_bitvectors: Vec<Vec<u64>>,
 }
 
 /// Batched version of InstructionPolynomials.
@@ -637,7 +641,7 @@ where
         let _enter = _span.enter();
 
         let memory_flag_polys =
-            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_polys);
+            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_bitvectors);
 
         let read_write_circuits = read_write_leaves
             .par_iter()
@@ -672,9 +676,8 @@ where
         let _enter = _span.enter();
 
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
-        let expanded_flag_map: Vec<usize> = (0..2 * preprocessing.num_memories)
-            .map(|i| i / 2)
-            .collect();
+        let expanded_flag_map: Vec<usize> =
+            (0..2 * preprocessing.num_memories).map(|i| i / 2).collect();
 
         // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
         let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
@@ -1103,8 +1106,8 @@ where
             })
             .collect();
 
-        let mut instruction_flag_bitvectors: Vec<Vec<usize>> =
-            vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
+        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
+            vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
             let opcode_index = op.to_opcode() as usize;
             instruction_flag_bitvectors[opcode_index][j] = 1;
@@ -1112,7 +1115,7 @@ where
 
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
             .par_iter()
-            .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
+            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
         InstructionPolynomials {
@@ -1121,6 +1124,7 @@ where
             read_cts,
             final_cts,
             instruction_flag_polys,
+            instruction_flag_bitvectors,
             E_polys,
         }
     }
@@ -1440,22 +1444,26 @@ where
     #[tracing::instrument(skip_all)]
     fn memory_flag_polys(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        instruction_flag_polys: &Vec<DensePolynomial<F>>,
+        instruction_flag_bitvectors: &Vec<Vec<u64>>,
     ) -> Vec<DensePolynomial<F>> {
-        let m = instruction_flag_polys[0].len();
+        let m = instruction_flag_bitvectors[0].len();
         let memory_flag_polys = (0..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
-                let mut memory_flag_poly = DensePolynomial::new(vec![F::zero(); m]);
+                let mut memory_flag_bitvector = vec![0u64; m];
                 for instruction_index in 0..Self::NUM_INSTRUCTIONS {
                     if preprocessing.instruction_to_memory_indices[instruction_index]
                         .contains(&memory_index)
                     {
-                        // TODO(JOLT-81): Do not DensePolynomial<F>::add_assign to compute this value.
-                        memory_flag_poly += &instruction_flag_polys[instruction_index];
+                        memory_flag_bitvector
+                            .iter_mut()
+                            .zip(&instruction_flag_bitvectors[instruction_index])
+                            .for_each(|(memory_flag, instruction_flag)| {
+                                *memory_flag += instruction_flag
+                            });
                     }
                 }
-                memory_flag_poly
+                DensePolynomial::from_u64(&memory_flag_bitvector)
             })
             .collect();
         memory_flag_polys
