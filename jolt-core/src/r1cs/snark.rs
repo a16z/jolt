@@ -1,20 +1,15 @@
 use std::collections::HashMap;
 
-use common::{path::JoltPaths, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
+use common::{path::JoltPaths, field_conversion::{IntoSpartan, spartan_to_ark_unsafe, ark_to_spartan_unsafe}};
 use spartan2::{
-  errors::SpartanError,
-  VerifierKey,
-  traits::{
+  errors::SpartanError, provider::{
+      bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
+      hyrax_pc::{HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
+  }, spartan::upsnark::R1CSSNARK, traits::{
     snark::RelaxedR1CSSNARKTrait,
       upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait},
       Group,
-  },
-  SNARK,
-  provider::{
-      bn256_grumpkin::bn256::{self, Scalar as Spartan2Fr, Point as SpartanG1},
-      hyrax_pc::HyraxEvaluationEngine as SpartanHyraxEE,
-  },
-  spartan::upsnark::R1CSSNARK,
+  }, VerifierKey, SNARK
 };
 use bellpepper_core::{
   Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
@@ -33,12 +28,15 @@ use crate::{poly::pedersen::PedersenGenerators, utils};
 use spartan2::traits::commitment::CommitmentEngineTrait;
 
 use crate::jolt;
+use halo2curves::CurveAffine; 
 
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
 const NUM_CHUNKS: usize = 4;
 const NUM_FLAGS: usize = 17;
 const NUM_SEGMENTS: usize = 12; // 11 + 1 for aux variables 
+
+type CommitmentKey<G> = <<G as Group>::CE as CommitmentEngineTrait<G>>::CommitmentKey;
 
 #[tracing::instrument(skip_all, name = "JoltCircuit::assemble_by_segments")]
 fn reassemble_by_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
@@ -207,7 +205,7 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 }
 
 // pub fn precommit<G: Group>(jolt_circuit: JoltCircuit<Spartan2Fr>) -> Result<(), SpartanError> {
-pub fn precommit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: JoltCircuit<F>) -> Result<(<<G as Group>::CE as CommitmentEngineTrait<G>>::CommitmentKey, Vec<Vec<F>>, Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
+pub fn precommit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: JoltCircuit<F>) -> Result<(CommitmentKey<G>, Vec<Vec<F>>, Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
   let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
   let w_segments = get_segments(jolt_witnesses); 
 
@@ -231,6 +229,30 @@ pub fn precommit<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeFie
   Ok((ck, w_segments, commitments))
 }
 
+pub fn precommit_with_ck<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(ck: CommitmentKey<G>, jolt_circuit: JoltCircuit<F>) -> Result<(Vec<Vec<F>>, Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
+  let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
+  let w_segments = get_segments(jolt_witnesses); 
+
+  // // w_segments but the last three are combined into one 
+  // let last_three_combined = old_w_segments[old_w_segments.len()-3..].concat();
+  // let w_segments = [&old_w_segments[..old_w_segments.len()-3], &[last_three_combined]].concat();
+
+  let N_SEGMENTS = w_segments.len();
+
+  // find largest segment len
+  let max_segment_len = w_segments.iter().map(|v| v.len()).max().unwrap();
+  // let ck = G::CE::setup(b"ck", max_segment_len);
+
+  // for each segment, commit to it using CE::<G>::commit(ck, &self.W) 
+  let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
+    .into_par_iter()
+    .map(|i| {
+      G::CE::commit(&ck, &w_segments[i]) 
+    }).collect();
+
+  Ok((w_segments, commitments))
+}
+
 pub struct R1CSProof  {
   proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
   vk: VerifierKey<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>>,
@@ -238,14 +260,14 @@ pub struct R1CSProof  {
 
 impl R1CSProof {
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-  pub fn prove<ArkF: ark_ff::PrimeField, ArkG: ark_ec::CurveGroup>(
+  pub fn prove<ArkF: ark_ff::PrimeField, SpartanAffine: halo2curves::CurveAffine>(
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
       inputs: Vec<Vec<ArkF>>, 
-//      _generators: &PedersenGenerators<ArkG>,
+      generators: Vec<SpartanAffine>,
   ) -> Result<Self, SpartanError> {
-    Self::prove_precommitted(W, C, TRACE_LEN, inputs)
+    Self::prove_precommitted(W, C, TRACE_LEN, inputs, generators)
   }
 
   pub fn prove_uniform<ArkF: ark_ff::PrimeField>(
@@ -288,12 +310,14 @@ impl R1CSProof {
       })
   }
 
-  pub fn prove_precommitted<ArkF: ark_ff::PrimeField>(
+  pub fn prove_precommitted<ArkF: ark_ff::PrimeField, SpartanAffine: halo2curves::CurveAffine>(
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
-      inputs: Vec<Vec<ArkF>>
-  ) -> Result<Self, SpartanError> {
+      inputs: Vec<Vec<ArkF>>, 
+      generators: Vec<SpartanAffine>,
+  ) -> Result<Self, SpartanError> 
+  {
 
     type G1 = SpartanG1;
     type EE = SpartanHyraxEE<SpartanG1>;
@@ -319,9 +343,18 @@ impl R1CSProof {
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
-      let (ck, w_segments, comms) = precommit::<G1, S, F>(jolt_circuit.clone()).unwrap();
-  
-      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, ck).unwrap();
+      // let generators_bn256: Vec<bn256::Affine> = generators.into_iter().map(|g| {
+      //   let (x, y) = (g.coordinates().unwrap().x(), g.coordinates().unwrap().y());
+      //   halo2curves::bn256::G1Affine::from_xy(*x, *y).unwrap()
+      // }).collect();
+      // let ck = spartan2::provider::pedersen::from_preprocessed_gens(generators);
+      let ck = spartan2::provider::pedersen::CommitmentKey::from_preprocessed_gens(generators);
+
+      let hyrax_ck = HyraxCommitmentKey{ck: ck};
+
+      let (w_segments, comms) = precommit_with_ck::<G1, S, F>(hyrax_ck, jolt_circuit.clone()).unwrap();
+      
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
     
       // produce a SNARK
       let proof = SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comms); 

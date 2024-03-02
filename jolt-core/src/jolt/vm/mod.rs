@@ -120,10 +120,6 @@ where
         .unwrap();
         let generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
 
-        // TODO(arasuarun): Use these
-        let spartan_generators: Vec<<G::Affine as IntoSpartan>::SpartanAffine> =
-            generators.into_spartan();
-
         JoltPreprocessing {
             generators,
             instruction_lookups: preprocessing,
@@ -184,6 +180,7 @@ where
             bytecode,
             memory_trace.into_iter().flatten().collect(),
             circuit_flags,
+            generators, 
             &mut transcript,
         );
 
@@ -350,6 +347,7 @@ where
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
+        generators: PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> R1CSProof {
         let N_FLAGS = 17;
@@ -472,7 +470,10 @@ where
             circuit_flags_padded,
         ];
 
-        R1CSProof::prove::<F, G>(32, C, PADDED_TRACE_LEN, inputs).expect("R1CS proof failed")
+        // TODO(arasuarun): Use these
+        let spartan_generators: Vec<<<G as CurveGroup>::Affine as IntoSpartan>::SpartanAffine> = generators.into_spartan();
+
+        R1CSProof::prove::<F, <G::Affine as IntoSpartan>::SpartanAffine>(32, C, PADDED_TRACE_LEN, inputs, spartan_generators).expect("R1CS proof failed")
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
