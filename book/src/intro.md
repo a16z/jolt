@@ -1,7 +1,12 @@
-# Intro
 ![Jolt Alpha](imgs/jolt_alpha.png)
 
-`TODO: Nice intro segment`
+[Jolt](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) is a zkVM framework built around the [Lasso](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf) lookup argument. 
+
+Jolt powers succinct proofs of execution of programs written in any high level language. Jolt's sumcheck-based SNARK is makes extensive use of multi-variate polynomials and commitment schemes. Jolt zkVMs have state-of-the-art prover performance and have substantial room for growth over the coming decades.
+
+Jolt zkVMs have an simple programming model, requiring only 50-100 LOC to implement new VM instructions.
+
+The Jolt codebase currently targets the Risc-V instruction set which is supported by most high-level language compilers, but the code is intended to be extensible and usable by any ISA.
 
 ## Related reading
 - [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
