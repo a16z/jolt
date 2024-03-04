@@ -10,6 +10,7 @@
 - [Background](./background.md)
     - [Sumcheck](./background/sumcheck.md)
     - [Multilinear Extensions](./background/multilinear-extensions.md)
+    - [Eq Extension](./background/eq-polynomial.md)
 - [Dev](./dev/README.md)
     - [Install](./dev/install.md)
     - [Tools](./dev/tools.md)

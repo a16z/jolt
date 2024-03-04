@@ -1,5 +1,5 @@
 # Multilinear Extensions 
-For any $v$-variate polynomial $g(x_1, ... x_v)$ polynomial, it's multilinear extension $f(x_1, ... x_v)$ is the polynomial which agrees over all $2^v$ points $x \in \{0,1\}^v$. By the schwartz zippel lemma, if $g$ and $f$ disagree at even a single input, then $g$ and $f$ must disagree *almost everywhere*.
+For any $v$-variate polynomial $g(x_1, ... x_v)$ polynomial, it's multilinear extension $f(x_1, ... x_v)$ is the polynomial which agrees over all $2^v$ points $x \in \{0,1\}^v$: $g(x_1, ... x_v) = \tilde{f}(x_1, ... x_v) \forall x \in \{0,1\}^v$. By the Schwartz-Zippel lemma, if $g$ and $f$ disagree at even a single input, then $g$ and $f$ must disagree *almost everywhere*.
 
 For more precise details please read **Section 3.5 of [Proofs and Args ZK](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)**. 
 
@@ -11,13 +11,22 @@ With a single streaming pass over all $n$ evaluations we can "bind" a single var
 - **Before:** $\tilde{f}(x_1, ... x_v): \{0,1\}^v \to \mathbb{F}$
 - **After:** $\tilde{f}(x_1, ... x_{v-1}): \{0,1\}^{v-1} \to \mathbb{F}$
 
-Algorithm:
-- TODO: sragss
+Assuming your MLE is represented as a 1-D vector of $2^v$ evaluations $E$ over the $v$-variate boolean hypercube $\{0,1\}^v$, indexed little-endian
+- $E[1] = \tilde{f}(0,0,0,1)$
+- $E[5] = \tilde{f}(0,1,0,1)$
+- $E[8] = \tilde{f}(1,0,0,0)$
 
-Details on reasoning can be found in **Section 3.5 of [Proofs and Args ZK](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf)**.
+Then we can transform the vector $E \to E'$ representing the transformation from $\tilde{f}(x_1, ... x_v) \to \tilde{f'}(r, x_1, ... x_{v-1})$ by "binding" the evaluations vector to a point $r$.
 
-   - MLE 
-	- multilinear polynomial definitions
-	- Stored as evaluations
-	- Can be "bound to a point" in O(n) time where 'n' is the evaluations.len()
-	- Evaluation of a derived MLE (product of individual terms)
+```python
+let n = 2^v;
+let half = n / 2;
+for i in 0..half {
+    let low = E[i];
+    let high = E[half + i];
+    E[i] = low + r * (high - low);
+}
+```
+
+### Multi Variable Binding
+Another common algorithm is to take the MLE $\tilde{f}(x_1, ... x_v)$ and compute its evaluation at a single $v$-variate point outside the boolean hypercube $x \in \mathbb{F}^v$. This algorithm can be performed in $O(n log(n))$ time by preforming the single variable binding algorithm $log(n)$ times.
