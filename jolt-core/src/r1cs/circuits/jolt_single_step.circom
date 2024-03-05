@@ -7,6 +7,7 @@ function C() {return 4;}
 function N_FLAGS() {return 17;}
 function LOG_M() { return 16; }
 function RAM_ADDR_OFFSET() { return 0x80000000 - 0x20; } // The committed RAM addresses have 0x20 added to separate from regs
+function NUM_MEMORIES() { return 80; }
 /* End of Compiler Variables */
 
 function L_CHUNK() { return LOG_M()/2; } 
@@ -121,6 +122,8 @@ template JoltStep() {
     signal input chunks_x[C()];
     signal input chunks_y[C()];
     signal input chunks_query[C()];
+    
+    signal input _lookup_read_cts[NUM_MEMORIES()];
 
     signal input lookup_output;
 
@@ -200,7 +203,7 @@ template JoltStep() {
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts at index 3
-        // (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
+        (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
     /* As "loads" are memory reads, we ensure that memreg_v_reads[3..] === memreg_v_writes[3..]
@@ -344,6 +347,7 @@ component main {public [
         chunks_x, 
         chunks_y, 
         chunks_query, 
+        _lookup_read_cts, 
         lookup_output, 
         op_flags
         ]} 

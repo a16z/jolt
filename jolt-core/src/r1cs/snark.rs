@@ -32,8 +32,8 @@ use halo2curves::CurveAffine;
 
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
-const NUM_FLAGS: usize = 17;
-const NUM_SEGMENTS: usize = 12; // 11 + 1 for aux variables 
+const NUM_FLAGS: usize = 18;
+const NUM_MEMORIES: usize = 80;
 
 type CommitmentKey<G> = <<G as Group>::CE as CommitmentEngineTrait<G>>::CommitmentKey;
 
@@ -97,7 +97,7 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       "chunks_x".to_string(), 
       "chunks_y".to_string(), 
       "chunks_query".to_string(), 
-      // "_lookup_read_cts".to_string(), 
+      "_lookup_read_cts".to_string(), 
       "lookup_output".to_string(), 
       "op_flags".to_string(),
       "input_state".to_string()
@@ -310,11 +310,12 @@ impl R1CSProof {
       .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.dim[i].evals().clone()))
       .collect();
 
-      // let lookup_read_cts: Vec<Vec<Spartan2Fr>> = (0..C)
-      // .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.read_cts[i].evals().clone()))
-      // .collect();
+      let lookup_read_cts: Vec<Vec<Spartan2Fr>> = (0..NUM_MEMORIES)
+      .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.read_cts[i].evals().clone()))
+      .collect();
 
       // println!("jolt_polynomials_ark.instruction_lookups.read_cts[i].len = {}", jolt_polynomials_ark.instruction_lookups.read_cts.len());
+      // assert!(false); 
 
       drop(_enter);
 
@@ -357,9 +358,10 @@ impl R1CSProof {
       w_segments.extend(w_segments_artificial[46..50].iter().cloned()); // chunks_x
       w_segments.extend(w_segments_artificial[50..54].iter().cloned()); // chunks_y
       w_segments.extend(chunks_query); // 54..58 is chunks_query
-      w_segments.push(w_segments_artificial[58].clone()); // lookup output 
+      w_segments.extend(lookup_read_cts); // 58..58+NUM_MEMORIES=138 is lookup_read_cts
+      w_segments.push(w_segments_artificial[138].clone()); // lookup output 
 
-      w_segments.extend(w_segments_artificial[59..].iter().cloned());
+      w_segments.extend(w_segments_artificial[139..].iter().cloned());
 
       let comms = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();

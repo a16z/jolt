@@ -468,6 +468,7 @@ where
         // dummy values 
         let memreg_t_reads = vec![F::zero(); PADDED_TRACE_LEN * 7];
         let memreg_t_writes = vec![F::zero(); PADDED_TRACE_LEN * 7];
+        let lookup_read_cts = vec![F::zero(); PADDED_TRACE_LEN * 80];
 
         let inputs = vec![
             prog_a_rw,
@@ -480,6 +481,7 @@ where
             chunks_x,
             chunks_y,
             chunks_query,
+            lookup_read_cts, 
             lookup_outputs,
             circuit_flags_padded,
         ];
