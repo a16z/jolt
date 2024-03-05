@@ -449,7 +449,6 @@ where
 
         // pad each of the above vectors to be of length PADDED_TRACE_LEN * their multiple
         prog_a_rw.resize(PADDED_TRACE_LEN, Default::default());
-        // prog_a_rw = jolt_polynomials.bytecode.a_read_write.evals(); 
         prog_v_rw.resize(PADDED_TRACE_LEN * 6, Default::default());
         memreg_a_rw.resize(PADDED_TRACE_LEN * 7, Default::default());
         memreg_v_reads.resize(PADDED_TRACE_LEN * 7, Default::default());
