@@ -465,12 +465,18 @@ where
         ]);
         // circuit_flags.resize(PADDED_TRACE_LEN * N_FLAGS, Default::default());
 
+        // dummy values 
+        let memreg_t_reads = vec![F::zero(); PADDED_TRACE_LEN * 7];
+        let memreg_t_writes = vec![F::zero(); PADDED_TRACE_LEN * 7];
+
         let inputs = vec![
             prog_a_rw,
             prog_v_rw,
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
+            memreg_t_reads,
+            memreg_t_writes,
             chunks_x,
             chunks_y,
             chunks_query,

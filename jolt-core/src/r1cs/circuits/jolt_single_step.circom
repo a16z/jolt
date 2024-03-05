@@ -4,9 +4,9 @@ pragma circom 2.1.6;
 function NUM_STEPS() {return 182;} // NOTE: Fibonacci ignores first 3
 function W() {return 32;}
 function C() {return 4;}
-function PROG_START_ADDR() {return 2147483664;}
 function N_FLAGS() {return 17;}
 function LOG_M() { return 16; }
+function RAM_ADDR_OFFSET() { return 0x80000000 - 0x20; } // The committed RAM addresses have 0x20 added to separate from regs
 /* End of Compiler Variables */
 
 function L_CHUNK() { return LOG_M()/2; } 
@@ -115,6 +115,9 @@ template JoltStep() {
     signal input memreg_v_reads[MOPS()];
     signal input memreg_v_writes[MOPS()];
 
+    signal input _memreg_t_reads[MOPS()]; // unused variables used for now because of the way the jolt commitments are structured
+    signal input _memreg_t_writes[MOPS()]; 
+
     signal input chunks_x[C()];
     signal input chunks_y[C()];
     signal input chunks_query[C()];
@@ -191,11 +194,13 @@ template JoltStep() {
     signal _load_store_addr <== rs1_val + immediate_signed;
     signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
-    memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
+    // memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
+    // memreg_a_rw[3] + RAM_ADDR_OFFSET() * (is_load_instr + is_store_instr) === (is_load_instr + is_store_instr) * load_store_addr; 
+    (is_load_instr + is_store_instr) * (memreg_a_rw[3] + RAM_ADDR_OFFSET() - load_store_addr) === 0;
 
     for (var i=1; i<MOPS()-3; i++) {
-        // the first three are rs1, rs2, rd so memory starts are index 3
-        (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
+        // the first three are rs1, rs2, rd so memory starts at index 3
+        // (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
     /* As "loads" are memory reads, we ensure that memreg_v_reads[3..] === memreg_v_writes[3..]
@@ -334,6 +339,8 @@ component main {public [
         memreg_a_rw, 
         memreg_v_reads, 
         memreg_v_writes, 
+        _memreg_t_reads,
+        _memreg_t_writes,
         chunks_x, 
         chunks_y, 
         chunks_query, 

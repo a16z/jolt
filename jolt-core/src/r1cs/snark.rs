@@ -14,7 +14,7 @@ use spartan2::{
 use bellpepper_core::{
   Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
 };
-use ff::PrimeField;
+use ff::{derive::bitvec::mem, PrimeField};
 use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
@@ -93,6 +93,8 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       "memreg_a_rw".to_string(), 
       "memreg_v_reads".to_string(), 
       "memreg_v_writes".to_string(), 
+      "_memreg_t_reads".to_string(), 
+      "_memreg_t_writes".to_string(), 
       "chunks_x".to_string(), 
       "chunks_y".to_string(), 
       "chunks_query".to_string(), 
@@ -282,6 +284,31 @@ impl R1CSProof {
       let rs2 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs2.evals().clone());
       let imm = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.imm.evals().clone());
 
+      // memory 
+      let memreg_a_rw: Vec<Vec<Spartan2Fr>> = (0..7)
+        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.a_read_write[i].evals().clone()))
+        .collect();
+      
+      let memreg_v_reads: Vec<Vec<Spartan2Fr>> = (0..7)
+        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.v_read[i].evals().clone()))
+        .collect();
+
+      let memreg_v_writes: Vec<Vec<Spartan2Fr>> = (0..7)
+        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.v_write[i].evals().clone()))
+        .collect();
+
+      let memreg_t_reads: Vec<Vec<Spartan2Fr>> = (0..7)
+        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.t_read[i].evals().clone()))
+        .collect();
+
+      let memreg_t_writes: Vec<Vec<Spartan2Fr>> = (0..7)
+        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.t_write[i].evals().clone()))
+        .collect();
+      
+
+      // println!("memreg_a_rw.len(): {:?}", memreg_a_rw.len());
+      // assert!(false); 
+
       drop(_enter);
 
       let NUM_STEPS = TRACE_LEN;
@@ -296,16 +323,31 @@ impl R1CSProof {
           ck: pedersen_ck
       };
   
-      let mut w_segments = get_w_segments::<G1, S, F>(&hyrax_ck, jolt_circuit.clone()).unwrap();
+      let w_segments_artificial = get_w_segments::<G1, S, F>(&hyrax_ck, jolt_circuit.clone()).unwrap();
 
-      // 0, 1 -- output states (step_counter, program_counter)
-      // 2, 3 -- input states 
-      // w_segments[4] = prog_a_rw; 
-      w_segments[5] = opcodes; 
-      w_segments[6] = rd; 
-      w_segments[7] = rs1; 
-      w_segments[8] = rs2; 
-      w_segments[9] = imm; 
+      let mut w_segments = vec![];
+      for i in 0..4 {
+        // 0, 1 -- output states (step_counter, program_counter)
+        // 2, 3 -- input states 
+        w_segments.push(w_segments_artificial[i].clone());
+      }
+      w_segments.push(w_segments_artificial[4].clone()); // w_segments[4] = prog_a_rw
+
+      w_segments.push(opcodes); 
+      w_segments.push(rd);
+      w_segments.push(rs1);
+      w_segments.push(rs2);
+      w_segments.push(imm);
+
+      w_segments.push(w_segments_artificial[10].clone()); // w_segments[10] = circuit_flags_packed 
+
+      w_segments.extend(memreg_a_rw.clone());
+      w_segments.extend(memreg_v_reads.clone());
+      w_segments.extend(memreg_v_writes.clone());
+      w_segments.extend(memreg_t_reads.clone());
+      w_segments.extend(memreg_t_writes.clone());
+
+      w_segments.extend(w_segments_artificial[46..].iter().cloned());
 
       let comms = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
