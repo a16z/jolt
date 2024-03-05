@@ -34,8 +34,9 @@ use self::{
     instruction_lookups::InstructionPolynomials,
 };
 
-#[derive(Clone)]
-pub struct JoltPreprocessing<F, G>
+use halo2curves::bn256::G1Affine as Bn256Affine; 
+
+pub struct JoltProof<F, G, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -173,6 +174,18 @@ where
             &mut transcript,
         );
 
+        let jolt_polynomials = JoltPolynomials {
+            bytecode: bytecode_polynomials,
+            read_write_memory: memory_polynomials,
+            instruction_lookups: instruction_lookups_polynomials,
+        };
+
+        let jolt_commitments = JoltCommitments {
+            bytecode: bytecode_commitment,
+            read_write_memory: memory_commitment,
+            instruction_lookups: instruction_lookups_commitment,
+        };
+
         let r1cs_proof = Self::prove_r1cs(
             instructions,
             bytecode_rows,
@@ -180,7 +193,9 @@ where
             bytecode,
             memory_trace.into_iter().flatten().collect(),
             circuit_flags,
-            generators, 
+            &generators, 
+            &jolt_commitments,
+            &jolt_polynomials,
             &mut transcript,
         );
 
@@ -190,16 +205,7 @@ where
             instruction_lookups: instruction_lookups_proof,
             r1cs: r1cs_proof,
         };
-        let _jolt_polynomials = JoltPolynomials {
-            bytecode: bytecode_polynomials,
-            read_write_memory: memory_polynomials,
-            instruction_lookups: instruction_lookups_polynomials,
-        };
-        let jolt_commitments = JoltCommitments {
-            bytecode: bytecode_commitment,
-            read_write_memory: memory_commitment,
-            instruction_lookups: instruction_lookups_commitment,
-        };
+
         (jolt_proof, jolt_commitments)
     }
 
@@ -347,7 +353,9 @@ where
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
-        generators: PedersenGenerators<G>,
+        generators: &PedersenGenerators<G>,
+        jolt_commitments: &JoltCommitments<G>,
+        jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
     ) -> R1CSProof {
         let N_FLAGS = 17;
@@ -441,6 +449,7 @@ where
 
         // pad each of the above vectors to be of length PADDED_TRACE_LEN * their multiple
         prog_a_rw.resize(PADDED_TRACE_LEN, Default::default());
+        // prog_a_rw = jolt_polynomials.bytecode.a_read_write.evals(); 
         prog_v_rw.resize(PADDED_TRACE_LEN * 6, Default::default());
         memreg_a_rw.resize(PADDED_TRACE_LEN * 7, Default::default());
         memreg_v_reads.resize(PADDED_TRACE_LEN * 7, Default::default());
@@ -470,10 +479,10 @@ where
             circuit_flags_padded,
         ];
 
-        // TODO(arasuarun): Use these
-        let spartan_generators: Vec<<<G as CurveGroup>::Affine as IntoSpartan>::SpartanAffine> = generators.into_spartan();
+        let spartan_generators: Vec<halo2curves::bn256::G1Affine> = generators.into_spartan_bn256_unsafe();
 
-        R1CSProof::prove::<F, <G::Affine as IntoSpartan>::SpartanAffine>(32, C, PADDED_TRACE_LEN, inputs, spartan_generators).expect("R1CS proof failed")
+        R1CSProof::prove::<F, G>(32, C, PADDED_TRACE_LEN, inputs, spartan_generators, jolt_polynomials,).expect("R1CS proof failed")
+
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]

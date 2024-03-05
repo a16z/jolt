@@ -101,6 +101,46 @@ pub trait IntoArk: CurveAffine {
     }
 }
 
+pub trait FromArk: halo2curves::CurveAffine {
+    type ArkConfig: SWCurveConfig;
+
+    fn from_ark(arg: ark_ec::short_weierstrass::Affine<Self::ArkConfig>) -> Self {
+        match arg.xy() {
+            None => Self::identity(),
+            Some((x, y)) => {
+                let [x, y] = [x, y].map(|ark_f| {
+                    let mut ff_repr =
+                        <<Self as CurveAffine>::Base as GenericPrimeField>::Repr::default();
+                    let ff_bytes = ff_repr.as_mut();
+                    ark_f.serialize_compressed(ff_bytes).unwrap();
+                    ff_repr
+                });
+                Self::from_xy(
+                    <Self as CurveAffine>::Base::from_repr(x).unwrap(),
+                    <Self as CurveAffine>::Base::from_repr(y).unwrap(),
+                )
+                .unwrap()
+            }
+        }
+    }
+}
+
+/// Conversion function for a vector 
+pub fn ark_to_spartan_vec<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(
+    ark: Vec<AF>,
+) -> Vec<FF> {
+    ark.into_iter().map(|a| ark_to_ff::<FF, AF>(a)).collect()
+}
+
+/// Conversion function for a vector of vectors 
+pub fn ark_to_spartan_vecs<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(
+    ark: Vec<Vec<AF>>,
+) -> Vec<Vec<FF>> {
+    ark.into_iter()
+        .map(|a| ark_to_spartan_vec::<AF, FF>(a))
+        .collect()
+}
+
 /// Transforms an `ark_ec` elliptic curve point into `halo2curves` format for Spartan compatibility.
 ///
 /// Serializes `ark_ec` point coordinates and deserializes them into `SpartanAffine` points.
@@ -121,6 +161,25 @@ pub trait IntoSpartan: ark_ec::AffineRepr {
                 Self::SpartanAffine::from_xy(
                     <Self::SpartanAffine as CurveAffine>::Base::from_repr(x).unwrap(),
                     <Self::SpartanAffine as CurveAffine>::Base::from_repr(y).unwrap(),
+                )
+                .unwrap()
+            }
+        }
+    }
+
+    fn to_spartan_bn256_unsafe(&self) -> halo2curves::bn256::G1Affine {
+        match self.xy() {
+            None => halo2curves::bn256::G1Affine::identity(),
+            Some((x, y)) => {
+                let [x, y] = [x,y].map(|ark_f| {
+                    let mut ff_repr = <<halo2curves::bn256::G1Affine as CurveAffine>::Base as GenericPrimeField>::Repr::default();
+                    let ff_bytes = ff_repr.as_mut();
+                    ark_f.serialize_compressed(ff_bytes).unwrap();
+                    ff_repr
+                });
+                halo2curves::bn256::G1Affine::from_xy(
+                    <halo2curves::bn256::G1Affine as CurveAffine>::Base::from_repr(x).unwrap(),
+                    <halo2curves::bn256::G1Affine as CurveAffine>::Base::from_repr(y).unwrap(),
                 )
                 .unwrap()
             }

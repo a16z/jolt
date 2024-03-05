@@ -61,6 +61,13 @@ impl<G: CurveGroup> PedersenGenerators<G> where G::Affine: IntoSpartan {
             g1_affine.to_spartan()
         }).collect()
     }
+
+    pub fn into_spartan_bn256_unsafe(&self) -> Vec<halo2curves::bn256::G1Affine> {
+        self.generators.iter().map(|g1: &G| {
+            let g1_affine: G::Affine = (*g1).into();
+            g1_affine.to_spartan_bn256_unsafe()
+        }).collect()
+    }
 }
 
 pub trait PedersenCommitment<G: CurveGroup>: Sized {
