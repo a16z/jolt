@@ -161,15 +161,15 @@ impl From<&ELFInstruction> for ELFRow {
 #[derive(Clone)]
 pub struct FiveTuplePoly<F: PrimeField> {
     /// MLE of all opcodes in the bytecode.
-    opcode: DensePolynomial<F>,
+    pub opcode: DensePolynomial<F>,
     /// MLE of all destination register indices in the bytecode.
-    rd: DensePolynomial<F>,
+    pub rd: DensePolynomial<F>,
     /// MLE of all first source register indices in the bytecode.
-    rs1: DensePolynomial<F>,
+    pub rs1: DensePolynomial<F>,
     /// MLE of all second source register indices in the bytecode.
-    rs2: DensePolynomial<F>,
+    pub rs2: DensePolynomial<F>,
     /// MLE of all immediate values in the bytecode.
-    imm: DensePolynomial<F>,
+    pub imm: DensePolynomial<F>,
 }
 
 impl<F: PrimeField> FiveTuplePoly<F> {
@@ -230,20 +230,30 @@ impl<F: PrimeField> FiveTuplePoly<F> {
         // pack: [opcode_1, ..., opcode_len, rd_1, ... rd_len, .... imm_1, ... imm_len]
         let mut packed = vec![F::zero(); 5 * len];
 
-        let opcode_index = |index: usize| -> usize { index };
-        let rs1_index = |index: usize| -> usize { len + index };
-        let rs2_index = |index: usize| -> usize { 2 * len + index };
-        let rd_index = |index: usize| -> usize { 3 * len + index };
-        let imm_index = |index: usize| -> usize { 4 * len + index };
-
+        let opcode_index = |index: usize| -> usize {
+            index
+        };
+        let rd_index = |index: usize| -> usize {
+            1*len + index
+        };
+        let rs1_index = |index: usize| -> usize {
+            2*len + index
+        };
+        let rs2_index = |index: usize| -> usize {
+            3*len + index
+        };
+        let imm_index = |index: usize| -> usize {
+            4*len + index
+        };
+        
         // TODO(arasuarun): handle circuit flags here and not in prove_r1cs()
         // let mut circuit_flags = Vec::with_capacity(len * 15);
 
         for (index, row) in elf.iter().enumerate() {
             packed[opcode_index(index)] = F::from(row.opcode);
+            packed[rd_index(index)] = F::from(row.rd);
             packed[rs1_index(index)] = F::from(row.rs1);
             packed[rs2_index(index)] = F::from(row.rs2);
-            packed[rd_index(index)] = F::from(row.rd);
             packed[imm_index(index)] = F::from(row.imm);
         }
 
@@ -255,19 +265,19 @@ pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     _group: PhantomData<G>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
-    a_read_write: DensePolynomial<F>,
+    pub a_read_write: DensePolynomial<F>,
     /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read values and write values are the same. There are multiple values (opcode, rd, rs1, etc.)
     /// associated with each memory address, so `v_read_write` comprises multiple polynomials.
-    v_read_write: FiveTuplePoly<F>,
+    pub v_read_write: FiveTuplePoly<F>,
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
     /// the intiial memory values. There are multiple values (opcode, rd, rs1, etc.)
     /// associated with each memory address, so `v_init_final` comprises multiple polynomials.
-    v_init_final: FiveTuplePoly<F>,
+    pub v_init_final: FiveTuplePoly<F>,
     /// MLE of the read timestamps.
-    t_read: DensePolynomial<F>,
+    pub t_read: DensePolynomial<F>,
     /// MLE of the final timestamps.
-    t_final: DensePolynomial<F>,
+    pub t_final: DensePolynomial<F>,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {

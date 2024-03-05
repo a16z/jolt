@@ -272,7 +272,15 @@ impl R1CSProof {
       // Convert types from Ark to Spartan
       let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
       let _enter = span.enter();
+
       let inputs: Vec<Vec<Spartan2Fr>> = ark_to_spartan_vecs::<ArkF, Spartan2Fr>(inputs_ark);
+
+      let prog_a_rw = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.a_read_write.evals().clone());
+      let opcodes = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.opcode.evals().clone());
+      let rd = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rd.evals().clone());
+      let rs1 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs1.evals().clone());
+      let rs2 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs2.evals().clone());
+      let imm = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.imm.evals().clone());
 
       drop(_enter);
 
@@ -289,7 +297,16 @@ impl R1CSProof {
       };
   
       let mut w_segments = get_w_segments::<G1, S, F>(&hyrax_ck, jolt_circuit.clone()).unwrap();
-      
+
+      // 0, 1 -- output states (step_counter, program_counter)
+      // 2, 3 -- input states 
+      // w_segments[4] = prog_a_rw; 
+      w_segments[5] = opcodes; 
+      w_segments[6] = rd; 
+      w_segments[7] = rs1; 
+      w_segments[8] = rs2; 
+      w_segments[9] = imm; 
+
       let comms = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
   

@@ -105,9 +105,9 @@ template JoltStep() {
 
     signal input prog_v_rw[6]; 
     signal opcode <== prog_v_rw[0];
-    signal rs1 <== prog_v_rw[1];
-    signal rs2 <== prog_v_rw[2];
-    signal rd <== prog_v_rw[3];
+    signal rd <== prog_v_rw[1];
+    signal rs1 <== prog_v_rw[2];
+    signal rs2 <== prog_v_rw[3];
     signal immediate_before_processing <== prog_v_rw[4];
     signal op_flags_packed <== prog_v_rw[5];
 
