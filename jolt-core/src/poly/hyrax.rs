@@ -17,8 +17,13 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-pub fn matrix_dimensions(num_vars: usize) -> (usize, usize) {
-    (num_vars / 2, num_vars - num_vars / 2)
+pub fn square_matrix_dimensions(num_vars: usize) -> (usize, usize) {
+    let (left_num_vars, right_num_vars) = (num_vars / 2, num_vars - num_vars / 2);
+    (left_num_vars.pow2(), right_num_vars.pow2())
+}
+
+pub fn rectangular_matrix_dimensions(num_vars: usize) -> (usize, usize) {
+    todo!()
 }
 
 pub struct HyraxGenerators<G: CurveGroup> {
@@ -28,8 +33,8 @@ pub struct HyraxGenerators<G: CurveGroup> {
 impl<G: CurveGroup> HyraxGenerators<G> {
     // the number of variables in the multilinear polynomial
     pub fn new(num_vars: usize, pedersen_generators: &PedersenGenerators<G>) -> Self {
-        let (_left, right) = matrix_dimensions(num_vars);
-        let gens = pedersen_generators.clone_n(right.pow2());
+        let (_left, right) = square_matrix_dimensions(num_vars);
+        let gens = pedersen_generators.clone_n(right);
         HyraxGenerators { gens }
     }
 }
@@ -40,14 +45,37 @@ pub struct HyraxCommitment<G: CurveGroup> {
 
 impl<G: CurveGroup> HyraxCommitment<G> {
     #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
-    pub fn commit(poly: &DensePolynomial<G::ScalarField>, gens: &HyraxGenerators<G>) -> Self {
+    pub fn commit_rectangular_matrix(
+        poly: &DensePolynomial<G::ScalarField>,
+        gens: &HyraxGenerators<G>,
+    ) -> Self {
         let n = poly.len();
         let ell = poly.get_num_vars();
         assert_eq!(n, ell.pow2());
 
-        let (left_num_vars, right_num_vars) = matrix_dimensions(ell);
-        let L_size = left_num_vars.pow2();
-        let R_size = right_num_vars.pow2();
+        let (L_size, R_size) = rectangular_matrix_dimensions(ell);
+        assert_eq!(L_size * R_size, n);
+
+        let gens: Vec<<G as CurveGroup>::Affine> =
+            CurveGroup::normalize_batch(&gens.gens.generators);
+        let row_commitments = poly
+            .evals_ref()
+            .par_chunks(R_size)
+            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+            .collect();
+        Self { row_commitments }
+    }
+
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
+    pub fn commit_square_matrix(
+        poly: &DensePolynomial<G::ScalarField>,
+        gens: &HyraxGenerators<G>,
+    ) -> Self {
+        let n = poly.len();
+        let ell = poly.get_num_vars();
+        assert_eq!(n, ell.pow2());
+
+        let (L_size, R_size) = square_matrix_dimensions(ell);
         assert_eq!(L_size * R_size, n);
 
         let gens = CurveGroup::normalize_batch(&gens.gens.generators);
@@ -99,9 +127,7 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
-        let (left_num_vars, right_num_vars) = matrix_dimensions(opening_point.len());
-        let L_size = left_num_vars.pow2();
-        let R_size = right_num_vars.pow2();
+        let (L_size, R_size) = square_matrix_dimensions(opening_point.len());
 
         // compute the L and R vectors
         let eq = EqPolynomial::new(opening_point.to_vec());
@@ -158,8 +184,7 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         poly: &DensePolynomial<G::ScalarField>,
         L: &[G::ScalarField],
     ) -> Vec<G::ScalarField> {
-        let (_left_num_vars, right_num_vars) = super::hyrax::matrix_dimensions(poly.get_num_vars());
-        let R_size = right_num_vars.pow2();
+        let (_, R_size) = super::hyrax::square_matrix_dimensions(poly.get_num_vars());
 
         poly.evals_ref()
             .par_chunks(R_size)
@@ -206,7 +231,7 @@ mod tests {
 
         let pedersen_generators = PedersenGenerators::new(1 << 8, b"test-two");
         let gens = HyraxGenerators::<G>::new(poly.get_num_vars(), &pedersen_generators);
-        let poly_commitment = HyraxCommitment::commit(&poly, &gens);
+        let poly_commitment = HyraxCommitment::commit_square_matrix(&poly, &gens);
 
         let mut prover_transcript = Transcript::new(b"example");
         let proof = HyraxOpeningProof::prove(&poly, &r, &mut prover_transcript);

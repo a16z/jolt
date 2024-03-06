@@ -10,7 +10,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::matrix_dimensions,
+        hyrax::square_matrix_dimensions,
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
@@ -570,7 +570,7 @@ where
 
         let max_num_vars =
             std::cmp::max(std::cmp::max(dim_read_num_vars, final_num_vars), E_num_vars);
-        matrix_dimensions(max_num_vars).1.pow2()
+        square_matrix_dimensions(max_num_vars).1
     }
 
     #[tracing::instrument(skip_all, name = "Surge::prove")]

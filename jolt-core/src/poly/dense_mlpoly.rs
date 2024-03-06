@@ -234,7 +234,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         G: CurveGroup<ScalarField = F>,
     {
         let generators = HyraxGenerators::new(self.get_num_vars(), pedersen_generators);
-        let joint_commitment = HyraxCommitment::commit(&self, &generators);
+        let joint_commitment = HyraxCommitment::commit_square_matrix(&self, &generators);
         BatchedPolynomialCommitment {
             generators,
             joint_commitment,
@@ -333,7 +333,7 @@ pub mod bench {
     }
 
     pub fn run_commit_bench(gens: HyraxGenerators<EdwardsProjective>, poly: DensePolynomial<Fr>) {
-        let result = black_box(HyraxCommitment::commit(&poly, &gens));
+        let result = black_box(HyraxCommitment::commit_square_matrix(&poly, &gens));
         black_box(result);
     }
 }

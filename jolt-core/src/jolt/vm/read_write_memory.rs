@@ -17,7 +17,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::matrix_dimensions,
+        hyrax::square_matrix_dimensions,
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
@@ -489,7 +489,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         // v_init, v_final, t_final
         let init_final_num_vars = (max_memory_address * 3).log_2();
         let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
-        matrix_dimensions(max_num_vars).1.pow2()
+        square_matrix_dimensions(max_num_vars).1
     }
 }
 

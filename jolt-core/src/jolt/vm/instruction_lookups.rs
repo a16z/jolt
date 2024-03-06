@@ -11,7 +11,7 @@ use tracing::trace_span;
 
 use crate::jolt::instruction::SubtableIndices;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{matrix_dimensions, HyraxGenerators};
+use crate::poly::hyrax::{square_matrix_dimensions, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
@@ -1510,7 +1510,7 @@ where
             (max_trace_length * (preprocessing.num_memories + Self::NUM_INSTRUCTIONS)).log_2();
 
         let max_num_vars = max([dim_read_num_vars, final_num_vars, E_flag_num_vars]).unwrap();
-        matrix_dimensions(max_num_vars).1.pow2()
+        square_matrix_dimensions(max_num_vars).1
     }
 
     fn protocol_name() -> &'static [u8] {

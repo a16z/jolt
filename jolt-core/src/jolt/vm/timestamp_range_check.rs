@@ -17,7 +17,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::matrix_dimensions,
+        hyrax::square_matrix_dimensions,
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
@@ -848,7 +848,7 @@ where
     /// range-check polynomials using Hyrax, given the maximum trace length.
     pub fn num_generators(max_trace_length: usize) -> usize {
         let batch_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
-        matrix_dimensions(batch_num_vars).1.pow2()
+        square_matrix_dimensions(batch_num_vars).1
     }
 
     fn protocol_name() -> &'static [u8] {

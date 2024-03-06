@@ -8,7 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::matrix_dimensions;
+use crate::poly::hyrax::square_matrix_dimensions;
 use crate::poly::pedersen::PedersenGenerators;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
@@ -417,7 +417,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         // t_final, v_init_final (opcode, rs1, rs2, rd, imm)
         let init_final_num_vars = (max_bytecode_size * 6).log_2();
         let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
-        matrix_dimensions(max_num_vars).1.pow2()
+        square_matrix_dimensions(max_num_vars).1
     }
 }
 
