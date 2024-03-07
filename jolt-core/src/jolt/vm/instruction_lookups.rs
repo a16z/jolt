@@ -1,6 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::NUM_R1CS_POLYS;
 use itertools::{interleave, max, Itertools};
 use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -11,7 +12,7 @@ use tracing::trace_span;
 
 use crate::jolt::instruction::SubtableIndices;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{square_matrix_dimensions, HyraxGenerators};
+use crate::poly::hyrax::{matrix_dimensions, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
@@ -28,7 +29,9 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        concatenated_commitment::{ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof},
+        concatenated_commitment::{
+            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
+        },
         grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
         sumcheck::SumcheckInstanceProof,
     },
@@ -98,9 +101,9 @@ pub struct InstructionCommitment<G: CurveGroup> {
 
 /// Contains generators used to commit to InstructionPolynomials.
 pub struct InstructionCommitmentGenerators<G: CurveGroup> {
-    pub dim_read_commitment_gens: HyraxGenerators<G>,
-    pub final_commitment_gens: HyraxGenerators<G>,
-    pub E_flag_commitment_gens: HyraxGenerators<G>,
+    pub dim_read_commitment_gens: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    pub final_commitment_gens: HyraxGenerators<1, G>,
+    pub E_flag_commitment_gens: HyraxGenerators<NUM_R1CS_POLYS, G>,
 }
 
 // TODO: macro?
@@ -178,7 +181,6 @@ where
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -191,7 +193,6 @@ where
 
         ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_E_flag,
-            &commitment.E_flag_commitment,
             opening_point,
             &E_flag_openings,
             transcript,
@@ -288,7 +289,6 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -301,7 +301,6 @@ where
 
         let dim_read_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
-            &commitment.dim_read_commitment,
             &opening_point,
             &dim_read_openings,
             transcript,
@@ -315,7 +314,6 @@ where
 
         let E_flag_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_E_flag,
-            &commitment.E_flag_commitment,
             &opening_point,
             &E_flag_openings,
             transcript,
@@ -400,14 +398,12 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
-            &commitment.final_commitment,
             &opening_point,
             &openings.final_openings,
             transcript,
@@ -953,7 +949,6 @@ where
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
-            &commitment,
             &r_primary_sumcheck,
             &sumcheck_openings,
             transcript,
@@ -967,13 +962,8 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = Self::prove_memory_checking(
-            preprocessing,
-            &polynomials,
-            &batched_polys,
-            &commitment,
-            transcript,
-        );
+        let memory_checking =
+            Self::prove_memory_checking(preprocessing, &polynomials, &batched_polys, transcript);
 
         (
             InstructionLookupsProof {
@@ -1523,7 +1513,7 @@ where
             (max_trace_length * (preprocessing.num_memories + Self::NUM_INSTRUCTIONS)).log_2();
 
         let max_num_vars = max([dim_read_num_vars, final_num_vars, E_flag_num_vars]).unwrap();
-        square_matrix_dimensions(max_num_vars).1
+        matrix_dimensions(max_num_vars, 1).1
     }
 
     fn protocol_name() -> &'static [u8] {

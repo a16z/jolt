@@ -17,7 +17,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::square_matrix_dimensions,
+        hyrax::matrix_dimensions,
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
@@ -489,7 +489,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         // v_init, v_final, t_final
         let init_final_num_vars = (max_memory_address * 3).log_2();
         let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
-        square_matrix_dimensions(max_num_vars).1
+        matrix_dimensions(max_num_vars, 1).1
     }
 }
 
@@ -612,7 +612,6 @@ where
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
-        commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -628,7 +627,6 @@ where
 
         ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_read_write,
-            &commitment.read_write_commitments,
             &opening_point,
             &combined_openings,
             transcript,
@@ -704,14 +702,12 @@ where
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
-        commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_init_final,
-            &commitment.init_final_commitments,
             &opening_point,
             &vec![openings.v_init, openings.v_final, openings.t_final],
             transcript,
@@ -956,7 +952,6 @@ mod tests {
             &NoPreprocessing,
             &rw_memory,
             &batched_polys,
-            &commitments,
             &mut transcript,
         );
 

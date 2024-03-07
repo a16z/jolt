@@ -9,10 +9,10 @@ use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
-    square_matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
+    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
 };
 use crate::poly::pedersen::PedersenGenerators;
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
 use common::{to_ram_address, ELFInstruction};
 
@@ -416,11 +416,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
     pub fn num_generators(max_bytecode_size: usize, max_trace_length: usize) -> usize {
         // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
-        let read_write_num_vars = (max_trace_length * 7).log_2();
+        let num_read_write_generators = matrix_dimensions(max_trace_length, NUM_R1CS_POLYS).1;
         // t_final, v_init_final (opcode, rs1, rs2, rd, imm)
-        let init_final_num_vars = (max_bytecode_size * 6).log_2();
-        let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
-        square_matrix_dimensions(max_num_vars).1
+        let num_init_final_generators = matrix_dimensions((max_bytecode_size * 6).log_2(), 1).1;
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 }
 
@@ -434,14 +433,14 @@ pub struct BatchedBytecodePolynomials<F: PrimeField> {
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
-    read_write_generators: HyraxGenerators<G>,
-    pub a_read_write: HyraxCommitment<G>,
-    pub v_opcode: HyraxCommitment<G>,
-    pub v_rs1: HyraxCommitment<G>,
-    pub v_rs2: HyraxCommitment<G>,
-    pub v_rd: HyraxCommitment<G>,
-    pub v_imm: HyraxCommitment<G>,
-    pub t_read: HyraxCommitment<G>,
+    read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    pub a_read_write: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub v_opcode: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub v_rs1: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub v_rs2: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub v_rd: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub v_imm: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub t_read: HyraxCommitment<NUM_R1CS_POLYS, G>,
 
     // Combined commitment for:
     // - t_final, v_init_final
@@ -494,7 +493,7 @@ where
             &batched_polys.t_read,
         ]
         .par_iter()
-        .map(|poly| HyraxCommitment::commit_rectangular_matrix(poly, &read_write_generators))
+        .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
         .collect::<Vec<_>>()
         .try_into()
         .unwrap();
@@ -721,7 +720,7 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Proof = BatchedHyraxOpeningProof<G>;
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
@@ -736,7 +735,6 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
-        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -756,15 +754,6 @@ where
                 &polynomials.v_read_write.rd,
                 &polynomials.v_read_write.imm,
                 &polynomials.t_read,
-            ],
-            &[
-                &commitment.a_read_write,
-                &commitment.v_opcode,
-                &commitment.v_rs1,
-                &commitment.v_rs2,
-                &commitment.v_rd,
-                &commitment.v_imm,
-                &commitment.t_read,
             ],
             &opening_point,
             &combined_openings,
@@ -833,7 +822,6 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
-        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -842,7 +830,6 @@ where
         combined_openings.extend(openings.v_init_final.iter());
         ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.combined_init_final,
-            &commitment.init_final_commitments,
             &opening_point,
             &combined_openings,
             transcript,
@@ -959,7 +946,6 @@ mod tests {
             &NoPreprocessing,
             &polys,
             &batched_polys,
-            &commitments,
             &mut transcript,
         );
 
@@ -996,13 +982,8 @@ mod tests {
 
         let mut transcript = Transcript::new(b"test_transcript");
 
-        let proof = BytecodeProof::prove_memory_checking(
-            &NoPreprocessing,
-            &polys,
-            &batch,
-            &commitments,
-            &mut transcript,
-        );
+        let proof =
+            BytecodeProof::prove_memory_checking(&NoPreprocessing, &polys, &batch, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(

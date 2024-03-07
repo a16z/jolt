@@ -14,13 +14,13 @@ use crate::{
 };
 
 pub struct ConcatenatedPolynomialCommitment<G: CurveGroup> {
-    pub generators: HyraxGenerators<G>,
-    pub joint_commitment: HyraxCommitment<G>,
+    pub generators: HyraxGenerators<1, G>,
+    pub joint_commitment: HyraxCommitment<1, G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ConcatenatedPolynomialOpeningProof<G: CurveGroup> {
-    joint_proof: HyraxOpeningProof<G>,
+    joint_proof: HyraxOpeningProof<1, G>,
 }
 
 impl<G: CurveGroup> ConcatenatedPolynomialOpeningProof<G> {
@@ -28,7 +28,6 @@ impl<G: CurveGroup> ConcatenatedPolynomialOpeningProof<G> {
     #[tracing::instrument(skip_all, name = "ConcatenatedPolynomialOpeningProof::prove")]
     pub fn prove(
         concatenated_poly: &DensePolynomial<G::ScalarField>,
-        commitment: &ConcatenatedPolynomialCommitment<G>,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         transcript: &mut Transcript,
@@ -78,7 +77,6 @@ impl<G: CurveGroup> ConcatenatedPolynomialOpeningProof<G> {
 
         let joint_proof = HyraxOpeningProof::prove(
             concatenated_poly,
-            &commitment.joint_commitment,
             &r_joint,
             transcript,
         );

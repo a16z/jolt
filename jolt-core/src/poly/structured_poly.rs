@@ -43,10 +43,9 @@ where
     fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;
 
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
-    /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
+    /// by `openings`. The polynomials should already be committed by the prover.
     fn prove_openings(
         polynomials: &Polynomials::BatchedPolynomials,
-        commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,

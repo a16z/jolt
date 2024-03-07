@@ -103,7 +103,6 @@ where
         preprocessing: &T,
         polynomials: &Polynomials,
         batched_polys: &Polynomials::BatchedPolynomials,
-        commitment: &Polynomials::Commitment,
         transcript: &mut Transcript,
     ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
         // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
@@ -120,7 +119,6 @@ where
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
             batched_polys,
-            commitment,
             &r_read_write,
             &read_write_openings,
             transcript,
@@ -128,7 +126,6 @@ where
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
             batched_polys,
-            commitment,
             &r_init_final,
             &init_final_openings,
             transcript,

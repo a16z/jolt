@@ -228,7 +228,6 @@ where
             .r1cs
             .verify()
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-
         Ok(())
     }
 
@@ -274,7 +273,6 @@ where
             &NoPreprocessing,
             &polys,
             &batched_polys,
-            &commitment,
             transcript,
         );
         (proof, polys, commitment)
@@ -307,7 +305,6 @@ where
             &NoPreprocessing,
             &memory,
             &batched_polys,
-            &commitment,
             transcript,
         );
 

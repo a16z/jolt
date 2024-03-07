@@ -18,70 +18,46 @@ use ark_ec::VariableBaseMSM;
 #[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
-pub fn square_matrix_dimensions(num_vars: usize) -> (usize, usize) {
-    let (left_num_vars, right_num_vars) = (num_vars / 2, num_vars - num_vars / 2);
-    (left_num_vars.pow2(), right_num_vars.pow2())
-}
-
-const NUM_POLYNOMIALS: usize = 82;
-pub fn rectangular_matrix_dimensions(num_vars: usize) -> (usize, usize) {
+pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize, usize) {
     let mut row_size = (num_vars / 2).pow2();
-    row_size = (row_size * NUM_POLYNOMIALS.sqrt()).next_power_of_two();
-    let col_size = num_vars.pow2() - row_size;
+    row_size = (row_size * matrix_aspect_ratio.sqrt()).next_power_of_two();
+
+    let right_num_vars = row_size.log_2();
+    let left_num_vars = num_vars - right_num_vars;
+    let col_size = left_num_vars.pow2();
+
     (col_size, row_size)
 }
 
-pub struct HyraxGenerators<G: CurveGroup> {
+pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
 
-impl<G: CurveGroup> HyraxGenerators<G> {
+impl<const RATIO: usize, G: CurveGroup> HyraxGenerators<RATIO, G> {
     // the number of variables in the multilinear polynomial
     pub fn new(num_vars: usize, pedersen_generators: &PedersenGenerators<G>) -> Self {
-        let (_left, right) = square_matrix_dimensions(num_vars);
+        let (_left, right) = matrix_dimensions(num_vars, RATIO);
         let gens = pedersen_generators.clone_n(right);
         HyraxGenerators { gens }
     }
 }
 
 #[derive(Debug)]
-pub struct HyraxCommitment<G: CurveGroup> {
+pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
     row_commitments: Vec<G>,
 }
 
-impl<G: CurveGroup> HyraxCommitment<G> {
+impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
     #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
-    pub fn commit_rectangular_matrix(
+    pub fn commit(
         poly: &DensePolynomial<G::ScalarField>,
-        gens: &HyraxGenerators<G>,
+        gens: &HyraxGenerators<RATIO, G>,
     ) -> Self {
         let n = poly.len();
         let ell = poly.get_num_vars();
         assert_eq!(n, ell.pow2());
 
-        let (L_size, R_size) = rectangular_matrix_dimensions(ell);
-        assert_eq!(L_size * R_size, n);
-
-        let gens: Vec<<G as CurveGroup>::Affine> =
-            CurveGroup::normalize_batch(&gens.gens.generators);
-        let row_commitments = poly
-            .evals_ref()
-            .par_chunks(R_size)
-            .map(|row| PedersenCommitment::commit_vector(row, &gens))
-            .collect();
-        Self { row_commitments }
-    }
-
-    #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
-    pub fn commit_square_matrix(
-        poly: &DensePolynomial<G::ScalarField>,
-        gens: &HyraxGenerators<G>,
-    ) -> Self {
-        let n = poly.len();
-        let ell = poly.get_num_vars();
-        assert_eq!(n, ell.pow2());
-
-        let (L_size, R_size) = square_matrix_dimensions(ell);
+        let (L_size, R_size) = matrix_dimensions(ell, RATIO);
         assert_eq!(L_size * R_size, n);
 
         let gens = CurveGroup::normalize_batch(&gens.gens.generators);
@@ -94,7 +70,7 @@ impl<G: CurveGroup> HyraxCommitment<G> {
     }
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for HyraxCommitment<G> {
+impl<const RATIO: usize, G: CurveGroup> AppendToTranscript<G> for HyraxCommitment<RATIO, G> {
     fn append_to_transcript<T: ProofTranscript<G>>(
         &self,
         label: &'static [u8],
@@ -109,12 +85,12 @@ impl<G: CurveGroup> AppendToTranscript<G> for HyraxCommitment<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct HyraxOpeningProof<G: CurveGroup> {
+pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
     vector_matrix_product: Vec<G::ScalarField>,
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<G: CurveGroup> HyraxOpeningProof<G> {
+impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
     fn protocol_name() -> &'static [u8] {
         b"Hyrax opening proof"
     }
@@ -122,20 +98,16 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
     #[tracing::instrument(skip_all, name = "HyraxOpeningProof::prove")]
     pub fn prove(
         poly: &DensePolynomial<G::ScalarField>,
-        commitment: &HyraxCommitment<G>,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         transcript: &mut Transcript,
-    ) -> HyraxOpeningProof<G> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            HyraxOpeningProof::<G>::protocol_name(),
-        );
+    ) -> HyraxOpeningProof<RATIO, G> {
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
         // compute the L and R vectors
-        let L_size = commitment.row_commitments.len();
+        let (L_size, _R_size) = matrix_dimensions(poly.get_num_vars(), RATIO);
         let eq = EqPolynomial::new(opening_point.to_vec());
         let (L, _R) = eq.compute_factored_evals(L_size);
 
@@ -149,19 +121,16 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
 
     pub fn verify(
         &self,
-        gens: &HyraxGenerators<G>,
+        gens: &HyraxGenerators<RATIO, G>,
         transcript: &mut Transcript,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         opening: &G::ScalarField,         // evaluation \widetilde{Z}(r)
-        commitment: &HyraxCommitment<G>,
+        commitment: &HyraxCommitment<RATIO, G>,
     ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            HyraxOpeningProof::<G>::protocol_name(),
-        );
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // compute L and R
-        let L_size = commitment.row_commitments.len();
+        let (L_size, _R_size) = matrix_dimensions(opening_point.len(), RATIO);
         let eq: EqPolynomial<_> = EqPolynomial::new(opening_point.to_vec());
         let (L, R) = eq.compute_factored_evals(L_size);
 
@@ -180,6 +149,7 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         if (homomorphically_derived_commitment == product_commitment) && (dot_product == *opening) {
             Ok(())
         } else {
+            assert!(false, "hyrax verify error");
             Err(ProofVerifyError::InternalError)
         }
     }
@@ -189,7 +159,7 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         poly: &DensePolynomial<G::ScalarField>,
         L: &[G::ScalarField],
     ) -> Vec<G::ScalarField> {
-        let (_, R_size) = super::hyrax::square_matrix_dimensions(poly.get_num_vars());
+        let (_, R_size) = super::hyrax::matrix_dimensions(poly.get_num_vars(), RATIO);
 
         poly.evals_ref()
             .par_chunks(R_size)
@@ -210,16 +180,15 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedHyraxOpeningProof<G: CurveGroup> {
-    joint_proof: HyraxOpeningProof<G>,
+pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
+    joint_proof: HyraxOpeningProof<RATIO, G>,
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
+impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
     pub fn prove(
         polynomials: &[&DensePolynomial<G::ScalarField>],
-        commitments: &[&HyraxCommitment<G>],
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         transcript: &mut Transcript,
@@ -253,23 +222,21 @@ impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
                 },
             );
 
-        let joint_proof = HyraxOpeningProof::prove(
-            &DensePolynomial::new(rlc_poly),
-            &commitments[0],
-            opening_point,
-            transcript,
-        );
+        let joint_proof =
+            HyraxOpeningProof::prove(&DensePolynomial::new(rlc_poly), opening_point, transcript);
         Self { joint_proof }
     }
 
     pub fn verify(
         &self,
-        gens: &HyraxGenerators<G>,
+        gens: &HyraxGenerators<RATIO, G>,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
-        commitments: &[&HyraxCommitment<G>],
+        commitments: &[&HyraxCommitment<RATIO, G>],
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
+        let (L_size, _R_size) = matrix_dimensions(opening_point.len(), RATIO);
+
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // append the claimed evaluations to transcript
@@ -294,7 +261,7 @@ impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
                     .collect()
             })
             .reduce(
-                || vec![G::zero(); commitments.len()],
+                || vec![G::zero(); L_size],
                 |running, new| {
                     debug_assert_eq!(running.len(), new.len());
                     running
@@ -347,11 +314,11 @@ mod tests {
         assert_eq!(eval, G::ScalarField::from(28u64));
 
         let pedersen_generators = PedersenGenerators::new(1 << 8, b"test-two");
-        let gens = HyraxGenerators::<G>::new(poly.get_num_vars(), &pedersen_generators);
-        let poly_commitment = HyraxCommitment::commit_square_matrix(&poly, &gens);
+        let gens = HyraxGenerators::<1, G>::new(poly.get_num_vars(), &pedersen_generators);
+        let poly_commitment = HyraxCommitment::commit(&poly, &gens);
 
         let mut prover_transcript = Transcript::new(b"example");
-        let proof = HyraxOpeningProof::prove(&poly, &poly_commitment, &r, &mut prover_transcript);
+        let proof = HyraxOpeningProof::prove(&poly, &r, &mut prover_transcript);
 
         let mut verifier_transcript = Transcript::new(b"example");
 
