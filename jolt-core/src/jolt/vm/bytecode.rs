@@ -8,7 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::square_matrix_dimensions;
+use crate::poly::hyrax::{square_matrix_dimensions, HyraxCommitment};
 use crate::poly::pedersen::PedersenGenerators;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
@@ -422,19 +422,22 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 }
 
 pub struct BatchedBytecodePolynomials<F: PrimeField> {
-    /// Contains:
-    /// - a_read_write, t_read, v_read_write
-    combined_read_write: DensePolynomial<F>,
-
+    a_read_write: DensePolynomial<F>,
+    v_read_write: FiveTuplePoly<F>,
+    t_read: DensePolynomial<F>,
     // Contains:
     // - t_final, v_init_final
     combined_init_final: DensePolynomial<F>,
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
-    /// Combined commitment for:
-    /// - a_read_write, t_read, v_read_write
-    pub read_write_commitments: BatchedPolynomialCommitment<G>,
+    pub a_read_write: HyraxCommitment<G>,
+    pub v_opcode: HyraxCommitment<G>,
+    pub v_rs1: HyraxCommitment<G>,
+    pub v_rs2: HyraxCommitment<G>,
+    pub v_rd: HyraxCommitment<G>,
+    pub v_imm: HyraxCommitment<G>,
+    pub t_read: HyraxCommitment<G>,
 
     // Combined commitment for:
     // - t_final, v_init_final
@@ -451,15 +454,6 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let combined_read_write = DensePolynomial::merge(&vec![
-            &self.a_read_write,
-            &self.t_read,
-            &self.v_read_write.opcode,
-            &self.v_read_write.rd,
-            &self.v_read_write.rs1,
-            &self.v_read_write.rs2,
-            &self.v_read_write.imm,
-        ]);
         let combined_init_final = DensePolynomial::merge(&vec![
             &self.t_final,
             &self.v_init_final.opcode,
@@ -470,7 +464,9 @@ where
         ]);
 
         Self::BatchedPolynomials {
-            combined_read_write,
+            a_read_write: self.a_read_write,
+            v_read_write: self.v_read_write,
+            t_read: self.t_read,
             combined_init_final,
         }
     }
@@ -480,15 +476,31 @@ where
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_commitments = batched_polys
-            .combined_read_write
-            .combined_commit(pedersen_generators);
+        let read_write_commitments: Vec<HyraxCommitment<G>> = [
+            batched_polys.a_read_write,
+            batched_polys.v_read_write.opcode,
+            batched_polys.v_read_write.rs1,
+            batched_polys.v_read_write.rs2,
+            batched_polys.v_read_write.rd,
+            batched_polys.v_read_write.imm,
+            batched_polys.t_read,
+        ]
+        .par_iter()
+        .map(|poly| poly.hyrax_commit_rectangular(pedersen_generators))
+        .collect();
+
         let init_final_commitments = batched_polys
             .combined_init_final
             .combined_commit(pedersen_generators);
 
         Self::Commitment {
-            read_write_commitments,
+            a_read_write: read_write_commitments[0],
+            v_opcode: read_write_commitments[1],
+            v_rs1: read_write_commitments[2],
+            v_rs2: read_write_commitments[3],
+            v_rd: read_write_commitments[4],
+            v_imm: read_write_commitments[5],
+            t_read: read_write_commitments[6],
             init_final_commitments,
         }
     }

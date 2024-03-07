@@ -226,6 +226,17 @@ impl<F: PrimeField> DensePolynomial<F> {
         DensePolynomial::new(Z)
     }
 
+    pub fn hyrax_commit_rectangular<G>(
+        &self,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> HyraxCommitment<G>
+    where
+        G: CurveGroup<ScalarField = F>,
+    {
+        let generators = HyraxGenerators::new(self.get_num_vars(), pedersen_generators);
+        HyraxCommitment::commit_rectangular_matrix(&self, &generators)
+    }
+
     pub fn combined_commit<G>(
         &self,
         pedersen_generators: &PedersenGenerators<G>,
