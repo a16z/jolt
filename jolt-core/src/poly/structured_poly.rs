@@ -46,6 +46,7 @@ where
     /// by `openings`. The polynomials should already be committed by the prover (`commitment`).
     fn prove_openings(
         polynomials: &Polynomials::BatchedPolynomials,
+        commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,

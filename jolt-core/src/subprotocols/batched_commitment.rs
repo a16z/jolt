@@ -28,6 +28,7 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
     #[tracing::instrument(skip_all, name = "BatchedPolynomialOpeningProof::prove")]
     pub fn prove(
         combined_poly: &DensePolynomial<G::ScalarField>,
+        commitment: &BatchedPolynomialCommitment<G>,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         transcript: &mut Transcript,
@@ -78,7 +79,12 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
             &eval_joint,
         );
 
-        let joint_proof = HyraxOpeningProof::prove(combined_poly, &r_joint, transcript);
+        let joint_proof = HyraxOpeningProof::prove(
+            combined_poly,
+            &commitment.joint_commitment,
+            &r_joint,
+            transcript,
+        );
 
         BatchedPolynomialOpeningProof { joint_proof }
     }

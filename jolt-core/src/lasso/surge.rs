@@ -108,12 +108,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
+        commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         E_poly_openings: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
+            &commitment.E_commitment,
             opening_point,
             E_poly_openings,
             transcript,
@@ -170,6 +172,7 @@ where
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
+        commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -184,12 +187,14 @@ where
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
+            &commitment.dim_read_commitment,
             &opening_point,
             &dim_read_openings,
             transcript,
         );
         let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
+            &commitment.E_commitment,
             &opening_point,
             &openings.E_poly_openings,
             transcript,
@@ -268,12 +273,14 @@ where
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedSurgePolynomials<F>,
+        commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
+            &commitment.final_commitment,
             &opening_point,
             &openings.final_openings,
             transcript,
@@ -632,6 +639,7 @@ where
                                                                                    // Create a single opening proof for the E polynomials
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
+            &commitment,
             &r_z,
             &sumcheck_openings,
             transcript,
@@ -649,6 +657,7 @@ where
             &preprocessing,
             &polynomials,
             &batched_polys,
+            &commitment,
             transcript,
         );
 

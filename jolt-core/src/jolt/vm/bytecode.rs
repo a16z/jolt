@@ -711,6 +711,7 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
+        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -723,6 +724,7 @@ where
 
         BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_read_write,
+            &commitment.read_write_commitments,
             &opening_point,
             &combined_openings,
             transcript,
@@ -781,6 +783,7 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedBytecodePolynomials<F>,
+        commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -789,6 +792,7 @@ where
         combined_openings.extend(openings.v_init_final.iter());
         BatchedPolynomialOpeningProof::prove(
             &polynomials.combined_init_final,
+            &commitment.init_final_commitments,
             &opening_point,
             &combined_openings,
             transcript,
@@ -905,6 +909,7 @@ mod tests {
             &NoPreprocessing,
             &polys,
             &batched_polys,
+            &commitments,
             &mut transcript,
         );
 
@@ -941,8 +946,13 @@ mod tests {
 
         let mut transcript = Transcript::new(b"test_transcript");
 
-        let proof =
-            BytecodeProof::prove_memory_checking(&NoPreprocessing, &polys, &batch, &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(
+            &NoPreprocessing,
+            &polys,
+            &batch,
+            &commitments,
+            &mut transcript,
+        );
 
         let mut transcript = Transcript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(

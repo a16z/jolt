@@ -72,7 +72,7 @@ where
     pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
     /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
-    /// construction of the memory flag polynomials in `read_write_grand_product`. 
+    /// construction of the memory flag polynomials in `read_write_grand_product`.
     instruction_flag_bitvectors: Vec<Vec<u64>>,
 }
 
@@ -178,6 +178,7 @@ where
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
+        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -190,6 +191,7 @@ where
 
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E_flag,
+            &commitment.E_flag_commitment,
             opening_point,
             &E_flag_openings,
             transcript,
@@ -286,6 +288,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
+        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -298,6 +301,7 @@ where
 
         let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
+            &commitment.dim_read_commitment,
             &opening_point,
             &dim_read_openings,
             transcript,
@@ -311,6 +315,7 @@ where
 
         let E_flag_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_E_flag,
+            &commitment.E_flag_commitment,
             &opening_point,
             &E_flag_openings,
             transcript,
@@ -395,12 +400,14 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedInstructionPolynomials<F>,
+        commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
+            &commitment.final_commitment,
             &opening_point,
             &openings.final_openings,
             transcript,
@@ -946,6 +953,7 @@ where
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &batched_polys,
+            &commitment,
             &r_primary_sumcheck,
             &sumcheck_openings,
             transcript,
@@ -959,8 +967,13 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking =
-            Self::prove_memory_checking(preprocessing, &polynomials, &batched_polys, transcript);
+        let memory_checking = Self::prove_memory_checking(
+            preprocessing,
+            &polynomials,
+            &batched_polys,
+            &commitment,
+            transcript,
+        );
 
         (
             InstructionLookupsProof {

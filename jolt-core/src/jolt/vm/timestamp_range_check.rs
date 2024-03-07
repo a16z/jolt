@@ -236,6 +236,7 @@ where
     #[tracing::instrument(skip_all, name = "RangeCheckReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedRangeCheckPolynomials<F>,
+        commitment: &RangeCheckCommitment<G>,
         opening_point: &Vec<F>,
         openings: &RangeCheckOpenings<F, G>,
         transcript: &mut Transcript,
@@ -249,6 +250,7 @@ where
             .collect();
         let range_check_opening_proof = BatchedPolynomialOpeningProof::prove(
             &polynomials,
+            &commitment,
             opening_point,
             &range_check_openings,
             transcript,
@@ -300,6 +302,7 @@ where
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, G>,
         _batched_polys: &BatchedRangeCheckPolynomials<F>,
+        _commitment: &RangeCheckCommitment<G>,
         _transcript: &mut Transcript,
     ) -> MemoryCheckingProof<
         G,
@@ -666,12 +669,14 @@ where
 
         let mut opening_proof = RangeCheckOpenings::prove_openings(
             &batched_range_check_polys,
+            &range_check_commitment,
             &r_grand_product,
             &openings,
             transcript,
         );
         opening_proof.memory_poly_opening_proof = Some(MemoryReadWriteOpenings::prove_openings(
             batched_memory_polynomials,
+            memory_commitment,
             &r_grand_product,
             &openings.memory_poly_openings,
             transcript,

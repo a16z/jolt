@@ -612,6 +612,7 @@ where
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
+        commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -627,6 +628,7 @@ where
 
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_read_write,
+            &commitment.read_write_commitments,
             &opening_point,
             &combined_openings,
             transcript,
@@ -702,12 +704,14 @@ where
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BatchedMemoryPolynomials<F>,
+        commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         BatchedPolynomialOpeningProof::prove(
             &polynomials.batched_init_final,
+            &commitment.init_final_commitments,
             &opening_point,
             &vec![openings.v_init, openings.v_final, openings.t_final],
             transcript,
@@ -952,6 +956,7 @@ mod tests {
             &NoPreprocessing,
             &rw_memory,
             &batched_polys,
+            &commitments,
             &mut transcript,
         );
 

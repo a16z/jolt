@@ -9,6 +9,7 @@ use ark_ec::CurveGroup;
 use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
+use num_integer::Roots;
 use rayon::prelude::*;
 
 #[cfg(feature = "ark-msm")]
@@ -22,8 +23,12 @@ pub fn square_matrix_dimensions(num_vars: usize) -> (usize, usize) {
     (left_num_vars.pow2(), right_num_vars.pow2())
 }
 
+const NUM_POLYNOMIALS: usize = 82;
 pub fn rectangular_matrix_dimensions(num_vars: usize) -> (usize, usize) {
-    todo!()
+    let mut row_size = (num_vars / 2).pow2();
+    row_size = (row_size * NUM_POLYNOMIALS.sqrt()).next_power_of_two();
+    let col_size = num_vars.pow2() - row_size;
+    (col_size, row_size)
 }
 
 pub struct HyraxGenerators<G: CurveGroup> {
@@ -116,6 +121,7 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
     #[tracing::instrument(skip_all, name = "HyraxOpeningProof::prove")]
     pub fn prove(
         poly: &DensePolynomial<G::ScalarField>,
+        commitment: &HyraxCommitment<G>,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         transcript: &mut Transcript,
     ) -> HyraxOpeningProof<G> {
@@ -127,13 +133,10 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
-        let (L_size, R_size) = square_matrix_dimensions(opening_point.len());
-
         // compute the L and R vectors
+        let L_size = commitment.row_commitments.len();
         let eq = EqPolynomial::new(opening_point.to_vec());
-        let (L, R) = eq.compute_factored_evals();
-        assert_eq!(L.len(), L_size);
-        assert_eq!(R.len(), R_size);
+        let (L, _R) = eq.compute_factored_evals(L_size);
 
         // compute vector-matrix product between L and Z viewed as a matrix
         let vector_matrix_product = Self::vector_matrix_product(poly, &L);
@@ -157,8 +160,9 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
         );
 
         // compute L and R
+        let L_size = commitment.row_commitments.len();
         let eq: EqPolynomial<_> = EqPolynomial::new(opening_point.to_vec());
-        let (L, R) = eq.compute_factored_evals();
+        let (L, R) = eq.compute_factored_evals(L_size);
 
         // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
         let homomorphically_derived_commitment: G =
@@ -234,7 +238,7 @@ mod tests {
         let poly_commitment = HyraxCommitment::commit_square_matrix(&poly, &gens);
 
         let mut prover_transcript = Transcript::new(b"example");
-        let proof = HyraxOpeningProof::prove(&poly, &r, &mut prover_transcript);
+        let proof = HyraxOpeningProof::prove(&poly, &poly_commitment, &r, &mut prover_transcript);
 
         let mut verifier_transcript = Transcript::new(b"example");
 

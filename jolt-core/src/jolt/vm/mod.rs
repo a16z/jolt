@@ -274,6 +274,7 @@ where
             &NoPreprocessing,
             &polys,
             &batched_polys,
+            &commitment,
             transcript,
         );
         (proof, polys, commitment)
@@ -306,6 +307,7 @@ where
             &NoPreprocessing,
             &memory,
             &batched_polys,
+            &commitment,
             transcript,
         );
 

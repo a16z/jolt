@@ -340,6 +340,8 @@ pub mod bench {
 
 #[cfg(test)]
 mod tests {
+    use crate::poly::hyrax::square_matrix_dimensions;
+
     use super::*;
     use ark_curve25519::EdwardsProjective as G1Projective;
     use ark_curve25519::Fr;
@@ -351,10 +353,11 @@ mod tests {
         Z: &[G::ScalarField],
         r: &[G::ScalarField],
     ) -> G::ScalarField {
-        let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
-        let (L, R) = eq.compute_factored_evals();
-
         let ell = r.len();
+        let (L_size, _R_size) = square_matrix_dimensions(ell);
+        let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
+        let (L, R) = eq.compute_factored_evals(L_size);
+
         // ensure ell is even
         assert!(ell % 2 == 0);
         // compute n = 2^\ell
@@ -496,7 +499,8 @@ mod tests {
             r.push(F::rand(&mut prng));
         }
         let chis = EqPolynomial::new(r.clone()).evals();
-        let (L, R) = EqPolynomial::new(r).compute_factored_evals();
+        let (L_size, _R_size) = square_matrix_dimensions(r.len());
+        let (L, R) = EqPolynomial::new(r).compute_factored_evals(L_size);
         let O = compute_outerproduct(&L, &R);
         assert_eq!(chis, O);
     }
@@ -516,7 +520,8 @@ mod tests {
         }
         let (L, R) = compute_factored_chis_at_r(&r);
         let eq = EqPolynomial::new(r);
-        let (L2, R2) = eq.compute_factored_evals();
+        let (L_size, _R_size) = square_matrix_dimensions(r.len());
+        let (L2, R2) = eq.compute_factored_evals(L_size);
         assert_eq!(L, L2);
         assert_eq!(R, R2);
     }
