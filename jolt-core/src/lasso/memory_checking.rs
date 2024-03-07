@@ -16,7 +16,6 @@ use ark_ff::PrimeField;
 use itertools::interleave;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use spartan2::traits::commitment;
 use std::iter::zip;
 use std::marker::PhantomData;
 

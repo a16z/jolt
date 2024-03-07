@@ -23,7 +23,7 @@ use crate::{
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
-        batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
+        concatenated_commitment::{ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof},
         grand_product::{
             BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
         },
@@ -169,7 +169,7 @@ where
     }
 }
 
-pub type RangeCheckCommitment<G> = BatchedPolynomialCommitment<G>;
+pub type RangeCheckCommitment<G> = ConcatenatedPolynomialCommitment<G>;
 pub type BatchedRangeCheckPolynomials<F> = DensePolynomial<F>;
 
 impl<F, G> BatchablePolynomials<G> for RangeCheckPolynomials<F, G>
@@ -217,8 +217,8 @@ pub struct RangeCheckOpeningProof<G>
 where
     G: CurveGroup,
 {
-    range_check_opening_proof: BatchedPolynomialOpeningProof<G>,
-    memory_poly_opening_proof: Option<BatchedPolynomialOpeningProof<G>>,
+    range_check_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
+    memory_poly_opening_proof: Option<ConcatenatedPolynomialOpeningProof<G>>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>> for RangeCheckOpenings<F, G>
@@ -248,7 +248,7 @@ where
             .chain(openings.final_cts_read_timestamp.into_iter())
             .chain(openings.final_cts_global_minus_read.into_iter())
             .collect();
-        let range_check_opening_proof = BatchedPolynomialOpeningProof::prove(
+        let range_check_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
             &polynomials,
             &commitment,
             opening_point,

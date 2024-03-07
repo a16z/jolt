@@ -23,8 +23,8 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
-    subprotocols::batched_commitment::{
-        BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
+    subprotocols::concatenated_commitment::{
+        ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
     },
     utils::{errors::ProofVerifyError, is_power_of_two, math::Math},
 };
@@ -441,7 +441,7 @@ pub struct BytecodeCommitment<G: CurveGroup> {
 
     // Combined commitment for:
     // - t_final, v_init_final
-    pub init_final_commitments: BatchedPolynomialCommitment<G>,
+    pub init_final_commitments: ConcatenatedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
@@ -734,7 +734,7 @@ where
         ];
         combined_openings.extend(openings.v_read_write_openings.iter());
 
-        BatchedPolynomialOpeningProof::prove(
+        ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.combined_read_write,
             &commitment.read_write_commitments,
             &opening_point,
@@ -802,7 +802,7 @@ where
     ) -> Self::Proof {
         let mut combined_openings: Vec<F> = vec![openings.t_final];
         combined_openings.extend(openings.v_init_final.iter());
-        BatchedPolynomialOpeningProof::prove(
+        ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.combined_init_final,
             &commitment.init_final_commitments,
             &opening_point,

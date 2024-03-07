@@ -4,7 +4,7 @@ use merlin::Transcript;
 
 use super::pedersen::PedersenGenerators;
 use crate::{
-    subprotocols::batched_commitment::BatchedPolynomialOpeningProof,
+    subprotocols::concatenated_commitment::ConcatenatedPolynomialOpeningProof,
     utils::errors::ProofVerifyError,
 };
 
@@ -37,7 +37,7 @@ where
     G: CurveGroup<ScalarField = F>,
     Polynomials: BatchablePolynomials<G> + ?Sized,
 {
-    type Proof = BatchedPolynomialOpeningProof<G>;
+    type Proof = ConcatenatedPolynomialOpeningProof<G>;
 
     /// Evaluates each fo the given `polynomials` at the given `opening_point`.
     fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;

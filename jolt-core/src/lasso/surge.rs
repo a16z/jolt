@@ -16,7 +16,7 @@ use crate::{
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
-        batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
+        concatenated_commitment::{ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof},
         sumcheck::SumcheckInstanceProof,
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
@@ -37,9 +37,9 @@ pub struct BatchedSurgePolynomials<F: PrimeField> {
 }
 
 pub struct SurgeCommitment<G: CurveGroup> {
-    pub dim_read_commitment: BatchedPolynomialCommitment<G>,
-    pub final_commitment: BatchedPolynomialCommitment<G>,
-    pub E_commitment: BatchedPolynomialCommitment<G>,
+    pub dim_read_commitment: ConcatenatedPolynomialCommitment<G>,
+    pub final_commitment: ConcatenatedPolynomialCommitment<G>,
+    pub E_commitment: ConcatenatedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials<G> for SurgePolys<F, G>
@@ -113,7 +113,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
         E_poly_openings: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        BatchedPolynomialOpeningProof::prove(
+        ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
             &commitment.E_commitment,
             opening_point,
@@ -147,8 +147,8 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
-    E_poly_opening_proof: BatchedPolynomialOpeningProof<G>,
+    dim_read_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
+    E_poly_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeReadWriteOpenings<F>
@@ -185,14 +185,14 @@ where
         .to_vec();
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
-        let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
+        let dim_read_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_dim_read,
             &commitment.dim_read_commitment,
             &opening_point,
             &dim_read_openings,
             transcript,
         );
-        let E_poly_opening_proof = BatchedPolynomialOpeningProof::prove(
+        let E_poly_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_E,
             &commitment.E_commitment,
             &opening_point,
@@ -278,7 +278,7 @@ where
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        BatchedPolynomialOpeningProof::prove(
+        ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_final,
             &commitment.final_commitment,
             &opening_point,
@@ -488,7 +488,7 @@ pub struct SurgePrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     num_rounds: usize,
     claimed_evaluation: F,
     openings: PrimarySumcheckOpenings<F>,
-    opening_proof: BatchedPolynomialOpeningProof<G>,
+    opening_proof: ConcatenatedPolynomialOpeningProof<G>,
 }
 
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>

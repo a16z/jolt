@@ -22,8 +22,8 @@ use crate::{
         pedersen::PedersenGenerators,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
-    subprotocols::batched_commitment::{
-        BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
+    subprotocols::concatenated_commitment::{
+        ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
@@ -505,11 +505,11 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
 pub struct MemoryCommitment<G: CurveGroup> {
     /// Commitments for:
     /// a_read_write, v_read, v_write, t_read, t_write
-    pub read_write_commitments: BatchedPolynomialCommitment<G>,
+    pub read_write_commitments: ConcatenatedPolynomialCommitment<G>,
 
     /// Commitments for:
     /// v_init, v_final, t_final
-    pub init_final_commitments: BatchedPolynomialCommitment<G>,
+    pub init_final_commitments: ConcatenatedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials<G> for ReadWriteMemory<F, G>
@@ -626,7 +626,7 @@ where
             .chain(openings.t_write_opening.into_iter())
             .collect();
 
-        BatchedPolynomialOpeningProof::prove(
+        ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_read_write,
             &commitment.read_write_commitments,
             &opening_point,
@@ -709,7 +709,7 @@ where
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        BatchedPolynomialOpeningProof::prove(
+        ConcatenatedPolynomialOpeningProof::prove(
             &polynomials.batched_init_final,
             &commitment.init_final_commitments,
             &opening_point,
