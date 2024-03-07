@@ -166,9 +166,9 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
 
         // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
         let homomorphically_derived_commitment: G =
-            VariableBaseMSM::msm_u64(&G::normalize_batch(&commitment.row_commitments), &L).unwrap();
+            VariableBaseMSM::msm(&G::normalize_batch(&commitment.row_commitments), &L).unwrap();
 
-        let product_commitment = VariableBaseMSM::msm_u64(
+        let product_commitment = VariableBaseMSM::msm(
             &G::normalize_batch(&gens.gens.generators),
             &self.vector_matrix_product,
         )
@@ -205,6 +205,119 @@ impl<G: CurveGroup> HyraxOpeningProof<G> {
                     acc
                 },
             )
+    }
+}
+
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BatchedHyraxOpeningProof<G: CurveGroup> {
+    joint_proof: HyraxOpeningProof<G>,
+}
+
+/// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge
+impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
+    #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
+    pub fn prove(
+        polynomials: &[DensePolynomial<G::ScalarField>],
+        commitments: &[HyraxCommitment<G>],
+        opening_point: &[G::ScalarField],
+        openings: &[G::ScalarField],
+        transcript: &mut Transcript,
+    ) -> Self {
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+        // append the claimed evaluations to transcript
+        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &openings);
+
+        let rlc_coefficients: Vec<_> = <Transcript as ProofTranscript<G>>::challenge_vector(
+            transcript,
+            b"challenge_combine_n_to_one",
+            polynomials.len(),
+        );
+
+        let poly_len = polynomials[0].len();
+
+        let rlc_poly = rlc_coefficients
+            .par_iter()
+            .zip(polynomials.par_iter())
+            .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * eval).collect())
+            .reduce(
+                || vec![G::ScalarField::zero(); poly_len],
+                |running, new| {
+                    debug_assert_eq!(running.len(), new.len());
+                    running
+                        .iter()
+                        .zip(new.iter())
+                        .map(|(r, n)| *r + n)
+                        .collect()
+                },
+            );
+        let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
+
+        let joint_proof = HyraxOpeningProof::prove(
+            &DensePolynomial::new(rlc_poly),
+            &commitments[0],
+            opening_point,
+            transcript,
+        );
+        Self { joint_proof }
+    }
+
+    pub fn verify(
+        &self,
+        gens: &HyraxGenerators<G>,
+        opening_point: &[G::ScalarField],
+        openings: &[G::ScalarField],
+        commitments: &[HyraxCommitment<G>],
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerifyError> {
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+
+        // append the claimed evaluations to transcript
+        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &openings);
+
+        let rlc_coefficients: Vec<_> = <Transcript as ProofTranscript<G>>::challenge_vector(
+            transcript,
+            b"challenge_combine_n_to_one",
+            openings.len(),
+        );
+
+        let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
+
+        let rlc_commitment = rlc_coefficients
+            .par_iter()
+            .zip(commitments.par_iter())
+            .map(|(coeff, commitment)| {
+                commitment
+                    .row_commitments
+                    .iter()
+                    .map(|commitment| *commitment * coeff)
+                    .collect()
+            })
+            .reduce(
+                || vec![G::zero(); commitments.len()],
+                |running, new| {
+                    debug_assert_eq!(running.len(), new.len());
+                    running
+                        .iter()
+                        .zip(new.iter())
+                        .map(|(r, n)| *r + n)
+                        .collect()
+                },
+            );
+
+        self.joint_proof.verify(
+            gens,
+            transcript,
+            opening_point,
+            &rlc_eval,
+            &HyraxCommitment {
+                row_commitments: rlc_commitment,
+            },
+        )
+    }
+
+    fn protocol_name() -> &'static [u8] {
+        b"Jolt BatchedHyraxOpeningProof"
     }
 }
 

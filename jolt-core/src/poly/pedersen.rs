@@ -77,6 +77,6 @@ impl<G: CurveGroup> PedersenCommitment<G> for G::ScalarField {
 
     fn commit_vector(inputs: &[Self], bases: &[G::Affine]) -> G {
         assert_eq!(bases.len(), inputs.len());
-        VariableBaseMSM::msm_u64(&bases, &inputs).unwrap()
+        VariableBaseMSM::msm(&bases, &inputs).unwrap()
     }
 }

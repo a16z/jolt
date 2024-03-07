@@ -33,10 +33,7 @@ impl<G: CurveGroup> ConcatenatedPolynomialOpeningProof<G> {
         openings: &[G::ScalarField],
         transcript: &mut Transcript,
     ) -> Self {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            ConcatenatedPolynomialOpeningProof::<G>::protocol_name(),
-        );
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let evals = {
             let mut evals: Vec<G::ScalarField> = openings.to_vec();
@@ -97,10 +94,8 @@ impl<G: CurveGroup> ConcatenatedPolynomialOpeningProof<G> {
         commitment: &ConcatenatedPolynomialCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            ConcatenatedPolynomialOpeningProof::<G>::protocol_name(),
-        );
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        
         let mut evals = openings.to_owned();
         evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
