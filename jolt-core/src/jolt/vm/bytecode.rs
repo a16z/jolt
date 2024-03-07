@@ -8,7 +8,9 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::{square_matrix_dimensions, HyraxCommitment};
+use crate::poly::hyrax::{
+    square_matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
+};
 use crate::poly::pedersen::PedersenGenerators;
 use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
@@ -156,6 +158,7 @@ impl From<&ELFInstruction> for ELFRow {
 
 /// Polynomial representation of bytecode as expected by Jolt –– each bytecode address maps to a
 /// tuple, containing information about the instruction and its operands.
+#[derive(Clone)]
 pub struct FiveTuplePoly<F: PrimeField> {
     /// MLE of all opcodes in the bytecode.
     opcode: DensePolynomial<F>,
@@ -431,6 +434,7 @@ pub struct BatchedBytecodePolynomials<F: PrimeField> {
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
+    read_write_generators: HyraxGenerators<G>,
     pub a_read_write: HyraxCommitment<G>,
     pub v_opcode: HyraxCommitment<G>,
     pub v_rs1: HyraxCommitment<G>,
@@ -464,9 +468,9 @@ where
         ]);
 
         Self::BatchedPolynomials {
-            a_read_write: self.a_read_write,
-            v_read_write: self.v_read_write,
-            t_read: self.t_read,
+            a_read_write: self.a_read_write.clone(),
+            v_read_write: self.v_read_write.clone(),
+            t_read: self.t_read.clone(),
             combined_init_final,
         }
     }
@@ -476,31 +480,38 @@ where
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_commitments: Vec<HyraxCommitment<G>> = [
-            batched_polys.a_read_write,
-            batched_polys.v_read_write.opcode,
-            batched_polys.v_read_write.rs1,
-            batched_polys.v_read_write.rs2,
-            batched_polys.v_read_write.rd,
-            batched_polys.v_read_write.imm,
-            batched_polys.t_read,
+        let read_write_generators = HyraxGenerators::new(
+            batched_polys.a_read_write.get_num_vars(),
+            pedersen_generators,
+        );
+        let [a_read_write, v_opcode, v_rs1, v_rs2, v_rd, v_imm, t_read] = [
+            &batched_polys.a_read_write,
+            &batched_polys.v_read_write.opcode,
+            &batched_polys.v_read_write.rs1,
+            &batched_polys.v_read_write.rs2,
+            &batched_polys.v_read_write.rd,
+            &batched_polys.v_read_write.imm,
+            &batched_polys.t_read,
         ]
         .par_iter()
-        .map(|poly| poly.hyrax_commit_rectangular(pedersen_generators))
-        .collect();
+        .map(|poly| HyraxCommitment::commit_rectangular_matrix(poly, &read_write_generators))
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
         let init_final_commitments = batched_polys
             .combined_init_final
             .combined_commit(pedersen_generators);
 
         Self::Commitment {
-            a_read_write: read_write_commitments[0],
-            v_opcode: read_write_commitments[1],
-            v_rs1: read_write_commitments[2],
-            v_rs2: read_write_commitments[3],
-            v_rd: read_write_commitments[4],
-            v_imm: read_write_commitments[5],
-            t_read: read_write_commitments[6],
+            read_write_generators,
+            a_read_write,
+            v_opcode,
+            v_rs1,
+            v_rs2,
+            v_rd,
+            v_imm,
+            t_read,
             init_final_commitments,
         }
     }
@@ -710,6 +721,8 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
+    type Proof = BatchedHyraxOpeningProof<G>;
+
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
@@ -734,9 +747,25 @@ where
         ];
         combined_openings.extend(openings.v_read_write_openings.iter());
 
-        ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.combined_read_write,
-            &commitment.read_write_commitments,
+        BatchedHyraxOpeningProof::prove(
+            &[
+                &polynomials.a_read_write,
+                &polynomials.v_read_write.opcode,
+                &polynomials.v_read_write.rs1,
+                &polynomials.v_read_write.rs2,
+                &polynomials.v_read_write.rd,
+                &polynomials.v_read_write.imm,
+                &polynomials.t_read,
+            ],
+            &[
+                &commitment.a_read_write,
+                &commitment.v_opcode,
+                &commitment.v_rs1,
+                &commitment.v_rs2,
+                &commitment.v_rd,
+                &commitment.v_imm,
+                &commitment.t_read,
+            ],
             &opening_point,
             &combined_openings,
             transcript,
@@ -757,9 +786,18 @@ where
         combined_openings.extend(self.v_read_write_openings.iter());
 
         opening_proof.verify(
+            &commitment.read_write_generators,
             opening_point,
             &combined_openings,
-            &commitment.read_write_commitments,
+            &[
+                &commitment.a_read_write,
+                &commitment.v_opcode,
+                &commitment.v_rs1,
+                &commitment.v_rs2,
+                &commitment.v_rd,
+                &commitment.v_imm,
+                &commitment.t_read,
+            ],
             transcript,
         )
     }

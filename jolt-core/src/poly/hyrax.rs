@@ -44,6 +44,7 @@ impl<G: CurveGroup> HyraxGenerators<G> {
     }
 }
 
+#[derive(Debug)]
 pub struct HyraxCommitment<G: CurveGroup> {
     row_commitments: Vec<G>,
 }
@@ -217,8 +218,8 @@ pub struct BatchedHyraxOpeningProof<G: CurveGroup> {
 impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
     pub fn prove(
-        polynomials: &[DensePolynomial<G::ScalarField>],
-        commitments: &[HyraxCommitment<G>],
+        polynomials: &[&DensePolynomial<G::ScalarField>],
+        commitments: &[&HyraxCommitment<G>],
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         transcript: &mut Transcript,
@@ -251,7 +252,6 @@ impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
                         .collect()
                 },
             );
-        let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
 
         let joint_proof = HyraxOpeningProof::prove(
             &DensePolynomial::new(rlc_poly),
@@ -267,7 +267,7 @@ impl<G: CurveGroup> BatchedHyraxOpeningProof<G> {
         gens: &HyraxGenerators<G>,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
-        commitments: &[HyraxCommitment<G>],
+        commitments: &[&HyraxCommitment<G>],
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
