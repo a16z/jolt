@@ -159,7 +159,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
         poly: &DensePolynomial<G::ScalarField>,
         L: &[G::ScalarField],
     ) -> Vec<G::ScalarField> {
-        let (_, R_size) = super::hyrax::matrix_dimensions(poly.get_num_vars(), RATIO);
+        let (_, R_size) = matrix_dimensions(poly.get_num_vars(), RATIO);
 
         poly.evals_ref()
             .par_chunks(R_size)
@@ -257,7 +257,7 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
                 commitment
                     .row_commitments
                     .iter()
-                    .map(|commitment| *commitment * coeff)
+                    .map(|row_commitment| *row_commitment * coeff)
                     .collect()
             })
             .reduce(

@@ -436,9 +436,9 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     pub a_read_write: HyraxCommitment<NUM_R1CS_POLYS, G>,
     pub v_opcode: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub v_rd: HyraxCommitment<NUM_R1CS_POLYS, G>,
     pub v_rs1: HyraxCommitment<NUM_R1CS_POLYS, G>,
     pub v_rs2: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub v_rd: HyraxCommitment<NUM_R1CS_POLYS, G>,
     pub v_imm: HyraxCommitment<NUM_R1CS_POLYS, G>,
     pub t_read: HyraxCommitment<NUM_R1CS_POLYS, G>,
 
@@ -483,12 +483,12 @@ where
             batched_polys.a_read_write.get_num_vars(),
             pedersen_generators,
         );
-        let [a_read_write, v_opcode, v_rs1, v_rs2, v_rd, v_imm, t_read] = [
+        let [a_read_write, v_opcode, v_rd, v_rs1, v_rs2, v_imm, t_read] = [
             &batched_polys.a_read_write,
             &batched_polys.v_read_write.opcode,
+            &batched_polys.v_read_write.rd,
             &batched_polys.v_read_write.rs1,
             &batched_polys.v_read_write.rs2,
-            &batched_polys.v_read_write.rd,
             &batched_polys.v_read_write.imm,
             &batched_polys.t_read,
         ]
@@ -506,9 +506,9 @@ where
             read_write_generators,
             a_read_write,
             v_opcode,
+            v_rd,
             v_rs1,
             v_rs2,
-            v_rd,
             v_imm,
             t_read,
             init_final_commitments,
@@ -748,12 +748,12 @@ where
         BatchedHyraxOpeningProof::prove(
             &[
                 &polynomials.a_read_write,
+                &polynomials.t_read,
                 &polynomials.v_read_write.opcode,
+                &polynomials.v_read_write.rd,
                 &polynomials.v_read_write.rs1,
                 &polynomials.v_read_write.rs2,
-                &polynomials.v_read_write.rd,
                 &polynomials.v_read_write.imm,
-                &polynomials.t_read,
             ],
             &opening_point,
             &combined_openings,
@@ -780,12 +780,12 @@ where
             &combined_openings,
             &[
                 &commitment.a_read_write,
+                &commitment.t_read,
                 &commitment.v_opcode,
+                &commitment.v_rd,
                 &commitment.v_rs1,
                 &commitment.v_rs2,
-                &commitment.v_rd,
                 &commitment.v_imm,
-                &commitment.t_read,
             ],
             transcript,
         )
