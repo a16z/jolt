@@ -522,7 +522,7 @@ mod tests {
             r.push(F::rand(&mut prng));
         }
         let (L, R) = compute_factored_chis_at_r(&r);
-        let eq = EqPolynomial::new(r);
+        let eq = EqPolynomial::new(r.clone());
         let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
         let (L2, R2) = eq.compute_factored_evals(L_size);
         assert_eq!(L, L2);

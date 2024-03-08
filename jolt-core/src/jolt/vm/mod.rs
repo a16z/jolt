@@ -36,8 +36,9 @@ use self::{
 
 use halo2curves::bn256::G1Affine as Bn256Affine; 
 
-pub struct JoltProof<F, G, Subtables>
-where
+#[derive(Clone)]
+pub struct JoltPreprocessing<F, G> where
+
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
@@ -193,7 +194,7 @@ where
             bytecode,
             memory_trace.into_iter().flatten().collect(),
             circuit_flags,
-            &generators, 
+            &preprocessing.generators, 
             &jolt_commitments,
             &jolt_polynomials,
             &mut transcript,

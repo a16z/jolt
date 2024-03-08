@@ -1,5 +1,6 @@
 use ark_bn254::Fr as ArkFr;
 use ark_ec::short_weierstrass::SWCurveConfig;
+use ark_ec::AffineRepr;
 use ark_ec::CurveConfig;
 use ark_ff::{fields::PrimeField as ArkPrimeField, BigInteger};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
