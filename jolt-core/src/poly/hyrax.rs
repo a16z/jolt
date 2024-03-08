@@ -22,7 +22,8 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     let mut row_size = (num_vars / 2).pow2();
     row_size = (row_size * matrix_aspect_ratio.sqrt()).next_power_of_two();
 
-    let right_num_vars = row_size.log_2();
+    let right_num_vars = std::cmp::min(row_size.log_2(), num_vars - 1);
+    row_size = right_num_vars.pow2();
     let left_num_vars = num_vars - right_num_vars;
     let col_size = left_num_vars.pow2();
 

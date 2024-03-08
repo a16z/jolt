@@ -1485,13 +1485,15 @@ where
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
     ) -> usize {
-        let dim_read_num_vars = (max_trace_length * (C + preprocessing.num_memories)).log_2();
-        let final_num_vars = (M * preprocessing.num_memories).log_2();
-        let E_flag_num_vars =
-            (max_trace_length * (preprocessing.num_memories + Self::NUM_INSTRUCTIONS)).log_2();
-
-        let max_num_vars = max([dim_read_num_vars, final_num_vars, E_flag_num_vars]).unwrap();
-        matrix_dimensions(max_num_vars, 1).1
+        let max_trace_length = max_trace_length.next_power_of_two();
+        let num_read_write_generators =
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
+        let num_init_final_generators = matrix_dimensions(
+            (M * preprocessing.num_memories).next_power_of_two().log_2(),
+            1,
+        )
+        .1;
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 
     fn protocol_name() -> &'static [u8] {

@@ -485,12 +485,22 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     /// Computes the maximum number of group generators needed to commit to read-write
     /// memory polynomials using Hyrax, given the maximum memory address and maximum trace length.
     pub fn num_generators(max_memory_address: usize, max_trace_length: usize) -> usize {
-        // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 } x { a_read, a_write, v_read, v_write, t_read_write }
-        let read_write_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 5).log_2();
+        let max_memory_address = max_memory_address.next_power_of_two();
+        let max_trace_length = max_trace_length.next_power_of_two();
+        
+        // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
+        let t_read_write_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION)
+            .next_power_of_two()
+            .log_2();
         // v_init, v_final, t_final
-        let init_final_num_vars = (max_memory_address * 3).log_2();
-        let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
-        matrix_dimensions(max_num_vars, 1).1
+        let init_final_num_vars = (max_memory_address * 3).next_power_of_two().log_2();
+        let num_read_write_generators = std::cmp::max(
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1,
+            matrix_dimensions(t_read_write_num_vars, 1).1,
+        );
+        let num_init_final_generators = matrix_dimensions(init_final_num_vars, 1).1;
+
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 }
 
