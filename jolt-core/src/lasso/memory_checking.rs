@@ -118,6 +118,7 @@ where
 
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
+            polynomials,
             batched_polys,
             &r_read_write,
             &read_write_openings,
@@ -125,6 +126,7 @@ where
         );
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
+            polynomials,
             batched_polys,
             &r_init_final,
             &init_final_openings,
@@ -502,6 +504,7 @@ mod tests {
                 unimplemented!()
             }
             fn prove_openings(
+                _: &NormalMems,
                 _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
@@ -528,6 +531,7 @@ mod tests {
                 unimplemented!()
             }
             fn commit(
+                &self,
                 _batched_polys: &Self::BatchedPolynomials,
                 _generators: &PedersenGenerators<EdwardsProjective>,
             ) -> Self::Commitment {
@@ -704,6 +708,7 @@ mod tests {
                 unimplemented!()
             }
             fn prove_openings(
+                _: &Polys,
                 _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
@@ -730,6 +735,7 @@ mod tests {
                 unimplemented!()
             }
             fn commit(
+                &self,
                 _batched_polys: &Self::BatchedPolynomials,
                 _generators: &PedersenGenerators<EdwardsProjective>,
             ) -> Self::Commitment {
@@ -952,6 +958,7 @@ mod tests {
                 unimplemented!()
             }
             fn prove_openings(
+                _: &FlagPolys,
                 _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
@@ -978,6 +985,7 @@ mod tests {
                 unimplemented!()
             }
             fn commit(
+                &self,
                 _batched_polys: &Self::BatchedPolynomials,
                 _generators: &PedersenGenerators<EdwardsProjective>,
             ) -> Self::Commitment {

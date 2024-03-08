@@ -16,7 +16,9 @@ use crate::{
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
-        concatenated_commitment::{ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof},
+        concatenated_commitment::{
+            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
+        },
         sumcheck::SumcheckInstanceProof,
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
@@ -71,6 +73,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
@@ -107,13 +110,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> StructuredOpeningProof<F, G,
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedSurgePolynomials<F>,
+        polynomials: &SurgePolys<F, G>,
+        batched_polynomials: &BatchedSurgePolynomials<F>,
         opening_point: &Vec<F>,
         E_poly_openings: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_E,
+            &batched_polynomials.batched_E,
             opening_point,
             E_poly_openings,
             transcript,
@@ -169,7 +173,8 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedSurgePolynomials<F>,
+        polynomials: &SurgePolys<F, G>,
+        batched_polynomials: &BatchedSurgePolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -183,13 +188,13 @@ where
         dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
 
         let dim_read_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_dim_read,
+            &batched_polynomials.batched_dim_read,
             &opening_point,
             &dim_read_openings,
             transcript,
         );
         let E_poly_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_E,
+            &batched_polynomials.batched_E,
             &opening_point,
             &openings.E_poly_openings,
             transcript,
@@ -267,13 +272,14 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedSurgePolynomials<F>,
+        polynomials: &SurgePolys<F, G>,
+        batched_polynomials: &BatchedSurgePolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_final,
+            &batched_polynomials.batched_final,
             &opening_point,
             &openings.final_openings,
             transcript,
@@ -587,7 +593,7 @@ where
         // TODO(sragss): Move upstream
         let pedersen_generators =
             PedersenGenerators::new(Self::num_generators(num_lookups), b"LassoV1");
-        let commitment = SurgePolys::commit(&batched_polys, &pedersen_generators);
+        let commitment = polynomials.commit(&batched_polys, &pedersen_generators);
 
         let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
@@ -631,6 +637,7 @@ where
         let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
                                                                                    // Create a single opening proof for the E polynomials
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            &polynomials,
             &batched_polys,
             &r_z,
             &sumcheck_openings,

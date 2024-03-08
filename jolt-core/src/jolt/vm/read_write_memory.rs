@@ -17,7 +17,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::matrix_dimensions,
+        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
@@ -28,7 +28,8 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
 use common::constants::{
-    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
+    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS,
+    REGISTER_COUNT,
 };
 use common::{to_ram_address, ELFInstruction};
 
@@ -494,18 +495,20 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 }
 
 pub struct BatchedMemoryPolynomials<F: PrimeField> {
-    /// Contains:
-    /// a_read_write, v_read, v_write, t_read, t_write
-    batched_read_write: DensePolynomial<F>,
+    /// Contains t_read and t_write
+    batched_t_read_write: DensePolynomial<F>,
     /// Contains:
     /// v_init, v_final, t_final
     batched_init_final: DensePolynomial<F>,
 }
 
 pub struct MemoryCommitment<G: CurveGroup> {
-    /// Commitments for:
-    /// a_read_write, v_read, v_write, t_read, t_write
-    pub read_write_commitments: ConcatenatedPolynomialCommitment<G>,
+    /// Generators for a_read_write, v_read, v_write
+    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    pub a_v_read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+
+    /// Commitments for t_read, t_write
+    pub t_read_write_commitments: ConcatenatedPolynomialCommitment<G>,
 
     /// Commitments for:
     /// v_init, v_final, t_final
@@ -522,37 +525,44 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let batched_read_write = DensePolynomial::merge(
-            self.a_read_write
-                .iter()
-                .chain(self.v_read.iter())
-                .chain(self.v_write.iter())
-                .chain(self.t_read.iter())
-                .chain(self.t_write.iter()),
-        );
+        let batched_t_read_write =
+            DensePolynomial::merge(self.t_read.iter().chain(self.t_write.iter()));
         let batched_init_final =
             DensePolynomial::merge(&vec![&self.v_init, &self.v_final, &self.t_final]);
 
         Self::BatchedPolynomials {
-            batched_read_write,
+            batched_t_read_write,
             batched_init_final,
         }
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_commitments = batched_polys
-            .batched_read_write
+        let read_write_generators =
+            HyraxGenerators::new(self.a_read_write[0].get_num_vars(), pedersen_generators);
+
+        let a_v_read_write_commitments = self
+            .a_read_write
+            .par_iter()
+            .chain(self.v_read.par_iter())
+            .chain(self.v_write.par_iter())
+            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
+            .collect::<Vec<_>>();
+        let t_read_write_commitments = batched_polys
+            .batched_t_read_write
             .combined_commit(pedersen_generators);
         let init_final_commitments = batched_polys
             .batched_init_final
             .combined_commit(pedersen_generators);
 
         Self::Commitment {
-            read_write_commitments,
+            read_write_generators,
+            a_v_read_write_commitments,
+            t_read_write_commitments,
             init_final_commitments,
         }
     }
@@ -575,11 +585,18 @@ where
     pub t_write_opening: [F; MEMORY_OPS_PER_INSTRUCTION],
 }
 
+pub struct MemoryReadWriteOpeningProof<G: CurveGroup> {
+    a_v_opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
+    t_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
+}
+
 impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryReadWriteOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
+    type Proof = MemoryReadWriteOpeningProof<G>;
+
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
     fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
@@ -611,26 +628,42 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedMemoryPolynomials<F>,
+        polynomials: &ReadWriteMemory<F, G>,
+        batched_polynomials: &BatchedMemoryPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        let combined_openings: Vec<F> = openings
+        let a_v_polys = polynomials
+            .a_read_write
+            .iter()
+            .chain(polynomials.v_read.iter())
+            .chain(polynomials.v_write.iter())
+            .collect::<Vec<_>>();
+        let a_v_openings = openings
             .a_read_write_opening
             .into_iter()
             .chain(openings.v_read_opening.into_iter())
             .chain(openings.v_write_opening.into_iter())
-            .chain(openings.t_read_opening.into_iter())
-            .chain(openings.t_write_opening.into_iter())
-            .collect();
+            .collect::<Vec<_>>();
+        let a_v_opening_proof =
+            BatchedHyraxOpeningProof::prove(&a_v_polys, &opening_point, &a_v_openings, transcript);
 
-        ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_read_write,
+        let t_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
+            &batched_polynomials.batched_t_read_write,
             &opening_point,
-            &combined_openings,
+            &openings
+                .t_read_opening
+                .into_iter()
+                .chain(openings.t_write_opening.into_iter())
+                .collect::<Vec<_>>(),
             transcript,
-        )
+        );
+
+        MemoryReadWriteOpeningProof {
+            a_v_opening_proof,
+            t_opening_proof,
+        }
     }
 
     fn verify_openings(
@@ -640,19 +673,28 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let combined_openings: Vec<F> = self
+        let a_v_openings = self
             .a_read_write_opening
             .into_iter()
             .chain(self.v_read_opening.into_iter())
             .chain(self.v_write_opening.into_iter())
-            .chain(self.t_read_opening.into_iter())
-            .chain(self.t_write_opening.into_iter())
-            .collect();
-
-        opening_proof.verify(
+            .collect::<Vec<_>>();
+        opening_proof.a_v_opening_proof.verify(
+            &commitment.read_write_generators,
             opening_point,
-            &combined_openings,
-            &commitment.read_write_commitments,
+            &a_v_openings,
+            &commitment.a_v_read_write_commitments,
+            transcript,
+        )?;
+
+        opening_proof.t_opening_proof.verify(
+            opening_point,
+            &self
+                .t_read_opening
+                .into_iter()
+                .chain(self.t_write_opening.into_iter())
+                .collect::<Vec<_>>(),
+            &commitment.t_read_write_commitments,
             transcript,
         )
     }
@@ -701,13 +743,14 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedMemoryPolynomials<F>,
+        polynomials: &ReadWriteMemory<F, G>,
+        batched_polynomials: &BatchedMemoryPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_init_final,
+            &batched_polynomials.batched_init_final,
             &opening_point,
             &vec![openings.v_init, openings.v_final, openings.t_final],
             transcript,
@@ -946,7 +989,7 @@ mod tests {
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
         let generators = PedersenGenerators::new(1 << 10, b"test");
-        let commitments = ReadWriteMemory::commit(&batched_polys, &generators);
+        let commitments = rw_memory.commit(&batched_polys, &generators);
 
         let proof = ReadWriteMemoryProof::prove_memory_checking(
             &NoPreprocessing,

@@ -267,7 +267,7 @@ where
     ) {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
         let batched_polys = polys.batch();
-        let commitment = BytecodePolynomials::commit(&batched_polys, &generators);
+        let commitment = BytecodePolynomials::commit(&polys, &batched_polys, &generators);
 
         let proof = BytecodeProof::prove_memory_checking(
             &NoPreprocessing,
@@ -299,7 +299,8 @@ where
     ) {
         let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
         let batched_polys = memory.batch();
-        let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&batched_polys, &generators);
+        let commitment: MemoryCommitment<G> =
+            ReadWriteMemory::commit(&memory, &batched_polys, &generators);
 
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
             &NoPreprocessing,

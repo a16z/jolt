@@ -232,7 +232,7 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         gens: &HyraxGenerators<RATIO, G>,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
-        commitments: &[&HyraxCommitment<RATIO, G>],
+        commitments: &[HyraxCommitment<RATIO, G>],
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         let (L_size, _R_size) = matrix_dimensions(opening_point.len(), RATIO);

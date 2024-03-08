@@ -23,7 +23,9 @@ use crate::{
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
     subprotocols::{
-        concatenated_commitment::{ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof},
+        concatenated_commitment::{
+            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
+        },
         grand_product::{
             BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
         },
@@ -32,7 +34,8 @@ use crate::{
 };
 
 use super::read_write_memory::{
-    BatchedMemoryPolynomials, MemoryCommitment, MemoryReadWriteOpenings, ReadWriteMemory,
+    BatchedMemoryPolynomials, MemoryCommitment, MemoryReadWriteOpeningProof,
+    MemoryReadWriteOpenings, ReadWriteMemory,
 };
 
 pub struct RangeCheckPolynomials<F, G>
@@ -193,6 +196,7 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
@@ -218,7 +222,7 @@ where
     G: CurveGroup,
 {
     range_check_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
-    memory_poly_opening_proof: Option<ConcatenatedPolynomialOpeningProof<G>>,
+    memory_poly_opening_proof: Option<MemoryReadWriteOpeningProof<G>>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>> for RangeCheckOpenings<F, G>
@@ -235,7 +239,8 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedRangeCheckPolynomials<F>,
+        polynomials: &RangeCheckPolynomials<F, G>,
+        batched_polynomials: &BatchedRangeCheckPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &RangeCheckOpenings<F, G>,
         transcript: &mut Transcript,
@@ -248,7 +253,7 @@ where
             .chain(openings.final_cts_global_minus_read.into_iter())
             .collect();
         let range_check_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials,
+            &batched_polynomials,
             opening_point,
             &range_check_openings,
             transcript,
@@ -616,8 +621,11 @@ where
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
         let batched_range_check_polys = range_check_polys.batch();
-        let range_check_commitment =
-            RangeCheckPolynomials::commit(&batched_range_check_polys, &generators);
+        let range_check_commitment = RangeCheckPolynomials::commit(
+            &range_check_polys,
+            &batched_range_check_polys,
+            &generators,
+        );
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
@@ -665,12 +673,14 @@ where
         };
 
         let mut opening_proof = RangeCheckOpenings::prove_openings(
+            &range_check_polys,
             &batched_range_check_polys,
             &r_grand_product,
             &openings,
             transcript,
         );
         opening_proof.memory_poly_opening_proof = Some(MemoryReadWriteOpenings::prove_openings(
+            &memory_polynomials,
             batched_memory_polynomials,
             &r_grand_product,
             &openings.memory_poly_openings,
@@ -883,7 +893,7 @@ mod tests {
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
         let generators = PedersenGenerators::new(1 << 10, b"Test generators");
-        let commitments = ReadWriteMemory::commit(&batched_polys, &generators);
+        let commitments = rw_memory.commit(&batched_polys, &generators);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,

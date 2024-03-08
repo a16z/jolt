@@ -22,6 +22,7 @@ pub trait BatchablePolynomials<G: CurveGroup> {
     fn batch(&self) -> Self::BatchedPolynomials;
     /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         generators: &PedersenGenerators<G>,
     ) -> Self::Commitment;
@@ -45,7 +46,8 @@ where
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
     /// by `openings`. The polynomials should already be committed by the prover.
     fn prove_openings(
-        polynomials: &Polynomials::BatchedPolynomials,
+        polynomials: &Polynomials,
+        batched_polynomials: &Polynomials::BatchedPolynomials,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,

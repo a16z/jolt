@@ -424,23 +424,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 }
 
 pub struct BatchedBytecodePolynomials<F: PrimeField> {
-    a_read_write: DensePolynomial<F>,
-    v_read_write: FiveTuplePoly<F>,
-    t_read: DensePolynomial<F>,
     // Contains:
     // - t_final, v_init_final
     combined_init_final: DensePolynomial<F>,
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
-    read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
-    pub a_read_write: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub v_opcode: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub v_rd: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub v_rs1: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub v_rs2: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub v_imm: HyraxCommitment<NUM_R1CS_POLYS, G>,
-    pub t_read: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 
     // Combined commitment for:
     // - t_final, v_init_final
@@ -467,36 +458,30 @@ where
         ]);
 
         Self::BatchedPolynomials {
-            a_read_write: self.a_read_write.clone(),
-            v_read_write: self.v_read_write.clone(),
-            t_read: self.t_read.clone(),
             combined_init_final,
         }
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_generators = HyraxGenerators::new(
-            batched_polys.a_read_write.get_num_vars(),
-            pedersen_generators,
-        );
-        let [a_read_write, v_opcode, v_rd, v_rs1, v_rs2, v_imm, t_read] = [
-            &batched_polys.a_read_write,
-            &batched_polys.v_read_write.opcode,
-            &batched_polys.v_read_write.rd,
-            &batched_polys.v_read_write.rs1,
-            &batched_polys.v_read_write.rs2,
-            &batched_polys.v_read_write.imm,
-            &batched_polys.t_read,
+        let read_write_generators =
+            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
+        let read_write_commitments = [
+            &self.a_read_write,
+            &self.t_read,
+            &self.v_read_write.opcode,
+            &self.v_read_write.rd,
+            &self.v_read_write.rs1,
+            &self.v_read_write.rs2,
+            &self.v_read_write.imm,
         ]
         .par_iter()
         .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
+        .collect::<Vec<_>>();
 
         let init_final_commitments = batched_polys
             .combined_init_final
@@ -504,13 +489,7 @@ where
 
         Self::Commitment {
             read_write_generators,
-            a_read_write,
-            v_opcode,
-            v_rd,
-            v_rs1,
-            v_rs2,
-            v_imm,
-            t_read,
+            read_write_commitments,
             init_final_commitments,
         }
     }
@@ -734,7 +713,8 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedBytecodePolynomials<F>,
+        polynomials: &BytecodePolynomials<F, G>,
+        _: &BatchedBytecodePolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -778,15 +758,7 @@ where
             &commitment.read_write_generators,
             opening_point,
             &combined_openings,
-            &[
-                &commitment.a_read_write,
-                &commitment.t_read,
-                &commitment.v_opcode,
-                &commitment.v_rd,
-                &commitment.v_rs1,
-                &commitment.v_rs2,
-                &commitment.v_imm,
-            ],
+            &commitment.read_write_commitments,
             transcript,
         )
     }
@@ -821,7 +793,8 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedBytecodePolynomials<F>,
+        _: &BytecodePolynomials<F, G>,
+        batched_polynomials: &BatchedBytecodePolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -829,7 +802,7 @@ where
         let mut combined_openings: Vec<F> = vec![openings.t_final];
         combined_openings.extend(openings.v_init_final.iter());
         ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.combined_init_final,
+            &batched_polynomials.combined_init_final,
             &opening_point,
             &combined_openings,
             transcript,
@@ -941,7 +914,7 @@ mod tests {
 
         let batched_polys = polys.batch();
         let generators = PedersenGenerators::new(10, b"test");
-        let commitments = BytecodePolynomials::commit(&batched_polys, &generators);
+        let commitments = polys.commit(&batched_polys, &generators);
         let proof = BytecodeProof::prove_memory_checking(
             &NoPreprocessing,
             &polys,
@@ -978,7 +951,7 @@ mod tests {
             BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
         let generators = PedersenGenerators::new(8, b"test");
-        let commitments = BytecodePolynomials::commit(&batch, &generators);
+        let commitments = polys.commit(&batch, &generators);
 
         let mut transcript = Transcript::new(b"test_transcript");
 

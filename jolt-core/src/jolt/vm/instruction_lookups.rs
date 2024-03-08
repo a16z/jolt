@@ -142,6 +142,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
@@ -180,7 +181,8 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        _: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -192,7 +194,7 @@ where
         .concat();
 
         ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_E_flag,
+            &batched_polynomials.batched_E_flag,
             opening_point,
             &E_flag_openings,
             transcript,
@@ -288,7 +290,8 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -300,7 +303,7 @@ where
         .concat();
 
         let dim_read_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_dim_read,
+            &batched_polynomials.batched_dim_read,
             &opening_point,
             &dim_read_openings,
             transcript,
@@ -313,7 +316,7 @@ where
         .concat();
 
         let E_flag_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_E_flag,
+            &batched_polynomials.batched_E_flag,
             &opening_point,
             &E_flag_openings,
             transcript,
@@ -397,13 +400,14 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         ConcatenatedPolynomialOpeningProof::prove(
-            &polynomials.batched_final,
+            &batched_polynomials.batched_final,
             &opening_point,
             &openings.final_openings,
             transcript,
@@ -903,7 +907,7 @@ where
 
         let polynomials = Self::polynomialize(preprocessing, &ops);
         let batched_polys = polynomials.batch();
-        let commitment = InstructionPolynomials::commit(&batched_polys, generators);
+        let commitment = polynomials.commit(&batched_polys, generators);
 
         commitment
             .E_flag_commitment
@@ -948,6 +952,7 @@ where
             flag_openings: flag_evals,
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            &polynomials,
             &batched_polys,
             &r_primary_sumcheck,
             &sumcheck_openings,
