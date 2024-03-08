@@ -318,26 +318,47 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
             assert_eq!(set_difference.len(), 0);
         }
+        let map_to_polys = |vals: &[Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]| {
+            vals.par_iter()
+                .map(|vals| DensePolynomial::from_u64(vals))
+                .collect::<Vec<DensePolynomial<F>>>()
+                .try_into()
+                .unwrap()
+        };
 
-        let t_read_polys: [DensePolynomial<F>; 7] = t_read
-            .iter()
-            .map(|vals| DensePolynomial::from_u64(&vals))
-            .collect::<Vec<DensePolynomial<F>>>()
-            .try_into()
-            .unwrap();
+        let (v_init, v_final, t_final, a_read_write, v_read, v_write, t_read_polys, t_write): (
+            DensePolynomial<F>,
+            DensePolynomial<F>,
+            DensePolynomial<F>,
+            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION]
+        ) = common::par_join_8!(
+            || DensePolynomial::from_u64(&v_init),
+            || DensePolynomial::from_u64(&v_final),
+            || DensePolynomial::from_u64(&t_final),
+            || map_to_polys(&a_read_write),
+            || map_to_polys(&v_read),
+            || map_to_polys(&v_write),
+            || map_to_polys(&t_read),
+            || map_to_polys(&t_write)
+        );
+
 
         (
             Self {
                 _group: PhantomData,
                 memory_size,
-                v_init: DensePolynomial::from_u64(&v_init),
-                a_read_write: a_read_write.map(|vals| DensePolynomial::from_u64(&vals)),
-                v_read: v_read.map(|vals| DensePolynomial::from_u64(&vals)),
-                v_write: v_write.map(|vals| DensePolynomial::from_u64(&vals)),
-                v_final: DensePolynomial::from_u64(&v_final),
+                v_init,
+                a_read_write,
+                v_read,
+                v_write,
+                v_final,
                 t_read: t_read_polys,
-                t_write: t_write.map(|vals| DensePolynomial::from_u64(&vals)),
-                t_final: DensePolynomial::from_u64(&t_final),
+                t_write,
+                t_final,
             },
             t_read,
         )
