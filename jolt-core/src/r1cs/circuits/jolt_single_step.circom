@@ -102,6 +102,7 @@ template JoltStep() {
 
     /* Per-step inputs. See JoltMain() for information.
     */
+    signal PC <== input_state[PC_IDX()];
     signal input prog_a_rw;
 
     signal input prog_v_rw[6]; 
@@ -116,21 +117,16 @@ template JoltStep() {
     signal input memreg_v_reads[MOPS()];
     signal input memreg_v_writes[MOPS()];
 
-    signal input _memreg_t_reads[MOPS()]; // unused variables used for now because of the way the jolt commitments are structured
-    signal input _memreg_t_writes[MOPS()]; 
-
     signal input chunks_x[C()];
     signal input chunks_y[C()];
     signal input chunks_query[C()];
-    
-    signal input _lookup_read_cts[NUM_MEMORIES()];
 
     signal input lookup_output;
 
     signal input op_flags[N_FLAGS()];
 
     /* Enforce that prog_a_rw === input_state.pc */
-    prog_a_rw === input_state[PC_IDX()];
+    // prog_a_rw === input_state[PC_IDX()];
         
     /* Constraints for op_flags: 
         1. Verify they combine to form op_flags_packed
@@ -175,7 +171,7 @@ template JoltStep() {
     rd === memreg_a_rw[2]; // the correctness of the write value will be handled later
 
     /******* Assigning operands x and y */
-    signal x <== if_else()([op_flags[0], rs1_val, prog_a_rw]); // TODO: change this for virtual instructions
+    signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
 
     signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
     signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
@@ -203,7 +199,7 @@ template JoltStep() {
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts at index 3
-        (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
+        // (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
     /* As "loads" are memory reads, we ensure that memreg_v_reads[3..] === memreg_v_writes[3..]
@@ -279,7 +275,7 @@ template JoltStep() {
     component rd_test_lookup = prodZeroTest(3);
     rd_test_lookup.in <== [rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]; 
     component rd_test_jump = prodZeroTest(3); 
-    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
+    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (PC + 4))]; 
 
     // TODO: LUI - add another flag for lui (again)
     // is_lui * (rd_val - immediate) === 0;
@@ -342,12 +338,9 @@ component main {public [
         memreg_a_rw, 
         memreg_v_reads, 
         memreg_v_writes, 
-        _memreg_t_reads,
-        _memreg_t_writes,
         chunks_x, 
         chunks_y, 
         chunks_query, 
-        _lookup_read_cts, 
         lookup_output, 
         op_flags
         ]} 

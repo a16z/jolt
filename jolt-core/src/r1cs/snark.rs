@@ -92,12 +92,9 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       "memreg_a_rw".to_string(), 
       "memreg_v_reads".to_string(), 
       "memreg_v_writes".to_string(), 
-      "_memreg_t_reads".to_string(), 
-      "_memreg_t_writes".to_string(), 
       "chunks_x".to_string(), 
       "chunks_y".to_string(), 
       "chunks_query".to_string(), 
-      "_lookup_read_cts".to_string(), 
       "lookup_output".to_string(), 
       "op_flags".to_string(),
       "input_state".to_string()
@@ -277,42 +274,42 @@ impl R1CSProof {
 
       let inputs: Vec<Vec<Spartan2Fr>> = ark_to_spartan_vecs::<ArkF, Spartan2Fr>(inputs_ark);
 
-      let prog_a_rw = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.a_read_write.evals().clone());
-      let opcodes = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.opcode.evals().clone());
-      let rd = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rd.evals().clone());
-      let rs1 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs1.evals().clone());
-      let rs2 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs2.evals().clone());
-      let imm = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.imm.evals().clone());
+      // let prog_a_rw = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.a_read_write.evals().clone());
+      // let opcodes = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.opcode.evals().clone());
+      // let rd = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rd.evals().clone());
+      // let rs1 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs1.evals().clone());
+      // let rs2 = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.rs2.evals().clone());
+      // let imm = ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.bytecode.v_read_write.imm.evals().clone());
 
-      // memory 
-      let memreg_a_rw: Vec<Vec<Spartan2Fr>> = (0..7)
-        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.a_read_write[i].evals().clone()))
-        .collect();
+      // // memory 
+      // let memreg_a_rw: Vec<Vec<Spartan2Fr>> = (0..7)
+      //   .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.a_read_write[i].evals().clone()))
+      //   .collect();
       
-      let memreg_v_reads: Vec<Vec<Spartan2Fr>> = (0..7)
-        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.v_read[i].evals().clone()))
-        .collect();
+      // let memreg_v_reads: Vec<Vec<Spartan2Fr>> = (0..7)
+      //   .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.v_read[i].evals().clone()))
+      //   .collect();
 
-      let memreg_v_writes: Vec<Vec<Spartan2Fr>> = (0..7)
-        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.v_write[i].evals().clone()))
-        .collect();
+      // let memreg_v_writes: Vec<Vec<Spartan2Fr>> = (0..7)
+      //   .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.v_write[i].evals().clone()))
+      //   .collect();
 
-      let memreg_t_reads: Vec<Vec<Spartan2Fr>> = (0..7)
-        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.t_read[i].evals().clone()))
-        .collect();
+      // let memreg_t_reads: Vec<Vec<Spartan2Fr>> = (0..7)
+      //   .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.t_read[i].evals().clone()))
+      //   .collect();
 
-      let memreg_t_writes: Vec<Vec<Spartan2Fr>> = (0..7)
-        .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.t_write[i].evals().clone()))
-        .collect();
+      // let memreg_t_writes: Vec<Vec<Spartan2Fr>> = (0..7)
+      //   .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.read_write_memory.t_write[i].evals().clone()))
+      //   .collect();
 
-      // lookup chunks 
-      let chunks_query: Vec<Vec<Spartan2Fr>> = (0..C)
-      .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.dim[i].evals().clone()))
-      .collect();
+      // // lookup chunks 
+      // let chunks_query: Vec<Vec<Spartan2Fr>> = (0..C)
+      // .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.dim[i].evals().clone()))
+      // .collect();
 
-      let lookup_read_cts: Vec<Vec<Spartan2Fr>> = (0..NUM_MEMORIES)
-      .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.read_cts[i].evals().clone()))
-      .collect();
+      // let lookup_read_cts: Vec<Vec<Spartan2Fr>> = (0..NUM_MEMORIES)
+      // .map(|i| ark_to_spartan_vec::<ArkF, Spartan2Fr>(jolt_polynomials_ark.instruction_lookups.read_cts[i].evals().clone()))
+      // .collect();
 
       // println!("jolt_polynomials_ark.instruction_lookups.read_cts[i].len = {}", jolt_polynomials_ark.instruction_lookups.read_cts.len());
       // assert!(false); 
@@ -334,34 +331,35 @@ impl R1CSProof {
       let w_segments_artificial = get_w_segments::<G1, S, F>(&hyrax_ck, jolt_circuit.clone()).unwrap();
 
       let mut w_segments = vec![];
-      for i in 0..4 {
-        // 0, 1 -- output states (step_counter, program_counter)
-        // 2, 3 -- input states 
-        w_segments.push(w_segments_artificial[i].clone());
-      }
-      w_segments.push(w_segments_artificial[4].clone()); // w_segments[4] = prog_a_rw
+      // for i in 0..4 {
+      //   // 0, 1 -- output states (step_counter, program_counter)
+      //   // 2, 3 -- input states 
+      //   w_segments.push(w_segments_artificial[i].clone());
+      // }
+      // w_segments.push(w_segments_artificial[4].clone()); // w_segments[4] = prog_a_rw
 
-      w_segments.push(opcodes); 
-      w_segments.push(rd);
-      w_segments.push(rs1);
-      w_segments.push(rs2);
-      w_segments.push(imm);
+      // w_segments.push(opcodes); 
+      // w_segments.push(rd);
+      // w_segments.push(rs1);
+      // w_segments.push(rs2);
+      // w_segments.push(imm);
 
-      w_segments.push(w_segments_artificial[10].clone()); // w_segments[10] = circuit_flags_packed 
+      // w_segments.push(w_segments_artificial[10].clone()); // w_segments[10] = circuit_flags_packed 
 
-      w_segments.extend(memreg_a_rw.clone());
-      w_segments.extend(memreg_v_reads.clone());
-      w_segments.extend(memreg_v_writes.clone());
-      w_segments.extend(memreg_t_reads.clone());
-      w_segments.extend(memreg_t_writes.clone());
+      // w_segments.extend(memreg_a_rw.clone());
+      // w_segments.extend(memreg_v_reads.clone());
+      // w_segments.extend(memreg_v_writes.clone());
+      // w_segments.extend(memreg_t_reads.clone());
+      // w_segments.extend(memreg_t_writes.clone());
 
-      w_segments.extend(w_segments_artificial[46..50].iter().cloned()); // chunks_x
-      w_segments.extend(w_segments_artificial[50..54].iter().cloned()); // chunks_y
-      w_segments.extend(chunks_query); // 54..58 is chunks_query
-      w_segments.extend(lookup_read_cts); // 58..58+NUM_MEMORIES=138 is lookup_read_cts
-      w_segments.push(w_segments_artificial[138].clone()); // lookup output 
+      // w_segments.extend(w_segments_artificial[46..50].iter().cloned()); // chunks_x
+      // w_segments.extend(w_segments_artificial[50..54].iter().cloned()); // chunks_y
+      // w_segments.extend(chunks_query); // 54..58 is chunks_query
+      // w_segments.extend(lookup_read_cts); // 58..58+NUM_MEMORIES=138 is lookup_read_cts
+      // w_segments.push(w_segments_artificial[138].clone()); // lookup output 
 
-      w_segments.extend(w_segments_artificial[139..].iter().cloned());
+      // w_segments.extend(w_segments_artificial[139..].iter().cloned());
+      w_segments.extend(w_segments_artificial[0..].iter().cloned());
 
       let comms = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<<G1 as Group>::Scalar>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
