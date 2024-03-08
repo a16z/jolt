@@ -857,6 +857,7 @@ where
     /// Computes the maximum number of group generators needed to commit to timestamp
     /// range-check polynomials using Hyrax, given the maximum trace length.
     pub fn num_generators(max_trace_length: usize) -> usize {
+        let max_trace_length = max_trace_length.next_power_of_two();
         let batch_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
         matrix_dimensions(batch_num_vars, 1).1
     }

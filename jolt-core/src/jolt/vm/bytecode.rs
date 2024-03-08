@@ -425,10 +425,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     /// Computes the maximum number of group generators needed to commit to bytecode
     /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
     pub fn num_generators(max_bytecode_size: usize, max_trace_length: usize) -> usize {
+        // Account for no-op appended to end of bytecode
+        let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
+        let max_trace_length = max_trace_length.next_power_of_two();
+
         // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
-        let num_read_write_generators = matrix_dimensions(max_trace_length, NUM_R1CS_POLYS).1;
+        let num_read_write_generators =
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
         // t_final, v_init_final (opcode, rs1, rs2, rd, imm)
-        let num_init_final_generators = matrix_dimensions((max_bytecode_size * 6).log_2(), 1).1;
+        let num_init_final_generators =
+            matrix_dimensions((max_bytecode_size * 6).next_power_of_two().log_2(), 1).1;
         std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 }
@@ -482,7 +488,7 @@ where
             HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
         let read_write_commitments = [
             &self.a_read_write,
-            &self.t_read,
+            &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
             &self.v_read_write.opcode,
             &self.v_read_write.rd,
             &self.v_read_write.rs1,
@@ -768,7 +774,7 @@ where
             &commitment.read_write_generators,
             opening_point,
             &combined_openings,
-            &commitment.read_write_commitments,
+            &commitment.read_write_commitments.iter().collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -917,13 +923,18 @@ mod tests {
             ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
+        let num_generators = BytecodePolynomials::<Fr, EdwardsProjective>::num_generators(
+            program.len(),
+            trace.len(),
+        );
+
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
 
         let mut transcript = Transcript::new(b"test_transcript");
 
         let batched_polys = polys.batch();
-        let generators = PedersenGenerators::new(10, b"test");
+        let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&batched_polys, &generators);
         let proof = BytecodeProof::prove_memory_checking(
             &NoPreprocessing,
@@ -957,10 +968,14 @@ mod tests {
             ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
+        let num_generators = BytecodePolynomials::<Fr, EdwardsProjective>::num_generators(
+            program.len(),
+            trace.len(),
+        );
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
-        let generators = PedersenGenerators::new(8, b"test");
+        let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&batch, &generators);
 
         let mut transcript = Transcript::new(b"test_transcript");

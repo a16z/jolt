@@ -211,7 +211,7 @@ where
             &commitment.read_write_generators,
             opening_point,
             &E_flag_openings,
-            &commitment.E_flag_commitment,
+            &commitment.E_flag_commitment.iter().collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -231,22 +231,13 @@ where
     flag_openings: Vec<F>,
 }
 
-pub struct InstructionReadWriteOpeningProof<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    dim_read_opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
-    E_flag_opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
-}
-
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
     for InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Proof = InstructionReadWriteOpeningProof<F, G>;
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
@@ -290,46 +281,28 @@ where
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        let dim_read_polys = polynomials
+        let read_write_polys = polynomials
             .dim
             .iter()
             .chain(polynomials.read_cts.iter())
-            .collect::<Vec<_>>();
-        let dim_read_openings: Vec<F> = [
-            openings.dim_openings.as_slice(),
-            openings.read_openings.as_slice(),
-        ]
-        .concat();
-
-        let dim_read_opening_proof = BatchedHyraxOpeningProof::prove(
-            &dim_read_polys,
-            &opening_point,
-            &dim_read_openings,
-            transcript,
-        );
-
-        let E_flag_polys = polynomials
-            .E_polys
-            .iter()
+            .chain(polynomials.E_polys.iter())
             .chain(polynomials.instruction_flag_polys.iter())
             .collect::<Vec<_>>();
-        let E_flag_openings: Vec<F> = [
+
+        let read_write_openings: Vec<F> = [
+            openings.dim_openings.as_slice(),
+            openings.read_openings.as_slice(),
             openings.E_poly_openings.as_slice(),
             openings.flag_openings.as_slice(),
         ]
         .concat();
 
-        let E_flag_opening_proof = BatchedHyraxOpeningProof::prove(
-            &E_flag_polys,
+        BatchedHyraxOpeningProof::prove(
+            &read_write_polys,
             opening_point,
-            &E_flag_openings,
+            &read_write_openings,
             transcript,
-        );
-
-        InstructionReadWriteOpeningProof {
-            dim_read_opening_proof,
-            E_flag_opening_proof,
-        }
+        )
     }
 
     fn verify_openings(
@@ -339,28 +312,22 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let dim_read_openings: Vec<F> =
-            [self.dim_openings.as_slice(), self.read_openings.as_slice()].concat();
-
-        openings_proof.dim_read_opening_proof.verify(
-            &commitment.read_write_generators,
-            opening_point,
-            &dim_read_openings,
-            &commitment.dim_read_commitment,
-            transcript,
-        )?;
-
-        let E_flag_openings: Vec<F> = [
+        let read_write_openings: Vec<F> = [
+            self.dim_openings.as_slice(),
+            self.read_openings.as_slice(),
             self.E_poly_openings.as_slice(),
             self.flag_openings.as_slice(),
         ]
         .concat();
-
-        openings_proof.E_flag_opening_proof.verify(
+        openings_proof.verify(
             &commitment.read_write_generators,
             opening_point,
-            &E_flag_openings,
-            &commitment.E_flag_commitment,
+            &read_write_openings,
+            &commitment
+                .dim_read_commitment
+                .iter()
+                .chain(commitment.E_flag_commitment.iter())
+                .collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -1518,13 +1485,15 @@ where
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
     ) -> usize {
-        let dim_read_num_vars = (max_trace_length * (C + preprocessing.num_memories)).log_2();
-        let final_num_vars = (M * preprocessing.num_memories).log_2();
-        let E_flag_num_vars =
-            (max_trace_length * (preprocessing.num_memories + Self::NUM_INSTRUCTIONS)).log_2();
-
-        let max_num_vars = max([dim_read_num_vars, final_num_vars, E_flag_num_vars]).unwrap();
-        matrix_dimensions(max_num_vars, 1).1
+        let max_trace_length = max_trace_length.next_power_of_two();
+        let num_read_write_generators =
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
+        let num_init_final_generators = matrix_dimensions(
+            (M * preprocessing.num_memories).next_power_of_two().log_2(),
+            1,
+        )
+        .1;
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 
     fn protocol_name() -> &'static [u8] {
