@@ -683,7 +683,10 @@ where
             &commitment.read_write_generators,
             opening_point,
             &a_v_openings,
-            &commitment.a_v_read_write_commitments,
+            &commitment
+                .a_v_read_write_commitments
+                .iter()
+                .collect::<Vec<_>>(),
             transcript,
         )?;
 
