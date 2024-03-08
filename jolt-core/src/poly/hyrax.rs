@@ -11,6 +11,7 @@ use ark_std::{One, Zero};
 use merlin::Transcript;
 use num_integer::Roots;
 use rayon::prelude::*;
+use tracing::trace_span;
 
 #[cfg(feature = "ark-msm")]
 use ark_ec::VariableBaseMSM;
@@ -205,23 +206,50 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
             polynomials.len(),
         );
 
+        let _span = trace_span!("Compute RLC of polynomials");
+        let _enter = _span.enter();
+
         let poly_len = polynomials[0].len();
 
-        let rlc_poly = rlc_coefficients
-            .par_iter()
-            .zip(polynomials.par_iter())
-            .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * eval).collect())
-            .reduce(
-                || vec![G::ScalarField::zero(); poly_len],
-                |running, new| {
-                    debug_assert_eq!(running.len(), new.len());
-                    running
-                        .iter()
-                        .zip(new.iter())
-                        .map(|(r, n)| *r + n)
-                        .collect()
-                },
-            );
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = poly_len / num_chunks;
+
+        let rlc_poly = if chunk_size > 0 {
+            (0..num_chunks)
+                .into_par_iter()
+                .flat_map_iter(|chunk_index| {
+                    let mut chunk = vec![G::ScalarField::zero(); chunk_size];
+                    for (coeff, poly) in rlc_coefficients.iter().zip(polynomials.iter()) {
+                        for (rlc, poly_eval) in chunk
+                            .iter_mut()
+                            .zip(poly.evals_ref()[chunk_index * chunk_size..].iter())
+                        {
+                            *rlc += mul_0_1_optimized(poly_eval, coeff);
+                        }
+                    }
+                    chunk
+                })
+                .collect::<Vec<_>>()
+        } else {
+            rlc_coefficients
+                .par_iter()
+                .zip(polynomials.par_iter())
+                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * eval).collect())
+                .reduce(
+                    || vec![G::ScalarField::zero(); poly_len],
+                    |running, new| {
+                        debug_assert_eq!(running.len(), new.len());
+                        running
+                            .iter()
+                            .zip(new.iter())
+                            .map(|(r, n)| *r + n)
+                            .collect()
+                    },
+                )
+        };
+
+        drop(_enter);
+        drop(_span);
 
         let joint_proof =
             HyraxOpeningProof::prove(&DensePolynomial::new(rlc_poly), opening_point, transcript);
