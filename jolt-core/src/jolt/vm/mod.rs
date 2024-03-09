@@ -313,7 +313,6 @@ where
             read_timestamps,
             &memory,
             &batched_polys,
-            &commitment,
             &generators,
             transcript,
         );

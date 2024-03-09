@@ -33,10 +33,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-use super::read_write_memory::{
-    BatchedMemoryPolynomials, MemoryCommitment, MemoryReadWriteOpeningProof,
-    MemoryReadWriteOpenings, ReadWriteMemory,
-};
+use super::read_write_memory::{BatchedMemoryPolynomials, MemoryCommitment, ReadWriteMemory};
 
 pub struct RangeCheckPolynomials<F, G>
 where
@@ -213,7 +210,8 @@ where
     read_cts_global_minus_read: [F; MEMORY_OPS_PER_INSTRUCTION],
     final_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION],
     final_cts_global_minus_read: [F; MEMORY_OPS_PER_INSTRUCTION],
-    memory_poly_openings: MemoryReadWriteOpenings<F, G>,
+    memory_t_read: [F; MEMORY_OPS_PER_INSTRUCTION],
+    memory_t_write: [F; MEMORY_OPS_PER_INSTRUCTION],
     identity_poly_opening: Option<F>,
 }
 
@@ -222,7 +220,7 @@ where
     G: CurveGroup,
 {
     range_check_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
-    memory_poly_opening_proof: Option<MemoryReadWriteOpeningProof<G>>,
+    memory_poly_opening_proof: Option<ConcatenatedPolynomialOpeningProof<G>>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>> for RangeCheckOpenings<F, G>
@@ -239,7 +237,7 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &RangeCheckPolynomials<F, G>,
+        _polynomials: &RangeCheckPolynomials<F, G>,
         batched_polynomials: &BatchedRangeCheckPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &RangeCheckOpenings<F, G>,
@@ -511,7 +509,7 @@ where
         _: &NoPreprocessing,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        let t_read_openings = openings.memory_poly_openings.t_read_opening;
+        let t_read_openings = openings.memory_t_read;
 
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_iter()
@@ -536,7 +534,7 @@ where
         _: &NoPreprocessing,
         openings: &Self::ReadWriteOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        let t_read_openings = openings.memory_poly_openings.t_read_opening;
+        let t_read_openings = openings.memory_t_read;
 
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_iter()
@@ -614,7 +612,6 @@ where
         read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
         memory_polynomials: &ReadWriteMemory<F, G>,
         batched_memory_polynomials: &BatchedMemoryPolynomials<F>,
-        memory_commitment: &MemoryCommitment<G>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
@@ -636,9 +633,6 @@ where
             .chain(range_check_polys.read_cts_global_minus_read.par_iter())
             .chain(range_check_polys.final_cts_read_timestamp.par_iter())
             .chain(range_check_polys.final_cts_global_minus_read.par_iter())
-            .chain(memory_polynomials.a_read_write.par_iter())
-            .chain(memory_polynomials.v_read.par_iter())
-            .chain(memory_polynomials.v_write.par_iter())
             .chain(memory_polynomials.t_read.par_iter())
             .chain(memory_polynomials.t_write.par_iter())
             .map(|poly| poly.evaluate_at_chi(&chis))
@@ -650,25 +644,16 @@ where
         let read_cts_global_minus_read = openings.next_chunk().unwrap();
         let final_cts_read_timestamp = openings.next_chunk().unwrap();
         let final_cts_global_minus_read = openings.next_chunk().unwrap();
-        let memory_a_read_write = openings.next_chunk().unwrap();
-        let memory_v_read = openings.next_chunk().unwrap();
-        let memory_v_write = openings.next_chunk().unwrap();
         let memory_t_read = openings.next_chunk().unwrap();
         let memory_t_write = openings.next_chunk().unwrap();
 
-        let memory_poly_openings = MemoryReadWriteOpenings {
-            a_read_write_opening: memory_a_read_write,
-            v_read_opening: memory_v_read,
-            v_write_opening: memory_v_write,
-            t_read_opening: memory_t_read,
-            t_write_opening: memory_t_write,
-        };
         let openings = RangeCheckOpenings {
             read_cts_read_timestamp,
             read_cts_global_minus_read,
             final_cts_read_timestamp,
             final_cts_global_minus_read,
-            memory_poly_openings,
+            memory_t_read,
+            memory_t_write,
             identity_poly_opening: None,
         };
 
@@ -679,11 +664,14 @@ where
             &openings,
             transcript,
         );
-        opening_proof.memory_poly_opening_proof = Some(MemoryReadWriteOpenings::prove_openings(
-            &memory_polynomials,
-            batched_memory_polynomials,
+        opening_proof.memory_poly_opening_proof = Some(ConcatenatedPolynomialOpeningProof::prove(
+            &batched_memory_polynomials.batched_t_read_write,
             &r_grand_product,
-            &openings.memory_poly_openings,
+            &openings
+                .memory_t_read
+                .into_iter()
+                .chain(openings.memory_t_write.into_iter())
+                .collect::<Vec<_>>(),
             transcript,
         ));
 
@@ -794,16 +782,21 @@ where
             &r_grand_product,
             transcript,
         )?;
-        self.openings.memory_poly_openings.verify_openings(
-            &self
-                .opening_proof
-                .memory_poly_opening_proof
-                .as_ref()
-                .unwrap(),
-            memory_commitment,
-            &r_grand_product,
-            transcript,
-        )?;
+        self.opening_proof
+            .memory_poly_opening_proof
+            .as_ref()
+            .unwrap()
+            .verify(
+                &r_grand_product,
+                &self
+                    .openings
+                    .memory_t_read
+                    .into_iter()
+                    .chain(self.openings.memory_t_write.into_iter())
+                    .collect::<Vec<_>>(),
+                &memory_commitment.t_read_write_commitments,
+                transcript,
+            )?;
 
         self.openings.compute_verifier_openings(&r_grand_product);
 
@@ -900,7 +893,6 @@ mod tests {
             read_timestamps,
             &rw_memory,
             &batched_polys,
-            &commitments,
             &generators,
             &mut transcript,
         );

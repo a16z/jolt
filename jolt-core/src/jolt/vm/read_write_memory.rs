@@ -506,7 +506,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
 pub struct BatchedMemoryPolynomials<F: PrimeField> {
     /// Contains t_read and t_write
-    batched_t_read_write: DensePolynomial<F>,
+    pub(crate) batched_t_read_write: DensePolynomial<F>,
     /// Contains:
     /// v_init, v_final, t_final
     batched_init_final: DensePolynomial<F>,
