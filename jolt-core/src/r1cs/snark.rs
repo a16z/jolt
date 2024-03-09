@@ -2,19 +2,14 @@ use std::collections::HashMap;
 
 use common::{path::JoltPaths, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
 use spartan2::{
-  errors::SpartanError,
-  VerifierKey,
-  traits::{
-    snark::RelaxedR1CSSNARKTrait,
-      upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait},
-      Group,
-  },
-  SNARK,
+  errors::SpartanError, 
   provider::{
-      bn256_grumpkin::bn256::{self, Scalar as Spartan2Fr, Point as SpartanG1},
-      hyrax_pc::HyraxEvaluationEngine as SpartanHyraxEE,
-  },
-  spartan::upsnark::R1CSSNARK,
+      bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
+      hyrax_pc::{HyraxEvaluationEngine as SpartanHyraxEE, HyraxCommitmentKey},
+  }, 
+  spartan::upsnark::R1CSSNARK, traits::{
+    commitment::CommitmentEngineTrait, snark::RelaxedR1CSSNARKTrait, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}, Group
+  }, VerifierKey, SNARK
 };
 use bellpepper_core::{
   Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
@@ -35,26 +30,25 @@ const NUM_CHUNKS: usize = 4;
 const NUM_FLAGS: usize = 17;
 const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
 
+type CommitmentKey<G> = <<G as Group>::CE as CommitmentEngineTrait<G>>::CommitmentKey;
+
 /// Remap [[1, a1, a2, a3], [1, b1, b2, b3], ...]  -> [1, a1, b1, ..., a2, b2, ..., a3, b3, ...]
-#[tracing::instrument(skip_all, name = "JoltCircuit::reassemble_by_segments")]
-fn reassemble_by_segments<F: ff::PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
-  let num_steps = jolt_witnesses.len();
-  let num_vars = jolt_witnesses[0].len() - 1;
+#[tracing::instrument(skip_all, name = "JoltCircuit::assemble_by_segments")]
+fn reassemble_by_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
+  get_segments(jolt_witnesses).into_iter().flatten().collect()
+}
 
-  let total_size = num_steps * (num_vars) + 1;
-  let mut total: Vec<F> = Vec::with_capacity(total_size);
-  total.push(F::ONE);
+fn get_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
+  let mut result: Vec<Vec<F>> = vec![Vec::new(); jolt_witnesses[0].len()-1]; // ignore 1 at the start 
 
-  total.par_extend((0..(total_size - 1)).into_par_iter().map(|i| {
-    let var_index: usize = i / num_steps;
-    let step_index: usize = i % num_steps;
+  for witness in &mut jolt_witnesses {
+    witness.remove(0);  // ignore 1
+    for (i, w) in witness.iter().enumerate() {
+        result[i].push(*w);
+    }
+  }
 
-    jolt_witnesses[step_index][var_index + 1]
-  }));
-
-  utils::thread::drop_in_background_thread(jolt_witnesses);
-
-  total
+  result 
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,11 +74,8 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       inputs: inputs,
     }
   }
-}
 
-impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
-  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
-  fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+  fn get_witnesses_by_step(self) -> Result<Vec<Vec<F>>, SynthesisError> {
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
@@ -143,18 +134,26 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     }).collect();
     drop(_compute_witness_guard);
 
+    Ok(jolt_witnesses)
+  }
+}
+
+impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
+  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
+  fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    let jolt_witnesses = self.get_witnesses_by_step()?;
+
     let witness_variable_wise = reassemble_by_segments(jolt_witnesses);
 
     let allocate_vars_span = tracing::span!(tracing::Level::INFO, "allocate_vars");
     let _allocate_vars_guard = allocate_vars_span.enter();
-    (1..witness_variable_wise.len()).for_each(|i| {
+    (0..witness_variable_wise.len()).for_each(|i| {
         let f = witness_variable_wise[i];
-        let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
+        let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", "aux", i)), || Ok(f)).unwrap();
     });
     drop(_allocate_vars_guard);
 
     utils::thread::drop_in_background_thread(witness_variable_wise);
-    utils::thread::drop_in_background_thread(inputs_chunked);
 
     Ok(())
   }
@@ -195,6 +194,23 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
   }
 }
 
+  pub fn get_w_segments<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: JoltCircuit<F>) -> Result<(Vec<Vec<F>>), SynthesisError> {
+    let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
+    Ok(get_segments(jolt_witnesses))
+  }
+  
+  pub fn precommit_with_ck<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(ck: &CommitmentKey<G>, w_segments: Vec<Vec<F>>) -> Result<(Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
+    let N_SEGMENTS = w_segments.len();
+  
+    // for each segment, commit to it using CE::<G>::commit(ck, &self.W) 
+    let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
+      .into_par_iter()
+      .map(|i| {
+        G::CE::commit(&ck, &w_segments[i]) 
+      }).collect();
+  
+    Ok(commitments)
+  }
 
 pub struct R1CSProof  {
   proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
@@ -207,7 +223,8 @@ impl R1CSProof {
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
-      inputs: Vec<Vec<ArkF>>
+      inputs: Vec<Vec<ArkF>>, 
+      generators: Vec<bn256::Affine>,
   ) -> Result<Self, SpartanError> {
       type G1 = SpartanG1;
       type EE = SpartanHyraxEE<SpartanG1>;
@@ -234,16 +251,22 @@ impl R1CSProof {
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
-      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
+      let hyrax_ck = HyraxCommitmentKey::<G1> {
+          ck: spartan2::provider::pedersen::from_gens_bn256(generators)
+      };
+      let w_segments = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
+      let comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
 
-      SNARK::prove(&pk, jolt_circuit).map(|snark| Self {
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
+
+      SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comm_w_vec).map(|snark| Self {
         proof: snark,
         vk
       })
   }
 
   pub fn verify(&self) -> Result<(), SpartanError> {
-    SNARK::verify(&self.proof, &self.vk, &[])
+    SNARK::verify_precommitted(&self.proof, &self.vk, &[])
   }
 }
 

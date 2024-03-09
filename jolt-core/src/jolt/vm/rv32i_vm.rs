@@ -264,7 +264,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
+
+        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
         <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
+            preprocessing, 
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
@@ -390,7 +393,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         let mut transcript = Transcript::new(b"Jolt transcript");
+        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
         <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
+            preprocessing, 
             instructions_r1cs,
             bytecode_rows,
             bytecode_trace,
