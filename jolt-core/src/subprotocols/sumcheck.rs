@@ -9,6 +9,7 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
+use itertools::multizip;
 use merlin::Transcript;
 use rayon::prelude::*;
 use tracing::trace_span;
@@ -381,7 +382,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             std::thread::spawn(move || drop(eq_evals));
             std::thread::spawn(move || drop(evals));
 
-            let evals = vec![
+            let evals = [
                 evals_combined_0,
                 e - evals_combined_0,
                 evals_combined_2,
@@ -403,12 +404,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = trace_span!("binding");
             let _enter = _span.enter();
 
-            let mut poly_iter: Vec<&mut DensePolynomial<F>> = params.poly_As.iter_mut()
-                .chain(params.poly_Bs.iter_mut())
-                .collect();
+            let mut poly_iter = params.poly_As.par_iter_mut()
+                .chain(params.poly_Bs.par_iter_mut());
 
             rayon::join(
-                || poly_iter.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j)),
+                || poly_iter.for_each(|poly| poly.bound_poly_var_top(&r_j)),
                 || params.poly_eq.bound_poly_var_top(&r_j)
             );
 
@@ -560,7 +560,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
             let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
 
-            let evals = vec![
+            let evals = [
                 evals_combined_0,
                 e - evals_combined_0,
                 evals_combined_2,
@@ -605,6 +605,73 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
 
+    #[tracing::instrument(skip_all, name = "SumcheckInstanceProof::compute_cubic_evals")]
+    fn compute_cubic_evals(flags_low: &[F], flags_high: &[F], leaves_low: &[F], leaves_high: &[F],  eq_evals: &Vec<(F, F, F)>) -> (F, F, F) {
+        let mut eval_0 = F::zero();
+        let mut eval_2 = F::zero();
+        let mut eval_3 = F::zero();
+        for (&flag_low, &flag_high, &leaf_low, &leaf_high, eq_eval) in multizip((flags_low, flags_high, leaves_low, leaves_high, eq_evals)) {
+            let m_eq: F = flag_high - flag_low;
+            let (flag_eval_point_2, flag_eval_point_3) = if m_eq.is_zero() {
+                (flag_high, flag_high)
+            } else {
+                let eval_point_2 = flag_high + m_eq;
+                let eval_point_3 = eval_point_2 + m_eq;
+                (eval_point_2, eval_point_3)
+            };
+
+            let flag_eval = (flag_low, flag_eval_point_2, flag_eval_point_3);
+
+            if flag_eval.0.is_zero() {
+                eval_0 += eq_eval.0
+            } else if flag_eval.0.is_one() {
+                eval_0 += eq_eval.0 * leaf_low
+            } else {
+                // eq_eval.0 * flag_eval.0 * leaf_low + eq_eval.0 - eq_eval.0 * flag_eval.0
+                eval_0 += eq_eval.0 * (flag_eval.0 * leaf_low + (F::one() - flag_eval.0))
+            };
+
+            let opt_poly_2_res: Option<(F, F)> = if flag_eval.1.is_zero() {
+                eval_2 += eq_eval.1;
+                None
+            } else if flag_eval.1.is_one() {
+                let poly_m = leaf_high - leaf_low;
+                let poly_2 = leaf_high + poly_m;
+                eval_2 += eq_eval.1 * poly_2;
+                Some((poly_2, poly_m))
+            } else {
+                let poly_m = leaf_high - leaf_low;
+                let poly_2 = leaf_high + poly_m;
+                eval_2 += eq_eval.1 * (flag_eval.1 * poly_2 + (F::one() - flag_eval.1));
+                Some((poly_2, poly_m))
+            };
+
+            if let Some((poly_2, poly_m)) = opt_poly_2_res {
+                if flag_eval.2.is_zero() {
+                    eval_3 += eq_eval.2; // TODO(sragss): Path may never happen
+                } else if flag_eval.2.is_one() {
+                    let poly_3 = poly_2 + poly_m;
+                    eval_3 += eq_eval.2 * poly_3;
+                } else {
+                    let poly_3 = poly_2 + poly_m;
+                    eval_3 += eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2));
+                }
+            } else {
+                eval_3 += eq_eval.2;
+            };
+
+            // Above is just a more complicated form of the following, optimizing for 0 / 1 flags.
+            // let poly_m = poly_eval[high] - poly_eval[low];
+            // let poly_2 = poly_eval[high] + poly_m;
+            // let poly_3 = poly_2 + poly_m;
+
+            // let eval_0 += params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
+            // let eval_2 += params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
+            // let eval_3 += params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
+        }
+        (eval_0, eval_2, eval_3)
+    }
+
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched_special_fork_flags")]
     pub fn prove_cubic_batched_flags<G>(
         claim: &F,
@@ -621,12 +688,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let mut r: Vec<F> = Vec::new();
         let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
 
+        let mut eq_evals: Vec<(F, F, F)> = Vec::with_capacity(params.poly_As[0].len() / 2);
+
         for _j in 0..params.num_rounds {
 
             let len = params.poly_As[0].len() / 2;
             let eq_span = trace_span!("eq_evals");
             let _eq_enter = eq_span.enter();
-            let eq_evals: Vec<(F, F, F)> = (0..len)
+            (0..len)
                 .into_par_iter()
                 .map(|i| {
                     let low = i;
@@ -640,123 +709,34 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                     let eval_point_3 = eval_point_2 + m_eq;
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
-                .collect();
+                .collect_into_vec(&mut eq_evals);
             drop(_eq_enter);
             drop(eq_span);
 
-            let flag_span = trace_span!("flag_evals");
-            let _flag_enter = flag_span.enter();
-            // Batch<MLEIndex<(eval_0, eval_2, eval_3)>>
-            let flag_evals: Vec<Vec<(F, F, F)>> = (0..params.poly_Bs.len())
-                .into_par_iter()
-                .map(|batch_index| {
-                    let mle_evals: Vec<(F, F, F)> = (0..len)
-                        .map(|mle_index| {
-                            let low = mle_index;
-                            let high = len + mle_index;
+            let evals: Vec<(F, F, F)> = params.poly_Bs.par_iter().enumerate().flat_map(|(memory_index, memory_flag_poly)| {
+                let (flags_low, flags_high) = memory_flag_poly.split_evals(len);
+                let (read_low, read_high) = params.poly_As[2 * memory_index].split_evals(len);
+                let (write_low, write_high) = params.poly_As[2 * memory_index + 1].split_evals(len);
 
-                            let poly = &params.poly_Bs[batch_index];
+                let (read_evals, write_evals) = rayon::join(
+                    || Self::compute_cubic_evals(flags_low, flags_high, read_low, read_high, &eq_evals),
+                    || Self::compute_cubic_evals(flags_low, flags_high, write_low, write_high, &eq_evals),
+                );
 
-                            let eval_point_0 = poly[low];
-                            let m_eq = poly[high] - poly[low];
-                            let (eval_point_2, eval_point_3) = if m_eq.is_zero() {
-                                (poly[high], poly[high])
-                            } else {
-                                let eval_point_2 = poly[high] + m_eq;
-                                let eval_point_3 = eval_point_2 + m_eq;
-                                (eval_point_2, eval_point_3)
-                            };
-
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        })
-                        .collect();
-                    mle_evals
-                })
-                .collect();
-            drop(_flag_enter);
-            drop(flag_span);
-
-            let evals_span = trace_span!("evals");
-            let _evals_enter = evals_span.enter();
-            let evals: Vec<(F, F, F)> = (0..params.poly_As.len())
-                .into_par_iter()
-                .map(|batch_index| {
-                    let eval: (F, F, F) = (0..len)
-                        .map(|mle_index| {
-                            let low = mle_index;
-                            let high = len + mle_index;
-
-                            let eq_eval = eq_evals[low];
-                            let flag_eval = flag_evals[params.a_to_b[batch_index]][mle_index];
-                            let poly_eval = &params.poly_As[batch_index];
-
-                            let eval_point_0 = if flag_eval.0.is_zero() {
-                                eq_eval.0
-                            } else if flag_eval.0.is_one() {
-                                eq_eval.0 * poly_eval[low]
-                            } else {
-                                eq_eval.0 * (flag_eval.0 * poly_eval[low] + (F::one() - flag_eval.0))
-                            };
-
-                            let (eval_point_2, opt_poly_2_res): (F, Option<(F, F)>) = if flag_eval.1.is_zero() {
-                                (eq_eval.1, None)
-                            } else if flag_eval.1.is_one() {
-                                let poly_m = poly_eval[high] - poly_eval[low];
-                                let poly_2 = poly_eval[high] + poly_m;
-                                (eq_eval.1 * poly_2, Some((poly_2, poly_m)))
-                            } else {
-                                let poly_m = poly_eval[high] - poly_eval[low];
-                                let poly_2 = poly_eval[high] + poly_m;
-                                (eq_eval.1 * (flag_eval.1 * poly_2 + (F::one() - flag_eval.1)), Some((poly_2, poly_m)))
-                            };
-
-                            let eval_point_3 = if let Some((poly_2, poly_m)) = opt_poly_2_res {
-                                if flag_eval.2.is_zero() {
-                                    eq_eval.2 // TODO(sragss): Path may never happen
-                                } else if flag_eval.2.is_one() {
-                                    let poly_3 = poly_2 + poly_m;
-                                    eq_eval.2 * poly_3
-                                } else {
-                                    let poly_3 = poly_2 + poly_m;
-                                    (eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2)))
-                                }
-                            } else {
-                                eq_eval.2
-                            };
-
-                            // Above is just a more complicated form of the following, optimizing for 0 / 1 flags.
-                            // let poly_m = poly_eval[high] - poly_eval[low];
-                            // let poly_2 = poly_eval[high] + poly_m;
-                            // let poly_3 = poly_2 + poly_m;
-
-                            // let eval_point_0 = params.combine(&poly_eval[low], &flag_eval.0, &eq_eval.0);
-                            // let eval_point_2 = params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
-                            // let eval_point_3 = params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
-
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        })
-                        .fold(
-                            (F::zero(), F::zero(), F::zero()),
-                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        );
-
-                        eval
-                })
-                .collect();
-            drop(_evals_enter);
-            drop(evals_span);
+                [read_evals, write_evals]
+            }).collect();
 
             let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
             let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
 
-            let evals = vec![
+            let cubic_evals = [
                 evals_combined_0,
                 e - evals_combined_0,
                 evals_combined_2,
                 evals_combined_3,
             ];
-            let poly = UniPoly::from_evals(&evals);
+            let poly = UniPoly::from_evals(&cubic_evals);
 
             // append the prover's message to the transcript
             <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
