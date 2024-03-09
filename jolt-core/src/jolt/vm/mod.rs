@@ -158,6 +158,7 @@ where
             std::array::from_fn(|_| MemoryOp::no_op()),
         );
 
+
         let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
             bytecode.clone(),
             padded_memory_trace,
@@ -176,24 +177,7 @@ where
             &mut transcript,
         );
 
-        let r1cs_proof = Self::prove_r1cs(
-            preprocessing,
-            instructions,
-            bytecode_rows,
-            bytecode_trace,
-            bytecode,
-            memory_trace.into_iter().flatten().collect(),
-            circuit_flags,
-            &mut transcript,
-        );
-
-        let jolt_proof = JoltProof {
-            bytecode: bytecode_proof,
-            read_write_memory: memory_proof,
-            instruction_lookups: instruction_lookups_proof,
-            r1cs: r1cs_proof,
-        };
-        let _jolt_polynomials = JoltPolynomials {
+        let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
             instruction_lookups: instruction_lookups_polynomials,
@@ -203,6 +187,27 @@ where
             read_write_memory: memory_commitment,
             instruction_lookups: instruction_lookups_commitment,
         };
+
+        let r1cs_proof = Self::prove_r1cs(
+            preprocessing,
+            instructions,
+            bytecode_rows,
+            bytecode_trace,
+            bytecode,
+            memory_trace.into_iter().flatten().collect(),
+            circuit_flags,
+            &jolt_polynomials, 
+            &jolt_commitments, 
+            &mut transcript,
+        );
+
+        let jolt_proof = JoltProof {
+            bytecode: bytecode_proof,
+            read_write_memory: memory_proof,
+            instruction_lookups: instruction_lookups_proof,
+            r1cs: r1cs_proof,
+        };
+
         (jolt_proof, jolt_commitments)
     }
 
@@ -350,6 +355,8 @@ where
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
+        jolt_polynomials: &JoltPolynomials<F, G>,
+        _jolt_commitments: &JoltCommitments<G>,
         transcript: &mut Transcript,
     ) -> R1CSProof {
         let N_FLAGS = 17;
@@ -472,7 +479,12 @@ where
             circuit_flags_padded,
         ];
 
-        R1CSProof::prove(32, C, PADDED_TRACE_LEN, inputs, preprocessing.spartan_generators).expect("R1CS proof failed")
+        R1CSProof::prove(
+            32, C, PADDED_TRACE_LEN, 
+            inputs, 
+            preprocessing.spartan_generators, 
+            jolt_polynomials,
+        ).expect("R1CS proof failed")
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]

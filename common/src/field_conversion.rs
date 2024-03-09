@@ -80,6 +80,24 @@ pub fn spartan_to_ark_unsafe<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrim
     }
     ark
 }
+
+/// Conversion function for a vector 
+pub fn ark_to_spartan_vec<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(
+    ark: Vec<AF>,
+) -> Vec<FF> {
+    ark.into_iter().map(|a| ark_to_ff::<FF, AF>(a)).collect()
+}
+
+/// Conversion function for a vector of vectors 
+pub fn ark_to_spartan_vecs<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(
+    ark: Vec<Vec<AF>>,
+) -> Vec<Vec<FF>> {
+    ark.into_iter()
+        .map(|a| ark_to_spartan_vec::<AF, FF>(a))
+        .collect()
+}
+
+
 pub trait IntoArk: CurveAffine {
     type ArkConfig: SWCurveConfig;
 

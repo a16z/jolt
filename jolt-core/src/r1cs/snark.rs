@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use common::{path::JoltPaths, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
+use common::{path::JoltPaths, field_conversion::{ark_to_spartan_vec, ark_to_spartan_vecs, ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
 use spartan2::{
   errors::SpartanError, 
   provider::{
@@ -14,6 +14,7 @@ use spartan2::{
 use bellpepper_core::{
   Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
 };
+use crate::jolt::vm::JoltPolynomials;
 use ff::PrimeField;
 use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
@@ -219,12 +220,13 @@ pub struct R1CSProof  {
 
 impl R1CSProof {
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-  pub fn prove<ArkF: ark_ff::PrimeField>(
+  pub fn prove<ArkF: ark_ff::PrimeField, ArkG: ark_ec::CurveGroup<ScalarField = ArkF>>(
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
       inputs: Vec<Vec<ArkF>>, 
       generators: Vec<bn256::Affine>,
+      jolt_polynomials: &JoltPolynomials<ArkF, ArkG>,
   ) -> Result<Self, SpartanError> {
       type G1 = SpartanG1;
       type EE = SpartanHyraxEE<SpartanG1>;
@@ -233,28 +235,33 @@ impl R1CSProof {
 
       let NUM_STEPS = TRACE_LEN;
 
+      // All conversions *********************************************/
+      let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
+      let _enter = span.enter();
 
-    let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
-    let _enter = span.enter();
-    let inputs_ff = inputs
-      .into_par_iter()
-      .map(|input| input
-          .into_par_iter()
-          .map(|x| {
-              ark_to_spartan_unsafe(x)
-          })
-          .collect::<Vec<Spartan2Fr>>()
-      ).collect::<Vec<Vec<Spartan2Fr>>>();
-      drop(_enter);
+      let inputs_ff = ark_to_spartan_vecs(inputs);
+
+      // bytecode polynomials 
+      let bytecode_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.bytecode.get_polys_r1cs().clone());
+
+
+      /**************************************************************/
 
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
+      // Obtain public key 
       let hyrax_ck = HyraxCommitmentKey::<G1> {
           ck: spartan2::provider::pedersen::from_gens_bn256(generators)
       };
-      let w_segments = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
+
+      // Obtain w_segments
+      let mut w_segments = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
+      w_segments[5..10].clone_from_slice(&bytecode_polys[1..6]);
+
+
+      // Commit to segments
       let comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
