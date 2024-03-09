@@ -74,6 +74,10 @@ impl<F: PrimeField> DensePolynomial<F> {
         )
     }
 
+    pub fn split_evals(&self, idx: usize) -> (&[F], &[F]) {
+        (&self.Z[..idx], &self.Z[idx..])
+    }
+
     pub fn bound_poly_var_top(&mut self, r: &F) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);
