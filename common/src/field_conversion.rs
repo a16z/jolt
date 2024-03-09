@@ -126,6 +126,25 @@ pub trait IntoSpartan: ark_ec::AffineRepr {
             }
         }
     }
+
+    fn to_spartan_bn256(&self) -> halo2curves::bn256::G1Affine {
+        match self.xy() {
+            None => halo2curves::bn256::G1Affine::identity(),
+            Some((x, y)) => {
+                let [x, y] = [x,y].map(|ark_f| {
+                    let mut ff_repr = <<halo2curves::bn256::G1Affine as CurveAffine>::Base as GenericPrimeField>::Repr::default();
+                    let ff_bytes = ff_repr.as_mut();
+                    ark_f.serialize_compressed(ff_bytes).unwrap();
+                    ff_repr
+                });
+                halo2curves::bn256::G1Affine::from_xy(
+                    <halo2curves::bn256::G1Affine as CurveAffine>::Base::from_repr(x).unwrap(),
+                    <halo2curves::bn256::G1Affine as CurveAffine>::Base::from_repr(y).unwrap(),
+                )
+                .unwrap()
+            }
+        }
+    }
 }
 
 impl IntoArk for Spartan2Affine {

@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
 use circom_scotia::r1cs;
+use halo2curves::bn256;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -41,6 +42,7 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     pub generators: PedersenGenerators<G>,
+    pub spartan_generators: Vec<bn256::G1Affine>,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
 }
 
@@ -120,12 +122,9 @@ where
         .unwrap();
         let generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
 
-        // TODO(arasuarun): Use these
-        let spartan_generators: Vec<<G::Affine as IntoSpartan>::SpartanAffine> =
-            generators.into_spartan();
-
         JoltPreprocessing {
-            generators,
+            generators: generators.clone(),
+            spartan_generators: generators.to_spartan_bn256(),
             instruction_lookups: preprocessing,
         }
     }
@@ -178,6 +177,7 @@ where
         );
 
         let r1cs_proof = Self::prove_r1cs(
+            preprocessing,
             instructions,
             bytecode_rows,
             bytecode_trace,
@@ -343,6 +343,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
     fn prove_r1cs(
+        preprocessing: JoltPreprocessing<F, G>,
         instructions: Vec<Self::InstructionSet>,
         bytecode_rows: Vec<ELFRow>,
         trace: Vec<ELFRow>,
@@ -471,7 +472,7 @@ where
             circuit_flags_padded,
         ];
 
-        R1CSProof::prove(32, C, PADDED_TRACE_LEN, inputs).expect("R1CS proof failed")
+        R1CSProof::prove(32, C, PADDED_TRACE_LEN, inputs, preprocessing.spartan_generators).expect("R1CS proof failed")
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
