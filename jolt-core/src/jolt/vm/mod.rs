@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
 use circom_scotia::r1cs;
+use common::field_conversion::ark_to_spartan_vecs;
 use halo2curves::bn256;
 use itertools::max;
 use merlin::Transcript;
@@ -362,6 +363,9 @@ where
         let N_FLAGS = 17;
         let TRACE_LEN = trace.len();
 
+
+        
+
         let log_M = log2(M) as usize;
 
         let [mut prog_a_rw, mut prog_v_rw, _] =
@@ -466,6 +470,20 @@ where
         ]);
         // circuit_flags.resize(PADDED_TRACE_LEN * N_FLAGS, Default::default());
 
+        // // Assemble the polynomials
+        // let bytecode_polys =  ark_to_spartan_vecs(jolt_polynomials.bytecode.get_polys_r1cs().clone()); 
+        // let bytecode_a = bytecode_polys[0..1];
+        // let bytecode_v = bytecode_polys[1..5];
+        // let packed_flags = packed_flags;
+
+        // let memory_polys =  ark_to_spartan_vecs(jolt_polynomials.read_write_memory.get_polys_r1cs().clone());
+        // let memreg_a = memory_polys[0..7];
+        // let memreg_v_read = memory_polys[7..14];
+        // let memreg_v_write = memory_polys[14..21];
+
+        // let chunks_x = chunks_x; 
+        // let chunks_y = chunks_y;
+
         let inputs = vec![
             prog_a_rw,
             prog_v_rw,
@@ -491,7 +509,10 @@ where
 
         let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.iter().map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>(); 
 
+        let lookup_comms = jolt_commitments.instruction_lookups.dim_read_commitment.iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
+
         jolt_commitments_spartan.extend(memory_comms);
+        jolt_commitments_spartan.extend(lookup_comms);
 
         R1CSProof::prove(
             32, C, PADDED_TRACE_LEN, 

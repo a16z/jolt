@@ -253,6 +253,8 @@ impl R1CSProof {
 
       let memreg_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.read_write_memory.get_polys_r1cs());
 
+      let lookup_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.instruction_lookups.dim.iter().map(|poly| poly.evals()).collect());
+
       /**************************************************************/
 
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
@@ -271,6 +273,8 @@ impl R1CSProof {
       w_segments[11..14].clone_from_slice(&memreg_polys[0..3]); // memreg_a_rw[0,2,3] out of 7
       w_segments[14..18].clone_from_slice(&memreg_polys[3..7]); // remaining addresses 
       w_segments[18..32].clone_from_slice(&memreg_polys[7..21]); // all values 
+      // 2 * C are for chunks_x and chunks_y
+      w_segments[40..44].clone_from_slice(&lookup_polys[0..4]); // lookup query (dim)
 
       // Commit to segments
       let mut comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
@@ -282,10 +286,15 @@ impl R1CSProof {
         comm_w_vec[11+i] = jolt_commitments[6+i].clone().into(); // register addresses 
       }
       for i in 0..4 {
-        comm_w_vec[14+i] = jolt_commitments[9+i].clone().into(); // register addresses 
+        comm_w_vec[14+i] = jolt_commitments[9+i].clone().into(); // RAM addresses 
       }
       for i in 0..14 {
-        comm_w_vec[18+i] = jolt_commitments[13+i].clone().into(); // register addresses 
+        comm_w_vec[18+i] = jolt_commitments[13+i].clone().into(); // all memory v 
+      }
+
+      // C many chunks_x and chunks_y
+      for i in 0..4 {
+        comm_w_vec[40+i] = jolt_commitments[27+i].clone().into(); // lookup query (dim)
       }
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
