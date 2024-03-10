@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
 use circom_scotia::r1cs;
+use common::constants::NUM_R1CS_POLYS;
 use common::field_conversion::ark_to_spartan_vecs;
 use halo2curves::bn256;
 use itertools::max;
@@ -11,6 +12,8 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::R1CSProof;
@@ -362,13 +365,24 @@ where
         transcript: &mut Transcript,
     ) -> R1CSProof {
         let N_FLAGS = 17;
-        let C_var = 4;
         let TRACE_LEN = trace.len();
         let PADDED_TRACE_LEN = TRACE_LEN.next_power_of_two();
 
         let log_M = log2(M) as usize;
 
-        // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
+        let hyrax_generators: HyraxGenerators<NUM_R1CS_POLYS, G> =
+            HyraxGenerators::new(PADDED_TRACE_LEN.trailing_zeros() as usize, &preprocessing.generators);
+
+        /* Assemble the polynomials and commitments from the rest of Jolt.
+        The ones that are extra, just for R1CS are: 
+            - circuit_flags_packed
+            - chunks_x
+            - chunks_y
+            - lookup_output
+            - circuit_flags_bits
+        */
+
+        // OBtain circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
         let span = tracing::span!(tracing::Level::INFO, "pack_flags");
         let _enter = span.enter();
         let precomputed_powers: Vec<F> = (0..N_FLAGS)
@@ -387,8 +401,7 @@ where
         drop(_enter);
         drop(span);
 
-        /* End of transformation for single-step version */
-
+        // Derive chunks_x and chunks_y
         let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
         let _guard = span.enter();
         
@@ -403,66 +416,36 @@ where
             }
         }
 
-        for vec in chunks_x_vecs.iter_mut() {
-            vec.resize(PADDED_TRACE_LEN, F::zero());
-        }
+        chunks_x_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
+        chunks_y_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
 
-        for vec in chunks_y_vecs.iter_mut() {
-            vec.resize(PADDED_TRACE_LEN, F::zero());
-        }
-
-        let mut chunks_x = Vec::with_capacity(PADDED_TRACE_LEN * C);
-        for vec in chunks_x_vecs {
-            chunks_x.append(&mut vec.clone());
-        }
-
-        let mut chunks_y = Vec::with_capacity(PADDED_TRACE_LEN * C);
-        for vec in chunks_y_vecs {
-            chunks_y.append(&mut vec.clone());
-        }
+        let chunks_x: Vec<F> = chunks_x_vecs.into_iter().flatten().collect();
+        let chunks_y: Vec<F> = chunks_y_vecs.into_iter().flatten().collect();
 
         drop(_guard);
         drop(span);
 
+        // Derive lookup_outputs 
         let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
         lookup_outputs.extend(vec![F::zero(); PADDED_TRACE_LEN - lookup_outputs.len()]);
 
-        // let mut circuit_flags_bits = vec![F::zero(); PADDED_TRACE_LEN * N_FLAGS];
-        // for (i, chunk) in circuit_flags.chunks(N_FLAGS).enumerate() {
-        //     for (j, &flag) in chunk.iter().enumerate() {
-        //         let index = j * PADDED_TRACE_LEN + i;
-        //         if index >= circuit_flags_bits.len() {
-        //             circuit_flags_bits.push(flag);
-        //         } else {
-        //             circuit_flags_bits[index] = flag;
-        //         }
-        //     }
-        // }
-
+        // Derive circuit flags
         let mut circuit_flags_bits_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); N_FLAGS];
 
-        for (i, chunk) in circuit_flags.chunks(N_FLAGS).enumerate() {
-            for (j, &flag) in chunk.iter().enumerate() {
+        circuit_flags.chunks(N_FLAGS).enumerate().for_each(|(i, chunk)| {
+            chunk.iter().enumerate().for_each(|(j, &flag)| {
                 circuit_flags_bits_vecs[j].push(flag);
-            }
-        }
+            });
+        });
 
-        for vec in circuit_flags_bits_vecs.iter_mut() {
-            while vec.len() < PADDED_TRACE_LEN {
-                vec.push(F::zero());
-            }
-        }
-
-        let mut circuit_flags_bits = Vec::with_capacity(PADDED_TRACE_LEN * N_FLAGS);
-        for vec in circuit_flags_bits_vecs {
-            circuit_flags_bits.append(&mut vec.clone());
-        }
+        circuit_flags_bits_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
+        let circuit_flags_bits: Vec<F> = circuit_flags_bits_vecs.into_iter().flatten().collect();
 
         // Assemble the polynomials
         let mut bytecode_polys = jolt_polynomials.bytecode.get_polys_r1cs(); 
         let bytecode_a: Vec<F> = bytecode_polys.drain(..1).into_iter().flatten().collect();
         let mut bytecode_v: Vec<F> = bytecode_polys.drain(..5).into_iter().flatten().collect();
-        bytecode_v.extend(packed_flags); 
+        bytecode_v.extend(packed_flags.clone()); 
 
         let mut memory_polys = jolt_polynomials.read_write_memory.get_polys_r1cs();
         let memreg_a_rw: Vec<F> = memory_polys.drain(..7).into_iter().flatten().collect();
@@ -476,23 +459,25 @@ where
         let chunks_query: Vec<F> = lookup_polys.drain(..C).into_iter().flatten().collect();
         let lookup_outputs = lookup_outputs;
         let circuit_flags_bits = circuit_flags_bits; 
-        println!("length of chunks_x, chunks_y, chunks_query, lookup_outputs, and circuit_flags_bits are: {}, {}, {}, {}, {}", chunks_x.len(), chunks_y.len(), chunks_query.len(), lookup_outputs.len(), circuit_flags_bits.len());
 
+        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
+        // will be the exact witness vector to feed into the R1CS
+        // after pre-pending IO and appending the AUX 
         let inputs: Vec<Vec<F>> = vec![
             bytecode_a, // prog_a_rw,
             bytecode_v, // prog_v_rw (with circuit_flags_packed)
-            memreg_a_rw, // memreg_a_rw,
+            memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
-            chunks_x,
-            chunks_y,
+            chunks_x.clone(),
+            chunks_y.clone(),
             chunks_query,
-            lookup_outputs,
-            circuit_flags_bits,
+            lookup_outputs.clone(),
+            circuit_flags_bits.clone(),
         ];
 
-        let mut jolt_commitments_spartan =  vec![
-            // skip 1 (it is timestamp), and move rd (3) to the end
+        // Assemble the commitments
+        let bytecode_comms =  vec![
             jolt_commitments.bytecode.read_write_commitments[0].to_spartan_bn256(), // a
             jolt_commitments.bytecode.read_write_commitments[2].to_spartan_bn256(), // opcode, 
             jolt_commitments.bytecode.read_write_commitments[4].to_spartan_bn256(), // rs1
@@ -501,18 +486,42 @@ where
             jolt_commitments.bytecode.read_write_commitments[6].to_spartan_bn256(), // imm
         ];
 
+        let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators).to_spartan_bn256()];
+
         let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.iter().map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>(); 
 
-        let lookup_comms = jolt_commitments.instruction_lookups.dim_read_commitment.iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
+        // commmit to chunks_x and chunks_y
+        let commit_to_chunks = |data: Vec<F>| -> Vec<Vec<bn256::G1Affine>> {
+            data.chunks(PADDED_TRACE_LEN).map(|chunk| {
+                HyraxCommitment::commit(&DensePolynomial::new(chunk.to_vec()), &hyrax_generators).to_spartan_bn256()
+            }).collect()
+        };
+        
+        // lookup chunks 
+        let chunks_x_comms = commit_to_chunks(chunks_x);
+        let chunks_y_comms = commit_to_chunks(chunks_y);
+        let lookup_outputs_comms = commit_to_chunks(lookup_outputs);
+        let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment.iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
 
+        let mut lookup_comms = Vec::new();
+            lookup_comms.extend(chunks_x_comms);
+            lookup_comms.extend(chunks_y_comms);
+            lookup_comms.extend(dim_read_comms);
+            lookup_comms.extend(lookup_outputs_comms);
+
+        let circuit_flags_comm = commit_to_chunks(circuit_flags_bits);
+
+        let mut jolt_commitments_spartan = vec![]; 
+        jolt_commitments_spartan.extend(bytecode_comms);
+        jolt_commitments_spartan.extend(packed_flags_comm);
         jolt_commitments_spartan.extend(memory_comms);
         jolt_commitments_spartan.extend(lookup_comms);
+        jolt_commitments_spartan.extend(circuit_flags_comm);
 
         R1CSProof::prove(
             32, C, PADDED_TRACE_LEN, 
             inputs, 
             preprocessing.spartan_generators, 
-            jolt_polynomials,
             &jolt_commitments_spartan, 
         ).expect("R1CS proof failed")
     }
