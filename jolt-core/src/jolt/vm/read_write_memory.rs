@@ -496,11 +496,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         };
 
         [
-            to_f_vec(&un_remap_address(&a_read_write)),
+            // to_f_vec(&un_remap_address(&a_read_write)),
+            to_f_vec(&a_read_write),
             to_f_vec(&v_read),
             to_f_vec(&v_write),
             to_f_vec(&t_read),
         ]
+    }
+
+    pub fn get_polys_r1cs(&self) -> Vec<Vec<F>> {
+        let a_polys = self.a_read_write.iter().map(|poly| poly.evals());
+        let v_polys = self.v_read.iter().chain(self.v_write.iter()).map(|poly| poly.evals());
+        a_polys.chain(v_polys).collect()
     }
 
     /// Computes the maximum number of group generators needed to commit to read-write
