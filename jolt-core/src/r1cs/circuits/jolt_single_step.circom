@@ -194,11 +194,12 @@ template JoltStep() {
     signal _load_store_addr <== rs1_val + immediate_signed;
     signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
-    memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
+    // memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
+    // (is_load_instr + is_store_instr) * (load_store_addr - memreg_a_rw[3] * 4 + RAM_START_ADDRESS()) === 0;
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts are index 3
-        (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
+        // (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
     }
 
     /* As "loads" are memory reads, we ensure that memreg_v_reads[3..] === memreg_v_writes[3..]
