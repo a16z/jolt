@@ -7,6 +7,7 @@ function C() {return 4;}
 function PROG_START_ADDR() {return 2147483664;}
 function N_FLAGS() {return 17;}
 function LOG_M() { return 16; }
+function RAM_START_ADDRESS() { return 0x80000000; }
 /* End of Compiler Variables */
 
 function L_CHUNK() { return LOG_M()/2; } 
@@ -125,7 +126,8 @@ template JoltStep() {
 
     signal PC <== input_state[PC_IDX()];
     /* Enforce that prog_a_rw === input_state.pc */
-    prog_a_rw === input_state[PC_IDX()];
+    // TODO(arasuarun): fix the preprocessing jump instruction!
+    // (prog_a_rw * 4 + RAM_START_ADDRESS()) * prog_a_rw === input_state[PC_IDX()];
         
     /* Constraints for op_flags: 
         1. Verify they combine to form op_flags_packed

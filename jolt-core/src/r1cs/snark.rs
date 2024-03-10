@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use common::{path::JoltPaths, field_conversion::{ark_to_spartan_vec, ark_to_spartan_vecs, ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
+use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, ark_to_spartan_vec, ark_to_spartan_vecs, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}, path::JoltPaths};
 use spartan2::{
   errors::SpartanError, 
   provider::{
@@ -115,7 +115,13 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(spartan_to_ark_unsafe).collect()).collect();
 
-      step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
+      let program_counter = if i > 0 && inputs_chunked[0][i][0] == F::from(0) {
+        F::from(0)
+      } else {
+          inputs_chunked[0][i][0] * F::from(4u64) + F::from(RAM_START_ADDRESS)
+      };
+      
+      step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(program_counter)]);
 
       let input_map: HashMap<String, Vec<ark_bn254::Fr>> = variable_names
         .iter()
@@ -245,10 +251,6 @@ impl R1CSProof {
       // bytecode polynomials 
       let bytecode_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.bytecode.get_polys_r1cs().clone());
 
-      // bytecode commitments 
-      // let bytecode_comms: Vec<G1> = (jolt_commitments.bytecode.read_write_commitments[0]).to_spartan_bn256();
-
-
       /**************************************************************/
 
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
@@ -262,14 +264,12 @@ impl R1CSProof {
 
       // Obtain w_segments
       let mut w_segments = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
-      w_segments[5..10].clone_from_slice(&bytecode_polys[1..6]);
-
+      w_segments[4..10].clone_from_slice(&bytecode_polys[0..6]); // including both bytecode a, v
 
       // Commit to segments
       let mut comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
-      // comm_w_vec[5] = jolt_commitments[1].clone().into(); // opcode  
-      for i in 0..5 {
-        comm_w_vec[5 + i] = jolt_commitments[1 + i].clone().into();
+      for i in 0..6 {
+        comm_w_vec[4 + i] = jolt_commitments[i].clone().into();
       }
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
