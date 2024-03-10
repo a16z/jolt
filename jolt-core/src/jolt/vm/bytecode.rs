@@ -1,5 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use halo2curves::group::Curve;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
@@ -450,6 +451,12 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     // - t_final, v_init_final
     pub init_final_commitments: ConcatenatedPolynomialCommitment<G>,
 }
+
+// impl<G: CurveGroup> BytecodeCommitment<G> {
+//     pub fn get_polys_r1cs(&self) -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+//         self.read_write_commitments
+//     } 
+// }
 
 impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
 where
