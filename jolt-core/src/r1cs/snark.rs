@@ -14,7 +14,7 @@ use spartan2::{
 use bellpepper_core::{
   Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
 };
-use crate::jolt::vm::JoltPolynomials;
+use crate::jolt::vm::{JoltCommitments, JoltPolynomials};
 use ff::PrimeField;
 use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
@@ -227,6 +227,7 @@ impl R1CSProof {
       inputs: Vec<Vec<ArkF>>, 
       generators: Vec<bn256::Affine>,
       jolt_polynomials: &JoltPolynomials<ArkF, ArkG>,
+      jolt_commitments: &Vec<Vec<bn256::Affine>>,
   ) -> Result<Self, SpartanError> {
       type G1 = SpartanG1;
       type EE = SpartanHyraxEE<SpartanG1>;
@@ -243,6 +244,9 @@ impl R1CSProof {
 
       // bytecode polynomials 
       let bytecode_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.bytecode.get_polys_r1cs().clone());
+
+      // bytecode commitments 
+      // let bytecode_comms: Vec<G1> = (jolt_commitments.bytecode.read_write_commitments[0]).to_spartan_bn256();
 
 
       /**************************************************************/
@@ -262,7 +266,11 @@ impl R1CSProof {
 
 
       // Commit to segments
-      let comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
+      let mut comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
+      // comm_w_vec[5] = jolt_commitments[1].clone().into(); // opcode  
+      for i in 0..5 {
+        comm_w_vec[5 + i] = jolt_commitments[1 + i].clone().into();
+      }
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
 

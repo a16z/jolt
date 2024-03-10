@@ -357,7 +357,7 @@ where
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
-        _jolt_commitments: &JoltCommitments<G>,
+        jolt_commitments: &JoltCommitments<G>,
         transcript: &mut Transcript,
     ) -> R1CSProof {
         let N_FLAGS = 17;
@@ -480,11 +480,26 @@ where
             circuit_flags_padded,
         ];
 
+        let mut jolt_commitments_spartan =  vec![
+            // skip 1 (it is timestamp), and move rd (3) to the end
+            jolt_commitments.bytecode.read_write_commitments[0].to_spartan_bn256(), // a
+            jolt_commitments.bytecode.read_write_commitments[2].to_spartan_bn256(), // opcode, 
+            jolt_commitments.bytecode.read_write_commitments[4].to_spartan_bn256(), // rs1
+            jolt_commitments.bytecode.read_write_commitments[5].to_spartan_bn256(), // rs2
+            jolt_commitments.bytecode.read_write_commitments[3].to_spartan_bn256(), // rd
+            jolt_commitments.bytecode.read_write_commitments[6].to_spartan_bn256(), // imm
+        ];
+
+        let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.iter().map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>(); 
+
+        jolt_commitments_spartan.extend(memory_comms);
+
         R1CSProof::prove(
             32, C, PADDED_TRACE_LEN, 
             inputs, 
             preprocessing.spartan_generators, 
             jolt_polynomials,
+            &jolt_commitments_spartan, 
         ).expect("R1CS proof failed")
     }
 

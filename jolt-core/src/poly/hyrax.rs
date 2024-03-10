@@ -8,6 +8,8 @@ use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::*;
 use ark_std::{One, Zero};
+use common::field_conversion::IntoSpartan;
+use halo2curves::bn256;
 use merlin::Transcript;
 use num_integer::Roots;
 use rayon::prelude::*;
@@ -82,6 +84,23 @@ impl<const RATIO: usize, G: CurveGroup> AppendToTranscript<G> for HyraxCommitmen
             transcript.append_point(b"poly_commitment_share", &self.row_commitments[i]);
         }
         transcript.append_message(label, b"poly_commitment_end");
+    }
+}
+
+impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> where G::Affine: IntoSpartan {
+    pub fn to_spartan(&self) -> Vec<<G::Affine as IntoSpartan>::SpartanAffine> {
+        self.row_commitments.iter().map(|g1: &G| {
+            let g1_affine: G::Affine = (*g1).into();
+            g1_affine.to_spartan()
+        }).collect()
+    }
+
+
+    pub fn to_spartan_bn256(&self) -> Vec<bn256::G1Affine> {
+        self.row_commitments.iter().map(|g1: &G| {
+            let g1_affine: G::Affine = (*g1).into();
+            g1_affine.to_spartan_bn256()
+        }).collect::<Vec<bn256::G1Affine>>()
     }
 }
 
