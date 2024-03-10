@@ -269,7 +269,7 @@ impl R1CSProof {
       w_segments[4..10].clone_from_slice(&bytecode_polys[0..6]); // including both bytecode a, v
       // w_segments[10] is circuit_flags_packed
       w_segments[11..14].clone_from_slice(&memreg_polys[0..3]); // memreg_a_rw[0,2,3] out of 7
-      // w_segments[14..18].clone_from_slice(&memreg_polys[3..7]); // remaining addresses 
+      w_segments[14..18].clone_from_slice(&memreg_polys[3..7]); // remaining addresses 
       w_segments[18..32].clone_from_slice(&memreg_polys[7..21]); // all values 
 
       // Commit to segments
