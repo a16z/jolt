@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 
-use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, ark_to_spartan_vec, ark_to_spartan_vecs, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}, path::JoltPaths};
+use common::{constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS}, field_conversion::{ark_to_spartan_unsafe, ark_to_spartan_vec, ark_to_spartan_vecs, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}, path::JoltPaths};
 use spartan2::{
   errors::SpartanError, 
   provider::{
       bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
-      hyrax_pc::{HyraxEvaluationEngine as SpartanHyraxEE, HyraxCommitmentKey},
+      hyrax_pc::{HyraxCommitment as SpartanHyraxCommitment, HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
   }, 
   spartan::upsnark::R1CSSNARK, traits::{
     commitment::CommitmentEngineTrait, snark::RelaxedR1CSSNARKTrait, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}, Group
   }, VerifierKey, SNARK
 };
+use crate::poly::hyrax::HyraxCommitment;
 use bellpepper_core::{
   Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
 };
@@ -233,13 +234,12 @@ pub struct R1CSProof  {
 
 impl R1CSProof {
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-  pub fn prove<ArkF: ark_ff::PrimeField, ArkG: ark_ec::CurveGroup<ScalarField = ArkF>>(
+  pub fn prove<ArkF: ark_ff::PrimeField> (
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
-      inputs: Vec<Vec<ArkF>>, 
+      inputs_ark: Vec<Vec<ArkF>>, 
       generators: Vec<bn256::Affine>,
-      jolt_polynomials: &JoltPolynomials<ArkF, ArkG>,
       jolt_commitments: &Vec<Vec<bn256::Affine>>,
   ) -> Result<Self, SpartanError> {
       type G1 = SpartanG1;
@@ -249,22 +249,13 @@ impl R1CSProof {
 
       let NUM_STEPS = TRACE_LEN;
 
-      // All conversions *********************************************/
       let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
       let _enter = span.enter();
+      let inputs= ark_to_spartan_vecs(inputs_ark);
+      drop(_enter);
+      drop(span);
 
-      let inputs_ff = ark_to_spartan_vecs(inputs);
-
-      // bytecode polynomials 
-      let bytecode_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.bytecode.get_polys_r1cs().clone());
-
-      let memreg_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.read_write_memory.get_polys_r1cs());
-
-      let lookup_polys: Vec<Vec<F>> = ark_to_spartan_vecs(jolt_polynomials.instruction_lookups.dim.iter().map(|poly| poly.evals()).collect());
-
-      /**************************************************************/
-
-      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
+      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs[0][0], inputs.clone());
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
@@ -273,36 +264,37 @@ impl R1CSProof {
           ck: spartan2::provider::pedersen::from_gens_bn256(generators)
       };
 
-      // Obtain w_segments
-      let mut w_segments = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
-      w_segments[4..10].clone_from_slice(&bytecode_polys[0..6]); // including both bytecode a, v
-      // w_segments[10] is circuit_flags_packed
-      w_segments[11..14].clone_from_slice(&memreg_polys[0..3]); // memreg_a_rw[0,2,3] out of 7
-      w_segments[14..18].clone_from_slice(&memreg_polys[3..7]); // remaining addresses 
-      w_segments[18..32].clone_from_slice(&memreg_polys[7..21]); // all values 
-      // 2 * C are for chunks_x and chunks_y
-      w_segments[40..44].clone_from_slice(&lookup_polys[0..4]); // lookup query (dim)
+      // Assemble w_segments 
+
+      // TODO(arasuarun): this will be replaced with a handwritten circuit that assigns IO and Aux directly 
+      let w_segments_from_circuit = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
+
+      let io_segments = w_segments_from_circuit[0..4].to_vec();
+      let inputs_segments: Vec<Vec<F>> = inputs.into_iter().flat_map(|input| {
+        input.chunks(TRACE_LEN).map(|chunk| chunk.to_vec()).collect::<Vec<_>>()
+      }).collect();
+      let aux_segments = w_segments_from_circuit[4+inputs_segments.len()..].to_vec();
+
+      let w_segments = io_segments.clone().into_iter()
+        .chain(inputs_segments.iter().cloned())
+        .chain(aux_segments.clone().into_iter())
+        .collect::<Vec<_>>(); 
 
       // Commit to segments
-      let mut comm_w_vec = precommit_with_ck::<G1, S, F>(&hyrax_ck, w_segments.clone()).unwrap();
-      for i in 0..6 {
-        comm_w_vec[4 + i] = jolt_commitments[i].clone().into();
-      }
-      // comm_w_vec[10] is circuit_flags_packed
-      for i in 0..3 {
-        comm_w_vec[11+i] = jolt_commitments[6+i].clone().into(); // register addresses 
-      }
-      for i in 0..4 {
-        comm_w_vec[14+i] = jolt_commitments[9+i].clone().into(); // RAM addresses 
-      }
-      for i in 0..14 {
-        comm_w_vec[18+i] = jolt_commitments[13+i].clone().into(); // all memory v 
-      }
+      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<_> {
+        segments.into_iter().map(|segment| {
+          <G1 as Group>::CE::commit(&hyrax_ck, &segment) 
+        }).collect()
+    };
+      
+      let io_comms = commit_segments(io_segments);
+      let input_comms = jolt_commitments; 
+      let aux_comms = commit_segments(aux_segments);
 
-      // C many chunks_x and chunks_y
-      for i in 0..4 {
-        comm_w_vec[40+i] = jolt_commitments[27+i].clone().into(); // lookup query (dim)
-      }
+      let comm_w_vec = io_comms.into_iter()
+      .chain(input_comms.iter().map(|comm| SpartanHyraxCommitment::from(comm.clone())))
+      .chain(aux_comms.into_iter())
+      .collect::<Vec<_>>();
 
       let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
 
