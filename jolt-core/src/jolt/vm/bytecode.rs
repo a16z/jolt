@@ -349,7 +349,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         for (trace_index, trace) in trace.iter().take(num_ops).enumerate() {
             let address = trace.address * 4 + RAM_START_ADDRESS as usize;
             // debug_assert!(address < code_size);
-            a_read_write_usize[trace_index] = address;
+            a_read_write_usize[trace_index] = trace.address;
             let counter = final_cts[trace.address];
             read_cts[trace_index] = counter;
             final_cts[trace.address] = counter + 1;
