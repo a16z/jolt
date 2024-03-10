@@ -123,6 +123,7 @@ template JoltStep() {
 
     signal input op_flags[N_FLAGS()];
 
+    signal PC <== input_state[PC_IDX()];
     /* Enforce that prog_a_rw === input_state.pc */
     prog_a_rw === input_state[PC_IDX()];
         
@@ -169,7 +170,7 @@ template JoltStep() {
     rd === memreg_a_rw[2]; // the correctness of the write value will be handled later
 
     /******* Assigning operands x and y */
-    signal x <== if_else()([op_flags[0], rs1_val, prog_a_rw]); // TODO: change this for virtual instructions
+    signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
 
     signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
     signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
@@ -271,7 +272,7 @@ template JoltStep() {
     component rd_test_lookup = prodZeroTest(3);
     rd_test_lookup.in <== [rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]; 
     component rd_test_jump = prodZeroTest(3); 
-    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
+    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (PC + 4))]; 
 
     // TODO: LUI - add another flag for lui (again)
     // is_lui * (rd_val - immediate) === 0;
