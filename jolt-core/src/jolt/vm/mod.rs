@@ -361,15 +361,11 @@ where
         transcript: &mut Transcript,
     ) -> R1CSProof {
         let N_FLAGS = 17;
+        let C_var = 4;
         let TRACE_LEN = trace.len();
-
-
-        
+        let PADDED_TRACE_LEN = TRACE_LEN.next_power_of_two();
 
         let log_M = log2(M) as usize;
-
-        let [mut prog_a_rw, mut prog_v_rw, _] =
-            BytecodePolynomials::<F, G>::r1cs_polys_from_bytecode(bytecode_rows, trace);
 
         // Add circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
         let span = tracing::span!(tracing::Level::INFO, "pack_flags");
@@ -377,7 +373,8 @@ where
         let precomputed_powers: Vec<F> = (0..N_FLAGS)
             .map(|i| F::from_u64(2u64.pow(i as u32)).unwrap())
             .collect();
-        let packed_flags: Vec<F> = circuit_flags
+        
+        let mut packed_flags: Vec<F> = circuit_flags
             .par_chunks(N_FLAGS)
             .map(|x| {
                 x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
@@ -385,116 +382,112 @@ where
                 })
             })
             .collect();
-        prog_v_rw.extend(packed_flags);
+        packed_flags.extend(vec![F::zero(); PADDED_TRACE_LEN - packed_flags.len()]);
         drop(_enter);
         drop(span);
 
-        /* Transformation for single-step version */
-        let span = tracing::span!(tracing::Level::INFO, "transform_to_single_step");
-        let _enter = span.enter();
-        let prog_v_components: Vec<&[F]> = prog_v_rw.chunks(TRACE_LEN).collect::<Vec<_>>();
-        let mut new_prog_v_rw = Vec::with_capacity(prog_v_rw.len());
-        for i in 0..TRACE_LEN {
-            for component in &prog_v_components {
-                if let Some(value) = component.get(i) {
-                    new_prog_v_rw.push(value.clone());
-                }
-            }
-        }
-        drop(_enter);
-        drop(span);
-
-        prog_v_rw = new_prog_v_rw;
         /* End of transformation for single-step version */
-
-        let [mut memreg_a_rw, mut memreg_v_reads, mut memreg_v_writes, _] =
-            ReadWriteMemory::<F, G>::get_r1cs_polys(bytecode, memory_trace, transcript);
 
         let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
         let _guard = span.enter();
-        let (mut chunks_x, mut chunks_y): (Vec<F>, Vec<F>) = instructions
-            .iter()
-            .flat_map(|op| {
-                let [chunks_x, chunks_y] = op.operand_chunks(C, log_M);
-                chunks_x.into_iter().zip(chunks_y.into_iter())
-            })
-            .map(|(x, y)| {
-                (
-                    F::from_u64(x as u64).unwrap(),
-                    F::from_u64(y as u64).unwrap(),
-                )
-            })
-            .unzip();
+        
+        let mut chunks_x_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); C];
+        let mut chunks_y_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); C];
 
-        let mut chunks_query = instructions
-            .par_iter()
-            .flat_map(|op| op.to_indices(C, log_M))
-            .map(|x| x as u64)
-            .map(F::from)
-            .collect::<Vec<F>>();
+        for (i, op) in instructions.iter().enumerate() {
+            let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
+            for (j, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
+                chunks_x_vecs[j].push(F::from_u64(x as u64).unwrap());
+                chunks_y_vecs[j].push(F::from_u64(y as u64).unwrap());
+            }
+        }
+
+        for vec in chunks_x_vecs.iter_mut() {
+            vec.resize(PADDED_TRACE_LEN, F::zero());
+        }
+
+        for vec in chunks_y_vecs.iter_mut() {
+            vec.resize(PADDED_TRACE_LEN, F::zero());
+        }
+
+        let mut chunks_x = Vec::with_capacity(PADDED_TRACE_LEN * C);
+        for vec in chunks_x_vecs {
+            chunks_x.append(&mut vec.clone());
+        }
+
+        let mut chunks_y = Vec::with_capacity(PADDED_TRACE_LEN * C);
+        for vec in chunks_y_vecs {
+            chunks_y.append(&mut vec.clone());
+        }
+
         drop(_guard);
         drop(span);
 
         let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
+        lookup_outputs.extend(vec![F::zero(); PADDED_TRACE_LEN - lookup_outputs.len()]);
 
-        // assert lengths
-        assert_eq!(prog_a_rw.len(), TRACE_LEN);
-        assert_eq!(prog_v_rw.len(), TRACE_LEN * 6);
-        assert_eq!(memreg_a_rw.len(), TRACE_LEN * 7);
-        assert_eq!(memreg_v_reads.len(), TRACE_LEN * 7);
-        assert_eq!(memreg_v_writes.len(), TRACE_LEN * 7);
-        assert_eq!(chunks_x.len(), TRACE_LEN * C);
-        assert_eq!(chunks_y.len(), TRACE_LEN * C);
-        assert_eq!(chunks_query.len(), TRACE_LEN * C);
-        assert_eq!(lookup_outputs.len(), TRACE_LEN);
-        assert_eq!(circuit_flags.len(), TRACE_LEN * N_FLAGS);
+        // let mut circuit_flags_bits = vec![F::zero(); PADDED_TRACE_LEN * N_FLAGS];
+        // for (i, chunk) in circuit_flags.chunks(N_FLAGS).enumerate() {
+        //     for (j, &flag) in chunk.iter().enumerate() {
+        //         let index = j * PADDED_TRACE_LEN + i;
+        //         if index >= circuit_flags_bits.len() {
+        //             circuit_flags_bits.push(flag);
+        //         } else {
+        //             circuit_flags_bits[index] = flag;
+        //         }
+        //     }
+        // }
 
-        // let padded_trace_len = next power of 2 from trace_eln
-        let PADDED_TRACE_LEN = TRACE_LEN.next_power_of_two();
+        let mut circuit_flags_bits_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); N_FLAGS];
 
-        // pad each of the above vectors to be of length PADDED_TRACE_LEN * their multiple
-        prog_a_rw.resize(PADDED_TRACE_LEN, Default::default());
-        prog_v_rw.resize(PADDED_TRACE_LEN * 6, Default::default());
-        memreg_a_rw.resize(PADDED_TRACE_LEN * 7, Default::default());
-        memreg_v_reads.resize(PADDED_TRACE_LEN * 7, Default::default());
-        memreg_v_writes.resize(PADDED_TRACE_LEN * 7, Default::default());
-        chunks_x.resize(PADDED_TRACE_LEN * C, Default::default());
-        chunks_y.resize(PADDED_TRACE_LEN * C, Default::default());
-        chunks_query.resize(PADDED_TRACE_LEN * C, Default::default());
-        lookup_outputs.resize(PADDED_TRACE_LEN, Default::default());
+        for (i, chunk) in circuit_flags.chunks(N_FLAGS).enumerate() {
+            for (j, &flag) in chunk.iter().enumerate() {
+                circuit_flags_bits_vecs[j].push(flag);
+            }
+        }
 
-        let mut circuit_flags_padded = circuit_flags.clone();
-        circuit_flags_padded.extend(vec![
-            F::zero();
-            PADDED_TRACE_LEN * N_FLAGS - circuit_flags.len()
-        ]);
-        // circuit_flags.resize(PADDED_TRACE_LEN * N_FLAGS, Default::default());
+        for vec in circuit_flags_bits_vecs.iter_mut() {
+            while vec.len() < PADDED_TRACE_LEN {
+                vec.push(F::zero());
+            }
+        }
 
-        // // Assemble the polynomials
-        // let bytecode_polys =  ark_to_spartan_vecs(jolt_polynomials.bytecode.get_polys_r1cs().clone()); 
-        // let bytecode_a = bytecode_polys[0..1];
-        // let bytecode_v = bytecode_polys[1..5];
-        // let packed_flags = packed_flags;
+        let mut circuit_flags_bits = Vec::with_capacity(PADDED_TRACE_LEN * N_FLAGS);
+        for vec in circuit_flags_bits_vecs {
+            circuit_flags_bits.append(&mut vec.clone());
+        }
 
-        // let memory_polys =  ark_to_spartan_vecs(jolt_polynomials.read_write_memory.get_polys_r1cs().clone());
-        // let memreg_a = memory_polys[0..7];
-        // let memreg_v_read = memory_polys[7..14];
-        // let memreg_v_write = memory_polys[14..21];
+        // Assemble the polynomials
+        let mut bytecode_polys = jolt_polynomials.bytecode.get_polys_r1cs(); 
+        let bytecode_a: Vec<F> = bytecode_polys.drain(..1).into_iter().flatten().collect();
+        let mut bytecode_v: Vec<F> = bytecode_polys.drain(..5).into_iter().flatten().collect();
+        bytecode_v.extend(packed_flags); 
 
-        // let chunks_x = chunks_x; 
-        // let chunks_y = chunks_y;
+        let mut memory_polys = jolt_polynomials.read_write_memory.get_polys_r1cs();
+        let memreg_a_rw: Vec<F> = memory_polys.drain(..7).into_iter().flatten().collect();
+        let memreg_v_reads: Vec<F> = memory_polys.drain(..7).into_iter().flatten().collect();
+        let memreg_v_writes: Vec<F> = memory_polys.drain(..7).flatten().collect();
+        println!("length of memreg_a_rw and memreg_v_reads are: {} and {}", memreg_a_rw.len(), memreg_v_writes.len());
 
-        let inputs = vec![
-            prog_a_rw,
-            prog_v_rw,
-            memreg_a_rw,
+        let mut lookup_polys: Vec<Vec<F>> = jolt_polynomials.instruction_lookups.dim.iter().map(|poly| poly.evals()).collect();
+        let chunks_x = chunks_x; 
+        let chunks_y = chunks_y;
+        let chunks_query: Vec<F> = lookup_polys.drain(..C).into_iter().flatten().collect();
+        let lookup_outputs = lookup_outputs;
+        let circuit_flags_bits = circuit_flags_bits; 
+        println!("length of chunks_x, chunks_y, chunks_query, lookup_outputs, and circuit_flags_bits are: {}, {}, {}, {}, {}", chunks_x.len(), chunks_y.len(), chunks_query.len(), lookup_outputs.len(), circuit_flags_bits.len());
+
+        let inputs: Vec<Vec<F>> = vec![
+            bytecode_a, // prog_a_rw,
+            bytecode_v, // prog_v_rw (with circuit_flags_packed)
+            memreg_a_rw, // memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
             chunks_x,
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags_padded,
+            circuit_flags_bits,
         ];
 
         let mut jolt_commitments_spartan =  vec![
