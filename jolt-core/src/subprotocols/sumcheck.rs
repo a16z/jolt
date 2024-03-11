@@ -311,6 +311,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let len = params.poly_As[0].len() / 2;
             let eq = &params.poly_eq;
             
+            let _span = trace_span!("eval_loop");
+            let _enter = _span.enter();
             let evals = (0..len).into_par_iter()
                 .map(|low_index| {
                     let high_index = low_index + len;
@@ -351,6 +353,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                     || (F::zero(), F::zero(), F::zero()),
                     |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
                 );
+            drop(_enter);
+            drop(_span);
 
             let evals = [
                 evals.0,
@@ -597,7 +601,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             } else if flag_eval.0.is_one() {
                 eval_0 += eq_eval.0 * leaf_low
             } else {
-                // eq_eval.0 * flag_eval.0 * leaf_low + eq_eval.0 - eq_eval.0 * flag_eval.0
                 eval_0 += eq_eval.0 * (flag_eval.0 * leaf_low + (F::one() - flag_eval.0))
             };
 
@@ -683,6 +686,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             drop(_eq_enter);
             drop(eq_span);
 
+            let _span = trace_span!("eval_loop");
+            let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = params.poly_Bs.par_iter().enumerate().flat_map(|(memory_index, memory_flag_poly)| {
                 let (flags_low, flags_high) = memory_flag_poly.split_evals(len);
                 let (read_low, read_high) = params.poly_As[2 * memory_index].split_evals(len);
@@ -695,6 +700,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                 [read_evals, write_evals]
             }).collect();
+            drop(_enter);
+            drop(_span);
 
             let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
@@ -718,32 +725,22 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             );
             r.push(r_j);
 
-            // bound all tables to the verifier's challenege
-            let bound_span = trace_span!("apply_bound_poly_var_top");
-            let _bound_enter = bound_span.enter();
-            
-            let poly_As_span = trace_span!("apply_bound_poly_As");
+            let poly_As_span = trace_span!("Bind leaves");
             let _poly_As_enter = poly_As_span.enter();
             params.poly_As.par_iter_mut()
                 .for_each(|poly| poly.bound_poly_var_top(&r_j));
             drop(_poly_As_enter);
             drop(poly_As_span);
             
-            let poly_eq_span = trace_span!("apply_bound_poly_eq");
-            let _poly_eq_enter = poly_eq_span.enter();
-            params.poly_eq.bound_poly_var_top(&r_j);
-            drop(_poly_eq_enter);
-            drop(poly_eq_span);
+            let poly_other_span = trace_span!("Bind EQ and flags");
+            let _poly_other_enter = poly_other_span.enter();
+            rayon::join(
+                || params.poly_eq.bound_poly_var_top(&r_j),
+                || params.poly_Bs.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j))
+            );
+            drop(_poly_other_enter);
+            drop(poly_other_span);
             
-            let poly_Bs_span = trace_span!("apply_bound_poly_Bs");
-            let _poly_Bs_enter = poly_Bs_span.enter();
-            params.poly_Bs.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j));
-            drop(_poly_Bs_enter);
-            drop(poly_Bs_span);
-            
-            drop(_bound_enter);
-            drop(bound_span);
-
             e = poly.evaluate(&r_j);
             cubic_polys.push(poly.compress());
         }
