@@ -172,33 +172,28 @@ impl<F: PrimeField> FiveTuplePoly<F> {
     #[tracing::instrument(skip_all, name = "FiveTuplePoly::from_elf")]
     fn from_elf(elf: &Vec<ELFRow>) -> Self {
         let len = elf.len().next_power_of_two();
-        let mut opcodes = Vec::with_capacity(len);
-        let mut rds = Vec::with_capacity(len);
-        let mut rs1s = Vec::with_capacity(len);
-        let mut rs2s = Vec::with_capacity(len);
-        let mut imms = Vec::with_capacity(len);
+        let mut opcodes = vec![0u64; len];
+        let mut rds = vec![0u64; len];
+        let mut rs1s = vec![0u64; len];
+        let mut rs2s = vec![0u64; len];
+        let mut imms = vec![0u64; len];
 
-        for row in elf {
-            opcodes.push(F::from_u64(row.opcode).unwrap());
-            rds.push(F::from_u64(row.rd).unwrap());
-            rs1s.push(F::from_u64(row.rs1).unwrap());
-            rs2s.push(F::from_u64(row.rs2).unwrap());
-            imms.push(F::from_u64(row.imm).unwrap());
-        }
-        // Padding
-        for _ in elf.len()..len {
-            opcodes.push(F::zero());
-            rds.push(F::zero());
-            rs1s.push(F::zero());
-            rs2s.push(F::zero());
-            imms.push(F::zero());
-        }
+        elf.iter().enumerate().for_each(|(index, row)| {
+            opcodes[index] = row.opcode;
+            rds[index] = row.rd;
+            rs1s[index] = row.rs1;
+            rs2s[index] = row.rs2;
+            imms[index] = row.imm;
+        });
 
-        let opcode = DensePolynomial::new(opcodes);
-        let rd = DensePolynomial::new(rds);
-        let rs1 = DensePolynomial::new(rs1s);
-        let rs2 = DensePolynomial::new(rs2s);
-        let imm = DensePolynomial::new(imms);
+        let (opcode, rd, rs1, rs2, imm) = common::par_join_5!(
+            || DensePolynomial::from_u64(&opcodes),
+            || DensePolynomial::from_u64(&rds),
+            || DensePolynomial::from_u64(&rs1s),
+            || DensePolynomial::from_u64(&rs2s),
+            || DensePolynomial::from_u64(&imms)
+        );
+
         FiveTuplePoly {
             opcode,
             rd,
@@ -304,12 +299,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             final_cts[address] = counter + 1;
         }
 
-        let v_read_write = FiveTuplePoly::from_elf(&trace);
-        let v_init_final = FiveTuplePoly::from_elf(&bytecode);
-
-        let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
-        let t_read = DensePolynomial::from_usize(&read_cts);
-        let t_final = DensePolynomial::from_usize(&final_cts);
+        let (v_read_write, v_init_final, a_read_write, t_read, t_final) = common::par_join_5!(
+            || FiveTuplePoly::from_elf(&trace),
+            || FiveTuplePoly::from_elf(&bytecode),
+            || DensePolynomial::from_usize(&a_read_write_usize),
+            || DensePolynomial::from_usize(&read_cts),
+            || DensePolynomial::from_usize(&final_cts)
+        );
 
         Self {
             _group: PhantomData,

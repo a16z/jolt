@@ -195,3 +195,4 @@ pub mod constants;
 pub mod field_conversion;
 pub mod path;
 pub mod serializable;
+pub mod parallel;
