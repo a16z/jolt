@@ -14,13 +14,6 @@ use merlin::Transcript;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
-#[cfg(not(feature = "ark-msm"))]
-use crate::msm::VariableBaseMSM;
-
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum CubicSumcheckType {
     // eq * A * B
@@ -306,6 +299,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     where
         G: CurveGroup<ScalarField = F>,
     {
+        assert_eq!(params.poly_As.len(), params.poly_Bs.len());
+        assert_eq!(params.poly_As.len(), coeffs.len());
+        
         let mut params = params;
 
         let mut e = *claim;
@@ -315,78 +311,51 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         for _j in 0..params.num_rounds {
             let len = params.poly_As[0].len() / 2;
             let eq = &params.poly_eq;
-            let eq_evals: Vec<(F, F, F)> = (0..len)
-                .into_par_iter()
-                .map(|i| {
-                    let low = i;
-                    let high = len + i;
+            
+            let evals = (0..len).into_par_iter()
+                .map(|low_index| {
+                    let high_index = low_index + len;
 
-                    let eval_point_0 = eq[low];
-                    let m_eq = eq[high] - eq[low];
-                    let eval_point_2 = eq[high] + m_eq;
-                    let eval_point_3 = eval_point_2 + m_eq;
-                    (eval_point_0, eval_point_2, eval_point_3)
+                    let eq_evals = { 
+                        let eval_point_0 = eq[low_index];
+                        let m_eq = eq[high_index] - eq[low_index];
+                        let eval_point_2 = eq[high_index] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    };
+
+                    let mut evals = (F::zero(), F::zero(), F::zero());
+
+                    for (coeff, poly_A, poly_B) in multizip((coeffs, &params.poly_As, &params.poly_Bs)) {
+                        let m_a = poly_A[high_index] - poly_A[low_index];
+                        let m_b = poly_B[high_index] - poly_B[low_index];
+
+                        let point_2_A = poly_A[high_index] + m_a;
+                        let point_3_A = point_2_A + m_a;
+
+                        let point_2_B = poly_B[high_index] + m_b;
+                        let point_3_B = point_2_B + m_b;
+
+                        evals.0 += *coeff * poly_A[low_index] * poly_B[low_index];
+                        evals.1 += *coeff * point_2_A * point_2_B;
+                        evals.2 += *coeff * point_3_A * point_3_B;
+                    }
+
+                    evals.0 *= eq_evals.0;
+                    evals.1 *= eq_evals.1;
+                    evals.2 *= eq_evals.2;
+                    evals
                 })
-                .collect();
-
-            // TODO(sragss): OPTIMIZATION IDEAS
-            // - Optimize for 1s! 
-            // - Compute 'r' bindings from 'm_a' / 'm_b
-
-            let _span = trace_span!("eval_loop");
-            let _enter = _span.enter();
-            let evals: Vec<(F, F, F)> = (0..params.poly_As.len()).into_par_iter()
-                .map(|batch_index| {
-                    let poly_A = &params.poly_As[batch_index];
-                    let poly_B = &params.poly_Bs[batch_index];
-                    let len = poly_A.len() / 2;
-
-                    // In the case of a flagged tree, the majority of the leaves will be 1s, optimize for this case.
-                    let (eval_point_0, eval_point_2, eval_point_3) = (0..len).into_par_iter()
-                        .map(|mle_index| {
-                            let low = mle_index;
-                            let high = len + mle_index;
-
-                            let m_a = poly_A[high] - poly_A[low];
-                            let m_b = poly_B[high] - poly_B[low];
-
-                            let point_2_A = poly_A[high] + m_a;
-                            let point_3_A = point_2_A + m_a;
-
-                            let point_2_B = poly_B[high] + m_b;
-                            let point_3_B = point_2_B + m_b;
-
-                            let eval_point_0 = eq_evals[low].0 * poly_A[low] * poly_B[low];
-                            let eval_point_2 = eq_evals[low].1 * point_2_A * point_2_B;
-                            let eval_point_3 = eq_evals[low].2 * point_3_A * point_3_B;
-
-                            (eval_point_0, eval_point_2, eval_point_3)
-                        })
-                        // For parallel
-                        .reduce(
-                            || (F::zero(), F::zero(), F::zero()),
-                            |(sum_0, sum_2, sum_3), (a, b, c)| (sum_0 + a, sum_2 + b, sum_3 + c),
-                        );
-
-                    (eval_point_0, eval_point_2, eval_point_3)
-                })
-                .collect();
-            drop(_enter);
-            drop(_span);
-
-            let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0 * coeffs[i]).sum();
-            let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1 * coeffs[i]).sum();
-            let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2 * coeffs[i]).sum();
-
-            // h/t https://abrams.cc/rust-dropping-things-in-another-thread
-            std::thread::spawn(move || drop(eq_evals));
-            std::thread::spawn(move || drop(evals));
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
 
             let evals = [
-                evals_combined_0,
-                e - evals_combined_0,
-                evals_combined_2,
-                evals_combined_3,
+                evals.0,
+                e - evals.0,
+                evals.1,
+                evals.2,
             ];
             let poly = UniPoly::from_evals(&evals);
 
@@ -404,7 +373,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = trace_span!("binding");
             let _enter = _span.enter();
 
-            let mut poly_iter = params.poly_As.par_iter_mut()
+            let poly_iter = params.poly_As.par_iter_mut()
                 .chain(params.poly_Bs.par_iter_mut());
 
             rayon::join(
