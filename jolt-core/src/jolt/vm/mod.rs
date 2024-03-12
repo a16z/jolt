@@ -5,8 +5,7 @@ use circom_scotia::r1cs;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
-use std::any::TypeId;
-use strum::{EnumCount, IntoEnumIterator};
+use strum::IntoEnumIterator;
 
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::pedersen::PedersenGenerators;
@@ -15,8 +14,7 @@ use crate::r1cs::snark::R1CSProof;
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     jolt::{
-        instruction::{JoltInstruction, Opcode},
-        subtable::LassoSubtable,
+        instruction::JoltInstruction, subtable::JoltSubtableSet,
         vm::timestamp_range_check::TimestampValidityProof,
     },
     lasso::memory_checking::NoPreprocessing,
@@ -34,6 +32,8 @@ use self::{
     instruction_lookups::InstructionPolynomials,
 };
 
+use super::instruction::JoltInstructionSet;
+
 #[derive(Clone)]
 pub struct JoltPreprocessing<F, G>
 where
@@ -48,8 +48,8 @@ pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subta
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
 {
     bytecode: BytecodeProof<F, G>,
     read_write_memory: ReadWriteMemoryProof<F, G>,
@@ -77,8 +77,8 @@ pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize
 where
     G::Affine: IntoSpartan,
 {
-    type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
-    type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
+    type InstructionSet: JoltInstructionSet;
+    type Subtables: JoltSubtableSet<F>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(

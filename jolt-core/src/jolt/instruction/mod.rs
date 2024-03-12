@@ -4,6 +4,7 @@ use fixedbitset::*;
 use rand::prelude::StdRng;
 use std::marker::Sync;
 use std::ops::Range;
+use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::instruction_utils::chunk_operand;
@@ -65,6 +66,10 @@ pub trait JoltInstruction: Sync + Clone + Debug {
         assert_eq!(offset, vals.len());
         slices
     }
+}
+
+pub trait JoltInstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount {
+    // Marker trait
 }
 
 pub trait Opcode {
