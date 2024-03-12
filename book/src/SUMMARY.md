@@ -11,6 +11,7 @@
     - [Sumcheck](./background/sumcheck.md)
     - [Multilinear Extensions](./background/multilinear-extensions.md)
     - [Eq Extension](./background/eq-polynomial.md)
+    - [Batched Polynomial Openings](./background/batched-openings.md)
 - [Dev](./dev/README.md)
     - [Install](./dev/install.md)
     - [Tools](./dev/tools.md)
