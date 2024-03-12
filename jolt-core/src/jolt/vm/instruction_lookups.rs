@@ -414,7 +414,7 @@ where
 }
 
 impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
-    MemoryCheckingProver<F, G, InstructionPolynomials<F, G>, InstructionLookupsPreprocessing<F>>
+    MemoryCheckingProver<F, G, InstructionPolynomials<F, G>>
     for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
@@ -422,6 +422,7 @@ where
     InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
     Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
 {
+    type Preprocessing = InstructionLookupsPreprocessing<F>;
     type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
     type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
 
@@ -679,7 +680,7 @@ where
 }
 
 impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>, InstructionLookupsPreprocessing<F>>
+    MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>>
     for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
@@ -792,6 +793,7 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
     {
         let materialized_subtables = Self::materialize_subtables::<M, Subtables>();
 
+        // Build a mapping from subtable type => chunk indices that access that subtable type
         let mut subtable_indices: Vec<SubtableIndices> =
             vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
         for instruction in InstructionSet::iter() {
