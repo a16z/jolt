@@ -6,7 +6,7 @@
     - [Lookups](./how/lookups.md)
     - [Memory Checking](./how/memory-checking.md)
     - [GKR](./how/gkr.md)
-    - [Jolt](./jolt.md)
+    - [Jolt](./how/jolt.md)
 - [Background](./background.md)
     - [Sumcheck](./background/sumcheck.md)
     - [Multilinear Extensions](./background/multilinear-extensions.md)
