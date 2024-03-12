@@ -290,8 +290,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, RangeCheckPolynomials<F, G>, NoPreprocessing>
-    for TimestampValidityProof<F, G>
+impl<F, G> MemoryCheckingProver<F, G, RangeCheckPolynomials<F, G>> for TimestampValidityProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -485,7 +484,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, RangeCheckPolynomials<F, G>, NoPreprocessing>
+impl<F, G> MemoryCheckingVerifier<F, G, RangeCheckPolynomials<F, G>>
     for TimestampValidityProof<F, G>
 where
     F: PrimeField,

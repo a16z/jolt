@@ -487,7 +487,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     pub fn num_generators(max_memory_address: usize, max_trace_length: usize) -> usize {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
-        
+
         // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
         let t_read_write_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION)
             .next_power_of_two()
@@ -791,8 +791,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, ReadWriteMemory<F, G>, NoPreprocessing>
-    for ReadWriteMemoryProof<F, G>
+impl<F, G> MemoryCheckingProver<F, G, ReadWriteMemory<F, G>> for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -926,8 +925,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, ReadWriteMemory<F, G>, NoPreprocessing>
-    for ReadWriteMemoryProof<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, ReadWriteMemory<F, G>> for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

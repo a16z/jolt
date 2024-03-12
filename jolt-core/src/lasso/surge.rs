@@ -314,14 +314,14 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize>
-    MemoryCheckingProver<F, G, SurgePolys<F, G>, SurgePreprocessing<F, Instruction, C, M>>
+impl<F, G, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
     for SurgeProof<F, G, Instruction, C, M>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
+    type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
     type ReadWriteOpenings = SurgeReadWriteOpenings<F>;
     type InitFinalOpenings = SurgeFinalOpenings<F, Instruction, C, M>;
 
@@ -408,8 +408,7 @@ where
 }
 
 impl<F, G, Instruction, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, SurgePolys<F, G>, SurgePreprocessing<F, Instruction, C, M>>
-    for SurgeProof<F, G, Instruction, C, M>
+    MemoryCheckingVerifier<F, G, SurgePolys<F, G>> for SurgeProof<F, G, Instruction, C, M>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

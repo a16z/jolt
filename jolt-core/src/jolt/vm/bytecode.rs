@@ -501,8 +501,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, BytecodePolynomials<F, G>, NoPreprocessing>
-    for BytecodeProof<F, G>
+impl<F, G> MemoryCheckingProver<F, G, BytecodePolynomials<F, G>> for BytecodeProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -624,8 +623,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, BytecodePolynomials<F, G>, NoPreprocessing>
-    for BytecodeProof<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, BytecodePolynomials<F, G>> for BytecodeProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
