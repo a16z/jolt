@@ -13,15 +13,15 @@ use crate::jolt::instruction::{
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
     or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
     slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction, Opcode,
-    SubtableIndices,
+    sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction,
+    JoltInstructionSet, Opcode, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
     gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-    or::OrSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable,
-    sra_sign::SraSignSubtable, srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable,
-    xor::XorSubtable, LassoSubtable, SubtableId,
+    or::OrSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable, sra_sign::SraSignSubtable,
+    srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable,
+    JoltSubtableSet, LassoSubtable, SubtableId,
 };
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
@@ -34,6 +34,7 @@ macro_rules! instruction_set {
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl Opcode for $enum_name {}
+        impl JoltInstructionSet for $enum_name {}
         impl $enum_name {
             pub fn random_instruction(rng: &mut StdRng) -> Self {
                 let index = rng.next_u64() as usize % $enum_name::COUNT;
@@ -76,6 +77,7 @@ macro_rules! subtable_enum {
             unsafe { *<*const _>::from(&self).cast::<usize>() }
           }
         }
+        impl<F: PrimeField> JoltSubtableSet<F> for $enum_name<F> {}
     };
 }
 

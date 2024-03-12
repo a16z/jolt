@@ -4,9 +4,11 @@ use fixedbitset::*;
 use rand::prelude::StdRng;
 use std::marker::Sync;
 use std::ops::Range;
+use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::subtable::LassoSubtable;
 use crate::utils::instruction_utils::chunk_operand;
+use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;
 
 #[enum_dispatch]
@@ -65,6 +67,12 @@ pub trait JoltInstruction: Sync + Clone + Debug {
         assert_eq!(offset, vals.len());
         slices
     }
+}
+
+pub trait JoltInstructionSet:
+    JoltInstruction + Opcode + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction>
+{
+    // Marker trait
 }
 
 pub trait Opcode {

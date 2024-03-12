@@ -2,7 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::NUM_R1CS_POLYS;
-use itertools::{interleave, max, Itertools};
+use itertools::{interleave, Itertools};
 use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
@@ -10,7 +10,8 @@ use std::marker::PhantomData;
 use strum::{EnumCount, IntoEnumIterator};
 use tracing::trace_span;
 
-use crate::jolt::instruction::SubtableIndices;
+use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
+use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::{MultisetHashes, NoPreprocessing};
 use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
@@ -336,7 +337,7 @@ where
 pub struct InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
-    Subtables: LassoSubtable<F> + IntoEnumIterator,
+    Subtables: JoltSubtableSet<F>,
 {
     _subtables: PhantomData<Subtables>,
     /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
@@ -352,7 +353,7 @@ impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Subtables: LassoSubtable<F> + IntoEnumIterator,
+    Subtables: JoltSubtableSet<F>,
 {
     type Preprocessing = InstructionLookupsPreprocessing<F>;
 
@@ -425,8 +426,8 @@ impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
 {
     type Preprocessing = InstructionLookupsPreprocessing<F>;
     type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
@@ -691,8 +692,8 @@ impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
 {
     fn read_tuples(
         preprocessing: &InstructionLookupsPreprocessing<F>,
@@ -756,8 +757,8 @@ pub struct InstructionLookupsProof<const C: usize, const M: usize, F, G, Instruc
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Subtables: LassoSubtable<F> + IntoEnumIterator,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+    Subtables: JoltSubtableSet<F>,
+    InstructionSet: JoltInstructionSet,
 {
     _instructions: PhantomData<InstructionSet>,
     /// "Primary" sumcheck, i.e. proving \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x))
@@ -794,8 +795,8 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
     pub fn preprocess<const C: usize, const M: usize, InstructionSet, Subtables>() -> Self
     where
-        InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-        Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+        InstructionSet: JoltInstructionSet,
+        Subtables: JoltSubtableSet<F>,
     {
         let materialized_subtables = Self::materialize_subtables::<M, Subtables>();
 
@@ -852,7 +853,7 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
     #[tracing::instrument(skip_all)]
     fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<F>>
     where
-        Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount,
+        Subtables: JoltSubtableSet<F>,
     {
         let mut subtables = Vec::with_capacity(Subtables::COUNT);
         for subtable in Subtables::iter() {
@@ -867,8 +868,8 @@ impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
 {
     const NUM_SUBTABLES: usize = Subtables::COUNT;
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;

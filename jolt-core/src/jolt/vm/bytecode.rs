@@ -5,7 +5,7 @@ use rand::rngs::StdRng;
 use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate::jolt::instruction::{JoltInstruction, Opcode};
+use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet, Opcode};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
@@ -91,7 +91,7 @@ impl BytecodeRow {
 
     pub fn bitflags<InstructionSet>(instruction: &ELFInstruction) -> u64
     where
-        InstructionSet: JoltInstruction + Opcode + for<'a> TryFrom<&'a ELFInstruction>,
+        InstructionSet: JoltInstructionSet,
     {
         let mut bitvector = 0;
         for flag in instruction.to_circuit_flags() {
@@ -110,7 +110,7 @@ impl BytecodeRow {
 
     pub fn from_instruction<InstructionSet>(instruction: &ELFInstruction) -> Self
     where
-        InstructionSet: JoltInstruction + Opcode + for<'a> TryFrom<&'a ELFInstruction>,
+        InstructionSet: JoltInstructionSet,
     {
         Self {
             address: instruction.address as usize,
