@@ -137,7 +137,7 @@ where
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
         circuit_flags: Vec<F>,
-        preprocessing: JoltPreprocessing<F, G>,
+        preprocessing: &JoltPreprocessing<F, G>,
     ) -> (
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<G>,
@@ -207,7 +207,7 @@ where
     }
 
     fn verify(
-        preprocessing: JoltPreprocessing<F, G>,
+        preprocessing: &JoltPreprocessing<F, G>,
         proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {

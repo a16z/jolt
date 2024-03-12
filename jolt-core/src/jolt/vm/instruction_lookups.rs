@@ -78,7 +78,7 @@ where
 
     /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
     /// construction of the memory flag polynomials in `read_write_grand_product`.
-    instruction_flag_bitvectors: Vec<Vec<u64>>,
+    instruction_flag_bitvectors: Vec<Vec<u8>>,
 }
 
 /// Batched version of InstructionPolynomials.
@@ -1082,8 +1082,8 @@ where
             })
             .collect();
 
-        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
-            vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
+        let mut instruction_flag_bitvectors: Vec<Vec<u8>> =
+            vec![vec![0u8; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
             let opcode_index = op.to_opcode() as usize;
             instruction_flag_bitvectors[opcode_index][j] = 1;
@@ -1091,7 +1091,7 @@ where
 
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
             .par_iter()
-            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
+            .map(|flag_bitvector| DensePolynomial::from_u8(flag_bitvector))
             .collect();
 
         InstructionPolynomials {
@@ -1420,13 +1420,13 @@ where
     #[tracing::instrument(skip_all)]
     fn memory_flag_polys(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        instruction_flag_bitvectors: &Vec<Vec<u64>>,
+        instruction_flag_bitvectors: &Vec<Vec<u8>>,
     ) -> Vec<DensePolynomial<F>> {
         let m = instruction_flag_bitvectors[0].len();
         let memory_flag_polys = (0..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
-                let mut memory_flag_bitvector = vec![0u64; m];
+                let mut memory_flag_bitvector = vec![0u8; m];
                 for instruction_index in 0..Self::NUM_INSTRUCTIONS {
                     if preprocessing.instruction_to_memory_indices[instruction_index]
                         .contains(&memory_index)
@@ -1439,7 +1439,7 @@ where
                             });
                     }
                 }
-                DensePolynomial::from_u64(&memory_flag_bitvector)
+                DensePolynomial::from_u8(&memory_flag_bitvector)
             })
             .collect();
         memory_flag_polys

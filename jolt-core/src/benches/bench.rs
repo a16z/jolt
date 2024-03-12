@@ -268,9 +268,9 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
                 memory_trace,
                 instructions_r1cs,
                 circuit_flags,
-                preprocessing.clone(),
+                &preprocessing,
             );
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let verification_result = RV32IJoltVM::verify(&preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -342,10 +342,10 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
                 memory_trace,
                 instructions_r1cs,
                 circuit_flags,
-                preprocessing.clone(),
+                &preprocessing,
             );
 
-        assert!(RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments).is_ok());
+        assert!(RV32IJoltVM::verify(&preprocessing, jolt_proof, jolt_commitments).is_ok());
     };
     tasks.push((
         tracing::info_span!("FibonacciR1CS"),

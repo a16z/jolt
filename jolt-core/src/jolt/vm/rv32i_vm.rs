@@ -329,9 +329,9 @@ mod tests {
             memory_trace,
             instructions_r1cs,
             circuit_flags,
-            preprocessing.clone(),
+            &preprocessing,
         );
-        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
+        let verification_result = RV32IJoltVM::verify(&preprocessing, proof, commitments);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -457,10 +457,10 @@ mod tests {
                 memory_trace,
                 instructions_r1cs,
                 circuit_flags,
-                preprocessing.clone(),
+                &preprocessing,
             );
 
-        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        let verification_result = RV32IJoltVM::verify(&preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

@@ -262,6 +262,15 @@ impl<F: PrimeField> DensePolynomial<F> {
                 .collect::<Vec<F>>(),
         )
     }
+
+    #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
+    pub fn from_u8(Z: &[u8]) -> Self {
+        DensePolynomial::new(
+            (0..Z.len())
+                .map(|i| F::from_u64(Z[i] as u64).unwrap())
+                .collect::<Vec<F>>(),
+        )
+    }
 }
 
 impl<F> Index<usize> for DensePolynomial<F> {
