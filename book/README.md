@@ -1,5 +1,6 @@
 # Jolt Book
-The Jolt Book runs on [mdBook](https://rust-lang.github.io/mdBook/). Serve locally with `mdbook serve`.
+The Jolt Book runs on [mdBook](https://rust-lang.github.io/mdBook/). Serve locally with `cd book && mdbook serve`.
 
 ## Deps
-Latex is rendered at compile time with [mdbook-katex](https://github.com/lzanini/mdbook-katex). Install: `cargo install mdbook-katex`
+- `cargo install mdbook`
+- `cargo install mdbook-katex`: Latex is rendered at compile time with [mdbook-katex](https://github.com/lzanini/mdbook-katex).
