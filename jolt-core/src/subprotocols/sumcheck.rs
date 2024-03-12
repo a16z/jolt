@@ -31,9 +31,6 @@ pub struct CubicSumcheckParams<F: PrimeField> {
     poly_As: Vec<DensePolynomial<F>>,
     poly_Bs: Vec<DensePolynomial<F>>,
 
-    // TODO(JOLT-41): Consider swapping to iterator references for `poly_As` / `poly_Bs`
-    a_to_b: Vec<usize>,
-
     poly_eq: DensePolynomial<F>,
 
     pub num_rounds: usize,
@@ -52,12 +49,9 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
         debug_assert_eq!(poly_lefts[0].len(), poly_rights[0].len());
         debug_assert_eq!(poly_lefts[0].len(), poly_eq.len());
 
-        let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
-
         CubicSumcheckParams {
             poly_As: poly_lefts,
             poly_Bs: poly_rights,
-            a_to_b,
             poly_eq,
             num_rounds,
             sumcheck_type: CubicSumcheckType::Prod,
@@ -74,33 +68,27 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
         debug_assert_eq!(poly_lefts[0].len(), poly_rights[0].len());
         debug_assert_eq!(poly_lefts[0].len(), poly_eq.len());
 
-        let a_to_b = (0..poly_lefts.len()).map(|i| i).collect();
-
         CubicSumcheckParams {
             poly_As: poly_lefts,
             poly_Bs: poly_rights,
-            a_to_b,
             poly_eq,
             num_rounds,
             sumcheck_type: CubicSumcheckType::ProdOnes,
         }
     }
-    /// flag_map: poly_leaves length vector mapping between poly_leaves indices and flag indices.
+
     pub fn new_flags(
         poly_leaves: Vec<DensePolynomial<F>>,
         poly_flags: Vec<DensePolynomial<F>>,
         poly_eq: DensePolynomial<F>,
-        flag_map: Vec<usize>,
         num_rounds: usize,
     ) -> Self {
-        debug_assert_eq!(poly_leaves.len(), flag_map.len());
         debug_assert_eq!(poly_leaves[0].len(), poly_flags[0].len());
         debug_assert_eq!(poly_leaves[0].len(), poly_eq.len());
 
         CubicSumcheckParams {
             poly_As: poly_leaves,
             poly_Bs: poly_flags,
-            a_to_b: flag_map,
             poly_eq,
             num_rounds,
             sumcheck_type: CubicSumcheckType::Flags,
@@ -149,8 +137,8 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
             .map(|i| self.poly_As[i][0])
             .collect();
 
-        let poly_B_final: Vec<F> = (0..self.poly_As.len())
-            .map(|i| self.poly_Bs[self.a_to_b[i]][0])
+        let poly_B_final: Vec<F> = (0..self.poly_Bs.len())
+            .map(|i| self.poly_Bs[i][0])
             .collect();
 
         let poly_eq_final = self.poly_eq[0];
@@ -580,11 +568,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
 
-    #[tracing::instrument(skip_all, name = "SumcheckInstanceProof::compute_cubic_evals")]
-    fn compute_cubic_evals(flags_low: &[F], flags_high: &[F], leaves_low: &[F], leaves_high: &[F],  eq_evals: &Vec<(F, F, F)>) -> (F, F, F) {
-        let mut eval_0 = F::zero();
-        let mut eval_2 = F::zero();
-        let mut eval_3 = F::zero();
+    #[tracing::instrument(skip_all, name = "SumcheckInstanceProof::compute_cubic_evals_flags")]
+    fn compute_cubic_evals_flags(flags: &DensePolynomial<F>, leaves: &DensePolynomial<F>, eq_evals: &Vec<(F, F, F)>, len: usize) -> (F, F, F) {
+        let (flags_low, flags_high) = flags.split_evals(len);
+        let (leaves_low, leaves_high) = leaves.split_evals(len);
+
+        let mut evals = (F::zero(), F::zero(), F::zero());
         for (&flag_low, &flag_high, &leaf_low, &leaf_high, eq_eval) in multizip((flags_low, flags_high, leaves_low, leaves_high, eq_evals)) {
             let m_eq: F = flag_high - flag_low;
             let (flag_eval_point_2, flag_eval_point_3) = if m_eq.is_zero() {
@@ -598,40 +587,40 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let flag_eval = (flag_low, flag_eval_point_2, flag_eval_point_3);
 
             if flag_eval.0.is_zero() {
-                eval_0 += eq_eval.0
+                evals.0 += eq_eval.0
             } else if flag_eval.0.is_one() {
-                eval_0 += eq_eval.0 * leaf_low
+                evals.0 += eq_eval.0 * leaf_low
             } else {
-                eval_0 += eq_eval.0 * (flag_eval.0 * leaf_low + (F::one() - flag_eval.0))
+                evals.0 += eq_eval.0 * (flag_eval.0 * leaf_low + (F::one() - flag_eval.0))
             };
 
             let opt_poly_2_res: Option<(F, F)> = if flag_eval.1.is_zero() {
-                eval_2 += eq_eval.1;
+                evals.1 += eq_eval.1;
                 None
             } else if flag_eval.1.is_one() {
                 let poly_m = leaf_high - leaf_low;
                 let poly_2 = leaf_high + poly_m;
-                eval_2 += eq_eval.1 * poly_2;
+                evals.1 += eq_eval.1 * poly_2;
                 Some((poly_2, poly_m))
             } else {
                 let poly_m = leaf_high - leaf_low;
                 let poly_2 = leaf_high + poly_m;
-                eval_2 += eq_eval.1 * (flag_eval.1 * poly_2 + (F::one() - flag_eval.1));
+                evals.1 += eq_eval.1 * (flag_eval.1 * poly_2 + (F::one() - flag_eval.1));
                 Some((poly_2, poly_m))
             };
 
             if let Some((poly_2, poly_m)) = opt_poly_2_res {
                 if flag_eval.2.is_zero() {
-                    eval_3 += eq_eval.2; // TODO(sragss): Path may never happen
+                    evals.2 += eq_eval.2; // TODO(sragss): Path may never happen
                 } else if flag_eval.2.is_one() {
                     let poly_3 = poly_2 + poly_m;
-                    eval_3 += eq_eval.2 * poly_3;
+                    evals.2 += eq_eval.2 * poly_3;
                 } else {
                     let poly_3 = poly_2 + poly_m;
-                    eval_3 += eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2));
+                    evals.2 += eq_eval.2 * (flag_eval.2 * poly_3 + (F::one() - flag_eval.2));
                 }
             } else {
-                eval_3 += eq_eval.2;
+                evals.2 += eq_eval.2;
             };
 
             // Above is just a more complicated form of the following, optimizing for 0 / 1 flags.
@@ -643,7 +632,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             // let eval_2 += params.combine(&poly_2, &flag_eval.1, &eq_eval.1);
             // let eval_3 += params.combine(&poly_3, &flag_eval.2, &eq_eval.2);
         }
-        (eval_0, eval_2, eval_3)
+        evals
     }
 
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched_special_fork_flags")]
@@ -690,13 +679,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = trace_span!("eval_loop");
             let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = params.poly_Bs.par_iter().enumerate().flat_map(|(memory_index, memory_flag_poly)| {
-                let (flags_low, flags_high) = memory_flag_poly.split_evals(len);
-                let (read_low, read_high) = params.poly_As[2 * memory_index].split_evals(len);
-                let (write_low, write_high) = params.poly_As[2 * memory_index + 1].split_evals(len);
+                let read_leaves = &params.poly_As[2 * memory_index];
+                let write_leaves = &params.poly_As[2 * memory_index + 1];
 
                 let (read_evals, write_evals) = rayon::join(
-                    || Self::compute_cubic_evals(flags_low, flags_high, read_low, read_high, &eq_evals),
-                    || Self::compute_cubic_evals(flags_low, flags_high, write_low, write_high, &eq_evals),
+                    || Self::compute_cubic_evals_flags(memory_flag_poly, read_leaves, &eq_evals, len),
+                    || Self::compute_cubic_evals_flags(memory_flag_poly, write_leaves, &eq_evals, len),
                 );
 
                 [read_evals, write_evals]
@@ -746,7 +734,18 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             cubic_polys.push(poly.compress());
         }
 
-        let claims_prod = params.get_final_evals();
+
+        let leaves_claims: Vec<F> = (0..params.poly_As.len())
+            .map(|i| params.poly_As[i][0])
+            .collect();
+
+        let flags_claims: Vec<F> = (0..params.poly_As.len())
+            .map(|i| params.poly_Bs[i / 2][0])
+            .collect();
+
+        let poly_eq_final = params.poly_eq[0];
+
+        let claims_prod = (leaves_claims, flags_claims, poly_eq_final);
 
         // h/t https://abrams.cc/rust-dropping-things-in-another-thread
         std::thread::spawn(move || drop(params));
@@ -1336,15 +1335,14 @@ mod test {
         let num_rounds = 2;
 
         let claim = Fr::from(4); // r points eq to the 1,1 eval
-        let coeffs = vec![Fr::one()];
+        let coeffs = vec![Fr::one(), Fr::zero()];
 
         let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
-            vec![factorial.clone()],
+            vec![factorial.clone(),factorial.clone()],
             vec![flags.clone()],
             eq.clone(),
-            vec![0],
             num_rounds,
         );
 
@@ -1400,15 +1398,14 @@ mod test {
             claim += eq_eval * (flag_eval * h_eval + Fr::one() - flag_eval);
         }
 
-        let coeffs = vec![Fr::one()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
+        let coeffs = vec![Fr::one(), Fr::zero()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
 
         let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
-            vec![h.clone()],
+            vec![h.clone(), h.clone()],
             vec![flags.clone()],
             eq.clone(),
-            vec![0],
             num_rounds,
         );
 
@@ -1423,8 +1420,8 @@ mod test {
 
         // Prover eval: unwrap and combine
         let (leaf_eval, flag_eval, eq_eval) = prove_evals;
-        assert_eq!(leaf_eval.len(), 1);
-        assert_eq!(flag_eval.len(), 1);
+        assert_eq!(leaf_eval.len(), 2);
+        assert_eq!(flag_eval.len(), 2);
         let leaf_eval = leaf_eval[0];
         let flag_eval = flag_eval[0];
         let prove_fingerprint_eval = flag_eval * leaf_eval + Fr::one() - flag_eval;
