@@ -690,8 +690,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, ReadWriteMemory<F, G>, NoPreprocessing>
-    for ReadWriteMemoryProof<F, G>
+impl<F, G> MemoryCheckingProver<F, G, ReadWriteMemory<F, G>> for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -825,8 +824,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, ReadWriteMemory<F, G>, NoPreprocessing>
-    for ReadWriteMemoryProof<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, ReadWriteMemory<F, G>> for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
