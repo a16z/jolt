@@ -186,17 +186,15 @@ template JoltStep() {
     signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
 
     /* Verify all 4 (or 8) addresses involved. The starting should be rs1_val + immediate. 
-    TODO(arasuarun): simplify below
+    Verify that the following are equal for load/store instructions: 
+    * let immediate_signed = if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1])
+    * calculated memory address: rs1_val + immediate_signed 
+    * claimed memory address: memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET()
     */
-    signal is_load_store_instr <== is_load_instr + is_store_instr;
-    signal immediate_absolute <== if_else()([sign_imm_flag, immediate, ALL_ONES() - immediate + 1]);
-    signal sign_of_immediate <== 1-2*sign_imm_flag;
-    signal immediate_signed <== sign_of_immediate * immediate_absolute;
-    signal _load_store_addr <== rs1_val + immediate_signed;
-    signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
-    // memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
-    (is_load_instr + is_store_instr) * (load_store_addr - (memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET())) === 0;
+    signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
+    (is_load_instr + is_store_instr) * ((rs1_val + immediate_signed) - (memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET())) === 0;
+
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts are index 3
