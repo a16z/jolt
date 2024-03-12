@@ -24,7 +24,9 @@ pub type SubtableId = TypeId;
 pub trait JoltSubtableSet<F: PrimeField>:
     LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>
 {
-    // Marker trait
+    fn enum_index(subtable: Box<dyn LassoSubtable<F>>) -> usize {
+        Self::from(subtable.subtable_id()).into()
+    }
 }
 
 pub mod and;

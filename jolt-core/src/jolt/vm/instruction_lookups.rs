@@ -805,8 +805,7 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
             vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
         for instruction in InstructionSet::iter() {
             for (subtable, indices) in instruction.subtables::<F>(C, M) {
-                subtable_indices[Subtables::from(subtable.subtable_id()).into()]
-                    .union_with(&indices);
+                subtable_indices[Subtables::enum_index(subtable)].union_with(&indices);
             }
         }
 
@@ -828,7 +827,7 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
         for instruction in InstructionSet::iter() {
             for (subtable, dimension_indices) in instruction.subtables::<F>(C, M) {
                 let memory_indices: Vec<_> = subtable_to_memory_indices
-                    [Subtables::from(subtable.subtable_id()).into()]
+                    [Subtables::enum_index(subtable)]
                 .iter()
                 .filter(|memory_index| {
                     dimension_indices.contains(memory_to_dimension_index[**memory_index])
