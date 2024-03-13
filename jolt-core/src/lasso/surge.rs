@@ -231,7 +231,7 @@ where
     }
 }
 
-pub struct SurgeFinalOpenings<F, Instruction, const C: usize>
+pub struct SurgeFinalOpenings<F, Instruction, const C: usize, const M: usize>
 where
     F: PrimeField,
     Instruction: JoltInstruction + Default,
@@ -242,8 +242,8 @@ where
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
-impl<F, G, Instruction, const C: usize> StructuredOpeningProof<F, G, SurgePolys<F, G>>
-    for SurgeFinalOpenings<F, Instruction, C>
+impl<F, G, Instruction, const C: usize, const M: usize>
+    StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeFinalOpenings<F, Instruction, C, M>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -285,9 +285,9 @@ where
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
         self.v_init_final = Some(
             Instruction::default()
-                .subtables(C)
+                .subtables(C, M)
                 .iter()
-                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .map(|(subtable, _)| subtable.evaluate_mle(opening_point))
                 .collect(),
         );
     }
@@ -308,15 +308,16 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
-    for Surge<F, G, Instruction, C>
+impl<F, G, Instruction, const C: usize, const M: usize>
+    MemoryCheckingProver<F, G, SurgePolys<F, G>, SurgePreprocessing<F, Instruction, C, M>>
+    for SurgeProof<F, G, Instruction, C, M>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     type ReadWriteOpenings = SurgeReadWriteOpenings<F>;
-    type InitFinalOpenings = SurgeFinalOpenings<F, Instruction, C>;
+    type InitFinalOpenings = SurgeFinalOpenings<F, Instruction, C, M>;
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
@@ -325,18 +326,19 @@ where
 
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
     fn compute_leaves(
-        &self,
+        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         polynomials: &SurgePolys<F, G>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
+        let num_lookups = polynomials.dim[0].len();
 
         let read_write_leaves = (0..Self::num_memories())
             .into_par_iter()
             .flat_map_iter(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
-                let read_fingerprints: Vec<F> = (0..self.num_lookups)
+                let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
                         mul_0_1_optimized(&polynomials.read_cts[dim_index][i], &gamma_squared)
                             + mul_0_1_optimized(&polynomials.E_polys[memory_index][i], gamma)
@@ -362,11 +364,13 @@ where
                 let dim_index = Self::memory_to_dimension_index(memory_index);
                 let subtable_index = Self::memory_to_subtable_index(memory_index);
                 // TODO(moodlezoup): Only need one init polynomial per subtable
-                let init_fingerprints: Vec<F> = (0..self.M)
+                let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
                         // 0 * gamma^2 +
-                        mul_0_1_optimized(&self.materialized_subtables[subtable_index][i], gamma)
-                            + F::from_u64(i as u64).unwrap()
+                        mul_0_1_optimized(
+                            &preprocessing.materialized_subtables[subtable_index][i],
+                            gamma,
+                        ) + F::from_u64(i as u64).unwrap()
                             - *tau
                     })
                     .collect();
@@ -397,14 +401,18 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize> MemoryCheckingVerifier<F, G, SurgePolys<F, G>>
-    for Surge<F, G, Instruction, C>
+impl<F, G, Instruction, const C: usize, const M: usize>
+    MemoryCheckingVerifier<F, G, SurgePolys<F, G>, SurgePreprocessing<F, Instruction, C, M>>
+    for SurgeProof<F, G, Instruction, C, M>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
-    fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn read_tuples(
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
@@ -416,7 +424,10 @@ where
             })
             .collect()
     }
-    fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn write_tuples(
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         (0..Self::num_memories())
             .map(|memory_index| {
                 let dim_index = Self::memory_to_dimension_index(memory_index);
@@ -428,7 +439,10 @@ where
             })
             .collect()
     }
-    fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn init_tuples(
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
 
@@ -442,7 +456,10 @@ where
             })
             .collect()
     }
-    fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn final_tuples(
+        _preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
 
@@ -467,22 +484,16 @@ pub struct SurgePrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     opening_proof: BatchedPolynomialOpeningProof<G>,
 }
 
-pub struct Surge<F, G, Instruction, const C: usize>
+pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Instruction: JoltInstruction + Default + Sync,
+    Instruction: JoltInstruction + Default,
 {
-    _field: PhantomData<F>,
-    _group: PhantomData<G>,
     _instruction: PhantomData<Instruction>,
-    ops: Vec<Instruction>,
     materialized_subtables: Vec<Vec<F>>,
-    num_lookups: usize,
-    M: usize,
 }
 
-pub struct SurgeProof<F, G, Instruction, const C: usize>
+pub struct SurgeProof<F, G, Instruction, const C: usize, const M: usize>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -498,41 +509,42 @@ where
         G,
         SurgePolys<F, G>,
         SurgeReadWriteOpenings<F>,
-        SurgeFinalOpenings<F, Instruction, C>,
+        SurgeFinalOpenings<F, Instruction, C, M>,
     >,
 }
 
-impl<F, G, Instruction, const C: usize> Surge<F, G, Instruction, C>
+impl<F, Instruction, const C: usize, const M: usize> SurgePreprocessing<F, Instruction, C, M>
+where
+    F: PrimeField,
+    Instruction: JoltInstruction + Default + Sync,
+{
+    #[tracing::instrument(skip_all, name = "Surge::preprocess")]
+    pub fn preprocess() -> Self {
+        let instruction = Instruction::default();
+
+        let materialized_subtables = instruction
+            .subtables(C, M)
+            .par_iter()
+            .map(|(subtable, _)| subtable.materialize(M))
+            .collect();
+
+        Self {
+            _instruction: PhantomData,
+            materialized_subtables,
+        }
+    }
+}
+
+impl<F, G, Instruction, const C: usize, const M: usize> SurgeProof<F, G, Instruction, C, M>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
+    #[tracing::instrument(skip_all, name = "Surge::preprocess")]
+
     fn num_memories() -> usize {
-        C * Instruction::default().subtables::<F>(C).len()
-    }
-
-    #[tracing::instrument(skip_all, name = "Surge::new")]
-    // TODO(moodlezoup): we can turn M back into a const generic
-    pub fn new(ops: Vec<Instruction>, M: usize) -> Self {
-        let num_lookups = ops.len().next_power_of_two();
-        let instruction = Instruction::default();
-
-        let materialized_subtables = instruction
-            .subtables(C)
-            .par_iter()
-            .map(|subtable| subtable.materialize(M))
-            .collect();
-
-        Self {
-            _field: PhantomData,
-            _group: PhantomData,
-            _instruction: PhantomData,
-            ops,
-            materialized_subtables,
-            num_lookups,
-            M,
-        }
+        C * Instruction::default().subtables::<F>(C, M).len()
     }
 
     /// Maps an index [0, NUM_MEMORIES) -> [0, NUM_SUBTABLES)
@@ -551,7 +563,7 @@ where
 
     /// Computes the maximum number of group generators needed to commit to Surge polynomials
     /// using Hyrax, given `M` and the maximum number of lookups.
-    pub fn num_generators(M: usize, max_num_lookups: usize) -> usize {
+    pub fn num_generators(max_num_lookups: usize) -> usize {
         let dim_read_num_vars = (max_num_lookups * 2 * C).log_2();
         let final_num_vars = (M * C).log_2();
         let E_num_vars = (max_num_lookups * Self::num_memories()).log_2();
@@ -562,16 +574,22 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::prove")]
-    pub fn prove(&self, transcript: &mut Transcript) -> SurgeProof<F, G, Instruction, C> {
+    pub fn prove(
+        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        ops: Vec<Instruction>,
+        transcript: &mut Transcript,
+    ) -> Self {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
+        let num_lookups = ops.len().next_power_of_two();
+        let polynomials = Self::construct_polys(preprocessing, &ops);
+        let batched_polys: BatchedSurgePolynomials<F> = polynomials.batch();
         // TODO(sragss): Move upstream
-        let polynomials = self.construct_polys();
-        let batched_polys = polynomials.batch();
         let pedersen_generators =
-            PedersenGenerators::new(Self::num_generators(self.M, self.num_lookups), b"LassoV1");
+            PedersenGenerators::new(Self::num_generators(num_lookups), b"LassoV1");
         let commitment = SurgePolys::commit(&batched_polys, &pedersen_generators);
-        let num_rounds = self.num_lookups.log_2();
+
+        let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
 
         // TODO(sragss): Commit some of this stuff to transcript?
@@ -584,7 +602,7 @@ where
         );
         let eq: DensePolynomial<F> =
             DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
-        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq, self.M);
+        let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -597,7 +615,7 @@ where
         let combine_lookups_eq = |vals: &[F]| -> F {
             let vals_no_eq: &[F] = &vals[0..(vals.len() - 1)];
             let eq = vals[vals.len() - 1];
-            instruction.combine_lookups(vals_no_eq, C, self.M) * eq
+            instruction.combine_lookups(vals_no_eq, C, M) * eq
         };
 
         let (primary_sumcheck_proof, r_z, _) =
@@ -627,7 +645,12 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = self.prove_memory_checking(&polynomials, &batched_polys, transcript);
+        let memory_checking = SurgeProof::prove_memory_checking(
+            &preprocessing,
+            &polynomials,
+            &batched_polys,
+            transcript,
+        );
 
         SurgeProof {
             commitment,
@@ -637,9 +660,9 @@ where
     }
 
     pub fn verify(
-        proof: SurgeProof<F, G, Instruction, C>,
+        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        proof: SurgeProof<F, G, Instruction, C, M>,
         transcript: &mut Transcript,
-        M: usize,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
         let instruction = Instruction::default();
@@ -680,24 +703,33 @@ where
             transcript,
         )?;
 
-        Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)
+        Self::verify_memory_checking(
+            preprocessing,
+            proof.memory_checking,
+            &proof.commitment,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
-    fn construct_polys(&self) -> SurgePolys<F, G> {
-        let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; self.num_lookups]; C];
+    fn construct_polys(
+        preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        ops: &Vec<Instruction>,
+    ) -> SurgePolys<F, G> {
+        let num_lookups = ops.len().next_power_of_two();
+        let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];
 
-        let mut read_cts = vec![vec![0usize; self.num_lookups]; C];
-        let mut final_cts = vec![vec![0usize; self.M]; C];
-        let log_M = ark_std::log2(self.M) as usize;
+        let mut read_cts = vec![vec![0usize; num_lookups]; C];
+        let mut final_cts = vec![vec![0usize; M]; C];
+        let log_M = ark_std::log2(M) as usize;
 
-        for (op_index, op) in self.ops.iter().enumerate() {
+        for (op_index, op) in ops.iter().enumerate() {
             let access_sequence = op.to_indices(C, log_M);
             assert_eq!(access_sequence.len(), C);
 
             for dimension_index in 0..C {
                 let memory_address = access_sequence[dimension_index];
-                debug_assert!(memory_address < self.M);
+                debug_assert!(memory_address < M);
 
                 dim_usize[dimension_index][op_index] = memory_address;
 
@@ -712,7 +744,7 @@ where
         // in zeros for read_cts and final_cts as this implicitly specifies a read at address 0. The prover
         // and verifier plumbing assume write_ts(r) = read_ts(r) + 1. This will not hold unless we update
         // the final_cts for these phantom reads.
-        for fake_ops_index in self.ops.len()..self.num_lookups {
+        for fake_ops_index in ops.len()..num_lookups {
             for dimension_index in 0..C {
                 let memory_address = 0;
                 let ts = final_cts[dimension_index][memory_address];
@@ -738,13 +770,13 @@ where
         // Construct E
         let mut E_i_evals = Vec::with_capacity(Self::num_memories());
         for E_index in 0..Self::num_memories() {
-            let mut E_evals = Vec::with_capacity(self.num_lookups);
-            for op_index in 0..self.num_lookups {
+            let mut E_evals = Vec::with_capacity(num_lookups);
+            for op_index in 0..num_lookups {
                 let dimension_index = Self::memory_to_dimension_index(E_index);
                 let subtable_index = Self::memory_to_subtable_index(E_index);
 
                 let eval_index = dim_usize[dimension_index][op_index];
-                let eval = self.materialized_subtables[subtable_index][eval_index];
+                let eval = preprocessing.materialized_subtables[subtable_index][eval_index];
                 E_evals.push(eval);
             }
             E_i_evals.push(E_evals);
@@ -764,11 +796,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(
-        polys: &SurgePolys<F, G>,
-        eq: &DensePolynomial<F>,
-        M: usize,
-    ) -> F {
+    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, G>, eq: &DensePolynomial<F>) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -793,8 +821,8 @@ where
 mod tests {
     use merlin::Transcript;
 
-    use super::Surge;
-    use crate::jolt::instruction::xor::XORInstruction;
+    use super::SurgePreprocessing;
+    use crate::{jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof};
     use ark_curve25519::{EdwardsProjective, Fr};
 
     #[test]
@@ -809,12 +837,15 @@ mod tests {
         const M: usize = 1 << 8;
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C>>::new(ops, M);
-        let proof = surge.prove(&mut transcript);
+        let preprocessing = SurgePreprocessing::preprocess();
+        let proof = SurgeProof::<Fr, EdwardsProjective, XORInstruction, C, M>::prove(
+            &preprocessing,
+            ops,
+            &mut transcript,
+        );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript, M)
-            .expect("should work");
+        SurgeProof::verify(&preprocessing, proof, &mut transcript).expect("should work");
     }
 
     #[test]
@@ -830,11 +861,14 @@ mod tests {
         const M: usize = 1 << 8;
 
         let mut transcript = Transcript::new(b"test_transcript");
-        let surge = <Surge<Fr, EdwardsProjective, XORInstruction, C>>::new(ops, M);
-        let proof = surge.prove(&mut transcript);
+        let preprocessing = SurgePreprocessing::preprocess();
+        let proof = SurgeProof::<Fr, EdwardsProjective, XORInstruction, C, M>::prove(
+            &preprocessing,
+            ops,
+            &mut transcript,
+        );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        <Surge<Fr, EdwardsProjective, XORInstruction, C>>::verify(proof, &mut transcript, M)
-            .expect("should work");
+        SurgeProof::verify(&preprocessing, proof, &mut transcript).expect("should work");
     }
 }

@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -18,24 +18,24 @@ impl JoltInstruction for SLTInstruction {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
-        debug_assert!(vals.len() % C == 0);
-        let mut vals_by_subtable = vals.chunks_exact(C);
-
-        let gt_msb = vals_by_subtable.next().unwrap();
-        let eq_msb = vals_by_subtable.next().unwrap();
-        let ltu = vals_by_subtable.next().unwrap();
-        let eq = vals_by_subtable.next().unwrap();
-        let lt_abs = vals_by_subtable.next().unwrap();
-        let eq_abs = vals_by_subtable.next().unwrap();
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values(vals, C, M);
+        
+        let gt_msb = vals_by_subtable[0];
+        let eq_msb = vals_by_subtable[1];
+        let ltu = vals_by_subtable[2];
+        let eq = vals_by_subtable[3];
+        let lt_abs = vals_by_subtable[4];
+        let eq_abs = vals_by_subtable[5];
 
         // Accumulator for LTU(x_{<s}, y_{<s})
         let mut ltu_sum = lt_abs[0];
         // Accumulator for EQ(x_{<s}, y_{<s})
         let mut eq_prod = eq_abs[0];
-        for i in 1..C {
-            ltu_sum += ltu[i] * eq_prod;
-            eq_prod *= eq[i];
+
+        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
+            ltu_sum += *ltu_i * eq_prod;
+            eq_prod *= eq_i;
         }
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
@@ -46,14 +46,18 @@ impl JoltInstruction for SLTInstruction {
         C + 1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            Box::new(GtMSBSubtable::new()),
-            Box::new(EqMSBSubtable::new()),
-            Box::new(LtuSubtable::new()),
-            Box::new(EqSubtable::new()),
-            Box::new(LtAbsSubtable::new()),
-            Box::new(EqAbsSubtable::new()),
+            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
     }
 
@@ -78,7 +82,7 @@ mod test {
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
-    
+
     use super::SLTInstruction;
 
     #[test]

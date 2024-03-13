@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
@@ -22,8 +22,12 @@ impl JoltInstruction for ORInstruction {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
-        vec![Box::new(OrSubtable::new())]
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        vec![(Box::new(OrSubtable::new()), SubtableIndices::from(0..C))]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -67,7 +71,7 @@ mod test {
         let instructions = vec![
             ORInstruction(100, 0),
             ORInstruction(0, 100),
-            ORInstruction(1 , 0),
+            ORInstruction(1, 0),
             ORInstruction(0, u32_max),
             ORInstruction(u32_max, 0),
             ORInstruction(u32_max, u32_max),

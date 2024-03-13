@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
@@ -13,25 +13,21 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         assert!(C <= 10);
-        assert!(vals.len() == C * C);
-
-        let mut subtable_vals = vals.chunks_exact(C);
-        let mut vals_filtered: Vec<F> = Vec::with_capacity(C);
-        for i in 0..C {
-            let subtable_val = subtable_vals.next().unwrap();
-            vals_filtered.extend_from_slice(&subtable_val[i..i + 1]);
-        }
-
-        vals_filtered.iter().sum()
+        assert!(vals.len() == C);
+        vals.iter().sum()
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
@@ -46,7 +42,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         ];
         subtables.truncate(C);
         subtables.reverse();
-        subtables
+
+        let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
+        subtables.into_iter().zip(indices).collect()
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -92,7 +90,7 @@ mod test {
         let instructions = vec![
             SRLInstruction::<32>(100, 0),
             SRLInstruction::<32>(0, 100),
-            SRLInstruction::<32>(1 , 0),
+            SRLInstruction::<32>(1, 0),
             SRLInstruction::<32>(0, u32_max),
             SRLInstruction::<32>(u32_max, 0),
             SRLInstruction::<32>(u32_max, u32_max),

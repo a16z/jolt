@@ -14,12 +14,13 @@ use crate::jolt::instruction::{
     blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, or::ORInstruction,
     sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
     srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+    SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
     gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
     or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
-    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, LassoSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, LassoSubtable, SubtableId,
 };
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
@@ -58,8 +59,8 @@ macro_rules! subtable_enum {
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
         pub enum $enum_name<F: PrimeField> { $($alias($struct)),+ }
-        impl<F: PrimeField> From<TypeId> for $enum_name<F> {
-          fn from(subtable_id: TypeId) -> Self {
+        impl<F: PrimeField> From<SubtableId> for $enum_name<F> {
+          fn from(subtable_id: SubtableId) -> Self {
             $(
               if subtable_id == TypeId::of::<$struct>() {
                 $enum_name::from(<$struct>::new())
@@ -133,7 +134,7 @@ impl<F, G> Jolt<'_, F, G, C, M> for RV32IJoltVM
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    G::Affine: IntoSpartan
+    G::Affine: IntoSpartan,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
@@ -175,16 +176,18 @@ mod tests {
 
         let mut prover_transcript = Transcript::new(b"example");
 
-        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
+        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
 
         let (proof, _, commitment) =
             <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_instruction_lookups(
+                &preprocessing.instruction_lookups,
                 ops,
-                &generators,
+                &preprocessing.generators,
                 &mut prover_transcript,
             );
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(RV32IJoltVM::verify_instruction_lookups(
+            &preprocessing.instruction_lookups,
             proof,
             commitment,
             &mut verifier_transcript
@@ -195,9 +198,8 @@ mod tests {
     #[test]
     fn instruction_set_subtables() {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::InstructionSet::iter()
-        {
-            for subtable in instruction.subtables::<Fr>(C) {
+        for instruction in <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::InstructionSet::iter() {
+            for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
                 let _ = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::Subtables::from(
                     subtable.subtable_id(),
@@ -320,16 +322,16 @@ mod tests {
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
-        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
             bytecode,
             bytecode_trace,
             memory_trace,
             instructions_r1cs,
             circuit_flags,
-            generators,
+            preprocessing.clone(),
         );
-        let verification_result = RV32IJoltVM::verify(proof, commitments);
+        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",
@@ -447,7 +449,7 @@ mod tests {
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
 
-        let generators = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
                 bytecode,
@@ -455,10 +457,10 @@ mod tests {
                 memory_trace,
                 instructions_r1cs,
                 circuit_flags,
-                generators,
+                preprocessing.clone(),
             );
 
-        let verification_result = RV32IJoltVM::verify(jolt_proof, jolt_commitments);
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),
             "Verification failed with error: {:?}",

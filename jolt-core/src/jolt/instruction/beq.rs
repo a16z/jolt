@@ -3,7 +3,10 @@ use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::{
-    jolt::subtable::{eq::EqSubtable, LassoSubtable},
+    jolt::{
+        instruction::SubtableIndices,
+        subtable::{eq::EqSubtable, LassoSubtable},
+    },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -23,8 +26,12 @@ impl JoltInstruction for BEQInstruction {
         C
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
-        vec![Box::new(EqSubtable::new())]
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        vec![(Box::new(EqSubtable::new()), SubtableIndices::from(0..C))]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -69,7 +76,7 @@ mod test {
         let instructions = vec![
             BEQInstruction(100, 0),
             BEQInstruction(0, 100),
-            BEQInstruction(1 , 0),
+            BEQInstruction(1, 0),
             BEQInstruction(0, u32_max),
             BEQInstruction(u32_max, 0),
             BEQInstruction(u32_max, u32_max),

@@ -12,6 +12,7 @@ use std::marker::PhantomData;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
+        NoPreprocessing,
     },
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -755,7 +756,8 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, Self> for ReadWriteMemory<F, G>
+impl<F, G> MemoryCheckingProver<F, G, ReadWriteMemory<F, G>, NoPreprocessing>
+    for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -773,7 +775,7 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
     fn compute_leaves(
-        &self,
+        _preprocessing: &NoPreprocessing,
         polynomials: &ReadWriteMemory<F, G>,
         gamma: &F,
         tau: &F,
@@ -809,11 +811,11 @@ where
             })
             .collect();
 
-        let init_fingerprints = (0..self.memory_size)
+        let init_fingerprints = (0..polynomials.memory_size)
             .into_par_iter()
             .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
             .collect();
-        let final_fingerprints = (0..self.memory_size)
+        let final_fingerprints = (0..polynomials.memory_size)
             .into_par_iter()
             .map(|i| {
                 mul_0_optimized(&polynomials.t_final[i], &gamma_squared)
@@ -833,6 +835,7 @@ where
     }
 
     fn uninterleave_hashes(
+        _preprocessing: &NoPreprocessing,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
@@ -856,7 +859,10 @@ where
         }
     }
 
-    fn check_multiset_equality(multiset_hashes: &MultisetHashes<F>) {
+    fn check_multiset_equality(
+        _preprocessing: &NoPreprocessing,
+        multiset_hashes: &MultisetHashes<F>,
+    ) {
         assert_eq!(
             multiset_hashes.read_hashes.len(),
             MEMORY_OPS_PER_INSTRUCTION
@@ -885,12 +891,16 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, Self> for ReadWriteMemory<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, ReadWriteMemory<F, G>, NoPreprocessing>
+    for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn read_tuples(
+        &_: &NoPreprocessing,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
                 (
@@ -901,7 +911,10 @@ where
             })
             .collect()
     }
-    fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn write_tuples(
+        &_: &NoPreprocessing,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
                 (
@@ -912,10 +925,16 @@ where
             })
             .collect()
     }
-    fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn init_tuples(
+        &_: &NoPreprocessing,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![(openings.a_init_final.unwrap(), openings.v_init, F::zero())]
     }
-    fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn final_tuples(
+        &_: &NoPreprocessing,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_init_final.unwrap(),
             openings.v_final,
@@ -950,10 +969,20 @@ mod tests {
         let generators = PedersenGenerators::new(1 << 10, b"test");
         let commitments = ReadWriteMemory::commit(&batched_polys, &generators);
 
-        let proof = rw_memory.prove_memory_checking(&rw_memory, &batched_polys, &mut transcript);
+        let proof = ReadWriteMemoryProof::prove_memory_checking(
+            &NoPreprocessing,
+            &rw_memory,
+            &batched_polys,
+            &mut transcript,
+        );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        ReadWriteMemory::verify_memory_checking(proof, &commitments, &mut transcript)
-            .expect("proof should verify");
+        ReadWriteMemoryProof::verify_memory_checking(
+            &NoPreprocessing,
+            proof,
+            &commitments,
+            &mut transcript,
+        )
+        .expect("proof should verify");
     }
 }

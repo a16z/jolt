@@ -12,6 +12,7 @@ use tracing::trace_span;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
+        NoPreprocessing,
     },
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -286,7 +287,8 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, RangeCheckPolynomials<F, G>> for RangeCheckPolynomials<F, G>
+impl<F, G> MemoryCheckingProver<F, G, RangeCheckPolynomials<F, G>, NoPreprocessing>
+    for TimestampValidityProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -295,7 +297,7 @@ where
     type InitFinalOpenings = RangeCheckOpenings<F, G>;
 
     fn prove_memory_checking(
-        &self,
+        _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, G>,
         _batched_polys: &BatchedRangeCheckPolynomials<F>,
         _transcript: &mut Transcript,
@@ -315,7 +317,7 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
     fn compute_leaves(
-        &self,
+        _: &NoPreprocessing,
         polynomials: &RangeCheckPolynomials<F, G>,
         gamma: &F,
         tau: &F,
@@ -413,7 +415,10 @@ where
         (read_write_leaves, init_final_leaves)
     }
 
-    fn interleave_hashes(multiset_hashes: &MultisetHashes<F>) -> (Vec<F>, Vec<F>) {
+    fn interleave_hashes(
+        _: &NoPreprocessing,
+        multiset_hashes: &MultisetHashes<F>,
+    ) -> (Vec<F>, Vec<F>) {
         let read_write_hashes = interleave(
             multiset_hashes.read_hashes.clone(),
             multiset_hashes.write_hashes.clone(),
@@ -426,6 +431,7 @@ where
     }
 
     fn uninterleave_hashes(
+        _: &NoPreprocessing,
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
@@ -451,7 +457,7 @@ where
         }
     }
 
-    fn check_multiset_equality(multiset_hashes: &MultisetHashes<F>) {
+    fn check_multiset_equality(_: &NoPreprocessing, multiset_hashes: &MultisetHashes<F>) {
         let num_memories = 2 * MEMORY_OPS_PER_INSTRUCTION;
         assert_eq!(multiset_hashes.read_hashes.len(), num_memories);
         assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
@@ -476,12 +482,14 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, RangeCheckPolynomials<F, G>> for RangeCheckPolynomials<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, RangeCheckPolynomials<F, G>, NoPreprocessing>
+    for TimestampValidityProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
     fn verify_memory_checking(
+        _: &NoPreprocessing,
         mut _proof: MemoryCheckingProof<
             G,
             RangeCheckPolynomials<F, G>,
@@ -494,7 +502,10 @@ where
         unimplemented!("Use TimestampValidityProof::verify instead");
     }
 
-    fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn read_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         let t_read_openings = openings.memory_poly_openings.t_read_opening;
 
         (0..MEMORY_OPS_PER_INSTRUCTION)
@@ -516,7 +527,10 @@ where
             .collect()
     }
 
-    fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
+    fn write_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         let t_read_openings = openings.memory_poly_openings.t_read_opening;
 
         (0..MEMORY_OPS_PER_INSTRUCTION)
@@ -538,7 +552,10 @@ where
             .collect()
     }
 
-    fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn init_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.identity_poly_opening.unwrap(),
             openings.identity_poly_opening.unwrap(),
@@ -546,7 +563,10 @@ where
         )]
     }
 
-    fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn final_tuples(
+        _: &NoPreprocessing,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_iter()
             .flat_map(|i| {
@@ -684,7 +704,7 @@ where
 
         // fka "ProductLayerProof"
         let (read_write_leaves, init_final_leaves) =
-            polynomials.compute_leaves(polynomials, &gamma, &tau);
+            TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
         let _span = trace_span!("TimestampValidityProof: construct grand product circuits");
         let _enter = _span.enter();
@@ -704,11 +724,12 @@ where
             .map(|circuit| circuit.evaluate())
             .collect();
         let (read_write_hashes, init_final_hashes) = hashes.split_at(read_write_leaves.len());
-        let multiset_hashes = RangeCheckPolynomials::<F, G>::uninterleave_hashes(
+        let multiset_hashes = TimestampValidityProof::<F, G>::uninterleave_hashes(
+            &NoPreprocessing,
             read_write_hashes.to_vec(),
             init_final_hashes.to_vec(),
         );
-        RangeCheckPolynomials::<F, G>::check_multiset_equality(&multiset_hashes);
+        TimestampValidityProof::<F, G>::check_multiset_equality(&NoPreprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript::<G>(transcript);
 
         let batched_circuit = BatchedGrandProductCircuit::new_batch(circuits);
@@ -741,11 +762,17 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         // Multiset equality checks
-        RangeCheckPolynomials::<F, G>::check_multiset_equality(&self.multiset_hashes);
+        TimestampValidityProof::<F, G>::check_multiset_equality(
+            &NoPreprocessing,
+            &self.multiset_hashes,
+        );
         self.multiset_hashes.append_to_transcript::<G>(transcript);
 
         let (read_write_hashes, init_final_hashes) =
-            RangeCheckPolynomials::<F, G>::interleave_hashes(&self.multiset_hashes);
+            TimestampValidityProof::<F, G>::interleave_hashes(
+                &NoPreprocessing,
+                &self.multiset_hashes,
+            );
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let (grand_product_claims, r_grand_product) = self
             .batched_grand_product
@@ -770,22 +797,26 @@ where
 
         self.openings.compute_verifier_openings(&r_grand_product);
 
-        let read_hashes: Vec<_> = RangeCheckPolynomials::read_tuples(&self.openings)
-            .iter()
-            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
-            .collect();
-        let write_hashes: Vec<_> = RangeCheckPolynomials::write_tuples(&self.openings)
-            .iter()
-            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
-            .collect();
-        let init_hashes: Vec<_> = RangeCheckPolynomials::init_tuples(&self.openings)
-            .iter()
-            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
-            .collect();
-        let final_hashes: Vec<_> = RangeCheckPolynomials::final_tuples(&self.openings)
-            .iter()
-            .map(|tuple| RangeCheckPolynomials::<F, G>::fingerprint(tuple, &gamma, &tau))
-            .collect();
+        let read_hashes: Vec<_> =
+            TimestampValidityProof::read_tuples(&NoPreprocessing, &self.openings)
+                .iter()
+                .map(|tuple| TimestampValidityProof::<F, G>::fingerprint(tuple, &gamma, &tau))
+                .collect();
+        let write_hashes: Vec<_> =
+            TimestampValidityProof::write_tuples(&NoPreprocessing, &self.openings)
+                .iter()
+                .map(|tuple| TimestampValidityProof::<F, G>::fingerprint(tuple, &gamma, &tau))
+                .collect();
+        let init_hashes: Vec<_> =
+            TimestampValidityProof::init_tuples(&NoPreprocessing, &self.openings)
+                .iter()
+                .map(|tuple| TimestampValidityProof::<F, G>::fingerprint(tuple, &gamma, &tau))
+                .collect();
+        let final_hashes: Vec<_> =
+            TimestampValidityProof::final_tuples(&NoPreprocessing, &self.openings)
+                .iter()
+                .map(|tuple| TimestampValidityProof::<F, G>::fingerprint(tuple, &gamma, &tau))
+                .collect();
 
         assert_eq!(
             grand_product_claims.len(),
@@ -801,7 +832,7 @@ where
             final_hashes,
         };
         let (read_write_hashes, init_final_hashes) =
-            RangeCheckPolynomials::<F, G>::interleave_hashes(&multiset_hashes);
+            TimestampValidityProof::<F, G>::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
         for (claim, fingerprint) in zip(read_write_claims, read_write_hashes) {
             assert_eq!(*claim, fingerprint);
@@ -851,10 +882,7 @@ mod tests {
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
             ReadWriteMemory::new(bytecode, memory_trace, &mut transcript);
         let batched_polys = rw_memory.batch();
-        let generators = PedersenGenerators::new(
-            1 << 10,
-            b"Test generators",
-        );
+        let generators = PedersenGenerators::new(1 << 10, b"Test generators");
         let commitments = ReadWriteMemory::commit(&batched_polys, &generators);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(

@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
@@ -13,30 +13,22 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
         assert!(C <= 10);
-        assert!(vals.len() == (C + 1) * C);
-
-        let mut subtable_vals = vals.chunks_exact(C);
-        let mut vals_filtered: Vec<F> = Vec::with_capacity(C);
-        for i in 0..C {
-            let subtable_val = subtable_vals.next().unwrap();
-            vals_filtered.extend_from_slice(&subtable_val[i..i + 1]);
-        }
-
-        // SRASign subtable applied to the most significant index
-        vals_filtered.extend_from_slice(&subtable_vals.next().unwrap()[0..1]);
-
-        vals_filtered.iter().sum()
+        assert_eq!(vals.len(), C + 1);
+        vals.iter().sum()
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         let mut subtables: Vec<Box<dyn LassoSubtable<F>>> = vec![
-            Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 0, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 1, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 2, WORD_SIZE>::new()),
@@ -48,9 +40,18 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
             Box::new(SrlSubtable::<F, 8, WORD_SIZE>::new()),
             Box::new(SrlSubtable::<F, 9, WORD_SIZE>::new()),
         ];
-        subtables.truncate(C + 1);
+        subtables.truncate(C);
         subtables.reverse();
-        subtables
+        let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
+        let mut subtables_and_indices: Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> =
+            subtables.into_iter().zip(indices).collect();
+
+        subtables_and_indices.push((
+            Box::new(SraSignSubtable::<F, WORD_SIZE>::new()),
+            SubtableIndices::from(0),
+        ));
+
+        subtables_and_indices
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
@@ -60,7 +61,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
 
     fn lookup_entry(&self) -> u64 {
         let x = self.0 as i32;
-        let y = (self.1 as u32 % (WORD_SIZE as u32));
+        let y = self.1 as u32 % (WORD_SIZE as u32);
         (x.checked_shr(y).unwrap_or(0) as u32).into()
     }
 
@@ -96,7 +97,7 @@ mod test {
         let instructions = vec![
             SRAInstruction::<32>(100, 0),
             SRAInstruction::<32>(0, 2),
-            SRAInstruction::<32>(1 , 2),
+            SRAInstruction::<32>(1, 2),
             SRAInstruction::<32>(0, 32),
             SRAInstruction::<32>(u32_max, 0),
             SRAInstruction::<32>(u32_max, 31),

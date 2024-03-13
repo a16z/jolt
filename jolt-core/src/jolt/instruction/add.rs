@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
@@ -22,36 +22,30 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        // The first C are from IDEN and the last C are from LOWER9
-        assert!(vals.len() == 2 * C);
-
-        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-
-        let mut vals_by_subtable = vals.chunks_exact(C);
-        let identity = vals_by_subtable.next().unwrap();
-        let truncate_overflow = vals_by_subtable.next().unwrap();
-
-        // The output is the LOWER9(most significant chunk) || IDEN of other chunks
-        concatenate_lookups(
-            [
-                &truncate_overflow[0..=msb_chunk_index],
-                &identity[msb_chunk_index + 1..C],
-            ]
-            .concat()
-            .as_slice(),
-            C,
-            log2(M) as usize,
-        )
+        assert!(vals.len() == C);
+        // The output is the TruncateOverflow(most significant chunk) || identity of other chunks
+        concatenate_lookups(vals, C, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![
-            Box::new(IdentitySubtable::new()),
-            Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+            (
+                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+                SubtableIndices::from(0..msb_chunk_index + 1),
+            ),
+            (
+                Box::new(IdentitySubtable::new()),
+                SubtableIndices::from(msb_chunk_index + 1..C),
+            ),
         ]
     }
 
@@ -82,11 +76,8 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use crate::{
-        jolt::instruction::JoltInstruction,
-        jolt_instruction_test,
-    };
     use super::ADDInstruction;
+    use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
     fn add_instruction_32_e2e() {
@@ -104,7 +95,7 @@ mod test {
         let instructions = vec![
             ADDInstruction::<32>(100, 0),
             ADDInstruction::<32>(0, 100),
-            ADDInstruction::<32>(1 , 0),
+            ADDInstruction::<32>(1, 0),
             ADDInstruction::<32>(0, u32_max),
             ADDInstruction::<32>(u32_max, 0),
             ADDInstruction::<32>(u32_max, u32_max),
