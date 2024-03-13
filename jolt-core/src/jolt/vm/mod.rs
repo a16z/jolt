@@ -3,7 +3,6 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use circom_scotia::r1cs;
 use common::constants::NUM_R1CS_POLYS;
-use common::field_conversion::ark_to_spartan_vecs;
 use halo2curves::bn256;
 use itertools::max;
 use merlin::Transcript;
@@ -477,6 +476,8 @@ where
         ];
 
         // Assemble the commitments
+        let span = tracing::span!(tracing::Level::INFO, "Assemble the commitments");
+        let _guard = span.enter();
         let bytecode_comms =  vec![
             jolt_commitments.bytecode.read_write_commitments[0].to_spartan_bn256(), // a
             jolt_commitments.bytecode.read_write_commitments[2].to_spartan_bn256(), // opcode, 
@@ -485,6 +486,7 @@ where
             jolt_commitments.bytecode.read_write_commitments[3].to_spartan_bn256(), // rd
             jolt_commitments.bytecode.read_write_commitments[6].to_spartan_bn256(), // imm
         ];
+        drop(_guard);
 
         let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators).to_spartan_bn256()];
 
@@ -492,7 +494,7 @@ where
 
         // commmit to chunks_x and chunks_y
         let commit_to_chunks = |data: Vec<F>| -> Vec<Vec<bn256::G1Affine>> {
-            data.chunks(PADDED_TRACE_LEN).map(|chunk| {
+            data.par_chunks(PADDED_TRACE_LEN).map(|chunk| {
                 HyraxCommitment::commit(&DensePolynomial::new(chunk.to_vec()), &hyrax_generators).to_spartan_bn256()
             }).collect()
         };
@@ -503,20 +505,11 @@ where
         let lookup_outputs_comms = commit_to_chunks(lookup_outputs);
         let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment.iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
 
-        let mut lookup_comms = Vec::new();
-            lookup_comms.extend(chunks_x_comms);
-            lookup_comms.extend(chunks_y_comms);
-            lookup_comms.extend(dim_read_comms);
-            lookup_comms.extend(lookup_outputs_comms);
+        let lookup_comms = [chunks_x_comms, chunks_y_comms, dim_read_comms, lookup_outputs_comms].concat();
 
         let circuit_flags_comm = commit_to_chunks(circuit_flags_bits);
 
-        let mut jolt_commitments_spartan = vec![]; 
-        jolt_commitments_spartan.extend(bytecode_comms);
-        jolt_commitments_spartan.extend(packed_flags_comm);
-        jolt_commitments_spartan.extend(memory_comms);
-        jolt_commitments_spartan.extend(lookup_comms);
-        jolt_commitments_spartan.extend(circuit_flags_comm);
+        let jolt_commitments_spartan = [bytecode_comms, packed_flags_comm, memory_comms, lookup_comms, circuit_flags_comm].concat();
 
         R1CSProof::prove(
             32, C, PADDED_TRACE_LEN, 
