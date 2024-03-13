@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use common::{constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS}, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}, path::JoltPaths};
+use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
 use spartan2::{
   errors::SpartanError, 
   provider::{
@@ -8,16 +8,13 @@ use spartan2::{
       hyrax_pc::{HyraxCommitment as SpartanHyraxCommitment, HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
   }, 
   spartan::upsnark::R1CSSNARK, traits::{
-    commitment::CommitmentEngineTrait, snark::RelaxedR1CSSNARKTrait, upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait}, Group
+    commitment::CommitmentEngineTrait, upsnark::PrecommittedSNARKTrait, Group
   }, VerifierKey, SNARK
 };
-use crate::poly::hyrax::HyraxCommitment;
 use bellpepper_core::{
-  Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
+  Circuit, ConstraintSystem, SynthesisError, num::AllocatedNum,
 };
-use crate::jolt::vm::{JoltCommitments, JoltPolynomials};
-use ff::{derive::bitvec::mem, PrimeField};
-use ruint::aliases::U256;
+use ff::PrimeField;
 use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
@@ -40,15 +37,18 @@ fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> 
   get_segments(jolt_witnesses).into_iter().flatten().collect()
 }
 
+/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
 #[tracing::instrument(skip_all)]
-fn get_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
-  let mut result: Vec<Vec<F>> = vec![Vec::with_capacity(jolt_witnesses.len()); jolt_witnesses[0].len()-1]; // ignore 1 at the start 
+fn get_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
+  let num_witnesses = jolt_witnesses.len();
+  let witness_len = jolt_witnesses[0].len();
+  let mut result: Vec<Vec<F>> = vec![vec![F::ZERO; num_witnesses]; witness_len - 1]; // ignore 1 at the start 
 
-  for witness in &mut jolt_witnesses {
-    for (i, w) in witness.iter().enumerate().skip(1) {
-        result[i-1].push(*w);
+  result.par_iter_mut().enumerate().for_each(|(trace_index, trace_step)| {
+    for witness_index in 0..num_witnesses {
+      trace_step[witness_index] = jolt_witnesses[witness_index][trace_index + 1];
     }
-  }
+  });
 
   result 
 }
