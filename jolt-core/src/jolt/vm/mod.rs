@@ -476,7 +476,7 @@ where
         ];
 
         // Assemble the commitments
-        let span = tracing::span!(tracing::Level::INFO, "Assemble the commitments");
+        let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
         let _guard = span.enter();
         let bytecode_comms =  vec![
             jolt_commitments.bytecode.read_write_commitments[0].to_spartan_bn256(), // a
@@ -488,28 +488,38 @@ where
         ];
         drop(_guard);
 
-        let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators).to_spartan_bn256()];
-
-        let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.iter().map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>(); 
-
-        // commmit to chunks_x and chunks_y
         let commit_to_chunks = |data: Vec<F>| -> Vec<Vec<bn256::G1Affine>> {
             data.par_chunks(PADDED_TRACE_LEN).map(|chunk| {
                 HyraxCommitment::commit(&DensePolynomial::new(chunk.to_vec()), &hyrax_generators).to_spartan_bn256()
             }).collect()
         };
         
-        // lookup chunks 
+        let span = tracing::span!(tracing::Level::INFO, "chunk_lookup_flags_commitments");
+        let _guard = span.enter();
         let chunks_x_comms = commit_to_chunks(chunks_x);
         let chunks_y_comms = commit_to_chunks(chunks_y);
         let lookup_outputs_comms = commit_to_chunks(lookup_outputs);
-        let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment.iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
-
-        let lookup_comms = [chunks_x_comms, chunks_y_comms, dim_read_comms, lookup_outputs_comms].concat();
-
+        let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators).to_spartan_bn256()];
         let circuit_flags_comm = commit_to_chunks(circuit_flags_bits);
+        drop(_guard);
+        
 
-        let jolt_commitments_spartan = [bytecode_comms, packed_flags_comm, memory_comms, lookup_comms, circuit_flags_comm].concat();
+        let span = tracing::span!(tracing::Level::INFO, "conversions");
+        let _guard = span.enter();
+        let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.par_iter().map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>(); 
+        let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment.par_iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
+        drop(_guard);
+
+        let jolt_commitments_spartan = [
+            bytecode_comms,
+            packed_flags_comm,
+            memory_comms,
+            chunks_x_comms,
+            chunks_y_comms,
+            dim_read_comms,
+            lookup_outputs_comms,
+            circuit_flags_comm
+        ].concat();
 
         R1CSProof::prove(
             32, C, PADDED_TRACE_LEN, 
