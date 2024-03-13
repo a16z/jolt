@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use common::{constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS}, field_conversion::{ark_to_spartan_unsafe, ark_to_spartan_vec, ark_to_spartan_vecs, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}, path::JoltPaths};
+use common::{constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS}, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}, path::JoltPaths};
 use spartan2::{
   errors::SpartanError, 
   provider::{
@@ -36,17 +36,17 @@ type CommitmentKey<G> = <<G as Group>::CE as CommitmentEngineTrait<G>>::Commitme
 
 /// Remap [[1, a1, a2, a3], [1, b1, b2, b3], ...]  -> [1, a1, b1, ..., a2, b2, ..., a3, b3, ...]
 #[tracing::instrument(skip_all, name = "JoltCircuit::assemble_by_segments")]
-fn reassemble_by_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
+fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
   get_segments(jolt_witnesses).into_iter().flatten().collect()
 }
 
+#[tracing::instrument(skip_all)]
 fn get_segments<F: PrimeField>(mut jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
-  let mut result: Vec<Vec<F>> = vec![Vec::new(); jolt_witnesses[0].len()-1]; // ignore 1 at the start 
+  let mut result: Vec<Vec<F>> = vec![Vec::with_capacity(jolt_witnesses.len()); jolt_witnesses[0].len()-1]; // ignore 1 at the start 
 
   for witness in &mut jolt_witnesses {
-    witness.remove(0);  // ignore 1
-    for (i, w) in witness.iter().enumerate() {
-        result[i].push(*w);
+    for (i, w) in witness.iter().enumerate().skip(1) {
+        result[i-1].push(*w);
     }
   }
 
@@ -77,7 +77,8 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     }
   }
 
-  fn get_witnesses_by_step(self) -> Result<Vec<Vec<F>>, SynthesisError> {
+  #[tracing::instrument(name = "JoltCircuit::get_witnesses_by_step", skip_all)]
+  fn get_witnesses_by_step(&self) -> Result<Vec<Vec<F>>, SynthesisError> {
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
@@ -209,23 +210,25 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
   }
 }
 
-  pub fn get_w_segments<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: JoltCircuit<F>) -> Result<(Vec<Vec<F>>), SynthesisError> {
-    let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
-    Ok(get_segments(jolt_witnesses))
-  }
-  
-  pub fn precommit_with_ck<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(ck: &CommitmentKey<G>, w_segments: Vec<Vec<F>>) -> Result<(Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
-    let N_SEGMENTS = w_segments.len();
-  
-    // for each segment, commit to it using CE::<G>::commit(ck, &self.W) 
-    let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
-      .into_par_iter()
-      .map(|i| {
-        G::CE::commit(&ck, &w_segments[i]) 
-      }).collect();
-  
-    Ok(commitments)
-  }
+
+#[tracing::instrument(name = "get_w_segments", skip_all)]
+pub fn get_w_segments<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: &JoltCircuit<F>) -> Result<(Vec<Vec<F>>), SynthesisError> {
+  let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
+  Ok(get_segments(jolt_witnesses))
+}
+
+pub fn precommit_with_ck<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(ck: &CommitmentKey<G>, w_segments: Vec<Vec<F>>) -> Result<(Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
+  let N_SEGMENTS = w_segments.len();
+
+  // for each segment, commit to it using CE::<G>::commit(ck, &self.W) 
+  let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
+    .into_par_iter()
+    .map(|i| {
+      G::CE::commit(&ck, &w_segments[i]) 
+    }).collect();
+
+  Ok(commitments)
+}
 
 pub struct R1CSProof  {
   proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
@@ -251,7 +254,7 @@ impl R1CSProof {
 
       let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
       let _enter = span.enter();
-      let inputs= ark_to_spartan_vecs(inputs_ark);
+      let inputs: Vec<Vec<Spartan2Fr>> = inputs_ark.into_par_iter().map(|vec| vec.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<ArkF, Spartan2Fr>(ark_item)).collect()).collect();
       drop(_enter);
       drop(span);
 
@@ -267,7 +270,10 @@ impl R1CSProof {
       // Assemble w_segments 
 
       // TODO(arasuarun): this will be replaced with a handwritten circuit that assigns IO and Aux directly 
-      let w_segments_from_circuit = get_w_segments::<G1, S, F>(jolt_circuit.clone()).unwrap();
+      let w_segments_from_circuit = get_w_segments::<G1, S, F>(&jolt_circuit).unwrap();
+
+      let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
+      let _enter = cloning_stuff_span.enter();
 
       let io_segments = w_segments_from_circuit[0..4].to_vec();
       let inputs_segments: Vec<Vec<F>> = inputs.into_iter().flat_map(|input| {
@@ -280,12 +286,17 @@ impl R1CSProof {
         .chain(aux_segments.clone().into_iter())
         .collect::<Vec<_>>(); 
 
+      drop(_enter);
+      drop(cloning_stuff_span);
+
       // Commit to segments
       let commit_segments = |segments: Vec<Vec<F>>| -> Vec<_> {
-        segments.into_iter().map(|segment| {
+        let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
+        let _g = span.enter();
+        segments.into_par_iter().map(|segment| {
           <G1 as Group>::CE::commit(&hyrax_ck, &segment) 
         }).collect()
-    };
+      };
       
       let io_comms = commit_segments(io_segments);
       let input_comms = jolt_commitments; 
