@@ -426,38 +426,29 @@ where
 
         // Derive lookup_outputs 
         let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
-        lookup_outputs.extend(vec![F::zero(); PADDED_TRACE_LEN - lookup_outputs.len()]);
+        lookup_outputs.resize(PADDED_TRACE_LEN, F::zero());
 
         // Derive circuit flags
-        let mut circuit_flags_bits_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); N_FLAGS];
-
-        circuit_flags.chunks(N_FLAGS).enumerate().for_each(|(i, chunk)| {
-            chunk.iter().enumerate().for_each(|(j, &flag)| {
-                circuit_flags_bits_vecs[j].push(flag);
+        let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
+        let _enter = span.enter();
+        let mut circuit_flags_bits = vec![F::zero(); PADDED_TRACE_LEN * N_FLAGS];
+        circuit_flags.chunks(N_FLAGS).enumerate().for_each(|(chunk_index, chunk)| {
+            chunk.iter().enumerate().for_each(|(trace_index, &flag)| {
+                let index = chunk_index + trace_index * PADDED_TRACE_LEN;
+                circuit_flags_bits[index] = flag;
             });
         });
-
-        circuit_flags_bits_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
-        let circuit_flags_bits: Vec<F> = circuit_flags_bits_vecs.into_iter().flatten().collect();
+        drop(_enter);
+        drop(span);
 
         // Assemble the polynomials
-        let mut bytecode_polys = jolt_polynomials.bytecode.get_polys_r1cs(); 
-        let bytecode_a: Vec<F> = bytecode_polys.drain(..1).into_iter().flatten().collect();
-        let mut bytecode_v: Vec<F> = bytecode_polys.drain(..5).into_iter().flatten().collect();
-        bytecode_v.extend(packed_flags.clone()); 
+        let (bytecode_a, mut bytecode_v) = jolt_polynomials.bytecode.get_polys_r1cs();
+        bytecode_v.extend(packed_flags.iter()); 
 
-        let mut memory_polys = jolt_polynomials.read_write_memory.get_polys_r1cs();
-        let memreg_a_rw: Vec<F> = memory_polys.drain(..7).into_iter().flatten().collect();
-        let memreg_v_reads: Vec<F> = memory_polys.drain(..7).into_iter().flatten().collect();
-        let memreg_v_writes: Vec<F> = memory_polys.drain(..7).flatten().collect();
+        let (memreg_a_rw, memreg_v_reads, memreg_v_writes) = jolt_polynomials.read_write_memory.get_polys_r1cs();
         println!("length of memreg_a_rw and memreg_v_reads are: {} and {}", memreg_a_rw.len(), memreg_v_writes.len());
 
-        let mut lookup_polys: Vec<Vec<F>> = jolt_polynomials.instruction_lookups.dim.iter().map(|poly| poly.evals()).collect();
-        let chunks_x = chunks_x; 
-        let chunks_y = chunks_y;
-        let chunks_query: Vec<F> = lookup_polys.drain(..C).into_iter().flatten().collect();
-        let lookup_outputs = lookup_outputs;
-        let circuit_flags_bits = circuit_flags_bits; 
+        let chunks_query: Vec<F> = jolt_polynomials.instruction_lookups.dim.iter().take(C).flat_map(|poly| poly.evals()).collect();
 
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
         // will be the exact witness vector to feed into the R1CS
