@@ -6,9 +6,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ff::PrimeField as GenericPrimeField;
 use halo2curves::group::prime::PrimeCurveAffine;
 use halo2curves::CurveAffine;
-
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use spartan2::provider::bn256_grumpkin::bn256::Affine as Spartan2Affine;
 use spartan2::provider::bn256_grumpkin::bn256::Scalar as Spartan2Fr;
+
 pub fn ark_to_spartan<ArkF: ArkPrimeField>(ark: ArkF) -> Spartan2Fr {
     let bigint: <ArkF as ArkPrimeField>::BigInt = ark.into_bigint();
     let bytes = bigint.to_bytes_le();
@@ -81,22 +82,21 @@ pub fn spartan_to_ark_unsafe<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrim
     ark
 }
 
-/// Conversion function for a vector 
+/// Conversion function for a vector
 pub fn ark_to_spartan_vec<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(
-    ark: Vec<AF>,
+    ark: &Vec<AF>,
 ) -> Vec<FF> {
-    ark.into_iter().map(|a| ark_to_ff::<FF, AF>(a)).collect()
+    ark.par_iter().map(|a| ark_to_ff::<FF, AF>(*a)).collect()
 }
 
-/// Conversion function for a vector of vectors 
+/// Conversion function for a vector of vectors
 pub fn ark_to_spartan_vecs<AF: ArkPrimeField, FF: GenericPrimeField<Repr = [u8; 32]>>(
     ark: Vec<Vec<AF>>,
 ) -> Vec<Vec<FF>> {
-    ark.into_iter()
+    ark.par_iter()
         .map(|a| ark_to_spartan_vec::<AF, FF>(a))
         .collect()
 }
-
 
 pub trait IntoArk: CurveAffine {
     type ArkConfig: SWCurveConfig;
