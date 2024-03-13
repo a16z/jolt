@@ -14,6 +14,7 @@ ark-ec = "0.4.2"
 ark-serialize = "0.4.2"
 bellpepper-core = "0.4.0"
 ff = "0.13.0"
-spartan2 = { git = "https://github.com/a16z/Spartan2"}
+spartan2 = { git = "https://github.com/a16z/Spartan2" }
 ruint = "1.11.1"
 halo2curves = "0.6.0"
+rayon = { version = "^1.8.0" }
