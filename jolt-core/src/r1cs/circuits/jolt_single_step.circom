@@ -220,17 +220,31 @@ template JoltStep() {
         - Then verify that the chunks of x, y, z are correct. 
     */
 
-    // Store the right query format into z
-    signal z_concat <== x * (2**W()) + y;
-    signal z_add <== x + y;
-    signal z_sub <== x + (ALL_ONES() - y + 1);
-    signal z_mul <== x * y;
+    // // Store the right query format into z
+    // signal z_concat <== x * (2**W()) + y;
+    // signal z_add <== x + y;
+    // signal z_sub <== x + (ALL_ONES() - y + 1);
+    // signal z_mul <== x * y;
 
-    signal z__4 <== is_concat * z_concat;
-    signal z__3 <== z__4 + is_add_instr * z_add;
-    signal z__2 <== z__3 + is_sub_instr * z_sub;
-    signal z__1 <== z__2 + is_mul_instr * z_mul;
-    signal z <== z__1;
+    // signal z__4 <== is_concat * z_concat;
+    // signal z__3 <== z__4 + is_add_instr * z_add;
+    // signal z__2 <== z__3 + is_sub_instr * z_sub;
+    // signal z__1 <== z__2 + is_mul_instr * z_mul;
+    // signal z <== z__1;
+    // (combined_z_chunks-z) * (1-(is_concat)) === 0;
+
+    /* Constraints to check correctness of chunks_query 
+        If NOT a concat query: chunks_query === chunks_z 
+        If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
+    */
+    signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
+    is_add_instr * (combined_z_chunks - (x + y)) === 0; 
+    is_sub_instr * (combined_z_chunks - (x + (ALL_ONES() - y + 1))) === 0; 
+
+    // This creates a big aux witness value only for mul instructions. 
+    signal is_mul_x <== is_mul_instr * x; 
+    signal is_mul_xy <== is_mul_instr * y;
+    is_mul_instr * (combined_z_chunks - is_mul_xy) === 0;
 
     // verify chunks_x
     signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
@@ -239,13 +253,6 @@ template JoltStep() {
     // verify chunks_y 
     signal combined_y_chunks <== combine_chunks(C(), L_CHUNK())(chunks_y);
     (combined_y_chunks-y) * is_concat === 0;
-
-    /* Constraints to check correctness of chunks_query 
-        If NOT a concat query: chunks_query === chunks_z 
-        If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
-    */
-    signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
-    (combined_z_chunks-z) * (1-(is_concat)) === 0;
 
     // the concat checks: 
     // the most significant chunk has a shorter length!
