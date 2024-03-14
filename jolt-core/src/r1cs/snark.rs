@@ -298,7 +298,7 @@ impl R1CSProof {
         }).collect()
       };
       
-      let io_comms = commit_segments(io_segments);
+      let io_comms: Vec<SpartanHyraxCommitment<SpartanG1>> = commit_segments(io_segments);
       let input_comms = jolt_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
