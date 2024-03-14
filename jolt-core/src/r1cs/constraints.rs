@@ -1,7 +1,7 @@
 // Handwritten circuit 
 
-use ark_ff::PrimeField;
-use circom_scotia::r1cs::R1CS;
+use ff::PrimeField; 
+use spartan2::r1cs::R1CSShape; 
 
 /* Compiler Variables */
 const C: usize = 4; 
@@ -23,10 +23,11 @@ const ALL_ONES: i64 = 0xffffffff;
 
 const ONE: (usize, i64) = (0, 1);
 
+const STATE_LENGTH: usize = 2;
 const INPUTS: &[(&str, usize)] = &[
     ("CONSTANT", 1), 
-    ("output_state", 2),
-    ("input_state", 2),
+    ("output_state", STATE_LENGTH),
+    ("input_state", STATE_LENGTH),
     ("prog_a_rw", 1),
     ("prog_v_rw", 6),
     ("memreg_a_rw", 7),
@@ -56,14 +57,14 @@ fn GET_INDEX(name: &str, offset: usize) -> Option<usize> {
 
 #[derive(Debug)]
 pub struct R1CSBuilder<F: PrimeField> {
-    A: Vec<Vec<(usize, i64)>>,
-    B: Vec<Vec<(usize, i64)>>,
-    C: Vec<Vec<(usize, i64)>>,
-    num_constraints: usize,
-    num_variables: usize,
-    num_inputs: usize, 
-    num_aux: usize, 
-    z: Option<Vec<F>>,
+    pub A: Vec<(usize, usize, i64)>,
+    pub B: Vec<(usize, usize, i64)>,
+    pub C: Vec<(usize, usize, i64)>,
+    pub num_constraints: usize,
+    pub num_variables: usize,
+    pub num_inputs: usize, 
+    pub num_aux: usize, 
+    pub z: Option<Vec<F>>,
 }
 
 fn subtract_vectors(x: Vec<(usize, i64)>, mut y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
@@ -82,20 +83,31 @@ fn combine_chunks_vec(start_idx: usize, L: usize, N: usize) -> Vec<(usize, i64)>
 
 fn i64_to_f<F: PrimeField>(num: i64) -> F {
     if num < 0 {
-        F::zero() - F::from(num.abs() as u64)
+        F::ZERO - F::from(num.abs() as u64)
     } else {
         F::from(num as u64)
     }
 }
 
 impl<F: PrimeField> R1CSBuilder<F> {
+    fn new_constraint(&mut self, a: Vec<(usize, i64)>, b: Vec<(usize, i64)>, c: Vec<(usize, i64)>) {
+        let row: usize = self.num_constraints; 
+        let prepend_row = |vec: Vec<(usize, i64)>| {
+            vec.into_iter().map(|(idx, val)| (row, idx, val)).collect::<Vec<(usize, usize, i64)>>()
+        };
+        self.A.extend(prepend_row(a).into_iter()); 
+        self.B.extend(prepend_row(b).into_iter()); 
+        self.C.extend(prepend_row(c).into_iter()); 
+        self.num_constraints += 1;
+    }
+
     fn get_val_from_lc(&self, lc: &[(usize, i64)]) -> F {
         lc.iter().map(|(idx, coeff)| self.z.as_ref().unwrap()[*idx] * i64_to_f::<F>(*coeff)).sum()
     }
 
     fn assign_aux(&mut self) -> usize {
         if self.z.is_some() {
-            self.z.as_mut().unwrap().push(F::zero())
+            self.z.as_mut().unwrap().push(F::ZERO)
         }
         let idx = self.num_variables; 
         self.num_aux += 1;
@@ -104,10 +116,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
     }   
 
     fn constr_abc(&mut self, a: Vec<(usize, i64)>, b: Vec<(usize, i64)>, c: Vec<(usize, i64)>) {
-        self.A.push(a); 
-        self.B.push(b);
-        self.C.push(c);
-        self.num_constraints += 1;
+        self.new_constraint(a, b, c); 
     }
 
     // Combines the L-bit wire values of [start_idx, ..., start_idx + N - 1] into a single value 
@@ -124,11 +133,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         constraint_B.push(ONE); 
         constraint_C.push((result_idx, 1));
 
-        self.A.push(constraint_A); 
-        self.B.push(constraint_B);
-        self.C.push(constraint_C);
-
-        self.num_constraints += 1;
+        self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
     fn combine_le(&mut self, start_idx: usize, L: usize, N: usize) -> usize {
@@ -149,11 +154,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             self.z.as_mut().unwrap()[result_idx] = result_value;
         }
 
-        self.A.push(constraint_A); 
-        self.B.push(constraint_B);
-        self.C.push(constraint_C);
-
-        self.num_constraints += 1;
+        self.new_constraint(constraint_A, constraint_B, constraint_C); 
         result_idx
     }
 
@@ -175,11 +176,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             self.z.as_mut().unwrap()[result_idx] = result_value;
         }
 
-        self.A.push(constraint_A); 
-        self.B.push(constraint_B);
-        self.C.push(constraint_C);
-
-        self.num_constraints += 1;
+        self.new_constraint(constraint_A, constraint_B, constraint_C); 
         result_idx
     }
 
@@ -206,19 +203,14 @@ impl<F: PrimeField> R1CSBuilder<F> {
             let choice_val = self.get_val_from_lc(&choice);
             let x_val = self.get_val_from_lc(&x);
             let y_val = self.get_val_from_lc(&y);
-            let z_val = if choice_val == F::zero() { x_val } else { y_val };
+            let z_val = if choice_val == F::ZERO { x_val } else { y_val };
             self.z.as_mut().unwrap()[z_idx] = z_val;
         }
 
         let y_minus_x = subtract_vectors(y, x.clone()); 
         let z_minus_x = subtract_vectors(vec![(z_idx, 1)], x);
 
-        self.A.push(choice); 
-        self.B.push(y_minus_x); 
-        self.C.push(z_minus_x); 
-
-        self.num_constraints += 1;
-        
+        self.new_constraint(choice, y_minus_x, z_minus_x); 
         z_idx 
     }
 
@@ -236,12 +228,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         constraint_B.push(ONE); 
         constraint_C.push((right_idx, 1));
 
-        self.A.push(constraint_A); 
-        self.B.push(constraint_B);
-        self.C.push(constraint_C);
-
-        self.num_constraints += 1;
-
+        self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
     // The left side is an lc but the right is a single index
@@ -258,12 +245,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             self.z.as_mut().unwrap()[right_idx] = self.get_val_from_lc(&constraint_A);
         }
 
-        self.A.push(constraint_A); 
-        self.B.push(constraint_B);
-        self.C.push(constraint_C);
-
-        self.num_constraints += 1;
-
+        self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
     fn constr_prod_0(&mut self, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>, z: Vec<(usize, i64)>) {
@@ -290,8 +272,10 @@ impl<F: PrimeField> R1CSBuilder<F> {
 
     pub fn get_matrices(inputs: Option<Vec<F>>) -> Option<Self> {
         // Append the constant 1 to the inputs 
-        let inputs_with_1 = inputs.map(|mut vec| {
-            vec.insert(0, F::one());
+        let inputs_with_const_output = inputs.map(|mut vec| {
+            vec.insert(0, F::ZERO);
+            vec.insert(0, F::ZERO);
+            vec.insert(0, F::ONE); // constant
             vec
         });
 
@@ -300,10 +284,10 @@ impl<F: PrimeField> R1CSBuilder<F> {
             B: vec![],
             C: vec![],
             num_constraints: 0,
-            num_variables: GET_TOTAL_LEN(), // includes ("constant", 1)
-            num_inputs: 0, // technically these inputs are also aux, so keep this 0
-            num_aux: 0, // haven't added any aux yet
-            z: inputs_with_1, 
+            num_variables: GET_TOTAL_LEN(), // includes ("constant", 1) and ("output_state", ..)
+            num_inputs: 0, // technically inputs are also aux, so keep this 0
+            num_aux: GET_TOTAL_LEN()-1, // dont' include the constant  
+            z: inputs_with_const_output, 
         };
 
         // Parse the input indices 
@@ -375,7 +359,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             (is_load_instr + is_store_instr) * ((rs1_val + immediate_signed) - (memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET())) === 0;
         */
         let immediate_signed = R1CSBuilder::if_else(&mut instance, vec![(sign_imm_flag, 1)], vec![(immediate, 1)], vec![(immediate, 1), (0, -ALL_ONES - 1)]);
-        R1CSBuilder::constr_abc(&mut instance, vec![(is_load_instr, 1), (is_store_instr, 1)], vec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX("memreg_a_rw", 3)?, -1), (MEMORY_ADDRESS_OFFSET, -1)], vec![]); 
+        R1CSBuilder::constr_abc(&mut instance, vec![(is_load_instr, 1), (is_store_instr, 1)], vec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX("memreg_a_rw", 3)?, -1), (0, -1 * MEMORY_ADDRESS_OFFSET as i64)], vec![]); 
 
         /*
             for (var i=1; i<MOPS()-3; i++) {
@@ -551,10 +535,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         let is_branch_times_lookup_output = R1CSBuilder::multiply(&mut instance, vec![(is_branch_instr, 1)], vec![(GET_INDEX("lookup_output", 0)?, 1)]); 
 
         let next_pc_j = R1CSBuilder::if_else(&mut instance, vec![(is_jump_instr, 1)], vec![(PC, 1), (0, 4)], vec![(GET_INDEX("lookup_output", 0)?, 1)]);
-        println!("PC is {:?}", PC);
-        println!("z[PC] is {:?}", instance.z.as_ref().unwrap()[PC]); 
-        println!("next_pc_j is {:?}", next_pc_j);
-        println!("z[next_pc_j] is {:?}", instance.z.as_ref().unwrap()[next_pc_j]); 
+
         let next_pc_j_b = R1CSBuilder::if_else(&mut instance, vec![(is_branch_times_lookup_output, 1)], vec![(next_pc_j, 1)], vec![(PC, 1), (immediate_signed, 1)]);
 
         R1CSBuilder::eq(&mut instance, 
@@ -564,13 +545,22 @@ impl<F: PrimeField> R1CSBuilder<F> {
         );
 
         Some(instance)
-        }
     }
+
+    pub fn convert_to_field(&self) -> (Vec<(usize, usize, F)>, Vec<(usize, usize, F)>, Vec<(usize, usize, F)>) {
+        (
+            self.A.iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
+            self.B.iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
+            self.C.iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
+        )
+    }
+}
+
 
     #[cfg(test)]
     mod tests {
         use super::*;
-        use ark_bn254::Fr as F; 
+        use spartan2::provider::bn256_grumpkin::bn256::Scalar as F;
 
         #[test]
         fn test_get_matrices() {

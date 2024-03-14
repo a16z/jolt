@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use super::constraints::{self, R1CSBuilder}; 
 
+use std::collections::HashMap;
 use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
+use itertools::Itertools;
 use spartan2::{
-  errors::SpartanError, 
-  provider::{
+  errors::SpartanError, provider::{
       bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
       hyrax_pc::{HyraxCommitment as SpartanHyraxCommitment, HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
-  }, 
-  spartan::upsnark::R1CSSNARK, traits::{
+  }, r1cs::R1CSShape, spartan::upsnark::R1CSSNARK, traits::{
     commitment::CommitmentEngineTrait, upsnark::PrecommittedSNARKTrait, Group
   }, VerifierKey, SNARK
 };
@@ -79,25 +79,6 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
 
   #[tracing::instrument(name = "JoltCircuit::get_witnesses_by_step", skip_all)]
   fn get_witnesses_by_step(&self) -> Result<Vec<Vec<F>>, SynthesisError> {
-    let r1cs_path = JoltPaths::r1cs_path();
-    let wtns_path = JoltPaths::witness_generator_path();
-
-    let cfg: CircomConfig<F> = CircomConfig::new(wtns_path, r1cs_path).unwrap();
-
-    let variable_names: Vec<String> = vec![
-      "prog_a_rw".to_string(), 
-      "prog_v_rw".to_string(), 
-      "memreg_a_rw".to_string(), 
-      "memreg_v_reads".to_string(), 
-      "memreg_v_writes".to_string(), 
-      "chunks_x".to_string(), 
-      "chunks_y".to_string(), 
-      "chunks_query".to_string(), 
-      "lookup_output".to_string(), 
-      "op_flags".to_string(),
-      "input_state".to_string()
-    ];
-
     let TRACE_LEN = self.inputs[0].len();
     let NUM_STEPS = self.num_steps;
 
@@ -108,45 +89,33 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     //   .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
     //   .collect();
 
-    let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
-    let wtns_buffer_size = witness::get_inputs_size(&graph);
-    let wtns_mapping = witness::get_input_mapping(&variable_names, &graph);
-
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
       // let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(spartan_to_ark_unsafe).collect()).collect();
-      let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = self.inputs.iter().map(|v| {
+      let mut step_inputs: Vec<Vec<F>> = self.inputs.iter().map(|v| {
         v.iter()
          .skip(i)
          .step_by(TRACE_LEN)
          .cloned()
-         .map(spartan_to_ark_unsafe)
-         .collect()
-      }).collect();
+         .collect_vec()
+      }).collect_vec();
 
       let program_counter = if i > 0 && self.inputs[0][i] == F::from(0) {
         F::from(0)
       } else {
           self.inputs[0][i] * F::from(4u64) + F::from(RAM_START_ADDRESS)
       };
-      step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(program_counter)]);
 
-      let input_map: HashMap<String, Vec<ark_bn254::Fr>> = variable_names
-        .iter()
-        .zip(step_inputs.into_iter())
-        .map(|(name, input)| (name.to_owned(), input))
-        .collect();
+      // For the non-circom version, we need to pre-prend the inputs 
+      step_inputs.insert(0, vec![F::from(i as u64), program_counter]);
 
-      // TODO(sragss): Could reuse the inputs buffer between parallel chunks
-      let mut inputs_buffer = vec![ark_bn254::Fr::zero(); wtns_buffer_size];
-      inputs_buffer[0] = ark_bn254::Fr::one();
-      witness::populate_inputs_fr(&input_map, &wtns_mapping, &mut inputs_buffer);
-      let ark_jolt_witness = witness::graph::evaluate_fr(&graph.nodes, &inputs_buffer, &graph.signals);
+      // flatten step_inputs 
+      let step_inputs_flat = step_inputs.into_iter().flatten().collect::<Vec<_>>();
 
-      let jolt_witnesses = ark_jolt_witness.into_iter().map(ark_to_spartan_unsafe).collect::<Vec<_>>();
+      let step_instance = R1CSBuilder::<F>::get_matrices(Some(step_inputs_flat)).unwrap(); 
 
-      jolt_witnesses
+      step_instance.z.unwrap()
     }).collect();
     drop(_compute_witness_guard);
 
@@ -259,8 +228,28 @@ impl R1CSProof {
       drop(span);
 
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs[0][0], inputs.clone());
-      let num_steps = jolt_circuit.num_steps;
-      let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
+      //let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
+      let skeleton_circuit = R1CSBuilder::<F>::get_matrices(None).unwrap(); 
+
+      println!("skeleton_circuit.num_constraints: {}", skeleton_circuit.num_constraints);
+      println!("skeleton_circuit.num_aux: {}", skeleton_circuit.num_aux);
+      println!("skeleton_circuit.num_inputs: {}", skeleton_circuit.num_inputs);
+      println!("skeleton_circuit.num_variables: {}", skeleton_circuit.num_variables);
+
+      let constraints_F = skeleton_circuit.convert_to_field(); 
+      for v in [constraints_F.0.clone(), constraints_F.1.clone(), constraints_F.2.clone()].iter() {
+        for e in v {
+          println!("e.0, e.1: {}, {}", e.0, e.1);
+        }
+      }
+      let shape_single = R1CSShape::<G1> {
+          A: constraints_F.0,
+          B: constraints_F.1,
+          C: constraints_F.2,
+          num_cons: skeleton_circuit.num_constraints,
+          num_vars: skeleton_circuit.num_aux, // shouldn't include 1 or IO 
+          num_io: skeleton_circuit.num_inputs,
+      };
 
       // Obtain public key 
       let hyrax_ck = HyraxCommitmentKey::<G1> {
@@ -307,9 +296,9 @@ impl R1CSProof {
       .chain(aux_comms.into_iter())
       .collect::<Vec<_>>();
 
-      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(shape_single, NUM_STEPS, hyrax_ck).unwrap();
 
-      SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comm_w_vec).map(|snark| Self {
+      SNARK::prove_precommitted(&pk, w_segments, comm_w_vec).map(|snark| Self {
         proof: snark,
         vk
       })
