@@ -15,13 +15,14 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
       with:
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-    - name: Build mdBook
-      run: |
-        curl -L https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-v0.4.12-x86_64-unknown-linux-gnu.tar.gz | tar xzf -
-        ./mdbook build
+    - name: Setup mdBook
+      uses: peaceiris/actions-mdbook@v1
+      with:
+        mdbook-version: '0.4.10'
+
+    - run: mdbook build ./book
 
     - name: Deploy to Google Cloud Storage
-      run: gsutil -m rsync -d -r ./book gs://$GCS_BUCKET_NAME
+      run: gsutil -m rsync -d -r ./book/book gs://$GCS_BUCKET_NAME
