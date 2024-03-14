@@ -46,6 +46,8 @@ jobs:
       - name: Install mdbook-katex
         run: cargo install mdbook-katex
 
+      - run: mdbook build ./book
+
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: "${{ secrets.GITHUB_TOKEN }}"
