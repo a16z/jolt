@@ -1,0 +1,27 @@
+name: Deploy mdBook to GCS
+
+on:
+  push:
+    branches:
+      - main 
+      - jolt
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@master
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Build mdBook
+      run: |
+        curl -L https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-v0.4.12-x86_64-unknown-linux-gnu.tar.gz | tar xzf -
+        ./mdbook build
+
+    - name: Deploy to Google Cloud Storage
+      run: gsutil -m rsync -d -r ./book gs://$GCS_BUCKET_NAME
