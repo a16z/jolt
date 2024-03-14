@@ -67,9 +67,10 @@ pub struct R1CSBuilder<F: PrimeField> {
     pub z: Option<Vec<F>>,
 }
 
-fn subtract_vectors(x: Vec<(usize, i64)>, mut y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
-    y.extend(x.into_iter().map(|(idx, coeff)| (idx, -coeff)));
-    y
+fn subtract_vectors(x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
+    let mut result = x.clone();
+    result.extend(y.into_iter().map(|(idx, coeff)| (idx, -coeff)));
+    result
 }
 
 // big-endian
@@ -92,8 +93,19 @@ fn i64_to_f<F: PrimeField>(num: i64) -> F {
 impl<F: PrimeField> R1CSBuilder<F> {
     fn new_constraint(&mut self, a: Vec<(usize, i64)>, b: Vec<(usize, i64)>, c: Vec<(usize, i64)>) {
         let row: usize = self.num_constraints; 
+        // let prepend_row = |vec: Vec<(usize, i64)>| {
+        //     vec.into_iter().map(|(idx, val)| (row, idx, val)).collect::<Vec<(usize, usize, i64)>>()
+        // };
         let prepend_row = |vec: Vec<(usize, i64)>| {
-            vec.into_iter().map(|(idx, val)| (row, idx, val)).collect::<Vec<(usize, usize, i64)>>()
+            let mut result: Vec<(usize, usize, i64)> = Vec::new();
+            for (idx, val) in vec {
+                if let Some((_, _, existing_val)) = result.iter_mut().find(|(_, existing_idx, _)| *existing_idx == idx) {
+                    *existing_val += val;
+                } else {
+                    result.push((row, idx, val));
+                }
+            }
+            result
         };
         self.A.extend(prepend_row(a).into_iter()); 
         self.B.extend(prepend_row(b).into_iter()); 
@@ -107,6 +119,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
 
     fn assign_aux(&mut self) -> usize {
         if self.z.is_some() {
+            assert!(self.z.as_ref().unwrap().len() == self.num_variables);
             self.z.as_mut().unwrap().push(F::ZERO)
         }
         let idx = self.num_variables; 
@@ -132,6 +145,11 @@ impl<F: PrimeField> R1CSBuilder<F> {
         }
         constraint_B.push(ONE); 
         constraint_C.push((result_idx, 1));
+
+        if self.z.is_some() {
+            let result_value = self.get_val_from_lc(&constraint_A);
+            assert!(self.z.as_ref().unwrap()[result_idx] == result_value);
+        }
 
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
@@ -352,7 +370,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             signal mem_v_bytes[MOPS()-3] <== subarray(3, MOPS()-3, MOPS())(memreg_v_writes);
             signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
         */
-        let load_or_store_value = R1CSBuilder::combine_le(&mut instance, GET_INDEX("memreg_v_writes", MOPS-3)?, 8, MOPS); 
+        let load_or_store_value = R1CSBuilder::combine_le(&mut instance, GET_INDEX("memreg_v_writes", 3)?, 8, MOPS-3); 
 
         /* 
             signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
@@ -377,7 +395,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             }
         */
         for i in 0..MOPS-3 {
-            R1CSBuilder::constr_abc(&mut instance, vec![(GET_INDEX("memreg_v_reads", 3+i)?, 1)], vec![(GET_INDEX("memreg_v_writes", 3+i)?, -1)], vec![(is_load_instr, 1)]);
+            R1CSBuilder::constr_abc(&mut instance, vec![(is_load_instr, 1)], vec![(GET_INDEX("memreg_v_reads", 3+i)?, 1), (GET_INDEX("memreg_v_writes", 3+i)?, -1)], vec![]);
         }
 
         // is_store_instr * (load_or_store_value - rs2_val) === 0;
@@ -451,7 +469,6 @@ impl<F: PrimeField> R1CSBuilder<F> {
         ); 
 
         /* Concat query construction: 
-
             signal chunk_y_used[C()]; 
             for (var i=0; i<C(); i++) {
                 chunk_y_used[i] <== if_else()([is_shift, chunks_y[i], chunks_y[C()-1]]);
@@ -469,8 +486,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         }
 
         // TODO: handle case when C() doesn't divide W() 
-        // var idx_ms_chunk = C()-1;
-        // (chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK()))) * is_concat === 0;
+        // Maybe like this: var idx_ms_chunk = C()-1; (chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK()))) * is_concat === 0;
 
         /* For assert instructions 
         is_assert_false_instr * (1-lookup_output) === 0;
@@ -506,12 +522,12 @@ impl<F: PrimeField> R1CSBuilder<F> {
             vec![(rd_val, 1), (PC, -1), (0, -4)], 
         ); 
         
-        // output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1;
-        // R1CSBuilder::constr_abc(&mut instance, 
-        //     vec![(GET_INDEX("output_state", STEP_NUM_IDX)?, 1)], 
-        //     vec![(GET_INDEX("input_state", STEP_NUM_IDX)?, 1), (0, 1)], 
-        //     vec![], 
-        // );
+        /* output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1; */
+        R1CSBuilder::constr_abc(&mut instance, 
+            vec![(GET_INDEX("output_state", STEP_NUM_IDX)?, 1)], 
+            vec![ONE], 
+            vec![(GET_INDEX("input_state", STEP_NUM_IDX)?, 1), (0, 1)], 
+        );
         R1CSBuilder::eq(&mut instance, 
             vec![(GET_INDEX("input_state", STEP_NUM_IDX)?, 1), (0, 1)], 
             GET_INDEX("output_state", STEP_NUM_IDX)?,
@@ -544,7 +560,30 @@ impl<F: PrimeField> R1CSBuilder<F> {
             true, 
         );
 
+
+        R1CSBuilder::move_constant_to_end(&mut instance);
         Some(instance)
+    }
+
+    fn move_constant_to_end(&mut self) {
+        if let Some(z) = &mut self.z {
+            z.remove(0);
+            z.push(F::ONE);
+        }
+
+        let modify_matrix= |mat: &mut Vec<(usize, usize, i64)>| {
+            for &mut (_, ref mut value, _) in mat {
+                if *value != 0 {
+                    *value -= 1;
+                } else {
+                    *value = self.num_variables-1;
+                }
+            }
+        };
+        
+        let _ = rayon::join(|| modify_matrix(&mut self.A),
+        || rayon::join(|| modify_matrix(&mut self.B),
+                       || modify_matrix(&mut self.C)));
     }
 
     pub fn convert_to_field(&self) -> (Vec<(usize, usize, F)>, Vec<(usize, usize, F)>, Vec<(usize, usize, F)>) {
