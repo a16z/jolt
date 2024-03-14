@@ -28,4 +28,4 @@ jobs:
     - run: mdbook build ./book
 
     - name: Deploy to Google Cloud Storage
-      run: gsutil -m rsync -d -r ./book/book gs://$GCS_BUCKET_NAME
+      run: gsutil -m rsync -d -r ./book/book gs://${{ secrets.GCS_BUCKET_NAME }}
