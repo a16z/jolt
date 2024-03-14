@@ -445,7 +445,6 @@ where
         bytecode_v.extend(packed_flags.iter()); 
 
         let (memreg_a_rw, memreg_v_reads, memreg_v_writes) = jolt_polynomials.read_write_memory.get_polys_r1cs();
-        println!("length of memreg_a_rw and memreg_v_reads are: {} and {}", memreg_a_rw.len(), memreg_v_writes.len());
 
         let chunks_query: Vec<F> = jolt_polynomials.instruction_lookups.dim.par_iter().take(C).flat_map(|poly| poly.evals()).collect();
 

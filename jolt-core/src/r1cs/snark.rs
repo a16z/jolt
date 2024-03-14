@@ -1,3 +1,5 @@
+use crate::jolt;
+
 use super::constraints::R1CSBuilder; 
 
 use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
@@ -30,6 +32,32 @@ fn reassemble_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>
   });
 
   result 
+}
+
+/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
+/// Works 
+#[tracing::instrument(skip_all)]
+fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_front: usize, num_back: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+  let trace_len = jolt_witnesses.len();
+  let total_length = jolt_witnesses[0].len();
+  let mut front_result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_front]; 
+  let mut back_result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_back]; 
+
+  // state starts at the beginning
+  front_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
+    for step in 0..trace_len {
+      variable_segment[step] = jolt_witnesses[step][variable_idx]; // NOTE: 1 is at the end!
+    }
+  });
+
+  // [aux || 1] is the end, and we skip the 1
+  back_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
+    for step in 0..trace_len {
+      variable_segment[step] = jolt_witnesses[step][(total_length-1-num_back) + variable_idx]; 
+    }
+  });
+
+  (front_result, back_result)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -98,10 +126,16 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     Ok(jolt_witnesses)
   }
 
-  #[tracing::instrument(name = "get_w_segments", skip_all)]
+  #[tracing::instrument(name = "synthesize_witness_segments", skip_all)]
   pub fn synthesize_witness_segments(&self) -> Result<Vec<Vec<F>>, SynthesisError> {
     let jolt_witnesses = self.synthesize_witnesses()?;
     Ok(reassemble_segments(jolt_witnesses))
+  }
+
+  #[tracing::instrument(name = "synthesize_witness_segments", skip_all)]
+  pub fn synthesize_state_aux_segments(&self, num_state: usize, num_aux: usize) -> Result<(Vec<Vec<F>>, Vec<Vec<F>>), SynthesisError> {
+    let jolt_witnesses = self.synthesize_witnesses()?;
+    Ok(reassemble_segments_partial(jolt_witnesses, num_state, num_aux))
   }
 }
 
@@ -152,16 +186,15 @@ impl R1CSProof {
           ck: spartan2::provider::pedersen::from_gens_bn256(generators)
       };
 
-      let w_segments_from_circuit = jolt_circuit.synthesize_witness_segments().unwrap();
+      // let w_segments_from_circuit = jolt_circuit.synthesize_witness_segments().unwrap();
+      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal).unwrap();
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
       let _enter = cloning_stuff_span.enter();
 
-      let io_segments = w_segments_from_circuit[0..4].to_vec();
       let inputs_segments: Vec<Vec<F>> = inputs.into_iter().flat_map(|input| {
         input.chunks(TRACE_LEN).map(|chunk| chunk.to_vec()).collect::<Vec<_>>()
       }).collect();
-      let aux_segments = w_segments_from_circuit[4+inputs_segments.len()..].to_vec();
 
       let w_segments = io_segments.clone().into_iter()
         .chain(inputs_segments.iter().cloned())

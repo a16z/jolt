@@ -64,6 +64,7 @@ pub struct R1CSBuilder<F: PrimeField> {
     pub num_variables: usize,
     pub num_inputs: usize, 
     pub num_aux: usize, 
+    pub num_internal: usize, 
     pub z: Option<Vec<F>>,
 }
 
@@ -125,6 +126,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         let idx = self.num_variables; 
         self.num_aux += 1;
         self.num_variables += 1;
+        self.num_internal += 1; 
         idx
     }   
 
@@ -305,6 +307,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             num_variables: GET_TOTAL_LEN(), // includes ("constant", 1) and ("output_state", ..)
             num_inputs: 0, // technically inputs are also aux, so keep this 0
             num_aux: GET_TOTAL_LEN()-1, // dont' include the constant  
+            num_internal: 0, 
             z: inputs_with_const_output, 
         };
 
