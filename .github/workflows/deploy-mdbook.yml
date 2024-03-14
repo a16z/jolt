@@ -25,6 +25,10 @@ jobs:
       with:
         mdbook-version: '0.4.10'
 
+    - name: Install mdbook-katex
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      run: cargo install mdbook-katex
+
     - run: mdbook build ./book
 
     - name: Deploy to Google Cloud Storage
