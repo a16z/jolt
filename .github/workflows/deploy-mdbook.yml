@@ -3,7 +3,8 @@ name: Deploy mdBook to GCS
 on:
   push:
     branches:
-      - main  # Or your default branch
+      - main 
+      - jolt
 
 jobs:
   deploy:
