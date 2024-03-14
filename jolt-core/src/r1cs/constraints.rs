@@ -1,5 +1,6 @@
 // Handwritten circuit 
 
+use ark_ff::PrimeField;
 use circom_scotia::r1cs::R1CS;
 
 /* Compiler Variables */
@@ -20,10 +21,10 @@ const PC_IDX: usize = 1;
 
 const ALL_ONES: i64 = 0xffffffff;
 
-
 const ONE: (usize, i64) = (0, 1);
 
 const INPUTS: &[(&str, usize)] = &[
+    ("CONSTANT", 1), 
     ("output_state", 2),
     ("input_state", 2),
     ("prog_a_rw", 1),
@@ -38,6 +39,10 @@ const INPUTS: &[(&str, usize)] = &[
     ("op_flags", N_FLAGS),
 ];
 
+fn GET_TOTAL_LEN() -> usize {
+    INPUTS.iter().map(|(_, value)| value).sum()
+}
+
 fn GET_INDEX(name: &str, offset: usize) -> Option<usize> {
     let mut total = 0;
     for &(input_name, value) in INPUTS {
@@ -50,7 +55,7 @@ fn GET_INDEX(name: &str, offset: usize) -> Option<usize> {
 }
 
 #[derive(Debug)]
-pub struct R1CSInstance {
+pub struct R1CSInstance<F: PrimeField> {
     A: Vec<Vec<(usize, i64)>>,
     B: Vec<Vec<(usize, i64)>>,
     C: Vec<Vec<(usize, i64)>>,
@@ -58,6 +63,7 @@ pub struct R1CSInstance {
     num_variables: usize,
     num_inputs: usize, 
     num_aux: usize, 
+    z: Option<Vec<F>>,
 }
 
 fn add_vectors(x: Vec<(usize, i64)>, mut y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
@@ -78,11 +84,26 @@ fn combine_chunks_vec(start_idx: usize, L: usize, N: usize) -> Vec<(usize, i64)>
     result
 }
 
-impl R1CSInstance {
+fn i64_to_f<F: PrimeField>(num: i64) -> F {
+    if num < 0 {
+        F::zero() - F::from(num.abs() as u64)
+    } else {
+        F::from(num as u64)
+    }
+}
+
+impl<F: PrimeField> R1CSInstance<F> {
+    fn get_val_from_lc(&self, lc: &[(usize, i64)]) -> F {
+        lc.iter().map(|(idx, coeff)| self.z.as_ref().unwrap()[*idx] * i64_to_f::<F>(*coeff)).sum()
+    }
 
     fn assign_aux(&mut self) -> usize {
-        let idx = self.num_aux; 
+        if self.z.is_none() {
+            self.z.as_mut().unwrap().push(F::zero())
+        }
+        let idx = self.num_variables; 
         self.num_aux += 1;
+        self.num_variables += 1;
         idx
     }   
 
@@ -93,7 +114,7 @@ impl R1CSInstance {
         self.num_constraints += 1;
     }
 
-    fn combine_eq(&mut self, start_idx: usize, L: usize, N: usize, result_idx: usize) {
+    fn combine_eq(&mut self, start_idx: usize, L: usize, N: usize, result_idx: usize, assign: bool) {
         let mut constraint_A = vec![];
         let mut constraint_B = vec![];
         let mut constraint_C = vec![];
@@ -104,6 +125,11 @@ impl R1CSInstance {
         constraint_B.push(ONE); 
         constraint_C.push((result_idx, 1));
 
+        if assign && self.z.is_some() {
+            let result_value = self.get_val_from_lc(&constraint_A);
+            self.z.as_mut().unwrap()[result_idx] = result_value;
+        }
+
         self.A.push(constraint_A); 
         self.B.push(constraint_B);
         self.C.push(constraint_C);
@@ -111,7 +137,7 @@ impl R1CSInstance {
         self.num_constraints += 1;
     }
 
-    fn constr_combine_le_eq(&mut self, start_idx: usize, L: usize, N: usize, result_idx: usize) {
+    fn constr_combine_le_eq(&mut self, start_idx: usize, L: usize, N: usize, result_idx: usize, assign: bool) {
         let mut constraint_A = vec![];
         let mut constraint_B = vec![];
         let mut constraint_C = vec![];
@@ -122,23 +148,10 @@ impl R1CSInstance {
         constraint_B.push(ONE); 
         constraint_C.push((result_idx, 1));
 
-        self.A.push(constraint_A); 
-        self.B.push(constraint_B);
-        self.C.push(constraint_C);
-
-        self.num_constraints += 1;
-    }
-
-    fn eq(&mut self, left_idx: usize, left_coeff: i64, left_const: i64, right_idx: usize, right_coeff: i64, right_const: i64) {
-        let mut constraint_A = vec![];
-        let mut constraint_B = vec![];
-        let mut constraint_C = vec![];
-
-        constraint_A.push((left_idx, left_coeff)); 
-        constraint_A.push((0, left_const)); 
-        constraint_B.push(ONE); 
-        constraint_C.push((right_idx, right_coeff));
-        constraint_A.push((0, right_const)); 
+        if assign && self.z.is_some() {
+            let result_value = self.get_val_from_lc(&constraint_A);
+            self.z.as_mut().unwrap()[result_idx] = result_value;
+        }
 
         self.A.push(constraint_A); 
         self.B.push(constraint_B);
@@ -146,6 +159,24 @@ impl R1CSInstance {
 
         self.num_constraints += 1;
     }
+
+    // fn eq(&mut self, left_idx: usize, left_coeff: i64, left_const: i64, right_idx: usize, right_coeff: i64, right_const: i64) {
+    //     let mut constraint_A = vec![];
+    //     let mut constraint_B = vec![];
+    //     let mut constraint_C = vec![];
+
+    //     constraint_A.push((left_idx, left_coeff)); 
+    //     constraint_A.push((0, left_const)); 
+    //     constraint_B.push(ONE); 
+    //     constraint_C.push((right_idx, right_coeff));
+    //     constraint_A.push((0, right_const)); 
+
+    //     self.A.push(constraint_A); 
+    //     self.B.push(constraint_B);
+    //     self.C.push(constraint_C);
+
+    //     self.num_constraints += 1;
+    // }
 
     fn constr_add(&mut self, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>, z: Vec<(usize, i64)>) {
         self.A.push(add_vectors(x, y)); 
@@ -158,6 +189,13 @@ impl R1CSInstance {
 
     fn constr_if_else(&mut self, choice: Vec<(usize, i64)>, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> usize {
         let z_idx = Self::assign_aux(self);
+        if self.z.is_some() {
+            let choice_val = self.get_val_from_lc(&choice);
+            let x_val = self.get_val_from_lc(&x);
+            let y_val = self.get_val_from_lc(&y);
+            let z_val = if choice_val == F::one() { x_val } else { y_val };
+            self.z.as_mut().unwrap()[z_idx] = z_val;
+        }
 
         let y_minus_x = subtract_vectors(y, x.clone()); 
         let z_minus_x = subtract_vectors(vec![(z_idx, 1)], x);
@@ -167,11 +205,48 @@ impl R1CSInstance {
         self.C.push(z_minus_x); 
 
         self.num_constraints += 1;
+        
         z_idx 
     }
 
+    // The left side is an lc but the right is a single index
     fn eq_simple(&mut self, left_idx: usize, right_idx: usize) {
-        Self::eq(self, left_idx, 1, 0, right_idx, 1, 0);
+        let mut constraint_A = vec![];
+        let mut constraint_B = vec![];
+        let mut constraint_C = vec![];
+
+        constraint_A.push((left_idx, 1));
+        constraint_B.push(ONE); 
+        constraint_C.push((right_idx, 1));
+
+        self.A.push(constraint_A); 
+        self.B.push(constraint_B);
+        self.C.push(constraint_C);
+
+        self.num_constraints += 1;
+
+    }
+
+    // The left side is an lc but the right is a single index
+    fn eq(&mut self, left: Vec<(usize, i64)>, right_idx: usize, assign: bool) {
+        let mut constraint_A = vec![];
+        let mut constraint_B = vec![];
+        let mut constraint_C = vec![];
+
+        constraint_A = left; 
+        constraint_B.push(ONE); 
+        constraint_C.push((right_idx, 1));
+
+        if assign && self.z.is_some() {
+            self.z.as_mut().unwrap()[right_idx] = self.get_val_from_lc(&constraint_A);
+        }
+
+        self.A.push(constraint_A); 
+        self.B.push(constraint_B);
+        self.C.push(constraint_C);
+
+        self.num_constraints += 1;
+
     }
 
     fn constr_prod_0(&mut self, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>, z: Vec<(usize, i64)>) {
@@ -190,15 +265,22 @@ impl R1CSInstance {
         ); 
     }
 
-    pub fn get_matrices() -> Option<Self> {
+    pub fn get_matrices(inputs: Option<Vec<F>>) -> Option<Self> {
+        // Append the constant 1 to the inputs 
+        let inputs_with_1 = inputs.map(|mut vec| {
+            vec.insert(0, F::one());
+            vec
+        });
+
         let mut instance = R1CSInstance {
             A: vec![],
             B: vec![],
             C: vec![],
             num_constraints: 0,
-            num_variables: 1,
+            num_variables: GET_TOTAL_LEN(),
             num_inputs: 0,
             num_aux: 0,
+            z: inputs_with_1, 
         };
 
         let opcode = GET_INDEX("prog_v_rw", 0)?;
@@ -229,7 +311,7 @@ impl R1CSInstance {
         // TODO(arasuarun)
 
         // combine flag_bits and check that they equal op_flags_packed 
-        R1CSInstance::combine_eq(&mut instance, GET_INDEX("op_flags", 0)?, 1, N_FLAGS, op_flags_packed);
+        R1CSInstance::combine_eq(&mut instance, GET_INDEX("op_flags", 0)?, 1, N_FLAGS, op_flags_packed, false);
 
         // signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
         let immediate: usize = R1CSInstance::constr_if_else(&mut instance, vec![(is_lui_auipc, 1)], vec![(immediate_before_processing, 1)], vec![(immediate_before_processing, 1<<12)]); 
@@ -263,7 +345,7 @@ impl R1CSInstance {
             signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
         */
         let load_or_store_value = R1CSInstance::assign_aux(&mut instance); 
-        R1CSInstance::constr_combine_le_eq(&mut instance, GET_INDEX("memreg_v_writes", MOPS-3)?, 8, MOPS, load_or_store_value); 
+        R1CSInstance::constr_combine_le_eq(&mut instance, GET_INDEX("memreg_v_writes", MOPS-3)?, 8, MOPS, load_or_store_value, true); 
 
         /* 
         signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
@@ -312,6 +394,20 @@ impl R1CSInstance {
         let z__2 = R1CSInstance::assign_aux(&mut instance);
         let z__1 = R1CSInstance::assign_aux(&mut instance);
         let z = R1CSInstance::assign_aux(&mut instance);
+
+        if instance.z.is_some() {
+            // set z_concat 
+            let z_concat = instance.z.as_ref().unwrap()[x] * F::from((1<<W) as u64) + instance.z.as_ref().unwrap()[y];
+            let z_add = instance.z.as_ref().unwrap()[x] + instance.z.as_ref().unwrap()[y];
+            let z_sub = instance.z.as_ref().unwrap()[x] + (F::from(ALL_ONES.abs() as u64) - instance.z.as_ref().unwrap()[y] + F::one());
+            instance.z.as_mut().unwrap()[z_mul] = instance.z.as_ref().unwrap()[x] * instance.z.as_ref().unwrap()[y];
+
+            instance.z.as_mut().unwrap()[z__4] = if instance.z.as_ref().unwrap()[is_concat] == F::one() { z_concat } else { F::zero() };
+            instance.z.as_mut().unwrap()[z__3] = instance.z.as_mut().unwrap()[z__4] + if instance.z.as_ref().unwrap()[is_add_instr] == F::one() { z_add } else { F::zero() };
+            instance.z.as_mut().unwrap()[z__2] = instance.z.as_mut().unwrap()[z__3] + if instance.z.as_ref().unwrap()[is_sub_instr] == F::one() { z_sub } else { F::zero() };
+            instance.z.as_mut().unwrap()[z__1] = instance.z.as_mut().unwrap()[z__2] + if instance.z.as_ref().unwrap()[is_mul_instr] == F::one() { instance.z.as_mut().unwrap()[z_mul] } else { F::zero() };
+            instance.z.as_mut().unwrap()[z] = instance.z.as_mut().unwrap()[z__1]; 
+        }
 
         R1CSInstance::constr_abc(&mut instance, vec![(is_concat, 1)], vec![(x, 1<<W), (y, 1)], vec![(z__4, 1)]);
         R1CSInstance::constr_abc(&mut instance, vec![(is_add_instr, 1)], vec![(x, 1), (y, 1)], vec![(z__3, 1), (z__4, -1)]);
@@ -431,9 +527,10 @@ impl R1CSInstance {
         R1CSInstance::constr_abc(&mut instance, vec![(is_branch_instr, 1)], vec![(GET_INDEX("lookup_output", 0)?, 1)], vec![(is_branch_times_lookup_output, 1)]); 
         let next_pc_j_b = R1CSInstance::constr_if_else(&mut instance, vec![(is_branch_times_lookup_output, 1)], vec![(next_pc_j, 1)], vec![(PC, 1), (immediate_signed, 1)]);
 
-        R1CSInstance::eq_simple(&mut instance, 
+        R1CSInstance::eq(&mut instance, 
+            vec![(next_pc_j_b, 1)], 
             GET_INDEX("output_state", PC_IDX)?, 
-            next_pc_j_b, 
+            true, 
         );
 
         Some(instance)
@@ -443,10 +540,11 @@ impl R1CSInstance {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use ark_bn254::Fr as F; 
 
         #[test]
         fn test_get_matrices() {
-            let instance = R1CSInstance::get_matrices();
+            let instance = R1CSInstance::<F>::get_matrices(None);
             println!("{:?}", instance.unwrap());
 
         }
