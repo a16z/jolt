@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+    - uses: dtolnay/rust-toolchain@stable
 
     - id: 'auth'
       uses: 'google-github-actions/auth@v2'
@@ -26,7 +27,6 @@ jobs:
         mdbook-version: '0.4.10'
 
     - name: Install mdbook-katex
-      uses: actions-rust-lang/setup-rust-toolchain@v1
       run: cargo install mdbook-katex
 
     - run: mdbook build ./book
