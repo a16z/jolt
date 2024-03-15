@@ -53,7 +53,6 @@ strum = "0.25.0"
 strum_macros = "0.25.2"
 subtle = { version = "2.4", default-features = false }
 textplots = "0.8.4"
-thiserror = "1.0"
 tracing = "0.1.37"
 tracing-chrome = "0.7.1"
 tracing-flame = "0.2.0"
@@ -67,12 +66,13 @@ compiler = { path = "../compiler" }
 # witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval" }
 ruint = "1.11.1"
-spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "dedupe/full"}
+spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "feat/remove-circom"}
 # spartan2 = { path = "../Spartan2/" }
 ark-bn254 = "0.4.0"
 lazy_static = "1.4.0"
 halo2curves = "0.6.1"
 fixedbitset = "0.5.0"
+thiserror = "1.0.58"
 
 [build-dependencies]
 common = { path = "../common" }
