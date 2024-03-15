@@ -1,6 +1,6 @@
 use crate::jolt::instruction::add::ADDInstruction;
 use crate::jolt::trace::JoltProvableTrace;
-use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, ELFRow};
+use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, BytecodeRow};
 use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
 use crate::jolt::vm::read_write_memory::{
     random_memory_trace, MemoryOp, RandomInstruction, ReadWriteMemory,
@@ -68,8 +68,8 @@ fn prove_e2e_except_r1cs(
         .map(|i| ELFInstruction::random(i, &mut rng))
         .collect();
     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
-    let bytecode_rows: Vec<ELFRow> = (0..bytecode_size)
-        .map(|i| ELFRow::random(i, &mut rng))
+    let bytecode_rows: Vec<BytecodeRow> = (0..bytecode_size)
+        .map(|i| BytecodeRow::random(i, &mut rng))
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
@@ -112,8 +112,8 @@ fn prove_bytecode(
     let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
-    let bytecode_rows: Vec<ELFRow> = (0..bytecode_size)
-        .map(|i| ELFRow::random(i, &mut rng))
+    let bytecode_rows: Vec<BytecodeRow> = (0..bytecode_size)
+        .map(|i| BytecodeRow::random(i, &mut rng))
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
@@ -225,7 +225,7 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
-        let bytecode_trace: Vec<ELFRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
+        let bytecode_trace: Vec<BytecodeRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
 
         let instructions_r1cs: Vec<RV32I> = trace
             .iter()
@@ -289,7 +289,7 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
-        let bytecode_trace: Vec<ELFRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
+        let bytecode_trace: Vec<BytecodeRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
 
         let instructions_r1cs: Vec<RV32I> = trace
             .iter()

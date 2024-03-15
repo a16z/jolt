@@ -151,7 +151,7 @@ mod tests {
 
     use crate::jolt::instruction::{add::ADDInstruction, JoltInstruction};
     use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
-    use crate::jolt::vm::bytecode::ELFRow;
+    use crate::jolt::vm::bytecode::BytecodeRow;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I};
     use crate::jolt::vm::MemoryOp;
     use std::sync::Mutex;
@@ -223,14 +223,14 @@ mod tests {
     //     let bytecode_location = JoltPaths::bytecode_path("fibonacci");
     //     let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
     //         .expect("deserialization failed");
-    //     let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
+    //     let bytecode_rows: Vec<BytecodeRow> = bytecode.clone().iter().map(BytecodeRow::from).collect();
 
     //     let converted_trace: Vec<RVTraceRow> = loaded_trace
     //         .into_iter()
     //         .map(|common| RVTraceRow::from_common(common))
     //         .collect();
 
-    //     let bytecode_trace: Vec<ELFRow> = converted_trace
+    //     let bytecode_trace: Vec<BytecodeRow> = converted_trace
     //         .iter()
     //         .map(|row| row.to_bytecode_trace())
     //         .collect();
@@ -294,7 +294,7 @@ mod tests {
             .map(|common| RVTraceRow::from_common(common))
             .collect();
 
-        let bytecode_trace: Vec<ELFRow> = converted_trace
+        let bytecode_trace: Vec<BytecodeRow> = converted_trace
             .iter()
             .map(|row| row.to_bytecode_trace())
             .collect();
@@ -351,14 +351,14 @@ mod tests {
     //     let bytecode_location = JoltPaths::bytecode_path("sha3-ex");
     //     let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
     //         .expect("deserialization failed");
-    //     let bytecode_rows: Vec<ELFRow> = bytecode.clone().iter().map(ELFRow::from).collect();
+    //     let bytecode_rows: Vec<BytecodeRow> = bytecode.clone().iter().map(BytecodeRow::from).collect();
 
     //     let converted_trace: Vec<RVTraceRow> = loaded_trace
     //         .into_iter()
     //         .map(|common| RVTraceRow::from_common(common))
     //         .collect();
 
-    //     let bytecode_trace: Vec<ELFRow> = converted_trace
+    //     let bytecode_trace: Vec<BytecodeRow> = converted_trace
     //         .iter()
     //         .map(|row| row.to_bytecode_trace())
     //         .collect();
@@ -421,7 +421,7 @@ mod tests {
             .map(|common| RVTraceRow::from_common(common))
             .collect();
 
-        let bytecode_trace: Vec<ELFRow> = converted_trace
+        let bytecode_trace: Vec<BytecodeRow> = converted_trace
             .iter()
             .map(|row| row.to_bytecode_trace())
             .collect();

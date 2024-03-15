@@ -35,7 +35,7 @@ use self::instruction_lookups::{
 };
 use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory, ReadWriteMemoryProof};
 use self::{
-    bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, ELFRow},
+    bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, BytecodeRow},
     instruction_lookups::InstructionPolynomials,
 };
 
@@ -136,7 +136,7 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         bytecode: Vec<ELFInstruction>,
-        bytecode_trace: Vec<ELFRow>,
+        bytecode_trace: Vec<BytecodeRow>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
         circuit_flags: Vec<F>,
@@ -146,7 +146,7 @@ where
         JoltCommitments<G>,
     ) {
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let bytecode_rows: Vec<ELFRow> = bytecode.iter().map(ELFRow::from).collect();
+        let bytecode_rows: Vec<BytecodeRow> = bytecode.iter().map(BytecodeRow::from).collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             bytecode_rows.clone(),
             bytecode_trace.clone(),
@@ -161,7 +161,6 @@ where
             memory_trace.len().next_power_of_two(),
             std::array::from_fn(|_| MemoryOp::no_op()),
         );
-
 
         let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
             bytecode.clone(),
@@ -201,8 +200,8 @@ where
             bytecode,
             memory_trace.into_iter().flatten().collect(),
             circuit_flags,
-            &jolt_polynomials, 
-            &jolt_commitments, 
+            &jolt_polynomials,
+            &jolt_commitments,
             &mut transcript,
         );
 
@@ -268,8 +267,8 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_bytecode")]
     fn prove_bytecode(
-        bytecode_rows: Vec<ELFRow>,
-        trace: Vec<ELFRow>,
+        bytecode_rows: Vec<BytecodeRow>,
+        trace: Vec<BytecodeRow>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -357,8 +356,8 @@ where
     fn prove_r1cs(
         preprocessing: JoltPreprocessing<F, G>,
         instructions: Vec<Self::InstructionSet>,
-        bytecode_rows: Vec<ELFRow>,
-        trace: Vec<ELFRow>,
+        bytecode_rows: Vec<BytecodeRow>,
+        trace: Vec<BytecodeRow>,
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
@@ -372,11 +371,13 @@ where
 
         let log_M = log2(M) as usize;
 
-        let hyrax_generators: HyraxGenerators<NUM_R1CS_POLYS, G> =
-            HyraxGenerators::new(padded_trace_len.trailing_zeros() as usize, &preprocessing.generators);
+        let hyrax_generators: HyraxGenerators<NUM_R1CS_POLYS, G> = HyraxGenerators::new(
+            padded_trace_len.trailing_zeros() as usize,
+            &preprocessing.generators,
+        );
 
         /* Assemble the polynomials and commitments from the rest of Jolt.
-        The ones that are extra, just for R1CS are: 
+        The ones that are extra, just for R1CS are:
             - circuit_flags_packed
             - chunks_x
             - chunks_y
@@ -390,7 +391,7 @@ where
         let precomputed_powers: Vec<F> = (0..N_FLAGS)
             .map(|i| F::from_u64(2u64.pow(i as u32)).unwrap())
             .collect();
-        
+
         let mut packed_flags: Vec<F> = circuit_flags
             .par_chunks(N_FLAGS)
             .map(|x| {
@@ -406,14 +407,18 @@ where
         // Derive chunks_x and chunks_y
         let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
         let _guard = span.enter();
-        
+
         let num_chunks = padded_trace_len * C;
         let mut chunks_x: Vec<F> = vec![F::zero(); num_chunks];
         let mut chunks_y: Vec<F> = vec![F::zero(); num_chunks];
 
         for (instruction_index, op) in instructions.iter().enumerate() {
             let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
-            for (chunk_index, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
+            for (chunk_index, (x, y)) in chunks_x_op
+                .into_iter()
+                .zip(chunks_y_op.into_iter())
+                .enumerate()
+            {
                 let flat_chunk_index = instruction_index + chunk_index * padded_trace_len;
                 chunks_x[flat_chunk_index] = F::from_u64(x as u64).unwrap();
                 chunks_y[flat_chunk_index] = F::from_u64(y as u64).unwrap();
@@ -423,7 +428,7 @@ where
         drop(_guard);
         drop(span);
 
-        // Derive lookup_outputs 
+        // Derive lookup_outputs
         let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
         lookup_outputs.resize(padded_trace_len, F::zero());
 
@@ -431,26 +436,35 @@ where
         let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
         let _enter = span.enter();
         let mut circuit_flags_bits = vec![F::zero(); padded_trace_len * N_FLAGS];
-        circuit_flags.chunks(N_FLAGS).enumerate().for_each(|(chunk_index, chunk)| {
-            chunk.iter().enumerate().for_each(|(trace_index, &flag)| {
-                let index = chunk_index + trace_index * padded_trace_len;
-                circuit_flags_bits[index] = flag;
+        circuit_flags
+            .chunks(N_FLAGS)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
+                chunk.iter().enumerate().for_each(|(trace_index, &flag)| {
+                    let index = chunk_index + trace_index * padded_trace_len;
+                    circuit_flags_bits[index] = flag;
+                })
             });
-        });
         drop(_enter);
         drop(span);
 
         // Assemble the polynomials
         let (bytecode_a, mut bytecode_v) = jolt_polynomials.bytecode.get_polys_r1cs();
-        bytecode_v.par_extend(packed_flags.par_iter()); 
+        bytecode_v.par_extend(packed_flags.par_iter());
 
-        let (memreg_a_rw, memreg_v_reads, memreg_v_writes) = jolt_polynomials.read_write_memory.get_polys_r1cs();
+        let (memreg_a_rw, memreg_v_reads, memreg_v_writes) =
+            jolt_polynomials.read_write_memory.get_polys_r1cs();
 
         let span = tracing::span!(tracing::Level::INFO, "chunks_query");
         let _guard = span.enter();
-        let mut chunks_query: Vec<F> = Vec::with_capacity(C * jolt_polynomials.instruction_lookups.dim[0].len());
+        let mut chunks_query: Vec<F> =
+            Vec::with_capacity(C * jolt_polynomials.instruction_lookups.dim[0].len());
         for i in 0..C {
-            chunks_query.par_extend(jolt_polynomials.instruction_lookups.dim[i].evals_ref().par_iter());
+            chunks_query.par_extend(
+                jolt_polynomials.instruction_lookups.dim[i]
+                    .evals_ref()
+                    .par_iter(),
+            );
         }
         drop(_guard);
 
@@ -458,9 +472,9 @@ where
         let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
         let _guard = span.enter();
         // TODO(sragss): JoltCommitment::convert_to_pre_r1cs();
-        let bytecode_comms: Vec<HyraxCommitment<1, G>> =  vec![
+        let bytecode_comms: Vec<HyraxCommitment<1, G>> = vec![
             jolt_commitments.bytecode.read_write_commitments[0].clone(), // a
-            jolt_commitments.bytecode.read_write_commitments[2].clone(), // opcode, 
+            jolt_commitments.bytecode.read_write_commitments[2].clone(), // opcode,
             jolt_commitments.bytecode.read_write_commitments[4].clone(), // rs1
             jolt_commitments.bytecode.read_write_commitments[5].clone(), // rs2
             jolt_commitments.bytecode.read_write_commitments[3].clone(), // rd
@@ -473,7 +487,7 @@ where
                 HyraxCommitment::commit_slice(chunk, &hyrax_generators)
             }).collect()
         };
-        
+
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
         let _guard = span.enter();
         let chunks_x_comms = commit_to_chunks(&chunks_x);
@@ -482,12 +496,15 @@ where
         let packed_flags_comm = vec![HyraxCommitment::commit_slice(&packed_flags, &hyrax_generators)];
         let circuit_flags_comm = commit_to_chunks(&circuit_flags_bits);
         drop(_guard);
-        
 
         let span = tracing::span!(tracing::Level::INFO, "conversions");
         let _guard = span.enter();
-        let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.clone();
-        let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment[0..C].to_vec();
+        let memory_comms = jolt_commitments
+            .read_write_memory
+            .a_v_read_write_commitments
+            .clone();
+        let dim_read_comms =
+            jolt_commitments.instruction_lookups.dim_read_commitment[0..C].to_vec();
         drop(_guard);
 
         let jolt_commitments_spartan = [
@@ -498,8 +515,9 @@ where
             chunks_y_comms,
             dim_read_comms,
             lookup_outputs_comms,
-            circuit_flags_comm
-        ].concat();
+            circuit_flags_comm,
+        ]
+        .concat();
 
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
         // will be the exact witness vector to feed into the R1CS
@@ -523,9 +541,10 @@ where
             padded_trace_len, 
             inputs, 
             hyrax_generators.clone(),
-            &jolt_commitments_spartan, 
-            transcript
-        ).expect("proof failed");
+            &jolt_commitments_spartan,
+            transcript,
+        )
+        .expect("proof failed");
 
         proof
     }
