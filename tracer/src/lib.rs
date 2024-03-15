@@ -9,7 +9,7 @@ use emulator::{
     Emulator,
 };
 
-use object::{Object, ObjectSection, SectionKind};
+use object::{Object, ObjectSection};
 
 mod decode;
 mod emulator;

@@ -1,12 +1,10 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use halo2curves::group::Curve;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
@@ -89,46 +87,46 @@ impl ELFRow {
         }
     }
 
-    fn circuit_flags_packed<F: PrimeField>(&self) -> F {
-        let circuit_flags: Vec<F> = RVTraceRow::new(
-            0,
-            RV32IM::from_repr(self.opcode as u8).unwrap(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .to_circuit_flags();
+    // fn circuit_flags_packed<F: PrimeField>(&self) -> F {
+    //     let circuit_flags: Vec<F> = RVTraceRow::new(
+    //         0,
+    //         RV32IM::from_repr(self.opcode as u8).unwrap(),
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //     )
+    //     .to_circuit_flags();
 
-        let circuit_flags_bits: Vec<bool> = circuit_flags
-            .iter()
-            .map(|x| if x.is_zero() { false } else { true })
-            .collect();
+    //     let circuit_flags_bits: Vec<bool> = circuit_flags
+    //         .iter()
+    //         .map(|x| if x.is_zero() { false } else { true })
+    //         .collect();
 
-        println!("opcode as u8: {:?}", (self.opcode as u8));
-        println!(
-            "opcode: {:?}",
-            RV32IM::from_repr(self.opcode as u8).unwrap()
-        );
-        println!("bits: {:?}", circuit_flags_bits);
+    //     println!("opcode as u8: {:?}", (self.opcode as u8));
+    //     println!(
+    //         "opcode: {:?}",
+    //         RV32IM::from_repr(self.opcode as u8).unwrap()
+    //     );
+    //     println!("bits: {:?}", circuit_flags_bits);
 
-        let mut bytes = [0u8; 2];
-        for (idx, bit) in circuit_flags_bits.into_iter().enumerate() {
-            let byte = idx / 8;
-            let shift = idx % 8;
-            bytes[byte] |= (bit as u8) << shift;
-        }
+    //     let mut bytes = [0u8; 2];
+    //     for (idx, bit) in circuit_flags_bits.into_iter().enumerate() {
+    //         let byte = idx / 8;
+    //         let shift = idx % 8;
+    //         bytes[byte] |= (bit as u8) << shift;
+    //     }
 
-        println!("bytes: {:?}", bytes);
+    //     println!("bytes: {:?}", bytes);
 
-        F::from_le_bytes_mod_order(&bytes)
-    }
+    //     F::from_le_bytes_mod_order(&bytes)
+    // }
 }
 
 pub fn random_bytecode_trace(
