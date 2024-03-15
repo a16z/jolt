@@ -8,9 +8,11 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::trace::{rv::RVTraceRow, JoltProvableTrace};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::matrix_dimensions;
+use crate::poly::hyrax::{
+    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
+};
 use crate::poly::pedersen::PedersenGenerators;
-use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::RV32IM;
 use common::{to_ram_address, ELFInstruction};
 
@@ -23,8 +25,8 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
     },
-    subprotocols::batched_commitment::{
-        BatchedPolynomialCommitment, BatchedPolynomialOpeningProof,
+    subprotocols::concatenated_commitment::{
+        ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
     },
     utils::{errors::ProofVerifyError, is_power_of_two, math::Math},
 };
@@ -156,6 +158,7 @@ impl From<&ELFInstruction> for ELFRow {
 
 /// Polynomial representation of bytecode as expected by Jolt –– each bytecode address maps to a
 /// tuple, containing information about the instruction and its operands.
+#[derive(Clone)]
 pub struct FiveTuplePoly<F: PrimeField> {
     /// MLE of all opcodes in the bytecode.
     opcode: DensePolynomial<F>,
@@ -408,33 +411,33 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     /// Computes the maximum number of group generators needed to commit to bytecode
     /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
     pub fn num_generators(max_bytecode_size: usize, max_trace_length: usize) -> usize {
+        // Account for no-op appended to end of bytecode
+        let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
+        let max_trace_length = max_trace_length.next_power_of_two();
+
         // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
-        let read_write_num_vars = (max_trace_length * 7).log_2();
+        let num_read_write_generators =
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
         // t_final, v_init_final (opcode, rs1, rs2, rd, imm)
-        let init_final_num_vars = (max_bytecode_size * 6).log_2();
-        let max_num_vars = std::cmp::max(read_write_num_vars, init_final_num_vars);
-        matrix_dimensions(max_num_vars).1.pow2()
+        let num_init_final_generators =
+            matrix_dimensions((max_bytecode_size * 6).next_power_of_two().log_2(), 1).1;
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 }
 
 pub struct BatchedBytecodePolynomials<F: PrimeField> {
-    /// Contains:
-    /// - a_read_write, t_read, v_read_write
-    combined_read_write: DensePolynomial<F>,
-
     // Contains:
     // - t_final, v_init_final
     combined_init_final: DensePolynomial<F>,
 }
 
 pub struct BytecodeCommitment<G: CurveGroup> {
-    /// Combined commitment for:
-    /// - a_read_write, t_read, v_read_write
-    pub read_write_commitments: BatchedPolynomialCommitment<G>,
+    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 
     // Combined commitment for:
     // - t_final, v_init_final
-    pub init_final_commitments: BatchedPolynomialCommitment<G>,
+    pub init_final_commitments: ConcatenatedPolynomialCommitment<G>,
 }
 
 impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
@@ -447,15 +450,6 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let combined_read_write = DensePolynomial::merge(&vec![
-            &self.a_read_write,
-            &self.t_read,
-            &self.v_read_write.opcode,
-            &self.v_read_write.rd,
-            &self.v_read_write.rs1,
-            &self.v_read_write.rs2,
-            &self.v_read_write.imm,
-        ]);
         let combined_init_final = DensePolynomial::merge(&vec![
             &self.t_final,
             &self.v_init_final.opcode,
@@ -466,24 +460,37 @@ where
         ]);
 
         Self::BatchedPolynomials {
-            combined_read_write,
             combined_init_final,
         }
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_commitments = batched_polys
-            .combined_read_write
-            .combined_commit(pedersen_generators);
+        let read_write_generators =
+            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
+        let read_write_commitments = [
+            &self.a_read_write,
+            &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
+            &self.v_read_write.opcode,
+            &self.v_read_write.rd,
+            &self.v_read_write.rs1,
+            &self.v_read_write.rs2,
+            &self.v_read_write.imm,
+        ]
+        .par_iter()
+        .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
+        .collect::<Vec<_>>();
+
         let init_final_commitments = batched_polys
             .combined_init_final
             .combined_commit(pedersen_generators);
 
         Self::Commitment {
+            read_write_generators,
             read_write_commitments,
             init_final_commitments,
         }
@@ -694,6 +701,8 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
+
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
@@ -706,7 +715,8 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedBytecodePolynomials<F>,
+        polynomials: &BytecodePolynomials<F, G>,
+        _: &BatchedBytecodePolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -717,8 +727,16 @@ where
         ];
         combined_openings.extend(openings.v_read_write_openings.iter());
 
-        BatchedPolynomialOpeningProof::prove(
-            &polynomials.combined_read_write,
+        BatchedHyraxOpeningProof::prove(
+            &[
+                &polynomials.a_read_write,
+                &polynomials.t_read,
+                &polynomials.v_read_write.opcode,
+                &polynomials.v_read_write.rd,
+                &polynomials.v_read_write.rs1,
+                &polynomials.v_read_write.rs2,
+                &polynomials.v_read_write.imm,
+            ],
             &opening_point,
             &combined_openings,
             transcript,
@@ -739,9 +757,10 @@ where
         combined_openings.extend(self.v_read_write_openings.iter());
 
         opening_proof.verify(
+            &commitment.read_write_generators,
             opening_point,
             &combined_openings,
-            &commitment.read_write_commitments,
+            &commitment.read_write_commitments.iter().collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -776,15 +795,16 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedBytecodePolynomials<F>,
+        _: &BytecodePolynomials<F, G>,
+        batched_polynomials: &BatchedBytecodePolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         let mut combined_openings: Vec<F> = vec![openings.t_final];
         combined_openings.extend(openings.v_init_final.iter());
-        BatchedPolynomialOpeningProof::prove(
-            &polynomials.combined_init_final,
+        ConcatenatedPolynomialOpeningProof::prove(
+            &batched_polynomials.combined_init_final,
             &opening_point,
             &combined_openings,
             transcript,
@@ -889,14 +909,19 @@ mod tests {
             ELFRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             ELFRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
+        let num_generators = BytecodePolynomials::<Fr, EdwardsProjective>::num_generators(
+            program.len(),
+            trace.len(),
+        );
+
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
 
         let mut transcript = Transcript::new(b"test_transcript");
 
         let batched_polys = polys.batch();
-        let generators = PedersenGenerators::new(10, b"test");
-        let commitments = BytecodePolynomials::commit(&batched_polys, &generators);
+        let generators = PedersenGenerators::new(num_generators, b"test");
+        let commitments = polys.commit(&batched_polys, &generators);
         let proof = BytecodeProof::prove_memory_checking(
             &NoPreprocessing,
             &polys,
@@ -929,11 +954,15 @@ mod tests {
             ELFRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
+        let num_generators = BytecodePolynomials::<Fr, EdwardsProjective>::num_generators(
+            program.len(),
+            trace.len(),
+        );
         let polys: BytecodePolynomials<Fr, EdwardsProjective> =
             BytecodePolynomials::new(program, trace);
         let batch = polys.batch();
-        let generators = PedersenGenerators::new(8, b"test");
-        let commitments = BytecodePolynomials::commit(&batch, &generators);
+        let generators = PedersenGenerators::new(num_generators, b"test");
+        let commitments = polys.commit(&batch, &generators);
 
         let mut transcript = Transcript::new(b"test_transcript");
 

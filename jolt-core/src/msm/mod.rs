@@ -11,7 +11,7 @@ impl<G: CurveGroup> VariableBaseMSM for G {}
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.
 pub trait VariableBaseMSM: ScalarMul {
-    fn msm_u64(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
+    fn msm(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, usize> {
         (bases.len() == scalars.len())
             .then(|| {
                 let max_num_bits = scalars

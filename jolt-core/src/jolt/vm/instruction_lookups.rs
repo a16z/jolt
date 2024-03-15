@@ -1,6 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::NUM_R1CS_POLYS;
 use itertools::{interleave, max, Itertools};
 use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -11,7 +12,9 @@ use tracing::trace_span;
 
 use crate::jolt::instruction::SubtableIndices;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{matrix_dimensions, HyraxGenerators};
+use crate::poly::hyrax::{
+    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
+};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
@@ -28,7 +31,9 @@ use crate::{
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        batched_commitment::{BatchedPolynomialCommitment, BatchedPolynomialOpeningProof},
+        concatenated_commitment::{
+            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
+        },
         grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
         sumcheck::SumcheckInstanceProof,
     },
@@ -72,35 +77,25 @@ where
     pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
     /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
-    /// construction of the memory flag polynomials in `read_write_grand_product`. 
+    /// construction of the memory flag polynomials in `read_write_grand_product`.
     instruction_flag_bitvectors: Vec<Vec<u64>>,
 }
 
 /// Batched version of InstructionPolynomials.
 pub struct BatchedInstructionPolynomials<F: PrimeField> {
-    /// dim_i and read_cts_i polynomials, batched together.
-    batched_dim_read: DensePolynomial<F>,
     /// final_cts_i polynomials, batched together.
     batched_final: DensePolynomial<F>,
-    /// E_i and flag polynomials, batched together.
-    batched_E_flag: DensePolynomial<F>,
 }
 
 /// Commitments to BatchedInstructionPolynomials.
 pub struct InstructionCommitment<G: CurveGroup> {
-    /// Commitment to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: BatchedPolynomialCommitment<G>,
+    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    /// Commitments to dim_i and read_cts_i polynomials.
+    pub dim_read_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     /// Commitment to final_cts_i polynomials.
-    pub final_commitment: BatchedPolynomialCommitment<G>,
-    /// Commitment to E_i and flag polynomials.
-    pub E_flag_commitment: BatchedPolynomialCommitment<G>,
-}
-
-/// Contains generators used to commit to InstructionPolynomials.
-pub struct InstructionCommitmentGenerators<G: CurveGroup> {
-    pub dim_read_commitment_gens: HyraxGenerators<G>,
-    pub final_commitment_gens: HyraxGenerators<G>,
-    pub E_flag_commitment_gens: HyraxGenerators<G>,
+    pub final_commitment: ConcatenatedPolynomialCommitment<G>,
+    /// Commitments to E_i and flag polynomials.
+    pub E_flag_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
 // TODO: macro?
@@ -114,39 +109,39 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let (batched_dim_read, (batched_final, batched_E_flag)) = rayon::join(
-            || DensePolynomial::merge(self.dim.iter().chain(self.read_cts.iter())),
-            || {
-                rayon::join(
-                    || DensePolynomial::merge(self.final_cts.iter()),
-                    || {
-                        DensePolynomial::merge(
-                            self.E_polys
-                                .iter()
-                                .chain(self.instruction_flag_polys.iter()),
-                        )
-                    },
-                )
-            },
-        );
-
         Self::BatchedPolynomials {
-            batched_dim_read,
-            batched_final,
-            batched_E_flag,
+            batched_final: DensePolynomial::merge(self.final_cts.iter()),
         }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(
+        &self,
         batched_polys: &Self::BatchedPolynomials,
-        generators: &PedersenGenerators<G>,
+        pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let dim_read_commitment = batched_polys.batched_dim_read.combined_commit(generators);
-        let final_commitment = batched_polys.batched_final.combined_commit(generators);
-        let E_flag_commitment = batched_polys.batched_E_flag.combined_commit(generators);
+        let read_write_generators =
+            HyraxGenerators::new(self.dim[0].get_num_vars(), pedersen_generators);
+        let dim_read_commitment = self
+            .dim
+            .par_iter()
+            .chain(self.read_cts.par_iter())
+            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
+            .collect::<Vec<_>>();
+
+        let E_flag_commitment = self
+            .E_polys
+            .par_iter()
+            .chain(self.instruction_flag_polys.par_iter())
+            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
+            .collect::<Vec<_>>();
+
+        let final_commitment = batched_polys
+            .batched_final
+            .combined_commit(pedersen_generators);
 
         Self::Commitment {
+            read_write_generators,
             dim_read_commitment,
             final_commitment,
             E_flag_commitment,
@@ -171,29 +166,32 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
+
     fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
+        _: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
+        let E_flag_polys = polynomials
+            .E_polys
+            .iter()
+            .chain(polynomials.instruction_flag_polys.iter())
+            .collect::<Vec<_>>();
         let E_flag_openings: Vec<F> = [
             openings.E_poly_openings.as_slice(),
             openings.flag_openings.as_slice(),
         ]
         .concat();
 
-        BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_E_flag,
-            opening_point,
-            &E_flag_openings,
-            transcript,
-        )
+        BatchedHyraxOpeningProof::prove(&E_flag_polys, opening_point, &E_flag_openings, transcript)
     }
 
     fn verify_openings(
@@ -210,9 +208,10 @@ where
         .concat();
 
         opening_proof.verify(
+            &commitment.read_write_generators,
             opening_point,
             &E_flag_openings,
-            &commitment.E_flag_commitment,
+            &commitment.E_flag_commitment.iter().collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -232,22 +231,13 @@ where
     flag_openings: Vec<F>,
 }
 
-pub struct InstructionReadWriteOpeningProof<F, G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    dim_read_opening_proof: BatchedPolynomialOpeningProof<G>,
-    E_flag_opening_proof: BatchedPolynomialOpeningProof<G>,
-}
-
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
     for InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Proof = InstructionReadWriteOpeningProof<F, G>;
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
@@ -285,41 +275,34 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        let dim_read_openings: Vec<F> = [
+        let read_write_polys = polynomials
+            .dim
+            .iter()
+            .chain(polynomials.read_cts.iter())
+            .chain(polynomials.E_polys.iter())
+            .chain(polynomials.instruction_flag_polys.iter())
+            .collect::<Vec<_>>();
+
+        let read_write_openings: Vec<F> = [
             openings.dim_openings.as_slice(),
             openings.read_openings.as_slice(),
-        ]
-        .concat();
-
-        let dim_read_opening_proof = BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_dim_read,
-            &opening_point,
-            &dim_read_openings,
-            transcript,
-        );
-
-        let E_flag_openings: Vec<F> = [
             openings.E_poly_openings.as_slice(),
             openings.flag_openings.as_slice(),
         ]
         .concat();
 
-        let E_flag_opening_proof = BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_E_flag,
-            &opening_point,
-            &E_flag_openings,
+        BatchedHyraxOpeningProof::prove(
+            &read_write_polys,
+            opening_point,
+            &read_write_openings,
             transcript,
-        );
-
-        InstructionReadWriteOpeningProof {
-            dim_read_opening_proof,
-            E_flag_opening_proof,
-        }
+        )
     }
 
     fn verify_openings(
@@ -329,26 +312,22 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let dim_read_openings: Vec<F> =
-            [self.dim_openings.as_slice(), self.read_openings.as_slice()].concat();
-
-        openings_proof.dim_read_opening_proof.verify(
-            opening_point,
-            &dim_read_openings,
-            &commitment.dim_read_commitment,
-            transcript,
-        )?;
-
-        let E_flag_openings: Vec<F> = [
+        let read_write_openings: Vec<F> = [
+            self.dim_openings.as_slice(),
+            self.read_openings.as_slice(),
             self.E_poly_openings.as_slice(),
             self.flag_openings.as_slice(),
         ]
         .concat();
-
-        openings_proof.E_flag_opening_proof.verify(
+        openings_proof.verify(
+            &commitment.read_write_generators,
             opening_point,
-            &E_flag_openings,
-            &commitment.E_flag_commitment,
+            &read_write_openings,
+            &commitment
+                .dim_read_commitment
+                .iter()
+                .chain(commitment.E_flag_commitment.iter())
+                .collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -394,13 +373,14 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
+        polynomials: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        BatchedPolynomialOpeningProof::prove(
-            &polynomials.batched_final,
+        ConcatenatedPolynomialOpeningProof::prove(
+            &batched_polynomials.batched_final,
             &opening_point,
             &openings.final_openings,
             transcript,
@@ -790,7 +770,7 @@ pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     num_rounds: usize,
     claimed_evaluation: F,
     openings: PrimarySumcheckOpenings<F>,
-    opening_proof: BatchedPolynomialOpeningProof<G>,
+    opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
 }
 
 #[derive(Clone)]
@@ -900,11 +880,11 @@ where
 
         let polynomials = Self::polynomialize(preprocessing, &ops);
         let batched_polys = polynomials.batch();
-        let commitment = InstructionPolynomials::commit(&batched_polys, generators);
+        let commitment = polynomials.commit(&batched_polys, generators);
 
-        commitment
-            .E_flag_commitment
-            .append_to_transcript(b"E_flag_commitment", transcript);
+        commitment.E_flag_commitment.iter().for_each(|commitment| {
+            commitment.append_to_transcript(b"E_flag_commitment", transcript)
+        });
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -945,6 +925,7 @@ where
             flag_openings: flag_evals,
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            &polynomials,
             &batched_polys,
             &r_primary_sumcheck,
             &sumcheck_openings,
@@ -981,9 +962,9 @@ where
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        commitment
-            .E_flag_commitment
-            .append_to_transcript(b"E_flag_commitment", transcript);
+        commitment.E_flag_commitment.iter().for_each(|commitment| {
+            commitment.append_to_transcript(b"E_flag_commitment", transcript)
+        });
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -1504,13 +1485,15 @@ where
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
     ) -> usize {
-        let dim_read_num_vars = (max_trace_length * (C + preprocessing.num_memories)).log_2();
-        let final_num_vars = (M * preprocessing.num_memories).log_2();
-        let E_flag_num_vars =
-            (max_trace_length * (preprocessing.num_memories + Self::NUM_INSTRUCTIONS)).log_2();
-
-        let max_num_vars = max([dim_read_num_vars, final_num_vars, E_flag_num_vars]).unwrap();
-        matrix_dimensions(max_num_vars).1.pow2()
+        let max_trace_length = max_trace_length.next_power_of_two();
+        let num_read_write_generators =
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
+        let num_init_final_generators = matrix_dimensions(
+            (M * preprocessing.num_memories).next_power_of_two().log_2(),
+            1,
+        )
+        .1;
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 
     fn protocol_name() -> &'static [u8] {

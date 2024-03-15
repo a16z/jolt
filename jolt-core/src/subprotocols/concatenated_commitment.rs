@@ -13,29 +13,26 @@ use crate::{
     },
 };
 
-pub struct BatchedPolynomialCommitment<G: CurveGroup> {
-    pub generators: HyraxGenerators<G>,
-    pub joint_commitment: HyraxCommitment<G>,
+pub struct ConcatenatedPolynomialCommitment<G: CurveGroup> {
+    pub generators: HyraxGenerators<1, G>,
+    pub joint_commitment: HyraxCommitment<1, G>,
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedPolynomialOpeningProof<G: CurveGroup> {
-    joint_proof: HyraxOpeningProof<G>,
+pub struct ConcatenatedPolynomialOpeningProof<G: CurveGroup> {
+    joint_proof: HyraxOpeningProof<1, G>,
 }
 
-impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
+impl<G: CurveGroup> ConcatenatedPolynomialOpeningProof<G> {
     /// evaluates both polynomials at r and produces a joint proof of opening
-    #[tracing::instrument(skip_all, name = "BatchedPolynomialOpeningProof::prove")]
+    #[tracing::instrument(skip_all, name = "ConcatenatedPolynomialOpeningProof::prove")]
     pub fn prove(
-        combined_poly: &DensePolynomial<G::ScalarField>,
+        concatenated_poly: &DensePolynomial<G::ScalarField>,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         transcript: &mut Transcript,
     ) -> Self {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            BatchedPolynomialOpeningProof::<G>::protocol_name(),
-        );
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let evals = {
             let mut evals: Vec<G::ScalarField> = openings.to_vec();
@@ -44,7 +41,7 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
         };
 
         assert_eq!(
-            combined_poly.get_num_vars(),
+            concatenated_poly.get_num_vars(),
             opening_point.len() + evals.len().log_2()
         );
 
@@ -68,7 +65,7 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
             let mut r_joint = challenges;
             r_joint.extend(opening_point);
 
-            debug_assert_eq!(combined_poly.evaluate(&r_joint), joint_claim_eval);
+            debug_assert_eq!(concatenated_poly.evaluate(&r_joint), joint_claim_eval);
             (r_joint, joint_claim_eval)
         };
         // decommit the joint polynomial at r_joint
@@ -78,9 +75,13 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
             &eval_joint,
         );
 
-        let joint_proof = HyraxOpeningProof::prove(combined_poly, &r_joint, transcript);
+        let joint_proof = HyraxOpeningProof::prove(
+            concatenated_poly,
+            &r_joint,
+            transcript,
+        );
 
-        BatchedPolynomialOpeningProof { joint_proof }
+        ConcatenatedPolynomialOpeningProof { joint_proof }
     }
 
     // verify evaluations of both polynomials at r
@@ -88,13 +89,11 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
         &self,
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
-        commitment: &BatchedPolynomialCommitment<G>,
+        commitment: &ConcatenatedPolynomialCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(
-            transcript,
-            BatchedPolynomialOpeningProof::<G>::protocol_name(),
-        );
+        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        
         let mut evals = openings.to_owned();
         evals.resize(evals.len().next_power_of_two(), G::ScalarField::zero());
 
@@ -133,11 +132,11 @@ impl<G: CurveGroup> BatchedPolynomialOpeningProof<G> {
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Lasso BatchedPolynomialOpeningProof"
+        b"Lasso ConcatenatedPolynomialOpeningProof"
     }
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for BatchedPolynomialCommitment<G> {
+impl<G: CurveGroup> AppendToTranscript<G> for ConcatenatedPolynomialCommitment<G> {
     fn append_to_transcript<T: ProofTranscript<G>>(
         &self,
         label: &'static [u8],

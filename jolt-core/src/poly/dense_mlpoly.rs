@@ -4,7 +4,7 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, m
 
 use super::hyrax::{HyraxCommitment, HyraxGenerators};
 use super::pedersen::PedersenGenerators;
-use crate::subprotocols::batched_commitment::BatchedPolynomialCommitment;
+use crate::subprotocols::concatenated_commitment::ConcatenatedPolynomialCommitment;
 use crate::utils::math::Math;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -229,13 +229,13 @@ impl<F: PrimeField> DensePolynomial<F> {
     pub fn combined_commit<G>(
         &self,
         pedersen_generators: &PedersenGenerators<G>,
-    ) -> BatchedPolynomialCommitment<G>
+    ) -> ConcatenatedPolynomialCommitment<G>
     where
         G: CurveGroup<ScalarField = F>,
     {
         let generators = HyraxGenerators::new(self.get_num_vars(), pedersen_generators);
         let joint_commitment = HyraxCommitment::commit(&self, &generators);
-        BatchedPolynomialCommitment {
+        ConcatenatedPolynomialCommitment {
             generators,
             joint_commitment,
         }
@@ -323,7 +323,7 @@ pub mod bench {
 
     pub fn init_commit_bench(
         log_size: usize,
-    ) -> (HyraxGenerators<EdwardsProjective>, DensePolynomial<Fr>) {
+    ) -> (HyraxGenerators<1, EdwardsProjective>, DensePolynomial<Fr>) {
         let evals: Vec<Fr> = gen_random_point::<Fr>(1 << log_size);
 
         let pedersen_generators = PedersenGenerators::new(1 << log_size, b"test_gens");
@@ -332,7 +332,10 @@ pub mod bench {
         (gens, poly)
     }
 
-    pub fn run_commit_bench(gens: HyraxGenerators<EdwardsProjective>, poly: DensePolynomial<Fr>) {
+    pub fn run_commit_bench(
+        gens: HyraxGenerators<1, EdwardsProjective>,
+        poly: DensePolynomial<Fr>,
+    ) {
         let result = black_box(HyraxCommitment::commit(&poly, &gens));
         black_box(result);
     }
@@ -340,6 +343,8 @@ pub mod bench {
 
 #[cfg(test)]
 mod tests {
+    use crate::poly::hyrax::matrix_dimensions;
+
     use super::*;
     use ark_curve25519::EdwardsProjective as G1Projective;
     use ark_curve25519::Fr;
@@ -351,10 +356,11 @@ mod tests {
         Z: &[G::ScalarField],
         r: &[G::ScalarField],
     ) -> G::ScalarField {
-        let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
-        let (L, R) = eq.compute_factored_evals();
-
         let ell = r.len();
+        let (L_size, _R_size) = matrix_dimensions(ell, 1);
+        let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
+        let (L, R) = eq.compute_factored_evals(L_size);
+
         // ensure ell is even
         assert!(ell % 2 == 0);
         // compute n = 2^\ell
@@ -496,7 +502,8 @@ mod tests {
             r.push(F::rand(&mut prng));
         }
         let chis = EqPolynomial::new(r.clone()).evals();
-        let (L, R) = EqPolynomial::new(r).compute_factored_evals();
+        let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
+        let (L, R) = EqPolynomial::new(r).compute_factored_evals(L_size);
         let O = compute_outerproduct(&L, &R);
         assert_eq!(chis, O);
     }
@@ -514,9 +521,10 @@ mod tests {
         for _i in 0..s {
             r.push(F::rand(&mut prng));
         }
+        let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
         let (L, R) = compute_factored_chis_at_r(&r);
         let eq = EqPolynomial::new(r);
-        let (L2, R2) = eq.compute_factored_evals();
+        let (L2, R2) = eq.compute_factored_evals(L_size);
         assert_eq!(L, L2);
         assert_eq!(R, R2);
     }
