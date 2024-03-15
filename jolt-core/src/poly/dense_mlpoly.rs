@@ -106,6 +106,25 @@ impl<F: PrimeField> DensePolynomial<F> {
         self.len = n;
     }
 
+    /// Bounds the polynomial's most significant index bit to 'r' optimized for a
+    /// high P(eval = 0).
+    #[tracing::instrument(skip_all)]
+    pub fn bound_poly_var_top_zero_optimized(&mut self, r: &F) {
+        let n = self.len() / 2;
+
+        let (left, right) = self.Z.split_at_mut(n);
+
+        left.par_iter_mut()
+            .zip(right.par_iter())
+            .filter(|(&mut a, &b)| a != b)
+            .for_each(|(a, b)| {
+                *a += *r * (*b - *a);
+            });
+
+        self.Z.resize(n, F::zero());
+        self.num_vars -= 1;
+    }
+
     #[tracing::instrument(skip_all)]
     pub fn new_poly_from_bound_poly_var_top(&self, r: &F) -> Self {
         let n = self.len() / 2;

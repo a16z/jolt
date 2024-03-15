@@ -804,6 +804,128 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
+
+    #[inline]
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_cubic")]
+    pub fn compute_eval_points_cubic<Func>(
+        poly_A: &DensePolynomial<F>,
+        poly_B: &DensePolynomial<F>,
+        poly_C: &DensePolynomial<F>,
+        poly_D: &DensePolynomial<F>,
+        comb_func: &Func,
+    ) -> (F, F, F)
+    where
+        Func: Fn(&F, &F, &F, &F) -> F + Sync,
+    {
+        let len = poly_A.len() / 2;
+        (0..len)
+        .into_par_iter()
+        .map(|i| {
+            // eval 0: bound_func is A(low)
+            let eval_point_0 = comb_func(&poly_A[i], &poly_B[i], &poly_C[i], &poly_D[i]);
+
+            // eval 2: bound_func is -A(low) + 2*A(high)
+            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+            let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
+            let poly_C_bound_point = poly_C[len + i] + poly_C[len + i] - poly_C[i];
+            let poly_D_bound_point = poly_D[len + i] + poly_D[len + i] - poly_D[i];
+            let eval_point_2 = comb_func(
+            &poly_A_bound_point,
+            &poly_B_bound_point,
+            &poly_C_bound_point,
+            &poly_D_bound_point,
+            );
+
+            // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
+            let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
+            let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
+            let poly_C_bound_point = poly_C_bound_point + poly_C[len + i] - poly_C[i];
+            let poly_D_bound_point = poly_D_bound_point + poly_D[len + i] - poly_D[i];
+            let eval_point_3 = comb_func(
+            &poly_A_bound_point,
+            &poly_B_bound_point,
+            &poly_C_bound_point,
+            &poly_D_bound_point,
+            );
+            (eval_point_0, eval_point_2, eval_point_3)
+        })
+        .reduce(
+            || (F::zero(), F::zero(), F::zero()),
+            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_cubic_with_additive_term")]
+    pub fn prove_cubic_with_additive_term<G, Func>(
+        claim: &F,
+        num_rounds: usize,
+        poly_A: &mut DensePolynomial<F>,
+        poly_B: &mut DensePolynomial<F>,
+        poly_C: &mut DensePolynomial<F>,
+        poly_D: &mut DensePolynomial<F>,
+        comb_func: Func,
+        transcript: &mut Transcript,
+    ) -> (Self, Vec<F>, Vec<F>)
+    where
+        Func: Fn(&F, &F, &F, &F) -> F + Sync,
+        G: CurveGroup<ScalarField = F>,
+    {
+        let mut r: Vec<F> = Vec::new();
+        let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
+        let mut claim_per_round = *claim;
+
+        for _ in 0..num_rounds {
+        let poly = {
+            // Make an iterator returning the contributions to the evaluations
+            let (eval_point_0, eval_point_2, eval_point_3) =
+            Self::compute_eval_points_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
+
+            let evals = vec![
+            eval_point_0,
+            claim_per_round - eval_point_0,
+            eval_point_2,
+            eval_point_3,
+            ];
+            UniPoly::from_evals(&evals)
+        };
+
+        // append the prover's message to the transcript
+        <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+
+        //derive the verifier's challenge for the next round
+        let r_i = <Transcript as ProofTranscript<G>>::challenge_scalar(
+            transcript,
+            b"challenge_nextround",
+        );
+        r.push(r_i);
+        polys.push(poly.compress());
+
+        // Set up next round
+        claim_per_round = poly.evaluate(&r_i);
+
+        // bound all tables to the verifier's challenege
+        rayon::join(
+            || poly_A.bound_poly_var_top(&r_i),
+            || {
+            rayon::join(
+                || poly_B.bound_poly_var_top_zero_optimized(&r_i),
+                || {
+                rayon::join(
+                    || poly_C.bound_poly_var_top_zero_optimized(&r_i),
+                    || poly_D.bound_poly_var_top_zero_optimized(&r_i),
+                )
+                },
+            )
+            },
+        );
+        }
+
+        (
+            SumcheckInstanceProof::new(polys),
+            r,
+            vec![poly_A[0], poly_B[0], poly_C[0], poly_D[0]],
+        )
+    }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]

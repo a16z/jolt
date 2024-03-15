@@ -148,11 +148,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             )
         };
 
-        let comb_func_outer =
-            |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F, poly_D_comp: &F| -> F {
+        let comb_func_outer = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F, poly_D_comp: &F| -> F {
                 // Below is an optimized form of: *poly_A_comp * (*poly_B_comp * *poly_C_comp - *poly_D_comp)
-                if *poly_B_comp == F::zero() || *poly_C_comp == F::zero() {
-                    if *poly_D_comp == F::zero() {
+                if poly_B_comp.is_zero() || poly_C_comp.is_zero() {
+                    if poly_D_comp.is_zero() {
                         F::zero()
                     } else {
                         *poly_A_comp * (-(*poly_D_comp))
@@ -162,8 +161,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 }
             };
 
-        let (sc_proof_outer, r_x, claims_outer) =
-            SumcheckInstanceProof::prove_cubic_with_additive_term(
+        let (sc_proof_outer, r_x, claims_outer) = SumcheckInstanceProof::prove_cubic_with_additive_term::<G, _>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
@@ -172,7 +170,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 &mut poly_Cz,
                 comb_func_outer,
                 &mut transcript,
-            )?;
+            );
         std::thread::spawn(|| drop(poly_Az));
         std::thread::spawn(|| drop(poly_Bz));
         std::thread::spawn(|| drop(poly_Cz));
