@@ -498,9 +498,9 @@ where
         let bytecode_comms = vec![
             jolt_commitments.bytecode.read_write_commitments[0].to_spartan_bn256(), // a
             jolt_commitments.bytecode.read_write_commitments[2].to_spartan_bn256(), // opcode,
+            jolt_commitments.bytecode.read_write_commitments[3].to_spartan_bn256(), // rd
             jolt_commitments.bytecode.read_write_commitments[4].to_spartan_bn256(), // rs1
             jolt_commitments.bytecode.read_write_commitments[5].to_spartan_bn256(), // rs2
-            jolt_commitments.bytecode.read_write_commitments[3].to_spartan_bn256(), // rd
             jolt_commitments.bytecode.read_write_commitments[6].to_spartan_bn256(), // imm
         ];
         drop(_guard);
