@@ -4,7 +4,7 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
-use common;
+use common::rv_trace::*;
 
 use self::fnv::FnvHashMap;
 
@@ -1467,9 +1467,8 @@ pub struct Instruction {
     pub name: &'static str,
     operation: fn(cpu: &mut Cpu, word: u32, address: u64) -> Result<(), Trap>,
     disassemble: fn(cpu: &mut Cpu, word: u32, address: u64, evaluate: bool) -> String,
-    pub trace: Option<
-        fn(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction,
-    >,
+    pub trace:
+        Option<fn(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction>,
 }
 
 struct FormatB {
@@ -1829,7 +1828,7 @@ fn normalize_u_imm(value: u64) -> u32 {
 }
 
 fn normalize_j_imm(value: u64) -> u32 {
-    // TODO(JOLT-89): Hack – value should be unnormalized in the tracer 
+    // TODO(JOLT-89): Hack – value should be unnormalized in the tracer
     value as u32
 }
 
@@ -1837,10 +1836,10 @@ fn normalize_register(value: usize) -> u64 {
     value.try_into().unwrap()
 }
 
-fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
+fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_r(word);
-    common::ELFInstruction {
-        opcode: common::RV32IM::from_str(inst.name),
+    ELFInstruction {
+        opcode: RV32IM::from_str(inst.name),
         address: normalize_u64(address, xlen),
         raw: word,
         imm: None,
@@ -1850,10 +1849,10 @@ fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     }
 }
 
-fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
+fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_i(word);
-    common::ELFInstruction {
-        opcode: common::RV32IM::from_str(inst.name),
+    ELFInstruction {
+        opcode: RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
         imm: Some(normalize_is_imm(f.imm)),
@@ -1863,10 +1862,10 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     }
 }
 
-fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
+fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_s(word);
-    common::ELFInstruction {
-        opcode: common::RV32IM::from_str(inst.name),
+    ELFInstruction {
+        opcode: RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
         imm: Some(normalize_is_imm(f.imm)),
@@ -1876,10 +1875,10 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     }
 }
 
-fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
+fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_b(word);
-    common::ELFInstruction {
-        opcode: common::RV32IM::from_str(inst.name),
+    ELFInstruction {
+        opcode: RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
         imm: Some(normalize_b_imm(f.imm)),
@@ -1889,10 +1888,10 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
     }
 }
 
-fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
+fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_u(word);
-    common::ELFInstruction {
-        opcode: common::RV32IM::from_str(inst.name),
+    ELFInstruction {
+        opcode: RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
         imm: Some(normalize_u_imm(f.imm)),
@@ -1903,10 +1902,10 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::
 }
 
 // (UJ)
-fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> common::ELFInstruction {
+fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_j(word);
-    common::ELFInstruction {
-        opcode: common::RV32IM::from_str(inst.name),
+    ELFInstruction {
+        opcode: RV32IM::from_str(inst.name),
         address: normalize_u64(address, &xlen),
         raw: word,
         imm: Some(normalize_j_imm(f.imm)),

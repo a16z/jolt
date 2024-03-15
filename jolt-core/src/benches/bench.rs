@@ -7,7 +7,7 @@ use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::{ELFInstruction, MemoryOp, RVTraceRow};
+use common::rv_trace::{ELFInstruction, MemoryOp, RVTraceRow};
 use criterion::black_box;
 use merlin::Transcript;
 use rand_core::SeedableRng;

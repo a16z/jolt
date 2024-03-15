@@ -31,7 +31,8 @@ use common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS,
     REGISTER_COUNT,
 };
-use common::{to_ram_address, ELFInstruction, MemoryOp};
+use common::rv_trace::{ELFInstruction, MemoryOp, RV32IM};
+use common::to_ram_address;
 
 use super::timestamp_range_check::TimestampValidityProof;
 
@@ -45,7 +46,7 @@ impl RandomInstruction for ELFInstruction {
             address: to_ram_address(index) as u64,
             raw: rng.next_u32(),
             // Only `address` and `raw` are used in ReadWriteMemory; the rest don't matter
-            opcode: common::RV32IM::ADD,
+            opcode: RV32IM::ADD,
             rs1: None,
             rs2: None,
             rd: None,

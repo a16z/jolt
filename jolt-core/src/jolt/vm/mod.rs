@@ -26,7 +26,9 @@ use crate::{
     lasso::memory_checking::NoPreprocessing,
 };
 use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction, MemoryOp,
+    constants::MEMORY_OPS_PER_INSTRUCTION,
+    field_conversion::IntoSpartan,
+    rv_trace::{ELFInstruction, MemoryOp},
 };
 
 use self::instruction_lookups::{

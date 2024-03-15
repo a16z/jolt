@@ -9,7 +9,7 @@ extern crate fnv;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
-use common::MemoryState;
+use common::rv_trace::MemoryState;
 
 use self::fnv::FnvHashMap;
 

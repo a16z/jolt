@@ -142,7 +142,11 @@ where
 mod tests {
     use ark_bn254::{Fr, G1Projective};
     use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-    use common::{path::JoltPaths, serializable::Serializable, ELFInstruction, RVTraceRow};
+    use common::{
+        path::JoltPaths,
+        rv_trace::{ELFInstruction, RVTraceRow},
+        serializable::Serializable,
+    };
     use itertools::Itertools;
     use merlin::Transcript;
     use rand_core::SeedableRng;
@@ -275,7 +279,7 @@ mod tests {
 
     #[test]
     fn fib_e2e() {
-        use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
+        use common::{path::JoltPaths, rv_trace::ELFInstruction};
         let _guard = FIB_FILE_LOCK.lock().unwrap();
         compiler::cached_compile_example("fibonacci");
 
