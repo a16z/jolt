@@ -1,5 +1,4 @@
 use crate::jolt::instruction::add::ADDInstruction;
-use crate::jolt::trace::rv::RVTraceRow;
 use crate::jolt::trace::JoltProvableTrace;
 use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, ELFRow};
 use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
@@ -11,7 +10,7 @@ use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::ELFInstruction;
+use common::{ELFInstruction, RVTraceRow};
 use criterion::black_box;
 use merlin::Transcript;
 use rand_core::SeedableRng;
@@ -219,26 +218,17 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
     let example_name = example_name.to_string();
     let task = move || {
         let trace_location = JoltPaths::trace_path(&example_name);
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
+        let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
+            .expect("deserialization failed");
+
         let bytecode_location = JoltPaths::bytecode_path(&example_name);
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
+        let bytecode_trace: Vec<ELFRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
 
-        let bytecode_trace: Vec<ELFRow> = converted_trace
+        let instructions_r1cs: Vec<RV32I> = trace
             .iter()
-            .map(|row| row.to_bytecode_trace())
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
             .flat_map(|row| {
                 let instructions = row.to_jolt_instructions();
                 if instructions.is_empty() {
@@ -249,12 +239,11 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
             })
             .collect();
 
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
-            .clone()
-            .into_iter()
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = trace
+            .iter()
             .map(|row| row.to_ram_ops().try_into().unwrap())
             .collect();
-        let circuit_flags = converted_trace
+        let circuit_flags = trace
             .iter()
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
@@ -293,26 +282,17 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         compiler::cached_compile_example("fibonacci");
 
         let trace_location = JoltPaths::trace_path("fibonacci");
-        let loaded_trace: Vec<common::RVTraceRow> =
-            Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
-                .expect("deserialization failed");
+        let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
+            .expect("deserialization failed");
+
         let bytecode_location = JoltPaths::bytecode_path("fibonacci");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
-        let converted_trace: Vec<RVTraceRow> = loaded_trace
-            .into_iter()
-            .map(|common| RVTraceRow::from_common(common))
-            .collect();
+        let bytecode_trace: Vec<ELFRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
 
-        let bytecode_trace: Vec<ELFRow> = converted_trace
+        let instructions_r1cs: Vec<RV32I> = trace
             .iter()
-            .map(|row| row.to_bytecode_trace())
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = converted_trace
-            .clone()
-            .into_iter()
             .flat_map(|row| {
                 let instructions = row.to_jolt_instructions();
                 if instructions.is_empty() {
@@ -323,12 +303,11 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             })
             .collect();
 
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = converted_trace
-            .clone()
-            .into_iter()
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = trace
+            .iter()
             .map(|row| row.to_ram_ops().try_into().unwrap())
             .collect();
-        let circuit_flags = converted_trace
+        let circuit_flags = trace
             .iter()
             .flat_map(|row| row.to_circuit_flags::<Fr>())
             .collect::<Vec<_>>();
