@@ -18,7 +18,7 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::read_write_memory::MemoryOp;
-use crate::jolt::vm::{bytecode::ELFRow, rv32i_vm::RV32I};
+use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
 use common::{RV32InstructionFormat, RVTraceRow, RV32IM};
 
 impl JoltProvableTrace for RVTraceRow {
@@ -249,8 +249,8 @@ impl JoltProvableTrace for RVTraceRow {
         }
     }
 
-    fn to_bytecode_trace(&self) -> ELFRow {
-        ELFRow::new(
+    fn to_bytecode_trace(&self) -> BytecodeRow {
+        BytecodeRow::new(
             self.instruction.address.try_into().unwrap(),
             self.instruction.opcode as u64,
             self.instruction.rd.unwrap_or(0),
