@@ -8,12 +8,11 @@ use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use super::Jolt;
-use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
-    and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction, bgeu::BGEUInstruction,
-    bne::BNEInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
-    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
-    xor::XORInstruction, JoltInstruction, Opcode, SubtableIndices,
+    add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
+    bgeu::BGEUInstruction, bne::BNEInstruction, or::ORInstruction, sll::SLLInstruction,
+    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
+    sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -81,7 +80,7 @@ const WORD_SIZE: usize = 32;
 
 instruction_set!(
   RV32I,
-  ADD: ADD32Instruction,
+  ADD: ADDInstruction<WORD_SIZE>,
   AND: ANDInstruction,
   BEQ: BEQInstruction,
   BGE: BGEInstruction,
@@ -127,7 +126,7 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, G> Jolt<'_, F, G, C, M> for RV32IJoltVM
+impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

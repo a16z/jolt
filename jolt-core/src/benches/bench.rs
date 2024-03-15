@@ -225,7 +225,10 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
-        let bytecode_trace: Vec<BytecodeRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
+        let bytecode_trace: Vec<BytecodeRow> = trace
+            .iter()
+            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
+            .collect();
 
         let instructions_r1cs: Vec<RV32I> = trace
             .iter()
@@ -245,20 +248,25 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
             .collect();
         let circuit_flags = trace
             .iter()
-            .flat_map(|row| row.to_circuit_flags::<Fr>())
-            .collect::<Vec<_>>();
+            .flat_map(|row| {
+                row.instruction
+                    .to_circuit_flags()
+                    .iter()
+                    .map(|&flag| flag.into())
+                    .collect::<Vec<Fr>>()
+            })
+            .collect();
 
         let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
-                bytecode,
-                bytecode_trace,
-                memory_trace,
-                instructions_r1cs,
-                circuit_flags,
-                preprocessing.clone(),
-            );
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            bytecode,
+            bytecode_trace,
+            memory_trace,
+            instructions_r1cs,
+            circuit_flags,
+            preprocessing.clone(),
+        );
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),
@@ -289,7 +297,10 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
-        let bytecode_trace: Vec<BytecodeRow> = trace.iter().map(|row| row.to_bytecode_trace()).collect();
+        let bytecode_trace: Vec<BytecodeRow> = trace
+            .iter()
+            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
+            .collect();
 
         let instructions_r1cs: Vec<RV32I> = trace
             .iter()
@@ -309,20 +320,25 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             .collect();
         let circuit_flags = trace
             .iter()
-            .flat_map(|row| row.to_circuit_flags::<Fr>())
-            .collect::<Vec<_>>();
+            .flat_map(|row| {
+                row.instruction
+                    .to_circuit_flags()
+                    .iter()
+                    .map(|&flag| flag.into())
+                    .collect::<Vec<Fr>>()
+            })
+            .collect();
 
         let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove(
-                bytecode,
-                bytecode_trace,
-                memory_trace,
-                instructions_r1cs,
-                circuit_flags,
-                preprocessing.clone(),
-            );
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            bytecode,
+            bytecode_trace,
+            memory_trace,
+            instructions_r1cs,
+            circuit_flags,
+            preprocessing.clone(),
+        );
 
         assert!(RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments).is_ok());
     };

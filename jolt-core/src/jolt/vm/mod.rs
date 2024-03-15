@@ -79,11 +79,15 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub instruction_lookups: InstructionCommitment<G>,
 }
 
-pub trait Jolt<'a, F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize>
+pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize>
 where
     G::Affine: IntoSpartan,
 {
-    type InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount;
+    type InstructionSet: JoltInstruction
+        + Opcode
+        + IntoEnumIterator
+        + EnumCount
+        + for<'a> TryFrom<&'a ELFInstruction>;
     type Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>;
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
@@ -146,7 +150,10 @@ where
         JoltCommitments<G>,
     ) {
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let bytecode_rows: Vec<BytecodeRow> = bytecode.iter().map(BytecodeRow::from).collect();
+        let bytecode_rows: Vec<BytecodeRow> = bytecode
+            .iter()
+            .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
+            .collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             bytecode_rows.clone(),
             bytecode_trace.clone(),

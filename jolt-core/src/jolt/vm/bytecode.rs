@@ -5,6 +5,7 @@ use rand::rngs::StdRng;
 use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
+use crate::jolt::instruction::{JoltInstruction, Opcode};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
@@ -41,7 +42,7 @@ pub struct BytecodeRow {
     /// Memory address as read from the ELF.
     address: usize,
     /// Packed instruction/circuit flags, used for r1cs
-    packed_flags: u64,
+    bitflags: u64,
     /// Index of the destination register for this instruction (0 if register is unused).
     rd: u64,
     /// Index of the first source register for this instruction (0 if register is unused).
@@ -53,10 +54,10 @@ pub struct BytecodeRow {
 }
 
 impl BytecodeRow {
-    pub fn new(address: usize, packed_flags: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
+    pub fn new(address: usize, bitflags: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
         Self {
             address,
-            packed_flags,
+            bitflags,
             rd,
             rs1,
             rs2,
@@ -67,7 +68,7 @@ impl BytecodeRow {
     pub fn no_op(address: usize) -> Self {
         Self {
             address,
-            packed_flags: 0,
+            bitflags: 0,
             rd: 0,
             rs1: 0,
             rs2: 0,
@@ -78,11 +79,44 @@ impl BytecodeRow {
     pub fn random(index: usize, rng: &mut StdRng) -> Self {
         Self {
             address: to_ram_address(index),
-            packed_flags: rng.next_u32() as u64, // Roughly how many flags there are
+            bitflags: rng.next_u32() as u64, // Roughly how many flags there are
             rd: rng.next_u64() % REGISTER_COUNT,
             rs1: rng.next_u64() % REGISTER_COUNT,
             rs2: rng.next_u64() % REGISTER_COUNT,
             imm: rng.next_u64() % (1 << 20), // U-format instructions have 20-bit imm values
+        }
+    }
+
+    pub fn bitflags<InstructionSet>(instruction: &ELFInstruction) -> u64
+    where
+        InstructionSet: JoltInstruction + Opcode + for<'a> TryFrom<&'a ELFInstruction>,
+    {
+        let mut bitvector = 0;
+        for flag in instruction.to_circuit_flags() {
+            bitvector |= flag as u64;
+            bitvector <<= 1;
+        }
+
+        // instruction flag
+        if let Ok(jolt_instruction) = InstructionSet::try_from(instruction) {
+            bitvector <<= jolt_instruction.to_opcode();
+            bitvector |= 1;
+        }
+
+        bitvector
+    }
+
+    pub fn from_instruction<InstructionSet>(instruction: &ELFInstruction) -> Self
+    where
+        InstructionSet: JoltInstruction + Opcode + for<'a> TryFrom<&'a ELFInstruction>,
+    {
+        Self {
+            address: instruction.address as usize,
+            bitflags: Self::bitflags::<InstructionSet>(instruction),
+            rd: instruction.rd.unwrap_or(0),
+            rs1: instruction.rs1.unwrap_or(0),
+            rs2: instruction.rs2.unwrap_or(0),
+            imm: instruction.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
         }
     }
 }
@@ -99,30 +133,17 @@ pub fn random_bytecode_trace(
     trace
 }
 
-impl From<&ELFInstruction> for BytecodeRow {
-    fn from(value: &ELFInstruction) -> Self {
-        Self::new(
-            value.address as usize,
-            value.opcode as u64,
-            value.rd.unwrap_or(0),
-            value.rs1.unwrap_or(0),
-            value.rs2.unwrap_or(0),
-            value.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
-        )
-    }
-}
-
 pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     _group: PhantomData<G>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
     a_read_write: DensePolynomial<F>,
     /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
-    /// so the read values and write values are the same. There are five values (packed_flags, rd, rs1, rs2, imm)
+    /// so the read values and write values are the same. There are five values (bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_read_write` comprises five polynomials.
     v_read_write: [DensePolynomial<F>; 5],
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
-    /// the intiial memory values. There are five values (packed_flags, rd, rs1, rs2, imm)
+    /// the intiial memory values. There are five values (bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_init_final` comprises five polynomials.
     v_init_final: [DensePolynomial<F>; 5],
     /// MLE of the read timestamps.
@@ -161,28 +182,28 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
         let to_v_polys = |rows: &Vec<BytecodeRow>| {
             let len = rows.len().next_power_of_two();
-            let mut packed_flags = Vec::with_capacity(len);
+            let mut bitflags = Vec::with_capacity(len);
             let mut rd = Vec::with_capacity(len);
             let mut rs1 = Vec::with_capacity(len);
             let mut rs2 = Vec::with_capacity(len);
             let mut imm = Vec::with_capacity(len);
 
             for row in rows {
-                packed_flags.push(F::from_u64(row.packed_flags).unwrap());
+                bitflags.push(F::from_u64(row.bitflags).unwrap());
                 rd.push(F::from_u64(row.rd).unwrap());
                 rs1.push(F::from_u64(row.rs1).unwrap());
                 rs2.push(F::from_u64(row.rs2).unwrap());
                 imm.push(F::from_u64(row.imm).unwrap());
             }
             // Padding
-            packed_flags.resize(len, F::zero());
+            bitflags.resize(len, F::zero());
             rd.resize(len, F::zero());
             rs1.resize(len, F::zero());
             rs2.resize(len, F::zero());
             imm.resize(len, F::zero());
 
             [
-                DensePolynomial::new(packed_flags),
+                DensePolynomial::new(bitflags),
                 DensePolynomial::new(rd),
                 DensePolynomial::new(rs1),
                 DensePolynomial::new(rs2),
