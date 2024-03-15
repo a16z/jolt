@@ -484,9 +484,9 @@ where
         let bytecode_comms: Vec<HyraxCommitment<1, G>> = vec![
             jolt_commitments.bytecode.read_write_commitments[0].clone(), // a
             jolt_commitments.bytecode.read_write_commitments[2].clone(), // opcode,
+            jolt_commitments.bytecode.read_write_commitments[3].clone(), // rd
             jolt_commitments.bytecode.read_write_commitments[4].clone(), // rs1
             jolt_commitments.bytecode.read_write_commitments[5].clone(), // rs2
-            jolt_commitments.bytecode.read_write_commitments[3].clone(), // rd
             jolt_commitments.bytecode.read_write_commitments[6].clone(), // imm
         ];
         drop(_guard);
