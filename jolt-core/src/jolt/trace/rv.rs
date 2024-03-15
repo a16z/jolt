@@ -1,7 +1,3 @@
-use ark_ff::PrimeField;
-use common::MemoryState;
-use eyre::ensure;
-
 use super::JoltProvableTrace;
 use crate::jolt::instruction::add::ADDInstruction;
 use crate::jolt::instruction::and::ANDInstruction;
@@ -19,7 +15,98 @@ use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::read_write_memory::MemoryOp;
 use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
-use common::{RV32InstructionFormat, RVTraceRow, RV32IM};
+use common::{ELFInstruction, MemoryState, RV32InstructionFormat, RVTraceRow, RV32IM};
+use eyre::ensure;
+
+impl TryFrom<&ELFInstruction> for RV32I {
+    type Error = &'static str;
+
+    #[rustfmt::skip] // keep matches pretty
+    fn try_from(instruction: &ELFInstruction) -> Result<Self, Self::Error> {
+        let result: Option<Self> = match instruction.opcode {
+            RV32IM::ADD  => Some(ADDInstruction::default().into()),
+            RV32IM::SUB  => Some(SUBInstruction::default().into()),
+            RV32IM::XOR  => Some(XORInstruction::default().into()),
+            RV32IM::OR   => Some(ORInstruction::default().into()),
+            RV32IM::AND  => Some(ANDInstruction::default().into()),
+            RV32IM::SLL  => Some(SLLInstruction::default().into()),
+            RV32IM::SRL  => Some(SRLInstruction::default().into()),
+            RV32IM::SRA  => Some(SRAInstruction::default().into()),
+            RV32IM::SLT  => Some(SLTInstruction::default().into()),
+            RV32IM::SLTU => Some(SLTUInstruction::default().into()),
+
+            RV32IM::ADDI  => Some(ADDInstruction::default().into()),
+            RV32IM::XORI  => Some(XORInstruction::default().into()),
+            RV32IM::ORI   => Some(ORInstruction::default().into()),
+            RV32IM::ANDI  => Some(ANDInstruction::default().into()),
+            RV32IM::SLLI  => Some(SLLInstruction::default().into()),
+            RV32IM::SRLI  => Some(SRLInstruction::default().into()),
+            RV32IM::SRAI  => Some(SRAInstruction::default().into()),
+            RV32IM::SLTI  => Some(SLTInstruction::default().into()),
+            RV32IM::SLTIU => Some(SLTUInstruction::default().into()),
+
+            RV32IM::BEQ  => Some(BEQInstruction::default().into()),
+            RV32IM::BNE  => Some(BNEInstruction::default().into()),
+            RV32IM::BLT  => Some(SLTInstruction::default().into()),
+            RV32IM::BLTU => Some(SLTUInstruction::default().into()),
+            RV32IM::BGE  => Some(BGEInstruction::default().into()),
+            RV32IM::BGEU => Some(BGEUInstruction::default().into()),
+
+            RV32IM::JAL   => Some(ADDInstruction::default().into()),
+            RV32IM::JALR  => Some(ADDInstruction::default().into()),
+            RV32IM::AUIPC => Some(ADDInstruction::default().into()),
+
+            _ => None
+        };
+
+        if let Some(jolt_instruction) = result {
+            Ok(jolt_instruction)
+        } else {
+            Err("No corresponding RV32I instruction")
+        }
+    }
+}
+
+impl From<&RVTraceRow> for RV32I {
+    #[rustfmt::skip] // keep matches pretty
+    fn from(row: &RVTraceRow) -> Self {
+        match row.instruction.opcode {
+            RV32IM::ADD => ADDInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::SUB => SUBInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::XOR => XORInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::OR  => ORInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::AND => ANDInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::SLL => SLLInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::SRL => SRLInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::SRA => SRAInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::SLT  => SLTInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::SLTU => SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+
+            RV32IM::ADDI  => ADDInstruction::<32>(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::XORI  => XORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::ORI   => ORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::ANDI  => ANDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::SLLI  => SLLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::SRLI  => SRLInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::SRAI  => SRAInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::SLTI  => SLTInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::SLTIU => SLTUInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+
+            RV32IM::BEQ  => BEQInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::BNE  => BNEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::BLT  => SLTInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::BLTU => SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::BGE  => BGEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+            RV32IM::BGEU => BGEUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into(),
+
+            RV32IM::JAL  => ADDInstruction(row.instruction.address, row.imm_u64()).into(),
+            RV32IM::JALR => ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into(),
+            RV32IM::AUIPC => ADDInstruction(row.instruction.address, row.imm_u64()).into(),
+
+            _ => panic!("Unsupported instruction")
+        }
+    }
+}
 
 impl JoltProvableTrace for RVTraceRow {
     type JoltInstructionEnum = RV32I;
@@ -247,188 +334,6 @@ impl JoltProvableTrace for RVTraceRow {
             ],
             _ => unreachable!("{self:?}"),
         }
-    }
-
-    fn to_bytecode_trace(&self) -> BytecodeRow {
-        BytecodeRow::new(
-            self.instruction.address.try_into().unwrap(),
-            self.instruction.opcode as u64,
-            self.instruction.rd.unwrap_or(0),
-            self.instruction.rs1.unwrap_or(0),
-            self.instruction.rs2.unwrap_or(0),
-            self.instruction.imm.unwrap_or(0) as u64, // imm is always cast to its 32-bit repr, signed or unsigned
-        )
-    }
-
-    fn to_circuit_flags<F: PrimeField>(&self) -> Vec<F> {
-        // Jolt Appendix A.1
-        // 0: first_operand == rs1 (1 if PC)
-        // 1: second_operand == rs2 (1 if imm)
-        // 2: Load instruction
-        // 3: Store instruciton
-        // 4: Jump instruction
-        // 5: Branch instruciton
-        // 6: Instruction writes lookup output to rd
-        // 7: Instruction adds operands (ie, and uses the ADD lookup table)
-        // 8: Instruction subtracts operands
-        // 9: Instruction multiplies operands
-        // 10: Instruction involves non-deterministic advice?
-        // 11: Instruction asserts lookup output as false
-        // 12: Instruction asserts lookup output as true
-        // 13: Sign-bit of imm
-        // 14: Is concat (Note: used to be is_lui)
-        // Arasu: Extra to get things working
-        // 15: is lui or auipc
-        // 16: is jal
-
-        let mut flags = vec![false; 17];
-
-        flags[0] = match self.instruction.opcode {
-            RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
-            _ => false,
-        };
-
-        flags[1] = match self.instruction.opcode {
-            RV32IM::ADDI
-            | RV32IM::XORI
-            | RV32IM::ORI
-            | RV32IM::ANDI
-            | RV32IM::SLLI
-            | RV32IM::SRLI
-            | RV32IM::SRAI
-            | RV32IM::SLTI
-            | RV32IM::SLTIU
-            | RV32IM::AUIPC
-            | RV32IM::JAL
-            | RV32IM::JALR => true,
-            _ => false,
-        };
-
-        flags[2] = match self.instruction.opcode {
-            RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU => true,
-            _ => false,
-        };
-
-        flags[3] = match self.instruction.opcode {
-            RV32IM::SB | RV32IM::SH | RV32IM::SW => true,
-            _ => false,
-        };
-
-        flags[4] = match self.instruction.opcode {
-            RV32IM::JAL | RV32IM::JALR => true,
-            _ => false,
-        };
-
-        flags[5] = match self.instruction.opcode {
-            RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU => {
-                true
-            }
-            _ => false,
-        };
-
-        // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
-        flags[6] = match self.instruction.opcode {
-            RV32IM::LB
-            | RV32IM::LH
-            | RV32IM::LW
-            | RV32IM::LBU
-            | RV32IM::LHU
-            | RV32IM::SB
-            | RV32IM::SH
-            | RV32IM::SW
-            | RV32IM::BEQ
-            | RV32IM::BNE
-            | RV32IM::BLT
-            | RV32IM::BGE
-            | RV32IM::BLTU
-            | RV32IM::BGEU
-            | RV32IM::JAL
-            | RV32IM::JALR
-            | RV32IM::LUI => false,
-            _ => true,
-        };
-
-        flags[7] = match self.instruction.opcode {
-            RV32IM::ADD | RV32IM::ADDI | RV32IM::JAL | RV32IM::JALR | RV32IM::AUIPC => true,
-            _ => false,
-        };
-
-        flags[8] = match self.instruction.opcode {
-            RV32IM::SUB => true,
-            _ => false,
-        };
-
-        flags[9] = match self.instruction.opcode {
-            RV32IM::MUL | RV32IM::MULU | RV32IM::MULH | RV32IM::MULSU => true,
-            _ => false,
-        };
-
-        // TODO(JOLT-29): Used in the 'M' extension
-        flags[10] = match self.instruction.opcode {
-            _ => false,
-        };
-
-        // TODO(JOLT-29): Used in the 'M' extension
-        flags[11] = match self.instruction.opcode {
-            _ => false,
-        };
-
-        // TODO(JOLT-29): Used in the 'M' extension
-        flags[12] = match self.instruction.opcode {
-            _ => false,
-        };
-
-        let mask = 1u32 << 31;
-        flags[13] = match self.instruction.imm {
-            Some(imm) if imm & mask == mask => true,
-            _ => false,
-        };
-
-        flags[14] = match self.instruction.opcode {
-            RV32IM::XOR
-            | RV32IM::XORI
-            | RV32IM::OR
-            | RV32IM::ORI
-            | RV32IM::AND
-            | RV32IM::ANDI
-            | RV32IM::SLL
-            | RV32IM::SRL
-            | RV32IM::SRA
-            | RV32IM::SLLI
-            | RV32IM::SRLI
-            | RV32IM::SRAI
-            | RV32IM::SLT
-            | RV32IM::SLTU
-            | RV32IM::SLTI
-            | RV32IM::SLTIU
-            | RV32IM::BEQ
-            | RV32IM::BNE
-            | RV32IM::BLT
-            | RV32IM::BGE
-            | RV32IM::BLTU
-            | RV32IM::BGEU => true,
-            _ => false,
-        };
-
-        flags[15] = match self.instruction.opcode {
-            RV32IM::LUI | RV32IM::AUIPC => true,
-            _ => false,
-        };
-
-        flags[16] = match self.instruction.opcode {
-            RV32IM::SLL
-            | RV32IM::SRL
-            | RV32IM::SRA
-            | RV32IM::SLLI
-            | RV32IM::SRLI
-            | RV32IM::SRAI => true,
-            _ => false,
-        };
-
-        flags
-            .into_iter()
-            .map(|bool_flag| bool_flag.into())
-            .collect()
     }
 }
 
