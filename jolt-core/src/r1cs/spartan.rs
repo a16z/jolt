@@ -1,7 +1,10 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use merlin::Transcript;
 use rayon::prelude::*;
 use thiserror::Error;
+use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::AppendToTranscript;
 
 use super::r1cs_shape::R1CSShape;
 use crate::{
@@ -95,17 +98,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         key: &UniformSpartanKey<F>,
         w_segments: Vec<Vec<F>>,
         witness_commitments: Vec<HyraxCommitment<1, G>>,
+        transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
         let witness_segments = w_segments;
 
-        let mut transcript = G::TE::new(b"R1CSSNARK");
-
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
-        transcript.absorb(b"vk", &key.vk_digest);
+        transcript.append_scalar(b"vk", &key.vk_digest);
 
         let span_u = tracing::span!(tracing::Level::INFO, "absorb_u");
         let _guard_u = span_u.enter();
-        transcript.absorb(b"U", &witness_commitments);
+        witness_commitments.iter().for_each(|commitment| {
+            commitment.append_to_transcript(b"U", transcript);
+        });
         drop(_guard_u);
 
         // TODO(sragss/arasuarun/moodlezoup): We can do this by reference in prove_quad_batched_unrolled.
@@ -129,15 +133,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| transcript.squeeze(b"t"))
+            .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Result<Vec<F>, SpartanError>>()?;
 
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
         // poly_Az is the polynomial extended from the vector Az
         let (mut poly_Az, mut poly_Bz, mut poly_Cz) = {
             let (poly_Az, poly_Bz, poly_Cz) =
-                key.S
-                    .multiply_vec_uniform(&witness, &witness_commitments.X, key.num_steps)?;
+                key.S.multiply_vec_uniform(&witness, &witness_commitments, key.num_steps)?; // TODO(sragss): witness_commitments param is wrong [W, 1, X]
             (
                 DensePolynomial::new(poly_Az),
                 DensePolynomial::new(poly_Bz),
@@ -179,10 +182,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) =
             (claims_outer[1], claims_outer[2], claims_outer[3]);
-        transcript.absorb(b"claims_outer", &[claim_Az, claim_Bz, claim_Cz].as_slice());
+        transcript.append_scalars(b"claims_outer", &[claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
-        let r = transcript.squeeze(b"r")?;
+        let r = transcript.challenge_scalar(b"r")?;
         let claim_inner_joint = claim_Az + r * claim_Bz + r * r * claim_Cz;
 
         let span = tracing::span!(tracing::Level::TRACE, "poly_ABC");
@@ -300,7 +303,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let comm_vec = witness_commitments;
 
         // now batch these together
-        let c = transcript.squeeze(b"c")?;
+        let c = transcript.challenge_scalar(b"c")?;
         todo!("change batching strategy");
         // let w: PolyEvalWitness<G> = PolyEvalWitness::batch(&w.W.as_slice().iter().map(|v| v.as_ref()).collect::<Vec<_>>(), &c);
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &witness_evals, &c);
@@ -334,6 +337,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         &self,
         key: &UniformSpartanKey<F>,
         io: &[F],
+        transcript: &mut Transcript
     ) -> Result<(), SpartanError> {
         let N_SEGMENTS = self.witness_segment_commitments.len();
 
@@ -345,11 +349,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         assert_eq!(io.len(), 0);
         // let witness_segment_commitments = PrecommittedR1CSInstance::new(&hollow_S, comm_W_vec.clone(), io)?;
 
-        let mut transcript = G::TE::new(b"R1CSSNARK");
-
         // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
-        transcript.absorb(b"vk", &key.digest());
-        transcript.absorb(b"U", &self.witness_segment_commitments);
+        transcript.append_scalar(b"vk", &key.vk_digest);
+        self.witness_segment_commitments.iter().for_each(|commitment| {
+          commitment.append_to_transcript(b"U", transcript)
+        });
 
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),
@@ -358,7 +362,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| transcript.squeeze(b"t"))
+            .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Result<Vec<F>, SpartanError>>()?;
 
         let (claim_outer_final, r_x) =
@@ -373,7 +377,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             return Err(SpartanError::InvalidSumcheckProof);
         }
 
-        transcript.absorb(
+        transcript.append_scalars(
             b"claims_outer",
             &[
                 self.outer_sumcheck_claims.0,
@@ -384,7 +388,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         );
 
         // inner sum-check
-        let r = transcript.squeeze(b"r")?;
+        let r = transcript.challenge_scalar(b"r")?;
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r * self.outer_sumcheck_claims.1
             + r * r * self.outer_sumcheck_claims.2;
@@ -496,7 +500,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let eval_vec = &self.eval_W;
 
         let r_y_point = &r_y[n_prefix..];
-        let c = transcript.squeeze(b"c")?;
+        let c = transcript.challenge_scalar(b"c")?;
         todo!("Fix batching strategy")
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &eval_vec, &c);
 
