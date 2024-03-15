@@ -40,8 +40,8 @@ pub type BytecodeProof<F, G> = MemoryCheckingProof<
 pub struct BytecodeRow {
     /// Memory address as read from the ELF.
     address: usize,
-    /// Opcode of the instruction as read from the ELF.
-    opcode: u64,
+    /// Packed instruction/circuit flags, used for r1cs
+    packed_flags: u64,
     /// Index of the destination register for this instruction (0 if register is unused).
     rd: u64,
     /// Index of the first source register for this instruction (0 if register is unused).
@@ -53,10 +53,10 @@ pub struct BytecodeRow {
 }
 
 impl BytecodeRow {
-    pub fn new(address: usize, opcode: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
+    pub fn new(address: usize, packed_flags: u64, rd: u64, rs1: u64, rs2: u64, imm: u64) -> Self {
         Self {
             address,
-            opcode,
+            packed_flags,
             rd,
             rs1,
             rs2,
@@ -67,7 +67,7 @@ impl BytecodeRow {
     pub fn no_op(address: usize) -> Self {
         Self {
             address,
-            opcode: 0,
+            packed_flags: 0,
             rd: 0,
             rs1: 0,
             rs2: 0,
@@ -78,7 +78,7 @@ impl BytecodeRow {
     pub fn random(index: usize, rng: &mut StdRng) -> Self {
         Self {
             address: to_ram_address(index),
-            opcode: rng.next_u64() % 64, // Roughly how many opcodes there are
+            packed_flags: rng.next_u32() as u64, // Roughly how many flags there are
             rd: rng.next_u64() % REGISTER_COUNT,
             rs1: rng.next_u64() % REGISTER_COUNT,
             rs2: rng.next_u64() % REGISTER_COUNT,
@@ -112,109 +112,19 @@ impl From<&ELFInstruction> for BytecodeRow {
     }
 }
 
-/// Polynomial representation of bytecode as expected by Jolt –– each bytecode address maps to a
-/// tuple, containing information about the instruction and its operands.
-#[derive(Clone)]
-pub struct FiveTuplePoly<F: PrimeField> {
-    /// MLE of all opcodes in the bytecode.
-    opcode: DensePolynomial<F>,
-    /// MLE of all destination register indices in the bytecode.
-    rd: DensePolynomial<F>,
-    /// MLE of all first source register indices in the bytecode.
-    rs1: DensePolynomial<F>,
-    /// MLE of all second source register indices in the bytecode.
-    rs2: DensePolynomial<F>,
-    /// MLE of all immediate values in the bytecode.
-    imm: DensePolynomial<F>,
-}
-
-impl<F: PrimeField> FiveTuplePoly<F> {
-    #[tracing::instrument(skip_all, name = "FiveTuplePoly::from_elf")]
-    fn from_elf(elf: &Vec<BytecodeRow>) -> Self {
-        let len = elf.len().next_power_of_two();
-        let mut opcodes = vec![0u64; len];
-        let mut rds = vec![0u64; len];
-        let mut rs1s = vec![0u64; len];
-        let mut rs2s = vec![0u64; len];
-        let mut imms = vec![0u64; len];
-
-        elf.iter().enumerate().for_each(|(index, row)| {
-            opcodes[index] = row.opcode;
-            rds[index] = row.rd;
-            rs1s[index] = row.rs1;
-            rs2s[index] = row.rs2;
-            imms[index] = row.imm;
-        });
-
-        let (opcode, rd, rs1, rs2, imm) = common::par_join_5!(
-            || DensePolynomial::from_u64(&opcodes),
-            || DensePolynomial::from_u64(&rds),
-            || DensePolynomial::from_u64(&rs1s),
-            || DensePolynomial::from_u64(&rs2s),
-            || DensePolynomial::from_u64(&imms)
-        );
-
-        FiveTuplePoly {
-            opcode,
-            rd,
-            rs1,
-            rs2,
-            imm,
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "FiveTuplePoly::evaluate")]
-    /// Evaluates the 5-tuple poly at the lagrange basis `chi`
-    fn evaluate_at_chi(&self, chis: &Vec<F>) -> Vec<F> {
-        vec![
-            self.opcode.evaluate_at_chi(chis),
-            self.rd.evaluate_at_chi(chis),
-            self.rs1.evaluate_at_chi(chis),
-            self.rs2.evaluate_at_chi(chis),
-            self.imm.evaluate_at_chi(chis),
-        ]
-    }
-
-    fn from_elf_r1cs(elf: &Vec<BytecodeRow>) -> Vec<F> {
-        let len = elf.len();
-
-        // pack: [opcode_1, ..., opcode_len, rd_1, ... rd_len, .... imm_1, ... imm_len]
-        let mut packed = vec![F::zero(); 5 * len];
-
-        let opcode_index = |index: usize| -> usize { index };
-        let rs1_index = |index: usize| -> usize { len + index };
-        let rs2_index = |index: usize| -> usize { 2 * len + index };
-        let rd_index = |index: usize| -> usize { 3 * len + index };
-        let imm_index = |index: usize| -> usize { 4 * len + index };
-
-        // TODO(arasuarun): handle circuit flags here and not in prove_r1cs()
-        // let mut circuit_flags = Vec::with_capacity(len * 15);
-
-        for (index, row) in elf.iter().enumerate() {
-            packed[opcode_index(index)] = F::from(row.opcode);
-            packed[rs1_index(index)] = F::from(row.rs1);
-            packed[rs2_index(index)] = F::from(row.rs2);
-            packed[rd_index(index)] = F::from(row.rd);
-            packed[imm_index(index)] = F::from(row.imm);
-        }
-
-        packed
-    }
-}
-
 pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     _group: PhantomData<G>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
     a_read_write: DensePolynomial<F>,
     /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
-    /// so the read values and write values are the same. There are multiple values (opcode, rd, rs1, etc.)
-    /// associated with each memory address, so `v_read_write` comprises multiple polynomials.
-    v_read_write: FiveTuplePoly<F>,
+    /// so the read values and write values are the same. There are five values (packed_flags, rd, rs1, rs2, imm)
+    /// associated with each memory address, so `v_read_write` comprises five polynomials.
+    v_read_write: [DensePolynomial<F>; 5],
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
-    /// the intiial memory values. There are multiple values (opcode, rd, rs1, etc.)
-    /// associated with each memory address, so `v_init_final` comprises multiple polynomials.
-    v_init_final: FiveTuplePoly<F>,
+    /// the intiial memory values. There are five values (packed_flags, rd, rs1, rs2, imm)
+    /// associated with each memory address, so `v_init_final` comprises five polynomials.
+    v_init_final: [DensePolynomial<F>; 5],
     /// MLE of the read timestamps.
     t_read: DensePolynomial<F>,
     /// MLE of the final timestamps.
@@ -249,13 +159,43 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             final_cts[address] = counter + 1;
         }
 
-        let (v_read_write, v_init_final, a_read_write, t_read, t_final) = common::par_join_5!(
-            || FiveTuplePoly::from_elf(&trace),
-            || FiveTuplePoly::from_elf(&bytecode),
-            || DensePolynomial::from_usize(&a_read_write_usize),
-            || DensePolynomial::from_usize(&read_cts),
-            || DensePolynomial::from_usize(&final_cts)
-        );
+        let to_v_polys = |rows: &Vec<BytecodeRow>| {
+            let len = rows.len().next_power_of_two();
+            let mut packed_flags = Vec::with_capacity(len);
+            let mut rd = Vec::with_capacity(len);
+            let mut rs1 = Vec::with_capacity(len);
+            let mut rs2 = Vec::with_capacity(len);
+            let mut imm = Vec::with_capacity(len);
+
+            for row in rows {
+                packed_flags.push(F::from_u64(row.packed_flags).unwrap());
+                rd.push(F::from_u64(row.rd).unwrap());
+                rs1.push(F::from_u64(row.rs1).unwrap());
+                rs2.push(F::from_u64(row.rs2).unwrap());
+                imm.push(F::from_u64(row.imm).unwrap());
+            }
+            // Padding
+            packed_flags.resize(len, F::zero());
+            rd.resize(len, F::zero());
+            rs1.resize(len, F::zero());
+            rs2.resize(len, F::zero());
+            imm.resize(len, F::zero());
+
+            [
+                DensePolynomial::new(packed_flags),
+                DensePolynomial::new(rd),
+                DensePolynomial::new(rs1),
+                DensePolynomial::new(rs2),
+                DensePolynomial::new(imm),
+            ]
+        };
+
+        let v_read_write = to_v_polys(&trace);
+        let v_init_final = to_v_polys(&bytecode);
+
+        let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
+        let t_read = DensePolynomial::from_usize(&read_cts);
+        let t_final = DensePolynomial::from_usize(&final_cts);
 
         Self {
             _group: PhantomData,
@@ -269,65 +209,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>) {
-        let a_read_write_evals = self.a_read_write.evals().clone();
+        let a_read_write_evals = self.a_read_write.evals();
         let v_read_write_evals = [
-            self.v_read_write.opcode.evals(),
-            self.v_read_write.rs1.evals(),
-            self.v_read_write.rs2.evals(),
-            self.v_read_write.rd.evals(),
-            self.v_read_write.imm.evals(),
+            self.v_read_write[0].evals(),
+            self.v_read_write[1].evals(),
+            self.v_read_write[2].evals(),
+            self.v_read_write[3].evals(),
+            self.v_read_write[4].evals(),
         ]
         .concat();
 
         (a_read_write_evals, v_read_write_evals)
-    }
-
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
-    pub fn r1cs_polys_from_bytecode(
-        mut bytecode: Vec<BytecodeRow>,
-        mut trace: Vec<BytecodeRow>,
-    ) -> [Vec<F>; 3] {
-        // As R1CS isn't padded, measure length here before padding is applied.
-        let num_ops: usize = trace.len();
-
-        Self::validate_bytecode(&bytecode, &trace);
-        Self::preprocess(&mut bytecode, &mut trace);
-
-        // ignore the padding
-        let trace = trace.drain(0..num_ops).collect::<Vec<BytecodeRow>>();
-
-        let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
-
-        // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
-        let code_size = (max_bytecode_address + 1).next_power_of_two();
-
-        let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
-        let mut read_cts: Vec<usize> = vec![0; num_ops];
-        let mut final_cts: Vec<usize> = vec![0; code_size];
-
-        for (trace_index, trace) in trace.iter().take(num_ops).enumerate() {
-            let address = trace.address * 4 + RAM_START_ADDRESS as usize;
-            // debug_assert!(address < code_size);
-            a_read_write_usize[trace_index] = trace.address;
-            let counter = final_cts[trace.address];
-            read_cts[trace_index] = counter;
-            final_cts[trace.address] = counter + 1;
-        }
-
-        // create a closure to convert usize to F vector
-        let to_f_vec = |vec: &Vec<usize>| -> Vec<F> {
-            vec.iter()
-                .map(|x| F::from_u64(*x as u64).unwrap())
-                .collect()
-        };
-
-        let v_read_write = FiveTuplePoly::from_elf_r1cs(&trace);
-
-        [
-            to_f_vec(&a_read_write_usize),
-            v_read_write,
-            to_f_vec(&read_cts),
-        ]
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
@@ -429,11 +321,11 @@ where
     fn batch(&self) -> Self::BatchedPolynomials {
         let combined_init_final = DensePolynomial::merge(&vec![
             &self.t_final,
-            &self.v_init_final.opcode,
-            &self.v_init_final.rd,
-            &self.v_init_final.rs1,
-            &self.v_init_final.rs2,
-            &self.v_init_final.imm,
+            &self.v_init_final[0],
+            &self.v_init_final[1],
+            &self.v_init_final[2],
+            &self.v_init_final[3],
+            &self.v_init_final[4],
         ]);
 
         Self::BatchedPolynomials {
@@ -452,11 +344,11 @@ where
         let read_write_commitments = [
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
-            &self.v_read_write.opcode,
-            &self.v_read_write.rd,
-            &self.v_read_write.rs1,
-            &self.v_read_write.rs2,
-            &self.v_read_write.imm,
+            &self.v_read_write[0],
+            &self.v_read_write[1],
+            &self.v_read_write[2],
+            &self.v_read_write[3],
+            &self.v_read_write[4],
         ]
         .par_iter()
         .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
@@ -504,7 +396,7 @@ where
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let num_ops = polynomials.a_read_write.len();
-        let memory_size = polynomials.v_init_final.opcode.len();
+        let memory_size = polynomials.v_init_final[0].len();
 
         let read_fingerprints = (0..num_ops)
             .into_par_iter()
@@ -512,11 +404,11 @@ where
                 Self::fingerprint(
                     &[
                         polynomials.a_read_write[i],
-                        polynomials.v_read_write.opcode[i],
-                        polynomials.v_read_write.rd[i],
-                        polynomials.v_read_write.rs1[i],
-                        polynomials.v_read_write.rs2[i],
-                        polynomials.v_read_write.imm[i],
+                        polynomials.v_read_write[0][i],
+                        polynomials.v_read_write[1][i],
+                        polynomials.v_read_write[2][i],
+                        polynomials.v_read_write[3][i],
+                        polynomials.v_read_write[4][i],
                         polynomials.t_read[i],
                     ],
                     gamma,
@@ -532,11 +424,11 @@ where
                 Self::fingerprint(
                     &[
                         F::from_u64(i as u64).unwrap(),
-                        polynomials.v_init_final.opcode[i],
-                        polynomials.v_init_final.rd[i],
-                        polynomials.v_init_final.rs1[i],
-                        polynomials.v_init_final.rs2[i],
-                        polynomials.v_init_final.imm[i],
+                        polynomials.v_init_final[0][i],
+                        polynomials.v_init_final[1][i],
+                        polynomials.v_init_final[2][i],
+                        polynomials.v_init_final[3][i],
+                        polynomials.v_init_final[4][i],
                         F::zero(),
                     ],
                     gamma,
@@ -552,11 +444,11 @@ where
                 Self::fingerprint(
                     &[
                         polynomials.a_read_write[i],
-                        polynomials.v_read_write.opcode[i],
-                        polynomials.v_read_write.rd[i],
-                        polynomials.v_read_write.rs1[i],
-                        polynomials.v_read_write.rs2[i],
-                        polynomials.v_read_write.imm[i],
+                        polynomials.v_read_write[0][i],
+                        polynomials.v_read_write[1][i],
+                        polynomials.v_read_write[2][i],
+                        polynomials.v_read_write[3][i],
+                        polynomials.v_read_write[4][i],
                         polynomials.t_read[i] + F::one(),
                     ],
                     gamma,
@@ -572,11 +464,11 @@ where
                 Self::fingerprint(
                     &[
                         F::from_u64(i as u64).unwrap(),
-                        polynomials.v_init_final.opcode[i],
-                        polynomials.v_init_final.rd[i],
-                        polynomials.v_init_final.rs1[i],
-                        polynomials.v_init_final.rs2[i],
-                        polynomials.v_init_final.imm[i],
+                        polynomials.v_init_final[0][i],
+                        polynomials.v_init_final[1][i],
+                        polynomials.v_init_final[2][i],
+                        polynomials.v_init_final[3][i],
+                        polynomials.v_init_final[4][i],
                         polynomials.t_final[i],
                     ],
                     gamma,
@@ -668,7 +560,7 @@ where
     /// Evaluation of the a_read_write polynomial at the opening point.
     a_read_write_opening: F,
     /// Evaluation of the v_read_write polynomials at the opening point.
-    v_read_write_openings: Vec<F>,
+    v_read_write_openings: [F; 5],
     /// Evaluation of the t_read polynomial at the opening point.
     t_read_opening: F,
 }
@@ -685,7 +577,13 @@ where
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
-            v_read_write_openings: polynomials.v_read_write.evaluate_at_chi(&chis),
+            v_read_write_openings: polynomials
+                .v_read_write
+                .par_iter()
+                .map(|poly| poly.evaluate_at_chi(&chis))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
             t_read_opening: polynomials.t_read.evaluate_at_chi(&chis),
         }
     }
@@ -708,11 +606,11 @@ where
             &[
                 &polynomials.a_read_write,
                 &polynomials.t_read,
-                &polynomials.v_read_write.opcode,
-                &polynomials.v_read_write.rd,
-                &polynomials.v_read_write.rs1,
-                &polynomials.v_read_write.rs2,
-                &polynomials.v_read_write.imm,
+                &polynomials.v_read_write[0],
+                &polynomials.v_read_write[1],
+                &polynomials.v_read_write[2],
+                &polynomials.v_read_write[3],
+                &polynomials.v_read_write[4],
             ],
             &opening_point,
             &combined_openings,
@@ -750,7 +648,7 @@ where
     /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
     /// Evaluation of the v_init/final polynomials at the opening point.
-    v_init_final: Vec<F>,
+    v_init_final: [F; 5],
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
 }
@@ -765,7 +663,13 @@ where
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_init_final: None,
-            v_init_final: polynomials.v_init_final.evaluate_at_chi(&chis),
+            v_init_final: polynomials
+                .v_init_final
+                .par_iter()
+                .map(|poly| poly.evaluate_at_chi(&chis))
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
             t_final: polynomials.t_final.evaluate_at_chi(&chis),
         }
     }
@@ -817,27 +721,6 @@ mod tests {
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
     use std::collections::HashSet;
-
-    #[test]
-    fn five_tuple_poly() {
-        let program = vec![
-            BytecodeRow::new(to_ram_address(0), 2u64, 3u64, 4u64, 5u64, 6u64),
-            BytecodeRow::new(to_ram_address(1), 7u64, 8u64, 9u64, 10u64, 11u64),
-            BytecodeRow::new(to_ram_address(2), 12u64, 13u64, 14u64, 15u64, 16u64),
-            BytecodeRow::new(to_ram_address(3), 17u64, 18u64, 19u64, 20u64, 21u64),
-        ];
-        let tuple: FiveTuplePoly<Fr> = FiveTuplePoly::from_elf(&program);
-        let expected_opcode: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![2, 7, 12, 17]);
-        let expected_rd: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![3, 8, 13, 18]);
-        let expected_rs1: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![4, 9, 14, 19]);
-        let expected_rs2: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![5, 10, 15, 20]);
-        let expected_imm: DensePolynomial<Fr> = DensePolynomial::from_usize(&vec![6, 11, 16, 21]);
-        assert_eq!(tuple.opcode, expected_opcode);
-        assert_eq!(tuple.rd, expected_rd);
-        assert_eq!(tuple.rs1, expected_rs1);
-        assert_eq!(tuple.rs2, expected_rs2);
-        assert_eq!(tuple.imm, expected_imm);
-    }
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
         let set1: HashSet<_> = vec1.iter().cloned().collect();
