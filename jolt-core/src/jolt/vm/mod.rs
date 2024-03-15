@@ -26,13 +26,13 @@ use crate::{
     lasso::memory_checking::NoPreprocessing,
 };
 use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction,
+    constants::MEMORY_OPS_PER_INSTRUCTION, field_conversion::IntoSpartan, ELFInstruction, MemoryOp,
 };
 
 use self::instruction_lookups::{
     InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
-use self::read_write_memory::{MemoryCommitment, MemoryOp, ReadWriteMemory, ReadWriteMemoryProof};
+use self::read_write_memory::{MemoryCommitment, ReadWriteMemory, ReadWriteMemoryProof};
 use self::{
     bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, BytecodeRow},
     instruction_lookups::InstructionPolynomials,
