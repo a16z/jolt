@@ -866,7 +866,7 @@ mod tests {
 
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
-    use common::ELFInstruction;
+    use common::rv_trace::ELFInstruction;
     use rand_core::SeedableRng;
 
     #[test]

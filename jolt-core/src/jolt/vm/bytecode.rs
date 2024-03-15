@@ -13,7 +13,8 @@ use crate::poly::hyrax::{
 };
 use crate::poly::pedersen::PedersenGenerators;
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
-use common::{to_ram_address, ELFInstruction};
+use common::rv_trace::ELFInstruction;
+use common::to_ram_address;
 
 use rayon::prelude::*;
 

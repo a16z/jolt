@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use common::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
+use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
 
 use crate::emulator::cpu::Xlen;
 

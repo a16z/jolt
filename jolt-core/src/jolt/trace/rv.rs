@@ -13,7 +13,7 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::rv32i_vm::RV32I;
-use common::{ELFInstruction, RVTraceRow, RV32IM};
+use common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
 
 impl TryFrom<&ELFInstruction> for RV32I {
     type Error = &'static str;
