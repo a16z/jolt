@@ -8,8 +8,6 @@ use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
-use crate::jolt::instruction::blt::BLTInstruction;
-use crate::jolt::instruction::bltu::BLTUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sll::SLLInstruction;
@@ -53,8 +51,8 @@ impl JoltProvableTrace for RVTraceRow {
 
             RV32IM::BEQ  => vec![BEQInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
             RV32IM::BNE  => vec![BNEInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
-            RV32IM::BLT  => vec![BLTInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
-            RV32IM::BLTU => vec![BLTUInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
+            RV32IM::BLT  => vec![SLTInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
+            RV32IM::BLTU => vec![SLTUInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
             RV32IM::BGE  => vec![BGEInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
             RV32IM::BGEU => vec![BGEUInstruction(self.register_state.rs1_val.unwrap(), self.register_state.rs2_val.unwrap()).into()],
 

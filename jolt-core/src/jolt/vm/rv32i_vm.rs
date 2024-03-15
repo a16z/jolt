@@ -11,10 +11,9 @@ use super::Jolt;
 use crate::jolt::instruction::add::ADD32Instruction;
 use crate::jolt::instruction::{
     and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction, bgeu::BGEUInstruction,
-    blt::BLTInstruction, bltu::BLTUInstruction, bne::BNEInstruction, or::ORInstruction,
-    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
-    srl::SRLInstruction, sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode,
-    SubtableIndices,
+    bne::BNEInstruction, or::ORInstruction, sll::SLLInstruction, slt::SLTInstruction,
+    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
+    xor::XORInstruction, JoltInstruction, Opcode, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -87,8 +86,6 @@ instruction_set!(
   BEQ: BEQInstruction,
   BGE: BGEInstruction,
   BGEU: BGEUInstruction,
-  BLT: BLTInstruction,
-  BLTU: BLTUInstruction,
   BNE: BNEInstruction,
   OR: ORInstruction,
   SLL: SLLInstruction<WORD_SIZE>,
@@ -267,7 +264,7 @@ mod tests {
 
     //     let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
     //     <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
-    //         preprocessing, 
+    //         preprocessing,
     //         instructions_r1cs,
     //         bytecode_rows,
     //         bytecode_trace,
@@ -395,7 +392,7 @@ mod tests {
     //     let mut transcript = Transcript::new(b"Jolt transcript");
     //     let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
     //     <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
-    //         preprocessing, 
+    //         preprocessing,
     //         instructions_r1cs,
     //         bytecode_rows,
     //         bytecode_trace,
