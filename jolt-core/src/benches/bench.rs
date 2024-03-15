@@ -1,16 +1,13 @@
 use crate::jolt::instruction::add::ADDInstruction;
-use crate::jolt::trace::JoltProvableTrace;
 use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, BytecodeRow};
 use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
-use crate::jolt::vm::read_write_memory::{
-    random_memory_trace, MemoryOp, RandomInstruction, ReadWriteMemory,
-};
+use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction, ReadWriteMemory};
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::{ELFInstruction, RVTraceRow};
+use common::{ELFInstruction, MemoryOp, RVTraceRow};
 use criterion::black_box;
 use merlin::Transcript;
 use rand_core::SeedableRng;
@@ -232,20 +229,17 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
 
         let instructions_r1cs: Vec<RV32I> = trace
             .iter()
-            .flat_map(|row| {
-                let instructions = row.to_jolt_instructions();
-                if instructions.is_empty() {
-                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
+            .map(|row| {
+                if let Ok(jolt_instruction) = RV32I::try_from(row) {
+                    jolt_instruction
                 } else {
-                    instructions
+                    ADDInstruction(0_u64, 0_u64).into()
                 }
             })
             .collect();
 
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = trace
-            .iter()
-            .map(|row| row.to_ram_ops().try_into().unwrap())
-            .collect();
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
+            trace.iter().map(|row| row.into()).collect();
         let circuit_flags = trace
             .iter()
             .flat_map(|row| {
@@ -304,20 +298,17 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let instructions_r1cs: Vec<RV32I> = trace
             .iter()
-            .flat_map(|row| {
-                let instructions = row.to_jolt_instructions();
-                if instructions.is_empty() {
-                    vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
+            .map(|row| {
+                if let Ok(jolt_instruction) = RV32I::try_from(row) {
+                    jolt_instruction
                 } else {
-                    instructions
+                    ADDInstruction(0_u64, 0_u64).into()
                 }
             })
             .collect();
 
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> = trace
-            .iter()
-            .map(|row| row.to_ram_ops().try_into().unwrap())
-            .collect();
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
+            trace.iter().map(|row| row.into()).collect();
         let circuit_flags = trace
             .iter()
             .flat_map(|row| {

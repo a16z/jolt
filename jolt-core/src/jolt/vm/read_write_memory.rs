@@ -31,7 +31,7 @@ use common::constants::{
     BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS,
     REGISTER_COUNT,
 };
-use common::{to_ram_address, ELFInstruction};
+use common::{to_ram_address, ELFInstruction, MemoryOp};
 
 use super::timestamp_range_check::TimestampValidityProof;
 
@@ -131,18 +131,6 @@ where
         MemoryInitFinalOpenings<F>,
     >,
     pub timestamp_validity_proof: TimestampValidityProof<F, G>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum MemoryOp {
-    Read(u64, u64),  // (address, value)
-    Write(u64, u64), // (address, new_value)
-}
-
-impl MemoryOp {
-    pub fn no_op() -> Self {
-        Self::Read(0, 0)
-    }
 }
 
 pub struct ReadWriteMemory<F, G>
@@ -336,7 +324,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
             [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
             [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION]
+            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
         ) = common::par_join_8!(
             || DensePolynomial::from_u64(&v_init),
             || DensePolynomial::from_u64(&v_final),
@@ -347,7 +335,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             || map_to_polys(&t_read),
             || map_to_polys(&t_write)
         );
-
 
         (
             Self {
@@ -507,17 +494,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>, Vec<F>) {
         let par_flatten = |polys: &[DensePolynomial<F>]| -> Vec<F> {
-            polys.par_iter()
+            polys
+                .par_iter()
                 .flat_map(|poly| poly.evals_ref())
                 .cloned()
                 .collect::<Vec<F>>()
         };
         let (a_polys, (v_read_polys, v_write_polys)): (Vec<F>, (Vec<F>, Vec<F>)) = rayon::join(
             || par_flatten(&self.a_read_write),
-            || rayon::join(
-                || par_flatten(&self.v_read),
-                || par_flatten(&self.v_write)
-            )
+            || rayon::join(|| par_flatten(&self.v_read), || par_flatten(&self.v_write)),
         );
         (a_polys, v_read_polys, v_write_polys)
     }
@@ -527,7 +512,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     pub fn num_generators(max_memory_address: usize, max_trace_length: usize) -> usize {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
-        
+
         // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
         let t_read_write_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION)
             .next_power_of_two()

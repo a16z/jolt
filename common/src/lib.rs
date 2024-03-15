@@ -1,3 +1,4 @@
+use constants::MEMORY_OPS_PER_INSTRUCTION;
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
@@ -6,6 +7,218 @@ pub struct RVTraceRow {
     pub instruction: ELFInstruction,
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum MemoryOp {
+    Read(u64, u64),  // (address, value)
+    Write(u64, u64), // (address, new_value)
+}
+
+impl MemoryOp {
+    pub fn no_op() -> Self {
+        Self::Read(0, 0)
+    }
+}
+
+fn sum_u64_i32(a: u64, b: i32) -> u64 {
+    if b.is_negative() {
+        let abs_b = b.abs() as u64;
+        if a < abs_b {
+            panic!("overflow")
+        }
+        a - abs_b
+    } else {
+        let b_u64: u64 = b.try_into().expect("failed u64 convesion");
+        a + b_u64
+    }
+}
+
+impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
+    fn into(self) -> [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
+        let instruction_type = self.instruction.opcode.instruction_type();
+
+        let rs1_read = || {
+            MemoryOp::Read(
+                self.instruction.rs1.unwrap(),
+                self.register_state.rs1_val.unwrap(),
+            )
+        };
+        let rs2_read = || {
+            MemoryOp::Read(
+                self.instruction.rs2.unwrap(),
+                self.register_state.rs2_val.unwrap(),
+            )
+        };
+        let rd_write = || {
+            MemoryOp::Write(
+                self.instruction.rd.unwrap(),
+                self.register_state.rd_post_val.unwrap(),
+            )
+        };
+
+        let ram_byte_read = |index: usize| match self.memory_state {
+            Some(MemoryState::Read { address, value }) => (value >> (index * 8)) as u8,
+            Some(MemoryState::Write {
+                address,
+                pre_value,
+                post_value,
+            }) => (pre_value >> (index * 8)) as u8,
+            None => panic!("Memory state not found"),
+        };
+        let ram_byte_written = |index: usize| match self.memory_state {
+            Some(MemoryState::Read { address, value }) => panic!("Unexpected MemoryState::Read"),
+            Some(MemoryState::Write {
+                address,
+                pre_value,
+                post_value,
+            }) => (post_value >> (index * 8)) as u8,
+            None => panic!("Memory state not found"),
+        };
+
+        let rs1_offset = || -> u64 {
+            let rs1_val = self.register_state.rs1_val.unwrap();
+            let imm = self.instruction.imm.unwrap();
+            sum_u64_i32(rs1_val, imm as i32)
+        };
+
+        // Canonical ordering for memory instructions
+        // 0: rs1
+        // 1: rs2
+        // 2: rd
+        // 3: byte_0
+        // 4: byte_1
+        // 5: byte_2
+        // 6: byte_3
+        // If any are empty a no_op is inserted.
+
+        // Validation: Number of ops should be a multiple of 7
+        match instruction_type {
+            RV32InstructionFormat::R => [
+                rs1_read(),
+                rs2_read(),
+                rd_write(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+            ],
+            RV32InstructionFormat::U => [
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                rd_write(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+            ],
+            RV32InstructionFormat::I => match self.instruction.opcode {
+                RV32IM::ADDI
+                | RV32IM::SLLI
+                | RV32IM::SRLI
+                | RV32IM::SRAI
+                | RV32IM::ANDI
+                | RV32IM::ORI
+                | RV32IM::XORI
+                | RV32IM::SLTI
+                | RV32IM::SLTIU => [
+                    rs1_read(),
+                    MemoryOp::no_op(),
+                    rd_write(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                ],
+                RV32IM::LB | RV32IM::LBU => [
+                    rs1_read(),
+                    MemoryOp::no_op(),
+                    rd_write(),
+                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                ],
+                RV32IM::LH | RV32IM::LHU => [
+                    rs1_read(),
+                    MemoryOp::no_op(),
+                    rd_write(),
+                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
+                    MemoryOp::Read(rs1_offset() + 1, ram_byte_read(1) as u64),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                ],
+                RV32IM::LW => [
+                    rs1_read(),
+                    MemoryOp::no_op(),
+                    rd_write(),
+                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
+                    MemoryOp::Read(rs1_offset() + 1, ram_byte_read(1) as u64),
+                    MemoryOp::Read(rs1_offset() + 2, ram_byte_read(2) as u64),
+                    MemoryOp::Read(rs1_offset() + 3, ram_byte_read(3) as u64),
+                ],
+                RV32IM::JALR => [
+                    rs1_read(),
+                    MemoryOp::no_op(),
+                    rd_write(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                ],
+                _ => unreachable!("{self:?}"),
+            },
+            RV32InstructionFormat::S => match self.instruction.opcode {
+                RV32IM::SB => [
+                    rs1_read(),
+                    rs2_read(),
+                    MemoryOp::no_op(),
+                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                ],
+                RV32IM::SH => [
+                    rs1_read(),
+                    rs2_read(),
+                    MemoryOp::no_op(),
+                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
+                    MemoryOp::no_op(),
+                    MemoryOp::no_op(),
+                ],
+                RV32IM::SW => [
+                    rs1_read(),
+                    rs2_read(),
+                    MemoryOp::no_op(),
+                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
+                    MemoryOp::Write(rs1_offset() + 2, ram_byte_written(2) as u64),
+                    MemoryOp::Write(rs1_offset() + 3, ram_byte_written(3) as u64),
+                ],
+                _ => unreachable!(),
+            },
+            RV32InstructionFormat::UJ => [
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                rd_write(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+            ],
+            RV32InstructionFormat::SB => [
+                rs1_read(),
+                rs2_read(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+            ],
+            _ => unreachable!("{self:?}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
