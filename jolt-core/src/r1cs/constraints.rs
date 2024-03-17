@@ -312,13 +312,14 @@ impl<F: PrimeField> R1CSBuilder<F> {
     }
 
     pub fn get_matrices(inputs: Option<Vec<F>>, shapes: Option<(usize, usize, usize, usize)>) -> Option<Self> {
-        // Append the constant 1 to the inputs 
-        let inputs_with_const_output = inputs.map(|mut vec| {
-            vec.insert(0, F::ZERO);
-            vec.insert(0, F::ZERO);
-            vec.insert(0, F::ONE); // constant
-            vec
-        });
+        // // Append the constant 1 to the inputs 
+        // Arasu: moved this to being done just once in snark.rs
+        // let inputs_with_const_output = inputs.map(|mut vec| {
+        //     vec.insert(0, F::ZERO);
+        //     vec.insert(0, F::ZERO);
+        //     vec.insert(0, F::ONE); // constant
+        //     vec
+        // });
         
         let (A, B, Cmat) = if let Some(shapes) = shapes {
             (Vec::with_capacity(shapes.0), Vec::with_capacity(shapes.1), Vec::with_capacity(shapes.2))
@@ -335,7 +336,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             num_inputs: 0, // technically inputs are also aux, so keep this 0
             num_aux: GET_TOTAL_LEN()-1, // dont' include the constant  
             num_internal: 0, 
-            z: inputs_with_const_output, 
+            z: inputs, 
             ABCz_lens: if let Some(shapes) = shapes {
                 shapes
             } else {

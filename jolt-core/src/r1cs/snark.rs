@@ -116,7 +116,7 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       };
 
       // For the non-circom version, we need to pre-prend the inputs.  
-      step_inputs.insert(0, vec![F::from(i as u64), program_counter]);
+      step_inputs.insert(0, vec![F::from(1), F::from(0), F::from(0), F::from(i as u64), program_counter]);
       let step_inputs_flat = step_inputs.into_iter().flatten().collect::<Vec<_>>();
 
       let step_instance = R1CSBuilder::<F>::get_matrices(Some(step_inputs_flat), Some(ABC_lens)).unwrap(); 
