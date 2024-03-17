@@ -160,7 +160,6 @@ pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 pub struct BytecodePreprocessing<F: PrimeField> {
     /// Size of the (padded) bytecode.
     code_size: usize,
-    no_op_address: usize,
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
     /// the initial memory values. There are five values (bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_init_final` comprises five polynomials.
@@ -175,11 +174,13 @@ impl<F: PrimeField> BytecodePreprocessing<F> {
             assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
             instruction.address -= RAM_START_ADDRESS as usize;
             instruction.address /= BYTES_PER_INSTRUCTION;
+
+            // Account for no-op instruction prepended to bytecode
+            instruction.address += 1;
         }
 
-        // Bytecode: Add single no_op instruction at adddress | ELF + 1 |
-        let no_op_address = bytecode.last().unwrap().address + 1;
-        bytecode.push(BytecodeRow::no_op(no_op_address));
+        // Bytecode: Prepend a single no-op instruction
+        bytecode.insert(0, BytecodeRow::no_op(0));
 
         // Bytecode: Pad to nearest power of 2
         for _ in bytecode.len()..bytecode.len().next_power_of_two() {
@@ -194,7 +195,6 @@ impl<F: PrimeField> BytecodePreprocessing<F> {
 
         Self {
             v_init_final,
-            no_op_address,
             code_size,
         }
     }
@@ -240,12 +240,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
             assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
             instruction.address -= RAM_START_ADDRESS as usize;
             instruction.address /= BYTES_PER_INSTRUCTION;
+
+            // Account for no-op instruction prepended to bytecode
+            instruction.address += 1;
         }
 
         // Pad trace to nearest power of 2
         for _ in trace.len()..trace.len().next_power_of_two() {
             // All padded elements of the trace point at the no_op row of the bytecode
-            trace.push(BytecodeRow::no_op(preprocessing.no_op_address));
+            trace.push(BytecodeRow::no_op(0));
         }
 
         let num_ops = trace.len();
@@ -305,7 +308,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     /// Computes the maximum number of group generators needed to commit to bytecode
     /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
     pub fn num_generators(max_bytecode_size: usize, max_trace_length: usize) -> usize {
-        // Account for no-op appended to end of bytecode
+        // Account for no-op prepended to bytecode
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
