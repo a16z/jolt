@@ -1,7 +1,7 @@
 // Handwritten circuit 
 
+
 use ff::PrimeField; 
-use spartan2::r1cs::R1CSShape; 
 
 /* Compiler Variables */
 const C: usize = 4; 
@@ -91,15 +91,14 @@ pub struct R1CSBuilder<F: PrimeField> {
     pub z: Option<Vec<F>>,
 }
 
-fn subtract_vectors(x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
-    let mut result = x.clone();
-    result.extend(y.into_iter().map(|(idx, coeff)| (idx, -coeff)));
-    result
+fn subtract_vectors(mut x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
+    x.extend(y.into_iter().map(|(idx, coeff)| (idx, -coeff)));
+    x
 }
 
 // big-endian
 fn combine_chunks_vec(start_idx: usize, L: usize, N: usize) -> Vec<(usize, i64)> {
-    let mut result = vec![];
+    let mut result = Vec::with_capacity(N);
     for i in 0..N {
         result.push((start_idx + i, 1 << ((N-1-i)*L)));
     }
@@ -108,7 +107,7 @@ fn combine_chunks_vec(start_idx: usize, L: usize, N: usize) -> Vec<(usize, i64)>
 
 fn i64_to_f<F: PrimeField>(num: i64) -> F {
     if num < 0 {
-        F::ZERO - F::from(num.abs() as u64)
+        F::ZERO - F::from((-num) as u64)
     } else {
         F::from(num as u64)
     }
@@ -117,34 +116,34 @@ fn i64_to_f<F: PrimeField>(num: i64) -> F {
 impl<F: PrimeField> R1CSBuilder<F> {
     fn new_constraint(&mut self, a: Vec<(usize, i64)>, b: Vec<(usize, i64)>, c: Vec<(usize, i64)>) {
         let row: usize = self.num_constraints; 
-        // let prepend_row = |vec: Vec<(usize, i64)>| {
-        //     vec.into_iter().map(|(idx, val)| (row, idx, val)).collect::<Vec<(usize, usize, i64)>>()
-        // };
-        let prepend_row = |vec: Vec<(usize, i64)>| {
-            let mut result: Vec<(usize, usize, i64)> = Vec::new();
+        let prepend_row = |vec: Vec<(usize, i64)>, matrix: &mut Vec<(usize, usize, i64)>| {
+            let old_len = matrix.len();
             for (idx, val) in vec {
-                if let Some((_, _, existing_val)) = result.iter_mut().find(|(_, existing_idx, _)| *existing_idx == idx) {
+                if let Some((_, _, existing_val)) = matrix[old_len..].iter_mut().find(|(_, existing_idx, _)| *existing_idx == idx) {
                     *existing_val += val;
                 } else {
-                    result.push((row, idx, val));
+                    matrix.push((row, idx, val));
                 }
             }
-            result
         };
-        self.A.extend(prepend_row(a).into_iter()); 
-        self.B.extend(prepend_row(b).into_iter()); 
-        self.C.extend(prepend_row(c).into_iter()); 
+        prepend_row(a, &mut self.A); 
+        prepend_row(b, &mut self.B); 
+        prepend_row(c, &mut self.C); 
         self.num_constraints += 1;
     }
 
     fn get_val_from_lc(&self, lc: &[(usize, i64)]) -> F {
-        lc.iter().map(|(idx, coeff)| self.z.as_ref().unwrap()[*idx] * i64_to_f::<F>(*coeff)).sum()
+        if let Some(z) = self.z.as_ref() {
+            lc.iter().map(|(idx, coeff)| z[*idx] * i64_to_f::<F>(*coeff)).sum()
+        } else {
+            F::ZERO
+        }
     }
 
     fn assign_aux(&mut self) -> usize {
-        if self.z.is_some() {
-            assert!(self.z.as_ref().unwrap().len() == self.num_variables);
-            self.z.as_mut().unwrap().push(F::ZERO)
+        if let Some(z) = self.z.as_mut() {
+            assert!(z.len() == self.num_variables);
+            z.push(F::ZERO);
         }
         let idx = self.num_variables; 
         self.num_aux += 1;
@@ -161,20 +160,15 @@ impl<F: PrimeField> R1CSBuilder<F> {
     // and constraints it to be equal to the wire value at result_idx.
     // The combination is big-endian with the most significant bit at start_idx.
     fn combine_constraint(&mut self, start_idx: usize, L: usize, N: usize, result_idx: usize) {
-        let mut constraint_A = vec![];
-        let mut constraint_B = vec![];
-        let mut constraint_C = vec![];
+        let mut constraint_A = Vec::with_capacity(N);
+        let constraint_B = vec![ONE];
+        let constraint_C = vec![(result_idx, 1)];
 
         for i in 0..N {
             constraint_A.push((start_idx + i, 1 << ((N-1-i)*L)));
         }
-        constraint_B.push(ONE); 
-        constraint_C.push((result_idx, 1));
 
-        if self.z.is_some() {
-            let result_value = self.get_val_from_lc(&constraint_A);
-            assert!(self.z.as_ref().unwrap()[result_idx] == result_value);
-        }
+        // Here the result_idx is assumed to already be assigned
 
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
@@ -182,15 +176,13 @@ impl<F: PrimeField> R1CSBuilder<F> {
     fn combine_le(&mut self, start_idx: usize, L: usize, N: usize) -> usize {
         let result_idx = Self::assign_aux(self);
 
-        let mut constraint_A = vec![];
-        let mut constraint_B = vec![];
-        let mut constraint_C = vec![];
+        let mut constraint_A = Vec::with_capacity(N);
+        let constraint_B = vec![ONE];
+        let constraint_C = vec![(result_idx, 1)];
 
         for i in 0..N {
             constraint_A.push((start_idx + i, 1 << (i*L)));
         }
-        constraint_B.push(ONE); 
-        constraint_C.push((result_idx, 1));
 
         if self.z.is_some() {
             let result_value = self.get_val_from_lc(&constraint_A);
@@ -204,15 +196,13 @@ impl<F: PrimeField> R1CSBuilder<F> {
     fn combine_be(&mut self, start_idx: usize, L: usize, N: usize) -> usize {
         let result_idx = Self::assign_aux(self);
 
-        let mut constraint_A = vec![];
-        let mut constraint_B = vec![];
-        let mut constraint_C = vec![];
+        let mut constraint_A = Vec::with_capacity(N);
+        let constraint_B = vec![ONE];
+        let constraint_C = vec![(result_idx, 1)];
 
         for i in 0..N {
             constraint_A.push((start_idx + i, 1 << ((N-1-i)*L)));
         }
-        constraint_B.push(ONE); 
-        constraint_C.push((result_idx, 1));
 
         if self.z.is_some() {
             let result_value = self.get_val_from_lc(&constraint_A);
@@ -263,26 +253,18 @@ impl<F: PrimeField> R1CSBuilder<F> {
 
     // The left side is an lc but the right is a single index
     fn eq_simple(&mut self, left_idx: usize, right_idx: usize) {
-        let mut constraint_A = vec![];
-        let mut constraint_B = vec![];
-        let mut constraint_C = vec![];
-
-        constraint_A.push((left_idx, 1));
-        constraint_B.push(ONE); 
-        constraint_C.push((right_idx, 1));
+        let constraint_A = vec![(left_idx, 1)];
+        let constraint_B = vec![ONE];
+        let constraint_C = vec![(right_idx, 1)];
 
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
     // The left side is an lc but the right is a single index
     fn eq(&mut self, left: Vec<(usize, i64)>, right_idx: usize, assign: bool) {
-        let mut constraint_A = vec![];
-        let mut constraint_B = vec![];
-        let mut constraint_C = vec![];
-
-        constraint_A = left; 
-        constraint_B.push(ONE); 
-        constraint_C.push((right_idx, 1));
+        let constraint_A = left;
+        let constraint_B = vec![ONE];
+        let constraint_C = vec![(right_idx, 1)];
 
         if assign && self.z.is_some() {
             self.z.as_mut().unwrap()[right_idx] = self.get_val_from_lc(&constraint_A);
