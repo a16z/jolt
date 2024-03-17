@@ -1,6 +1,7 @@
 // Handwritten circuit 
 
-
+use smallvec::SmallVec;
+use smallvec::smallvec;
 use ff::PrimeField; 
 
 /* Compiler Variables */
@@ -78,6 +79,8 @@ fn GET_INDEX(input_type: InputType, offset: usize) -> usize {
     INPUT_OFFSETS[input_type as usize] + offset
 }
 
+const SMALLVEC_SIZE: usize = 4;
+
 #[derive(Debug)]
 pub struct R1CSBuilder<F: PrimeField> {
     pub A: Vec<(usize, usize, i64)>,
@@ -91,18 +94,35 @@ pub struct R1CSBuilder<F: PrimeField> {
     pub z: Option<Vec<F>>,
 }
 
-fn subtract_vectors(mut x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> Vec<(usize, i64)> {
-    x.extend(y.into_iter().map(|(idx, coeff)| (idx, -coeff)));
+fn subtract_vectors(mut x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> SmallVec<[(usize, i64); SMALLVEC_SIZE]> {
+    for (y_idx, y_coeff) in y {
+        if let Some((_, x_coeff)) = x.iter_mut().find(|(x_idx, _)| *x_idx == y_idx) {
+            *x_coeff -= y_coeff;
+        } else {
+            x.push((y_idx, -y_coeff));
+        }
+    }
     x
 }
 
 // big-endian
-fn combine_chunks_vec(start_idx: usize, L: usize, N: usize) -> Vec<(usize, i64)> {
-    let mut result = Vec::with_capacity(N);
+fn combine_chunks_vec(start_idx: usize, L: usize, N: usize) -> SmallVec<[(usize, i64); SMALLVEC_SIZE]> {
+    let mut result = SmallVec::with_capacity(N);
     for i in 0..N {
         result.push((start_idx + i, 1 << ((N-1-i)*L)));
     }
     result
+}
+
+fn concat_constraint_vecs(mut x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> SmallVec<[(usize, i64); SMALLVEC_SIZE]> {
+    for (y_idx, y_coeff) in y {
+        if let Some((_, x_coeff)) = x.iter_mut().find(|(x_idx, _)| *x_idx == y_idx) {
+            *x_coeff += y_coeff;
+        } else {
+            x.push((y_idx, y_coeff));
+        }
+    }
+    x
 }
 
 fn i64_to_f<F: PrimeField>(num: i64) -> F {
@@ -114,16 +134,11 @@ fn i64_to_f<F: PrimeField>(num: i64) -> F {
 }
 
 impl<F: PrimeField> R1CSBuilder<F> {
-    fn new_constraint(&mut self, a: Vec<(usize, i64)>, b: Vec<(usize, i64)>, c: Vec<(usize, i64)>) {
+    fn new_constraint(&mut self, a: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, b: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, c: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) {
         let row: usize = self.num_constraints; 
-        let prepend_row = |vec: Vec<(usize, i64)>, matrix: &mut Vec<(usize, usize, i64)>| {
-            let old_len = matrix.len();
+        let prepend_row = |vec: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, matrix: &mut Vec<(usize, usize, i64)>| {
             for (idx, val) in vec {
-                if let Some((_, _, existing_val)) = matrix[old_len..].iter_mut().find(|(_, existing_idx, _)| *existing_idx == idx) {
-                    *existing_val += val;
-                } else {
                     matrix.push((row, idx, val));
-                }
             }
         };
         prepend_row(a, &mut self.A); 
@@ -152,7 +167,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         idx
     }   
 
-    fn constr_abc(&mut self, a: Vec<(usize, i64)>, b: Vec<(usize, i64)>, c: Vec<(usize, i64)>) {
+    fn constr_abc(&mut self, a: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, b: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, c: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) {
         self.new_constraint(a, b, c); 
     }
 
@@ -160,9 +175,9 @@ impl<F: PrimeField> R1CSBuilder<F> {
     // and constraints it to be equal to the wire value at result_idx.
     // The combination is big-endian with the most significant bit at start_idx.
     fn combine_constraint(&mut self, start_idx: usize, L: usize, N: usize, result_idx: usize) {
-        let mut constraint_A = Vec::with_capacity(N);
-        let constraint_B = vec![ONE];
-        let constraint_C = vec![(result_idx, 1)];
+        let mut constraint_A = SmallVec::with_capacity(N);
+        let constraint_B = smallvec![ONE];
+        let constraint_C = smallvec![(result_idx, 1)];
 
         for i in 0..N {
             constraint_A.push((start_idx + i, 1 << ((N-1-i)*L)));
@@ -176,9 +191,9 @@ impl<F: PrimeField> R1CSBuilder<F> {
     fn combine_le(&mut self, start_idx: usize, L: usize, N: usize) -> usize {
         let result_idx = Self::assign_aux(self);
 
-        let mut constraint_A = Vec::with_capacity(N);
-        let constraint_B = vec![ONE];
-        let constraint_C = vec![(result_idx, 1)];
+        let mut constraint_A = SmallVec::with_capacity(N);
+        let constraint_B = smallvec![ONE];
+        let constraint_C = smallvec![(result_idx, 1)];
 
         for i in 0..N {
             constraint_A.push((start_idx + i, 1 << (i*L)));
@@ -196,9 +211,9 @@ impl<F: PrimeField> R1CSBuilder<F> {
     fn combine_be(&mut self, start_idx: usize, L: usize, N: usize) -> usize {
         let result_idx = Self::assign_aux(self);
 
-        let mut constraint_A = Vec::with_capacity(N);
-        let constraint_B = vec![ONE];
-        let constraint_C = vec![(result_idx, 1)];
+        let mut constraint_A = SmallVec::with_capacity(N);
+        let constraint_B = smallvec![ONE];
+        let constraint_C = smallvec![(result_idx, 1)];
 
         for i in 0..N {
             constraint_A.push((start_idx + i, 1 << ((N-1-i)*L)));
@@ -213,7 +228,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         result_idx
     }
 
-    fn multiply(&mut self, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> usize {
+    fn multiply(&mut self, x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> usize {
         let xy_idx = Self::assign_aux(self); 
         if self.z.is_some() {
             let x = self.get_val_from_lc(&x);
@@ -224,13 +239,13 @@ impl<F: PrimeField> R1CSBuilder<F> {
         R1CSBuilder::constr_abc(self, 
             x, 
             y, 
-            vec![(xy_idx, 1)], 
+            smallvec![(xy_idx, 1)], 
         ); 
 
         xy_idx 
     }
 
-    fn if_else(&mut self, choice: Vec<(usize, i64)>, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>) -> usize {
+    fn if_else(&mut self, choice: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> usize {
         let z_idx = Self::assign_aux(self);
         if self.z.is_some() {
             let choice_val = self.get_val_from_lc(&choice);
@@ -241,30 +256,30 @@ impl<F: PrimeField> R1CSBuilder<F> {
         }
 
         let y_minus_x = subtract_vectors(y, x.clone()); 
-        let z_minus_x = subtract_vectors(vec![(z_idx, 1)], x);
+        let z_minus_x = subtract_vectors(smallvec![(z_idx, 1)], x);
 
         self.new_constraint(choice, y_minus_x, z_minus_x); 
         z_idx 
     }
 
     fn if_else_simple(&mut self, choice: usize, x: usize, y: usize) -> usize {
-        Self::if_else(self, vec![(choice, 1)], vec![(x, 1)], vec![(y, 1)])  
+        Self::if_else(self, smallvec![(choice, 1)], smallvec![(x, 1)], smallvec![(y, 1)])  
     }
 
     // The left side is an lc but the right is a single index
     fn eq_simple(&mut self, left_idx: usize, right_idx: usize) {
-        let constraint_A = vec![(left_idx, 1)];
-        let constraint_B = vec![ONE];
-        let constraint_C = vec![(right_idx, 1)];
+        let constraint_A = smallvec![(left_idx, 1)];
+        let constraint_B = smallvec![ONE];
+        let constraint_C = smallvec![(right_idx, 1)];
 
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
     // The left side is an lc but the right is a single index
-    fn eq(&mut self, left: Vec<(usize, i64)>, right_idx: usize, assign: bool) {
+    fn eq(&mut self, left: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, right_idx: usize, assign: bool) {
         let constraint_A = left;
-        let constraint_B = vec![ONE];
-        let constraint_C = vec![(right_idx, 1)];
+        let constraint_B = smallvec![ONE];
+        let constraint_C = smallvec![(right_idx, 1)];
 
         if assign && self.z.is_some() {
             self.z.as_mut().unwrap()[right_idx] = self.get_val_from_lc(&constraint_A);
@@ -273,7 +288,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
-    fn constr_prod_0(&mut self, x: Vec<(usize, i64)>, y: Vec<(usize, i64)>, z: Vec<(usize, i64)>) {
+    fn constr_prod_0(&mut self, x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, z: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) {
         let xy_idx = Self::assign_aux(self); 
 
         if self.z.is_some() {
@@ -285,13 +300,13 @@ impl<F: PrimeField> R1CSBuilder<F> {
         R1CSBuilder::constr_abc(self, 
             x, 
             y, 
-            vec![(xy_idx, 1)], 
+            smallvec![(xy_idx, 1)], 
         ); 
 
         R1CSBuilder::constr_abc(self, 
-            vec![(xy_idx, 1)], 
+            smallvec![(xy_idx, 1)], 
             z, 
-            vec![], 
+            smallvec![], 
         ); 
     }
 
@@ -349,7 +364,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         R1CSBuilder::combine_constraint(&mut instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
 
         // Constriant: signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
-        let immediate: usize = R1CSBuilder::if_else(&mut instance, vec![(is_lui_auipc, 1)], vec![(immediate_before_processing, 1)], vec![(immediate_before_processing, 1<<12)]); 
+        let immediate: usize = R1CSBuilder::if_else(&mut instance, smallvec![(is_lui_auipc, 1)], smallvec![(immediate_before_processing, 1)], smallvec![(immediate_before_processing, 1<<12)]); 
 
         // Constraint: rs1 === memreg_a_rw[0];
         R1CSBuilder::eq_simple(&mut instance, rs1, GET_INDEX(InputType::MemregARW, 0)); 
@@ -384,8 +399,8 @@ impl<F: PrimeField> R1CSBuilder<F> {
             signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
             (is_load_instr + is_store_instr) * ((rs1_val + immediate_signed) - (memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET())) === 0;
         */
-        let immediate_signed = R1CSBuilder::if_else(&mut instance, vec![(sign_imm_flag, 1)], vec![(immediate, 1)], vec![(immediate, 1), (0, -ALL_ONES - 1)]);
-        R1CSBuilder::constr_abc(&mut instance, vec![(is_load_instr, 1), (is_store_instr, 1)], vec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, -1 * MEMORY_ADDRESS_OFFSET as i64)], vec![]); 
+        let immediate_signed = R1CSBuilder::if_else(&mut instance, smallvec![(sign_imm_flag, 1)], smallvec![(immediate, 1)], smallvec![(immediate, 1), (0, -ALL_ONES - 1)]);
+        R1CSBuilder::constr_abc(&mut instance, smallvec![(is_load_instr, 1), (is_store_instr, 1)], smallvec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, -1 * MEMORY_ADDRESS_OFFSET as i64)], smallvec![]); 
 
         /*
             for (var i=1; i<MOPS()-3; i++) {
@@ -394,7 +409,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
             }
         */
         for i in 1..MOPS-3 {
-            R1CSBuilder::constr_abc(&mut instance, vec![(GET_INDEX(InputType::MemregARW, 3+i), 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, i as i64 * -1)], vec![(GET_INDEX(InputType::MemregARW, 3+i), 1)], vec![]);
+            R1CSBuilder::constr_abc(&mut instance, smallvec![(GET_INDEX(InputType::MemregARW, 3+i), 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, i as i64 * -1)], smallvec![(GET_INDEX(InputType::MemregARW, 3+i), 1)], smallvec![]);
         }
 
         /*
@@ -403,11 +418,11 @@ impl<F: PrimeField> R1CSBuilder<F> {
             }
         */
         for i in 0..MOPS-3 {
-            R1CSBuilder::constr_abc(&mut instance, vec![(is_load_instr, 1)], vec![(GET_INDEX(InputType::MemregVReads, 3+i), 1), (GET_INDEX(InputType::MemregVWrites, 3+i), -1)], vec![]);
+            R1CSBuilder::constr_abc(&mut instance, smallvec![(is_load_instr, 1)], smallvec![(GET_INDEX(InputType::MemregVReads, 3+i), 1), (GET_INDEX(InputType::MemregVWrites, 3+i), -1)], smallvec![]);
         }
 
         // is_store_instr * (load_or_store_value - rs2_val) === 0;
-        R1CSBuilder::constr_abc(&mut instance, vec![(is_store_instr, 1)], vec![(load_or_store_value, 1), (rs2_val, -1)], vec![]);
+        R1CSBuilder::constr_abc(&mut instance, smallvec![(is_store_instr, 1)], smallvec![(load_or_store_value, 1), (rs2_val, -1)], smallvec![]);
 
 
         /* Create the lookup query 
@@ -432,22 +447,22 @@ impl<F: PrimeField> R1CSBuilder<F> {
 
         let combined_z_chunks = R1CSBuilder::combine_be(&mut instance, GET_INDEX(InputType::ChunksQuery, 0), LOG_M, C);
         R1CSBuilder::constr_abc(&mut instance,
-            vec![(is_add_instr, 1)], 
-            vec![(combined_z_chunks, 1), (x, -1), (y, -1)],
-            vec![]
+            smallvec![(is_add_instr, 1)], 
+            smallvec![(combined_z_chunks, 1), (x, -1), (y, -1)],
+            smallvec![]
         ); 
         R1CSBuilder::constr_abc(&mut instance,
-            vec![(is_sub_instr, 1)], 
-            vec![(combined_z_chunks, 1), (x, -1), (y, 1), (0, -1 * (ALL_ONES + 1))],
-            vec![]
+            smallvec![(is_sub_instr, 1)], 
+            smallvec![(combined_z_chunks, 1), (x, -1), (y, 1), (0, -1 * (ALL_ONES + 1))],
+            smallvec![]
         ); 
 
-        let is_mul_x = R1CSBuilder::multiply(&mut instance, vec![(is_mul_instr, 1)], vec![(x, 1)]);
-        let is_mul_xy = R1CSBuilder::multiply(&mut instance, vec![(is_mul_x, 1)], vec![(y, 1)]);
+        let is_mul_x = R1CSBuilder::multiply(&mut instance, smallvec![(is_mul_instr, 1)], smallvec![(x, 1)]);
+        let is_mul_xy = R1CSBuilder::multiply(&mut instance, smallvec![(is_mul_x, 1)], smallvec![(y, 1)]);
         R1CSBuilder::constr_abc(&mut instance,
-            vec![(is_mul_instr, 1)], 
-            vec![(combined_z_chunks, 1), (is_mul_xy, -1)],
-            vec![]
+            smallvec![(is_mul_instr, 1)], 
+            smallvec![(combined_z_chunks, 1), (is_mul_xy, -1)],
+            smallvec![]
         );
 
     /* Verify the chunks of x and y for concat instructions. 
@@ -459,21 +474,21 @@ impl<F: PrimeField> R1CSBuilder<F> {
     */
         R1CSBuilder::constr_abc(
             &mut instance,  
-            [
+            concat_constraint_vecs(
                 combine_chunks_vec(GET_INDEX(InputType::ChunksX, 0), L_CHUNK, C), 
-                vec![(x, -1)]
-            ].concat(),
-            vec![(is_concat, 1)],
-            vec![], 
+                smallvec![(x, -1)]
+            ), 
+            smallvec![(is_concat, 1)],
+            smallvec![], 
         ); 
         R1CSBuilder::constr_abc(
             &mut instance,  
-            [
+            concat_constraint_vecs(
                 combine_chunks_vec(GET_INDEX(InputType::ChunksY, 0), L_CHUNK, C),
-                vec![(y, -1)]
-            ].concat(),
-            vec![(is_concat, 1)],
-            vec![], 
+                smallvec![(y, -1)]
+            ), 
+            smallvec![(is_concat, 1)],
+            smallvec![], 
         ); 
 
         /* Concat query construction: 
@@ -487,9 +502,9 @@ impl<F: PrimeField> R1CSBuilder<F> {
             let chunk_y_used_i = R1CSBuilder::if_else_simple(&mut instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
             R1CSBuilder::constr_abc(
                 &mut instance,  
-                vec![(GET_INDEX(InputType::ChunksQuery, i), 1), (chunk_y_used_i, -1), (GET_INDEX(InputType::ChunksX, i), (1<<L_CHUNK)*-1)],
-                vec![(is_concat, 1)],
-                vec![], 
+                smallvec![(GET_INDEX(InputType::ChunksQuery, i), 1), (chunk_y_used_i, -1), (GET_INDEX(InputType::ChunksX, i), (1<<L_CHUNK)*-1)],
+                smallvec![(is_concat, 1)],
+                smallvec![], 
             ); 
         }
 
@@ -500,8 +515,8 @@ impl<F: PrimeField> R1CSBuilder<F> {
         is_assert_false_instr * (1-lookup_output) === 0;
         is_assert_true_instr * lookup_output === 0;
         */
-        R1CSBuilder::constr_abc(&mut instance, vec![(is_assert_false_instr, 1)], vec![(GET_INDEX(InputType::LookupOutput, 0), -1), (0, 1)], vec![]); 
-        R1CSBuilder::constr_abc(&mut instance, vec![(is_assert_true_instr, 1)], vec![(GET_INDEX(InputType::LookupOutput, 0), 1)], vec![]); 
+        R1CSBuilder::constr_abc(&mut instance, smallvec![(is_assert_false_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), -1), (0, 1)], smallvec![]); 
+        R1CSBuilder::constr_abc(&mut instance, smallvec![(is_assert_true_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)], smallvec![]); 
 
         /* Constraints for storing value in register rd.
             // lui doesn't need a lookup and simply requires the lookup_output to be set to immediate 
@@ -516,28 +531,28 @@ impl<F: PrimeField> R1CSBuilder<F> {
             rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
         */
         let rd_val = GET_INDEX(InputType::MemregVWrites, 2);
-        R1CSBuilder::constr_abc(&mut instance, vec![(is_load_instr, 1)], vec![(rd_val, 1), (load_or_store_value, -1)], vec![]);
+        R1CSBuilder::constr_abc(&mut instance, smallvec![(is_load_instr, 1)], smallvec![(rd_val, 1), (load_or_store_value, -1)], smallvec![]);
         R1CSBuilder::constr_prod_0(
             &mut instance, 
-            vec![(rd, 1)], 
-            vec![(if_update_rd_with_lookup_output, 1)], 
-            vec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], 
+            smallvec![(rd, 1)], 
+            smallvec![(if_update_rd_with_lookup_output, 1)], 
+            smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], 
         );
         R1CSBuilder::constr_prod_0(
             &mut instance, 
-            vec![(rd, 1)], 
-            vec![(is_jump_instr, 1)], 
-            vec![(rd_val, 1), (PC, -1), (0, -4)], 
+            smallvec![(rd, 1)], 
+            smallvec![(is_jump_instr, 1)], 
+            smallvec![(rd_val, 1), (PC, -1), (0, -4)], 
         ); 
         
         /* output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1; */
         R1CSBuilder::constr_abc(&mut instance, 
-            vec![(GET_INDEX(InputType::OutputState, STEP_NUM_IDX), 1)], 
-            vec![ONE], 
-            vec![(GET_INDEX(InputType::InputState, STEP_NUM_IDX), 1), (0, 1)], 
+            smallvec![(GET_INDEX(InputType::OutputState, STEP_NUM_IDX), 1)], 
+            smallvec![ONE], 
+            smallvec![(GET_INDEX(InputType::InputState, STEP_NUM_IDX), 1), (0, 1)], 
         );
         R1CSBuilder::eq(&mut instance, 
-            vec![(GET_INDEX(InputType::InputState, STEP_NUM_IDX), 1), (0, 1)], 
+            smallvec![(GET_INDEX(InputType::InputState, STEP_NUM_IDX), 1), (0, 1)], 
             GET_INDEX(InputType::OutputState, STEP_NUM_IDX),
             true, 
         );
@@ -556,14 +571,14 @@ impl<F: PrimeField> R1CSBuilder<F> {
             ]);
             output_state[PC_IDX()] <== next_pc_j_b;
         */
-        let is_branch_times_lookup_output = R1CSBuilder::multiply(&mut instance, vec![(is_branch_instr, 1)], vec![(GET_INDEX(InputType::LookupOutput, 0), 1)]); 
+        let is_branch_times_lookup_output = R1CSBuilder::multiply(&mut instance, smallvec![(is_branch_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]); 
 
-        let next_pc_j = R1CSBuilder::if_else(&mut instance, vec![(is_jump_instr, 1)], vec![(PC, 1), (0, 4)], vec![(GET_INDEX(InputType::LookupOutput, 0), 1)]);
+        let next_pc_j = R1CSBuilder::if_else(&mut instance, smallvec![(is_jump_instr, 1)], smallvec![(PC, 1), (0, 4)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]);
 
-        let next_pc_j_b = R1CSBuilder::if_else(&mut instance, vec![(is_branch_times_lookup_output, 1)], vec![(next_pc_j, 1)], vec![(PC, 1), (immediate_signed, 1)]);
+        let next_pc_j_b = R1CSBuilder::if_else(&mut instance, smallvec![(is_branch_times_lookup_output, 1)], smallvec![(next_pc_j, 1)], smallvec![(PC, 1), (immediate_signed, 1)]);
 
         R1CSBuilder::eq(&mut instance, 
-            vec![(next_pc_j_b, 1)], 
+            smallvec![(next_pc_j_b, 1)], 
             GET_INDEX(InputType::OutputState, PC_IDX), 
             true, 
         );

@@ -73,6 +73,7 @@ lazy_static = "1.4.0"
 halo2curves = "0.6.1"
 fixedbitset = "0.5.0"
 thiserror = "1.0.58"
+smallvec = "1.13.1"
 
 [build-dependencies]
 common = { path = "../common" }
