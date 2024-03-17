@@ -92,6 +92,7 @@ pub struct R1CSBuilder<F: PrimeField> {
     pub num_aux: usize, 
     pub num_internal: usize, 
     pub z: Option<Vec<F>>,
+    pub ABCz_lens: (usize, usize, usize, usize),
 }
 
 fn subtract_vectors(mut x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> SmallVec<[(usize, i64); SMALLVEC_SIZE]> {
@@ -310,7 +311,7 @@ impl<F: PrimeField> R1CSBuilder<F> {
         ); 
     }
 
-    pub fn get_matrices(inputs: Option<Vec<F>>) -> Option<Self> {
+    pub fn get_matrices(inputs: Option<Vec<F>>, shapes: Option<(usize, usize, usize, usize)>) -> Option<Self> {
         // Append the constant 1 to the inputs 
         let inputs_with_const_output = inputs.map(|mut vec| {
             vec.insert(0, F::ZERO);
@@ -318,17 +319,28 @@ impl<F: PrimeField> R1CSBuilder<F> {
             vec.insert(0, F::ONE); // constant
             vec
         });
+        
+        let (A, B, Cmat) = if let Some(shapes) = shapes {
+            (Vec::with_capacity(shapes.0), Vec::with_capacity(shapes.1), Vec::with_capacity(shapes.2))
+        } else {
+            (vec![], vec![], vec![])
+        };
 
         let mut instance = R1CSBuilder {
-            A: vec![],
-            B: vec![],
-            C: vec![],
+            A: A,
+            B: B,
+            C: Cmat,
             num_constraints: 0,
             num_variables: GET_TOTAL_LEN(), // includes ("constant", 1) and ("output_state", ..)
             num_inputs: 0, // technically inputs are also aux, so keep this 0
             num_aux: GET_TOTAL_LEN()-1, // dont' include the constant  
             num_internal: 0, 
             z: inputs_with_const_output, 
+            ABCz_lens: if let Some(shapes) = shapes {
+                shapes
+            } else {
+                (0, 0, 0, 0)
+            }
         };
 
         // Parse the input indices 
@@ -626,14 +638,14 @@ impl<F: PrimeField> R1CSBuilder<F> {
 
         #[test]
         fn test_get_matrices() {
-            let instance = R1CSBuilder::<F>::get_matrices(None);
+            let instance = R1CSBuilder::<F>::get_matrices(None, None);
             println!("{:?}", instance.unwrap());
 
         }
 
         #[test]
         fn test_get_matrices_all_zeros() {
-            let instance = R1CSBuilder::<F>::get_matrices(Some(vec![F::from(0); GET_TOTAL_LEN()])).unwrap();
+            let instance = R1CSBuilder::<F>::get_matrices(Some(vec![F::from(0); GET_TOTAL_LEN()]), None).unwrap();
             // println!("{:?}", instance);
             println!("z vector is {:?}", instance.z.unwrap());
             // println!("z[2] vector is {:?}", instance.z.unwrap()[2] * F::from(-1));
