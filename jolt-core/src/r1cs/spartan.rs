@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::prelude::*;
 use thiserror::Error;
+use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::transcript::ProofTranscript;
 use crate::utils::transcript::AppendToTranscript;
 
@@ -33,8 +34,9 @@ pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
-    eval_W: Vec<F>,   // TODO(arasuarun): better name (claimed_eval_witness_segments?)
     eval_arg: Vec<F>, // TODO(arasuarun): better name
+    claimed_witnesss_evals: Vec<F>,
+    opening_proof: BatchedHyraxOpeningProof<1, G>
 }
 
 pub struct PrecommittedR1CSInstance<F: PrimeField, G: CurveGroup<ScalarField = F>> {
@@ -59,6 +61,9 @@ pub enum SpartanError {
     /// returned if the supplied witness is not of the right length
     #[error("InvalidWitnessLength")]
     InvalidWitnessLength,
+    /// returned when an invalid Hyrax proof is provided
+    #[error("InvalidHyraxProof")]
+    InvalidHyraxProof,
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
@@ -140,7 +145,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // poly_Az is the polynomial extended from the vector Az
         let (mut poly_Az, mut poly_Bz, mut poly_Cz) = {
             let (poly_Az, poly_Bz, poly_Cz) =
-                key.S.multiply_vec_uniform(&witness, &witness_commitments, key.num_steps)?; // TODO(sragss): witness_commitments param is wrong [W, 1, X]
+                key.shape_single_step.multiply_vec_uniform(&witness, &vec![], key.num_steps)?; // TODO(sragss): witness_commitments param is wrong [W, 1, X] -- I think it's just IO??
             (
                 DensePolynomial::new(poly_Az),
                 DensePolynomial::new(poly_Bz),
@@ -161,7 +166,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 }
             };
 
-        let (sc_proof_outer, r_x, claims_outer) = SumcheckInstanceProof::prove_cubic_with_additive_term::<G, _>(
+        let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) = SumcheckInstanceProof::prove_cubic_with_additive_term::<G, _>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
@@ -179,7 +184,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) =
-            (claims_outer[1], claims_outer[2], claims_outer[3]);
+            (outer_sumcheck_claims[1], outer_sumcheck_claims[2], outer_sumcheck_claims[3]);
         transcript.append_scalars(b"claims_outer", &[claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
@@ -192,7 +197,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
         let poly_ABC = {
             let num_steps_bits = key.num_steps.trailing_zeros();
-            let (rx_con, rx_ts) = r_x.split_at(r_x.len() - num_steps_bits as usize);
+            let (rx_con, rx_ts) = outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
             let (eq_rx_con, eq_rx_ts) = rayon::join(
                 || EqPolynomial::new(rx_con.to_vec()).evals(),
                 || EqPolynomial::new(rx_ts.to_vec()).evals(),
@@ -213,11 +218,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             };
 
             let (small_A_evals, (small_B_evals, small_C_evals)) = rayon::join(
-                || compute_eval_table_sparse_single(&key.S.A),
+                || compute_eval_table_sparse_single(&key.shape_single_step.A),
                 || {
                     rayon::join(
-                        || compute_eval_table_sparse_single(&key.S.B),
-                        || compute_eval_table_sparse_single(&key.S.C),
+                        || compute_eval_table_sparse_single(&key.shape_single_step.B),
+                        || compute_eval_table_sparse_single(&key.shape_single_step.C),
                     )
                 },
             );
@@ -239,7 +244,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             // 3. Handles the constant 1 variable
             let compute_eval_constant_column = |small_M: &Vec<(usize, usize, F)>| -> F {
                 let constant_sum: F = small_M.iter()
-              .filter(|(_, col, _)| *col == key.S.num_vars)   // expecting ~1
+              .filter(|(_, col, _)| *col == key.shape_single_step.num_vars)   // expecting ~1
               .map(|(row, _, val)| {
                   let eq_sum = (0..n_steps).into_par_iter().map(|t| eq_rx_ts[t]).sum::<F>();
                   *val * eq_rx_con[*row] * eq_sum
@@ -249,11 +254,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             };
 
             let (constant_term_A, (constant_term_B, constant_term_C)) = rayon::join(
-                || compute_eval_constant_column(&key.S.A),
+                || compute_eval_constant_column(&key.shape_single_step.A),
                 || {
                     rayon::join(
-                        || compute_eval_constant_column(&key.S.B),
-                        || compute_eval_constant_column(&key.S.C),
+                        || compute_eval_constant_column(&key.shape_single_step.B),
+                        || compute_eval_constant_column(&key.shape_single_step.C),
                     )
                 },
             );
@@ -274,7 +279,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             }
         };
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
-        let (sc_proof_inner, r_y, _claims_inner) = SumcheckInstanceProof::prove_quad_unrolled(
+        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) = SumcheckInstanceProof::prove_quad_unrolled(
             &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
             num_rounds_y,
             &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
@@ -291,42 +296,40 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let n_prefix = (key.num_vars_total.trailing_zeros() as usize
             - key.num_steps.trailing_zeros() as usize)
             + 1;
-        let r_y_point = &r_y[n_prefix..];
+        let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
         let span = tracing::span!(tracing::Level::TRACE, "evaluate_segments");
         let _enter = span.enter();
-        let witness_evals = DensePolynomial::batch_evaluate(&witness_segments, &r_y_point);
+        let witness_segment_polys: Vec<DensePolynomial<F>> = witness_segments.into_iter().map(|segment| DensePolynomial::new(segment)).collect();
+        let chi = EqPolynomial::new(r_y_point).evals();
+        let witness_evals: Vec<F> = witness_segment_polys.iter().map(|segment| segment.evaluate_at_chi_low_optimized(&chi)).collect();
         drop(_enter);
-        let comm_vec = witness_commitments;
 
         // now batch these together
         let c = transcript.challenge_scalar(b"c")?;
-        todo!("change batching strategy");
+        // todo!("change batching strategy");
         // let w: PolyEvalWitness<G> = PolyEvalWitness::batch(&w.W.as_slice().iter().map(|v| v.as_ref()).collect::<Vec<_>>(), &c);
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &witness_evals, &c);
 
         // TODO(sragss/arasuarun): switch to hyrax
-        // let eval_arg = EE::prove(
-        //   &pk.ck,
-        //   &pk.pk_ee,
-        //   &mut transcript,
-        //   &u.c,
-        //   &w.p,
-        //   &r_y_point,
-        //   &mut Some(u.e),
-        // )?;
+        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> = witness_segment_polys.iter().map(|poly_ref| poly_ref).collect();
+        let opening_proof = BatchedHyraxOpeningProof::prove(&witness_segment_polys_ref, &r_y_point, &witness_evals, transcript);
 
-        // let compressed_commitments = comm_vec.par_iter().map(|elem| elem.compress()).collect::<Vec<_>>();
+        // todo!("finish the stuff");
 
-        // Ok(UniformSpartanProof{
-        //   comm_W: compressed_commitments,
-        //   sc_proof_outer,
-        //   claims_outer: (claim_Az, claim_Bz, claim_Cz),
-        //   sc_proof_inner,
-        //   eval_W: witness_evals,
-        //   eval_arg,
-        // })
+        // TODO(sragss): Compress commitments?
+
+      let outer_sumcheck_claims = (outer_sumcheck_claims[0], outer_sumcheck_claims[1], outer_sumcheck_claims[2]);
+      Ok(UniformSpartanProof {
+        witness_segment_commitments: witness_commitments,
+        outer_sumcheck_proof,
+        outer_sumcheck_claims,
+        inner_sumcheck_proof,
+        eval_arg: vec![],
+        claimed_witnesss_evals: witness_evals,
+        opening_proof
+      })
     }
 
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
@@ -335,6 +338,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         &self,
         key: &UniformSpartanKey<F>,
         io: &[F],
+        generators: HyraxGenerators<1, G>,
         transcript: &mut Transcript
     ) -> Result<(), SpartanError> {
         let N_SEGMENTS = self.witness_segment_commitments.len();
@@ -409,11 +413,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 // constant term
                 let mut poly_X = vec![(0, 1.into())];
                 //remaining inputs
-                poly_X.extend(
-                    (0..self.witness_segment_commitments.len())
-                        .map(|i| (i + 1, self.witness_segment_commitments[i]))
-                        .collect::<Vec<(usize, F)>>(),
-                );
+                // TODO(sragss / arasuarun): I believe this is supposed to be io -- which is empty??
+                // poly_X.extend(
+                //     (0..self.witness_segment_commitments.len())
+                //         .map(|i| (i + 1, self.witness_segment_commitments[i]))
+                //         .collect::<Vec<(usize, F)>>(),
+                // );
                 SparsePolynomial::new(usize::try_from(key.num_vars_total.ilog2()).unwrap(), poly_X)
                     .evaluate(&r_y[1..])
             };
@@ -432,7 +437,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                         }
                     });
 
-                    product * self.eval_W[i]
+                    product * self.claimed_witnesss_evals[i]
                 })
                 .sum::<F>();
 
@@ -494,24 +499,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         }
 
         // we now combine evaluation claims at the same point rz into one
-        let comm_vec = self.witness_segment_commitments;
-        let eval_vec = &self.eval_W;
+        // let comm_vec = self.witness_segment_commitments;
+        // let eval_vec = &self.eval_W;
 
         let r_y_point = &r_y[n_prefix..];
         let c = transcript.challenge_scalar(b"c")?;
-        todo!("Fix batching strategy")
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &eval_vec, &c);
+        let hyrax_commitment_refs: Vec<&HyraxCommitment<1, G>> = self.witness_segment_commitments.iter().map(|commit_ref| commit_ref).collect(); // TODO(sragss): Fix
+        self.opening_proof.verify(&generators, &r_y_point, &self.claimed_witnesss_evals, &hyrax_commitment_refs, &mut transcript)
+            .map_err(|_| SpartanError::InvalidHyraxProof)?;
 
-        // verify
-        // EE::verify(
-        //   &vk.vk_ee,
-        //   &mut transcript,
-        //   &u.c,
-        //   &r_y_point,
-        //   &u.e,
-        //   &self.eval_arg,
-        // )?;
-
-        // Ok(())
+        Ok(())
     }
 }
