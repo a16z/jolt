@@ -400,25 +400,21 @@ where
         drop(span);
 
         // Derive chunks_x and chunks_y
-        let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
+        let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
         let _guard = span.enter();
         
-        let mut chunks_x_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); C];
-        let mut chunks_y_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); C];
+        let num_chunks = PADDED_TRACE_LEN * C;
+        let mut chunks_x: Vec<F> = vec![F::zero(); num_chunks];
+        let mut chunks_y: Vec<F> = vec![F::zero(); num_chunks];
 
-        for (i, op) in instructions.iter().enumerate() {
+        for (instruction_index, op) in instructions.iter().enumerate() {
             let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
-            for (j, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
-                chunks_x_vecs[j].push(F::from_u64(x as u64).unwrap());
-                chunks_y_vecs[j].push(F::from_u64(y as u64).unwrap());
+            for (chunk_index, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
+                let flat_chunk_index = instruction_index + chunk_index * PADDED_TRACE_LEN;
+                chunks_x[flat_chunk_index] = F::from_u64(x as u64).unwrap();
+                chunks_y[flat_chunk_index] = F::from_u64(y as u64).unwrap();
             }
         }
-
-        chunks_x_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
-        chunks_y_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
-
-        let chunks_x: Vec<F> = chunks_x_vecs.into_iter().flatten().collect();
-        let chunks_y: Vec<F> = chunks_y_vecs.into_iter().flatten().collect();
 
         drop(_guard);
         drop(span);
