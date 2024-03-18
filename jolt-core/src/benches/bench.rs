@@ -199,18 +199,22 @@ fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     tasks
 }
 
+fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    prove_example("fibonacci-guest")
+}
+
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha2-ex")
+    prove_example("sha2-guest")
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha3-ex")
+    prove_example("sha3-guest")
 }
 
 fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     use common::{path::JoltPaths, serializable::Serializable};
-    compiler::cached_compile_example(example_name);
+    compiler::compile_example(example_name);
 
     let example_name = example_name.to_string();
     let task = move || {
@@ -270,71 +274,6 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
     };
     tasks.push((
         tracing::info_span!("Example_E2E"),
-        Box::new(task) as Box<dyn FnOnce()>,
-    ));
-
-    tasks
-}
-
-fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let mut tasks = Vec::new();
-    let task = || {
-        use common::{path::JoltPaths, serializable::Serializable};
-
-        compiler::cached_compile_example("fibonacci");
-
-        let trace_location = JoltPaths::trace_path("fibonacci");
-        let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
-            .expect("deserialization failed");
-
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
-
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .iter()
-            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = trace
-            .iter()
-            .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
-                } else {
-                    ADDInstruction(0_u64, 0_u64).into()
-                }
-            })
-            .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.iter().map(|row| row.into()).collect();
-        let circuit_flags = trace
-            .iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<Fr>>()
-            })
-            .collect();
-
-        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
-
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
-            bytecode,
-            bytecode_trace,
-            memory_trace,
-            instructions_r1cs,
-            circuit_flags,
-            preprocessing.clone(),
-        );
-
-        assert!(RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments).is_ok());
-    };
-    tasks.push((
-        tracing::info_span!("FibonacciR1CS"),
         Box::new(task) as Box<dyn FnOnce()>,
     ));
 

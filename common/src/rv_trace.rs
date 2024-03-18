@@ -1,4 +1,4 @@
-use crate::constants::MEMORY_OPS_PER_INSTRUCTION;
+use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, PANIC_ADDRESS, INPUT_START_ADDRESS, OUTPUT_START_ADDRESS};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
@@ -442,7 +442,7 @@ impl RVTraceRow {
 }
 
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize, Hash)]
 #[repr(u8)]
 pub enum RV32IM {
     ADD,
@@ -626,4 +626,56 @@ impl RV32IM {
             | RV32IM::UNIMPL => unimplemented!(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JoltDevice {
+    pub inputs: Vec<u8>,
+    pub outputs: Vec<u8>,
+    pub panic: bool,
+}
+
+impl JoltDevice {
+    pub fn new() -> Self {
+        Self {
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            panic: false,
+        }
+    }
+
+    pub fn load(&self, address: u64) -> u8 {
+        let internal_address = convert_read_address(address);
+        if self.inputs.len() <= internal_address {
+            0
+        } else {
+            self.inputs[internal_address]
+        }
+    }
+
+    pub fn store(&mut self, address: u64, value: u8) {
+        if address as usize == PANIC_ADDRESS {
+            self.panic = true;
+            return;
+        }
+
+        let internal_address = convert_write_address(address);
+        if self.outputs.len() <= internal_address {
+            self.outputs.resize(internal_address + 1, 0);
+        }
+
+        self.outputs[internal_address] = value;
+    }
+
+    pub fn size(&self) -> usize {
+        self.inputs.len() + self.outputs.len()
+    }
+}
+
+fn convert_read_address(address: u64) -> usize {
+    address as usize - INPUT_START_ADDRESS
+}
+
+fn convert_write_address(address: u64) -> usize {
+    address as usize - OUTPUT_START_ADDRESS
 }

@@ -24,9 +24,14 @@ members = [
     "tracer",
     "common",
     "compiler",
+    "jolt-sdk",
+    "jolt-sdk/macros",
     "examples/fibonacci",
+    "examples/fibonacci/guest",
     "examples/sha2-ex",
+    "examples/sha2-ex/guest",
     "examples/sha3-ex",
+    "examples/sha3-ex/guest",
     "integration-tests",
 ]
 

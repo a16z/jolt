@@ -281,12 +281,12 @@ mod tests {
     fn fib_e2e() {
         use common::{path::JoltPaths, rv_trace::ELFInstruction};
         let _guard = FIB_FILE_LOCK.lock().unwrap();
-        compiler::cached_compile_example("fibonacci");
+        compiler::compile_example("fibonacci-guest");
 
-        let trace_location = JoltPaths::trace_path("fibonacci");
+        let trace_location = JoltPaths::trace_path("fibonacci-guest");
         let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
             .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        let bytecode_location = JoltPaths::bytecode_path("fibonacci-guest");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
@@ -403,12 +403,12 @@ mod tests {
     #[test]
     fn sha3_e2e() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
-        compiler::cached_compile_example("sha3-ex");
+        compiler::compile_example("sha3-guest");
 
-        let trace_location = JoltPaths::trace_path("sha3-ex");
+        let trace_location = JoltPaths::trace_path("sha3-guest");
         let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
             .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("sha3-ex");
+        let bytecode_location = JoltPaths::bytecode_path("sha3-guest");
         let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
 
