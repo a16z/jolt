@@ -346,7 +346,7 @@ impl RVTraceRow {
                 // Assert instruction correctness
                 let lookups = self.to_jolt_instructions();
                 assert_eq!(lookups.len(), 1);
-                let expected_result: Fr = lookups[0].lookup_entry(C, M);
+                let expected_result: Fr = Fr::from(lookups[0].lookup_entry());
                 let bigint = expected_result.into_bigint();
                 let expected_result: u64 = bigint.0[0];
 
@@ -382,7 +382,7 @@ impl RVTraceRow {
                     assert!(lookups.len() == 1);
                     if lookups.len() == 1 && self.rd.unwrap() != 0 {
                         assert_eq!(lookups.len(), 1, "{self:?}");
-                        let expected_result: Fr = lookups[0].lookup_entry(C, M);
+                        let expected_result: Fr = Fr::from(lookups[0].lookup_entry());
                         let bigint = expected_result.into_bigint();
                         let expected_result: u64 = bigint.0[0];
 
@@ -641,7 +641,7 @@ impl RVTraceRow {
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
 
             // UJ-type instructions point to address offsets: even numbers.
-            // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent. 
+            // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent.
             RV32InstructionFormat::UJ => (self.imm.unwrap() as u64) << 0u64,
             _ => unimplemented!(),
         }
@@ -889,8 +889,8 @@ impl JoltProvableTrace for RVTraceRow {
             | RV32IM::SRAI
             | RV32IM::SLTI
             | RV32IM::SLTIU
-            | RV32IM::AUIPC 
-            | RV32IM::JAL 
+            | RV32IM::AUIPC
+            | RV32IM::JAL
             | RV32IM::JALR => true,
             _ => false,
         };
@@ -933,18 +933,14 @@ impl JoltProvableTrace for RVTraceRow {
             | RV32IM::BGE
             | RV32IM::BLTU
             | RV32IM::BGEU
-            | RV32IM::JAL 
+            | RV32IM::JAL
             | RV32IM::JALR
             | RV32IM::LUI => false,
             _ => true,
         };
 
         flags[7] = match self.opcode {
-            RV32IM::ADD 
-            | RV32IM::ADDI 
-            | RV32IM::JAL 
-            | RV32IM::JALR 
-            | RV32IM::AUIPC => true,
+            RV32IM::ADD | RV32IM::ADDI | RV32IM::JAL | RV32IM::JALR | RV32IM::AUIPC => true,
             _ => false,
         };
 
@@ -980,12 +976,28 @@ impl JoltProvableTrace for RVTraceRow {
         };
 
         flags[14] = match self.opcode {
-            RV32IM::XOR | RV32IM::XORI | RV32IM::OR | RV32IM::ORI | RV32IM::AND | RV32IM::ANDI | 
-            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI |
-            RV32IM::SLT | RV32IM::SLTU | RV32IM::SLTI | RV32IM::SLTIU | 
-            RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | 
-            RV32IM::BLTU | RV32IM::BGEU 
-            => true, 
+            RV32IM::XOR
+            | RV32IM::XORI
+            | RV32IM::OR
+            | RV32IM::ORI
+            | RV32IM::AND
+            | RV32IM::ANDI
+            | RV32IM::SLL
+            | RV32IM::SRL
+            | RV32IM::SRA
+            | RV32IM::SLLI
+            | RV32IM::SRLI
+            | RV32IM::SRAI
+            | RV32IM::SLT
+            | RV32IM::SLTU
+            | RV32IM::SLTI
+            | RV32IM::SLTIU
+            | RV32IM::BEQ
+            | RV32IM::BNE
+            | RV32IM::BLT
+            | RV32IM::BGE
+            | RV32IM::BLTU
+            | RV32IM::BGEU => true,
             _ => false,
         };
 
@@ -995,7 +1007,12 @@ impl JoltProvableTrace for RVTraceRow {
         };
 
         flags[16] = match self.opcode {
-            RV32IM::SLL | RV32IM::SRL | RV32IM::SRA | RV32IM::SLLI | RV32IM::SRLI | RV32IM::SRAI => true,
+            RV32IM::SLL
+            | RV32IM::SRL
+            | RV32IM::SRA
+            | RV32IM::SLLI
+            | RV32IM::SRLI
+            | RV32IM::SRAI => true,
             _ => false,
         };
 
@@ -1031,7 +1048,7 @@ mod tests {
             rv32i_vm::RV32IJoltVM, Jolt,
         },
         poly::structured_poly::BatchablePolynomials,
-        utils::{gen_random_point, math::Math, random::RandomTape},
+        utils::{gen_random_point, math::Math},
     };
 
     use super::*;
@@ -1083,7 +1100,8 @@ mod tests {
         use common::path::JoltPaths;
         use common::serializable::Serializable;
 
-        let trace_location = JoltPaths::trace_path("fibonacci");
+        compiler::compile_example("fibonacci-guest");
+        let trace_location = JoltPaths::trace_path("fibonacci-guest");
         let loaded_trace: Vec<common::RVTraceRow> =
             Vec::<common::RVTraceRow>::deserialize_from_file(&trace_location)
                 .expect("deserialization failed");
@@ -1112,7 +1130,8 @@ mod tests {
         use common::path::JoltPaths;
         use common::serializable::Serializable;
 
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci");
+        compiler::compile_example("fibonacci-guest");
+        let bytecode_location = JoltPaths::bytecode_path("fibonacci-guest");
         let instructions = Vec::<common::ELFInstruction>::deserialize_from_file(&bytecode_location)
             .expect("deserialization failed");
         let _: Vec<ELFRow> = instructions.iter().map(|x| ELFRow::from(x)).collect();

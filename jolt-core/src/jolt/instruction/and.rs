@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
@@ -22,12 +22,20 @@ impl JoltInstruction for ANDInstruction {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
-        vec![Box::new(AndSubtable::new())]
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        vec![(Box::new(AndSubtable::new()), SubtableIndices::from(0..C))]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+    }
+
+    fn lookup_entry(&self) -> u64 {
+        self.0 & self.1
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -47,18 +55,45 @@ mod test {
     use super::ANDInstruction;
 
     #[test]
-    fn and_instruction_e2e() {
+    fn and_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = ANDInstruction(x, y);
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn and_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
+        // Random
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(ANDInstruction(x, y), (x & y).into());
-            assert_eq!(
-                ANDInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x & y).into()
-            );
+            let instruction = ANDInstruction(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Test edge-cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            ANDInstruction(100, 0),
+            ANDInstruction(0, 100),
+            ANDInstruction(1, 0),
+            ANDInstruction(0, u32_max),
+            ANDInstruction(u32_max, 0),
+            ANDInstruction(u32_max, u32_max),
+            ANDInstruction(u32_max, 1 << 8),
+            ANDInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

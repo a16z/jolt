@@ -18,13 +18,13 @@ impl<F: PrimeField> IdentitySubtable<F> {
 
 impl<F: PrimeField> LassoSubtable<F> for IdentitySubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
-        (0..M).map(|i| F::from(i as u64)).collect()
+        (0..M).map(|i| F::from_u64(i as u64).unwrap()).collect()
     }
 
     fn evaluate_mle(&self, point: &[F]) -> F {
         let mut result = F::zero();
         for i in 0..point.len() {
-            result += F::from(1u64 << i) * point[point.len() - 1 - i];
+            result += F::from_u64(1u64 << i).unwrap() * point[point.len() - 1 - i];
         }
         result
     }

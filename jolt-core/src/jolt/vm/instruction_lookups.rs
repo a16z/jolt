@@ -1,38 +1,45 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use itertools::interleave;
+use common::constants::NUM_R1CS_POLYS;
+use itertools::{interleave, max, Itertools};
 use merlin::Transcript;
-use rayon::iter::IntoParallelIterator;
-use std::marker::PhantomData;
-use std::{any::TypeId, collections::HashMap};
-use strum::{EnumCount, IntoEnumIterator};
-
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
+use std::marker::PhantomData;
+use strum::{EnumCount, IntoEnumIterator};
+use tracing::trace_span;
 
-use crate::utils::{count_poly_zeros, mul_0_1_optimized, split_poly_flagged};
+use crate::jolt::instruction::SubtableIndices;
+use crate::lasso::memory_checking::MultisetHashes;
+use crate::poly::hyrax::{
+    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
+};
+use crate::poly::pedersen::PedersenGenerators;
+use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
-        subtable::LassoSubtable,
+        subtable::{LassoSubtable, SubtableId},
     },
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
-        dense_mlpoly::{DensePolynomial, PolyCommitmentGens},
+        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        combined_table_proof::{CombinedTableCommitment, CombinedTableEvalProof},
+        concatenated_commitment::{
+            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
+        },
         grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
         sumcheck::SumcheckInstanceProof,
     },
     utils::{
         errors::ProofVerifyError,
         math::Math,
-        random::RandomTape,
         transcript::{AppendToTranscript, ProofTranscript},
     },
 };
@@ -49,11 +56,11 @@ where
     /// `m` (# lookups).
     pub dim: Vec<DensePolynomial<F>>,
 
-    /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// read access counts to the memory. Each `DensePolynomial` has size `m` (# lookups).
     pub read_cts: Vec<DensePolynomial<F>>,
 
-    /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
+    /// `NUM_MEMORIES` sized vector of `DensePolynomials` whose evaluations correspond to
     /// final access counts to the memory. Each `DensePolynomial` has size M, AKA subtable size.
     pub final_cts: Vec<DensePolynomial<F>>,
 
@@ -69,48 +76,30 @@ where
     /// Stored independently for use in sumcheck, combined into single DensePolynomial for commitment.
     pub instruction_flag_polys: Vec<DensePolynomial<F>>,
 
-    /// NUM_SUBTABLES sized – uncommitted but used by the prover for grand products. Can be derived by verifier
-    /// via summation of all instruction_flags that use a given subtable
-    pub subtable_flag_polys: Vec<DensePolynomial<F>>,
+    /// Instruction flag polynomials as bitvectors, kept in this struct for more efficient
+    /// construction of the memory flag polynomials in `read_write_grand_product`.
+    instruction_flag_bitvectors: Vec<Vec<u64>>,
 }
 
 /// Batched version of InstructionPolynomials.
 pub struct BatchedInstructionPolynomials<F: PrimeField> {
-    /// dim_i and read_cts_i polynomials, batched together.
-    batched_dim_read: DensePolynomial<F>,
     /// final_cts_i polynomials, batched together.
     batched_final: DensePolynomial<F>,
-    /// E_i polynomials, batched together.
-    batched_E: DensePolynomial<F>,
-    /// flag polynomials, batched together.
-    batched_flag: DensePolynomial<F>,
 }
 
 /// Commitments to BatchedInstructionPolynomials.
 pub struct InstructionCommitment<G: CurveGroup> {
-    /// Group generators used for commitments.
-    pub generators: InstructionCommitmentGenerators<G>,
-
-    /// Commitment to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: CombinedTableCommitment<G>,
+    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    /// Commitments to dim_i and read_cts_i polynomials.
+    pub dim_read_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     /// Commitment to final_cts_i polynomials.
-    pub final_commitment: CombinedTableCommitment<G>,
-    /// Commitment to E_i polynomials.
-    pub E_commitment: CombinedTableCommitment<G>,
-    /// Commitment to flag polynomials.
-    pub instruction_flag_commitment: CombinedTableCommitment<G>,
-}
-
-/// Contains generators used to commit to InstructionPolynomials.
-pub struct InstructionCommitmentGenerators<G: CurveGroup> {
-    pub dim_read_commitment_gens: PolyCommitmentGens<G>,
-    pub final_commitment_gens: PolyCommitmentGens<G>,
-    pub E_commitment_gens: PolyCommitmentGens<G>,
-    pub flag_commitment_gens: PolyCommitmentGens<G>,
+    pub final_commitment: ConcatenatedPolynomialCommitment<G>,
+    /// Commitments to E_i and flag polynomials.
+    pub E_flag_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
 // TODO: macro?
-impl<F, G> BatchablePolynomials for InstructionPolynomials<F, G>
+impl<F, G> BatchablePolynomials<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -120,153 +109,117 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        use rayon::prelude::*;
-        let (batched_dim_read, (batched_final, batched_E, batched_flag)) = rayon::join(
-            || DensePolynomial::merge_dual(self.dim.as_ref(), self.read_cts.as_ref()),
-            || {
-                let batched_final = DensePolynomial::merge(&self.final_cts);
-                let (batched_E, batched_flag) = rayon::join(
-                    || DensePolynomial::merge(&self.E_polys),
-                    || DensePolynomial::merge(&self.instruction_flag_polys),
-                );
-                (batched_final, batched_E, batched_flag)
-            },
-        );
-
         Self::BatchedPolynomials {
-            batched_dim_read,
-            batched_final,
-            batched_E,
-            batched_flag,
+            batched_final: DensePolynomial::merge(self.final_cts.iter()),
         }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(batched_polys: &Self::BatchedPolynomials) -> Self::Commitment {
-        let (dim_read_commitment_gens, dim_read_commitment) = batched_polys
-            .batched_dim_read
-            .combined_commit(b"BatchedInstructionPolynomials.dim_read");
-        let (final_commitment_gens, final_commitment) = batched_polys
-            .batched_final
-            .combined_commit(b"BatchedInstructionPolynomials.final_cts");
-        let (E_commitment_gens, E_commitment) = batched_polys
-            .batched_E
-            .combined_commit(b"BatchedInstructionPolynomials.E_poly");
-        let (flag_commitment_gens, instruction_flag_commitment) = batched_polys
-            .batched_flag
-            .combined_commit_with_hint(b"BatchedInstructionPolynomials.flag");
+    fn commit(
+        &self,
+        batched_polys: &Self::BatchedPolynomials,
+        pedersen_generators: &PedersenGenerators<G>,
+    ) -> Self::Commitment {
+        let read_write_generators =
+            HyraxGenerators::new(self.dim[0].get_num_vars(), pedersen_generators);
+        let dim_read_commitment = self
+            .dim
+            .par_iter()
+            .chain(self.read_cts.par_iter())
+            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
+            .collect::<Vec<_>>();
 
-        let generators = InstructionCommitmentGenerators {
-            dim_read_commitment_gens,
-            final_commitment_gens,
-            E_commitment_gens,
-            flag_commitment_gens,
-        };
+        let E_flag_commitment = self
+            .E_polys
+            .par_iter()
+            .chain(self.instruction_flag_polys.par_iter())
+            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
+            .collect::<Vec<_>>();
+
+        let final_commitment = batched_polys
+            .batched_final
+            .combined_commit(pedersen_generators);
 
         Self::Commitment {
+            read_write_generators,
             dim_read_commitment,
             final_commitment,
-            E_commitment,
-            instruction_flag_commitment,
-            generators,
+            E_flag_commitment,
         }
     }
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
-struct PrimarySumcheckOpenings<F, G>
+struct PrimarySumcheckOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     E_poly_openings: Vec<F>,
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     flag_openings: Vec<F>,
-
-    E_poly_opening_proof: CombinedTableEvalProof<G>,
-    flag_opening_proof: CombinedTableEvalProof<G>,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>>
-    StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
 {
-    type Openings = (Vec<F>, Vec<F>);
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
-    fn open(
-        _polynomials: &InstructionPolynomials<F, G>,
-        _opening_point: &Vec<F>,
-    ) -> Self::Openings {
+    fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
+        polynomials: &InstructionPolynomials<F, G>,
+        _: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
-        openings: (Vec<F>, Vec<F>),
+        openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let E_poly_openings = &openings.0;
-        let flag_openings = &openings.1;
+    ) -> Self::Proof {
+        let E_flag_polys = polynomials
+            .E_polys
+            .iter()
+            .chain(polynomials.instruction_flag_polys.iter())
+            .collect::<Vec<_>>();
+        let E_flag_openings: Vec<F> = [
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
 
-        let E_poly_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_E,
-            E_poly_openings,
-            opening_point,
-            &commitment.generators.E_commitment_gens,
-            transcript,
-            random_tape,
-        );
-        let flag_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_flag,
-            flag_openings,
-            opening_point,
-            &commitment.generators.flag_commitment_gens,
-            transcript,
-            random_tape,
-        );
-
-        Self {
-            E_poly_openings: E_poly_openings.to_vec(),
-            E_poly_opening_proof,
-            flag_openings: flag_openings.to_vec(),
-            flag_opening_proof,
-        }
+        BatchedHyraxOpeningProof::prove(&E_flag_polys, opening_point, &E_flag_openings, transcript)
     }
 
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.E_poly_opening_proof.verify(
-            opening_point,
-            &self.E_poly_openings,
-            &commitment.generators.E_commitment_gens,
-            &commitment.E_commitment,
-            transcript,
-        )?;
-        self.flag_opening_proof.verify(
-            opening_point,
-            &self.flag_openings,
-            &commitment.generators.flag_commitment_gens,
-            &commitment.instruction_flag_commitment,
-            transcript,
-        )?;
+        let E_flag_openings: Vec<F> = [
+            self.E_poly_openings.as_slice(),
+            self.flag_openings.as_slice(),
+        ]
+        .concat();
 
-        Ok(())
+        opening_proof.verify(
+            &commitment.read_write_generators,
+            opening_point,
+            &E_flag_openings,
+            &commitment.E_flag_commitment.iter().collect::<Vec<_>>(),
+            transcript,
+        )
     }
 }
 
-pub struct InstructionReadWriteOpenings<F, G>
+pub struct InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
 {
     /// Evaluations of the dim_i polynomials at the opening point. Vector is of length C.
     dim_openings: Vec<F>,
@@ -276,22 +229,18 @@ where
     E_poly_openings: Vec<F>,
     /// Evaluations of the flag polynomials at the opening point. Vector is of length NUM_INSTRUCTIONS.
     flag_openings: Vec<F>,
-
-    dim_read_opening_proof: CombinedTableEvalProof<G>,
-    E_poly_opening_proof: CombinedTableEvalProof<G>,
-    flag_opening_proof: CombinedTableEvalProof<G>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for InstructionReadWriteOpenings<F, G>
+    for InstructionReadWriteOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Openings = [Vec<F>; 4];
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
@@ -316,188 +265,165 @@ where
             .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
             .collect();
 
-        [dim_openings, read_openings, E_poly_openings, flag_openings]
+        Self {
+            dim_openings,
+            read_openings,
+            E_poly_openings,
+            flag_openings,
+        }
     }
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
+        polynomials: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
-        openings: [Vec<F>; 4],
+        openings: &Self,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let dim_openings = &openings[0];
-        let read_openings = &openings[1];
-        let E_poly_openings = &openings[2];
-        let flag_openings = &openings[3];
+    ) -> Self::Proof {
+        let read_write_polys = polynomials
+            .dim
+            .iter()
+            .chain(polynomials.read_cts.iter())
+            .chain(polynomials.E_polys.iter())
+            .chain(polynomials.instruction_flag_polys.iter())
+            .collect::<Vec<_>>();
 
-        let mut dim_read_openings = [dim_openings.as_slice(), read_openings.as_slice()]
-            .concat()
-            .to_vec();
-        dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
+        let read_write_openings: Vec<F> = [
+            openings.dim_openings.as_slice(),
+            openings.read_openings.as_slice(),
+            openings.E_poly_openings.as_slice(),
+            openings.flag_openings.as_slice(),
+        ]
+        .concat();
 
-        let dim_read_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_dim_read,
-            &dim_read_openings,
-            &opening_point,
-            &commitment.generators.dim_read_commitment_gens,
+        BatchedHyraxOpeningProof::prove(
+            &read_write_polys,
+            opening_point,
+            &read_write_openings,
             transcript,
-            random_tape,
-        );
-        let E_poly_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_E,
-            E_poly_openings,
-            &opening_point,
-            &commitment.generators.E_commitment_gens,
-            transcript,
-            random_tape,
-        );
-        let flag_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_flag,
-            flag_openings,
-            &opening_point,
-            &commitment.generators.flag_commitment_gens,
-            transcript,
-            random_tape,
-        );
-
-        Self {
-            dim_openings: dim_openings.to_vec(),
-            read_openings: read_openings.to_vec(),
-            E_poly_openings: E_poly_openings.to_vec(),
-            flag_openings: flag_openings.to_vec(),
-            dim_read_opening_proof,
-            E_poly_opening_proof,
-            flag_opening_proof,
-        }
+        )
     }
 
     fn verify_openings(
         &self,
+        openings_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let mut dim_read_openings = [self.dim_openings.as_slice(), self.read_openings.as_slice()]
-            .concat()
-            .to_vec();
-        dim_read_openings.resize(dim_read_openings.len().next_power_of_two(), F::zero());
-
-        self.dim_read_opening_proof.verify(
+        let read_write_openings: Vec<F> = [
+            self.dim_openings.as_slice(),
+            self.read_openings.as_slice(),
+            self.E_poly_openings.as_slice(),
+            self.flag_openings.as_slice(),
+        ]
+        .concat();
+        openings_proof.verify(
+            &commitment.read_write_generators,
             opening_point,
-            &dim_read_openings,
-            &commitment.generators.dim_read_commitment_gens,
-            &commitment.dim_read_commitment,
+            &read_write_openings,
+            &commitment
+                .dim_read_commitment
+                .iter()
+                .chain(commitment.E_flag_commitment.iter())
+                .collect::<Vec<_>>(),
             transcript,
-        )?;
-
-        self.E_poly_opening_proof.verify(
-            opening_point,
-            &self.E_poly_openings,
-            &commitment.generators.E_commitment_gens,
-            &commitment.E_commitment,
-            transcript,
-        )?;
-
-        self.flag_opening_proof.verify(
-            opening_point,
-            &self.flag_openings,
-            &commitment.generators.flag_commitment_gens,
-            &commitment.instruction_flag_commitment,
-            transcript,
-        )?;
-        Ok(())
+        )
     }
 }
 
-pub struct InstructionFinalOpenings<F, G>
+pub struct InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
+    _subtables: PhantomData<Subtables>,
     /// Evaluations of the final_cts_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     final_openings: Vec<F>,
-    final_opening_proof: CombinedTableEvalProof<G>,
     /// Evaluation of the a_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
     /// Evaluation of the v_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     v_init_final: Option<Vec<F>>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
-    for InstructionFinalOpenings<F, G>
+impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+    for InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
-    type Openings = Vec<F>;
-
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self::Openings {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
-        polynomials
+        let final_openings = polynomials
             .final_cts
             .par_iter()
             .map(|final_cts_i| final_cts_i.evaluate_at_chi_low_optimized(&chis))
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
-    fn prove_openings(
-        polynomials: &BatchedInstructionPolynomials<F>,
-        commitment: &InstructionCommitment<G>,
-        opening_point: &Vec<F>,
-        openings: Vec<F>,
-        transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> Self {
-        let final_opening_proof = CombinedTableEvalProof::prove(
-            &polynomials.batched_final,
-            &openings,
-            &opening_point,
-            &commitment.generators.final_commitment_gens,
-            transcript,
-            random_tape,
-        );
-
+            .collect();
         Self {
-            final_openings: openings,
-            final_opening_proof,
+            _subtables: PhantomData,
+            final_openings,
             a_init_final: None,
             v_init_final: None,
         }
     }
 
+    #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
+    fn prove_openings(
+        polynomials: &InstructionPolynomials<F, G>,
+        batched_polynomials: &BatchedInstructionPolynomials<F>,
+        opening_point: &Vec<F>,
+        openings: &Self,
+        transcript: &mut Transcript,
+    ) -> Self::Proof {
+        ConcatenatedPolynomialOpeningProof::prove(
+            &batched_polynomials.batched_final,
+            &opening_point,
+            &openings.final_openings,
+            transcript,
+        )
+    }
+
+    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+        self.a_init_final =
+            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
+        self.v_init_final = Some(
+            Subtables::iter()
+                .map(|subtable| subtable.evaluate_mle(opening_point))
+                .collect(),
+        );
+    }
+
     fn verify_openings(
         &self,
+        opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        self.final_opening_proof.verify(
+        opening_proof.verify(
             opening_point,
             &self.final_openings,
-            &commitment.generators.final_commitment_gens,
             &commitment.final_commitment,
             transcript,
         )
     }
 }
 
-impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingProver<F, G, InstructionPolynomials<F, G>>
-    for InstructionLookups<F, G, InstructionSet, Subtables, C, M>
+impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
+    MemoryCheckingProver<F, G, InstructionPolynomials<F, G>, InstructionLookupsPreprocessing<F>>
+    for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
 {
-    type ReadWriteOpenings = InstructionReadWriteOpenings<F, G>;
-    type InitFinalOpenings = InstructionFinalOpenings<F, G>;
+    type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
+    type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
 
     type MemoryTuple = (F, F, F, Option<F>); // (a, v, t, flag)
 
@@ -509,185 +435,242 @@ where
         }
     }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::read_leaves")]
-    fn read_leaves(
-        &self,
+    #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
+    fn compute_leaves(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         polynomials: &InstructionPolynomials<F, G>,
         gamma: &F,
         tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
+    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+        let gamma_squared = gamma.square();
+        let num_lookups = polynomials.dim[0].len();
 
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .into_par_iter()
+        let read_write_leaves = (0..preprocessing.num_memories)
+            .into_par_iter()
+            .flat_map_iter(|memory_index| {
+                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+
+                let read_fingerprints: Vec<F> = (0..num_lookups)
                     .map(|i| {
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
                     })
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "InstructionLookups::write_leaves")]
-    fn write_leaves(
-        &self,
-        polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-
-                let leaf_fingerprints = (0..self.num_lookups)
-                    .map(|i| {
-                        let a = &polynomials.dim[dim_index][i];
-                        let v = &polynomials.E_polys[memory_index][i];
-                        let t = &(polynomials.read_cts[memory_index][i] + F::one());
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
-                    })
+                let write_fingerprints = read_fingerprints
+                    .iter()
+                    .map(|read_fingerprint| *read_fingerprint + gamma_squared)
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
+                [
+                    DensePolynomial::new(read_fingerprints),
+                    DensePolynomial::new(write_fingerprints),
+                ]
             })
-            .collect()
-    }
+            .collect();
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::init_leaves")]
-    fn init_leaves(
-        &self,
-        _polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-
-                let leaf_fingerprints = (0..M)
+        let init_final_leaves: Vec<DensePolynomial<F>> = preprocessing
+            .materialized_subtables
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(subtable_index, subtable)| {
+                let init_fingerprints: Vec<F> = (0..M)
                     .map(|i| {
-                        let a = &F::from(i as u64);
-                        let v = &self.materialized_subtables[subtable_index][i];
+                        let a = &F::from_u64(i as u64).unwrap();
+                        let v = &subtable[i];
                         // let t = F::zero();
-
                         // Compute h(a,v,t) where t == 0
-
                         mul_0_1_optimized(v, gamma) + a - tau
                     })
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
-            })
-            .collect()
-    }
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::final_leaves")]
-    fn final_leaves(
-        &self,
-        polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> Vec<DensePolynomial<F>> {
-        let gamma_square = &gamma.square();
-        (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-
-                let leaf_fingerprints = (0..M)
-                    .map(|i| {
-                        let a = &F::from(i as u64);
-                        let v = &self.materialized_subtables[subtable_index][i];
-                        let t = &polynomials.final_cts[memory_index][i];
-
-                        mul_0_1_optimized(t, gamma_square) + mul_0_1_optimized(v, gamma) + a - tau
+                let final_leaves: Vec<DensePolynomial<F>> = preprocessing
+                    .subtable_to_memory_indices[subtable_index]
+                    .iter()
+                    .map(|memory_index| {
+                        let final_cts = &polynomials.final_cts[*memory_index];
+                        let final_fingerprints = (0..M)
+                            .map(|i| {
+                                init_fingerprints[i]
+                                    + mul_0_1_optimized(&final_cts[i], &gamma_squared)
+                            })
+                            .collect();
+                        DensePolynomial::new(final_fingerprints)
                     })
                     .collect();
-                DensePolynomial::new(leaf_fingerprints)
+
+                let mut polys = Vec::with_capacity(C + 1);
+                polys.push(DensePolynomial::new(init_fingerprints));
+                polys.extend(final_leaves);
+                polys
             })
-            .collect()
+            .collect();
+
+        (read_write_leaves, init_final_leaves)
+    }
+
+    fn interleave_hashes(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        multiset_hashes: &MultisetHashes<F>,
+    ) -> (Vec<F>, Vec<F>) {
+        // R W R W R W ...
+        let read_write_hashes = interleave(
+            multiset_hashes.read_hashes.clone(),
+            multiset_hashes.write_hashes.clone(),
+        )
+        .collect();
+
+        // I F F F F I F F F F ...
+        let mut init_final_hashes = Vec::with_capacity(
+            multiset_hashes.init_hashes.len() + multiset_hashes.final_hashes.len(),
+        );
+        for subtable_index in 0..Self::NUM_SUBTABLES {
+            init_final_hashes.push(multiset_hashes.init_hashes[subtable_index]);
+            let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
+            memory_indices
+                .iter()
+                .for_each(|i| init_final_hashes.push(multiset_hashes.final_hashes[*i]));
+        }
+
+        (read_write_hashes, init_final_hashes)
+    }
+
+    fn uninterleave_hashes(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        read_write_hashes: Vec<F>,
+        init_final_hashes: Vec<F>,
+    ) -> MultisetHashes<F> {
+        assert_eq!(read_write_hashes.len(), 2 * preprocessing.num_memories);
+        assert_eq!(
+            init_final_hashes.len(),
+            Self::NUM_SUBTABLES + preprocessing.num_memories
+        );
+
+        let mut read_hashes = Vec::with_capacity(preprocessing.num_memories);
+        let mut write_hashes = Vec::with_capacity(preprocessing.num_memories);
+        for i in 0..preprocessing.num_memories {
+            read_hashes.push(read_write_hashes[2 * i]);
+            write_hashes.push(read_write_hashes[2 * i + 1]);
+        }
+
+        let mut init_hashes = Vec::with_capacity(Self::NUM_SUBTABLES);
+        let mut final_hashes = Vec::with_capacity(preprocessing.num_memories);
+        let mut init_final_hashes = init_final_hashes.iter();
+        for subtable_index in 0..Self::NUM_SUBTABLES {
+            // I
+            init_hashes.push(*init_final_hashes.next().unwrap());
+            // F F F F
+            let memory_indices = &preprocessing.subtable_to_memory_indices[subtable_index];
+            for _ in memory_indices {
+                final_hashes.push(*init_final_hashes.next().unwrap());
+            }
+        }
+
+        MultisetHashes {
+            read_hashes,
+            write_hashes,
+            init_hashes,
+            final_hashes,
+        }
+    }
+
+    fn check_multiset_equality(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        multiset_hashes: &MultisetHashes<F>,
+    ) {
+        assert_eq!(multiset_hashes.init_hashes.len(), Self::NUM_SUBTABLES);
+        assert_eq!(
+            multiset_hashes.read_hashes.len(),
+            preprocessing.num_memories
+        );
+        assert_eq!(
+            multiset_hashes.write_hashes.len(),
+            preprocessing.num_memories
+        );
+        assert_eq!(
+            multiset_hashes.final_hashes.len(),
+            preprocessing.num_memories
+        );
+
+        (0..preprocessing.num_memories)
+            .into_par_iter()
+            .for_each(|i| {
+                let read_hash = multiset_hashes.read_hashes[i];
+                let write_hash = multiset_hashes.write_hashes[i];
+                let init_hash =
+                    multiset_hashes.init_hashes[preprocessing.memory_to_subtable_index[i]];
+                let final_hash = multiset_hashes.final_hashes[i];
+                assert_eq!(
+                    init_hash * write_hash,
+                    final_hash * read_hash,
+                    "Multiset hashes don't match"
+                );
+            });
     }
 
     /// Overrides default implementation to handle flags
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
-        &self,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         polynomials: &InstructionPolynomials<F, G>,
-        gamma: &F,
-        tau: &F,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>, Vec<F>) {
-        let (read_fingerprints, write_fingerprints) = rayon::join(
-            || self.read_leaves(polynomials, gamma, tau),
-            || self.write_leaves(polynomials, gamma, tau),
-        );
-        assert_eq!(read_fingerprints.len(), write_fingerprints.len());
-        assert_eq!(read_fingerprints.len(), Self::NUM_MEMORIES);
+        read_write_leaves: Vec<DensePolynomial<F>>,
+    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
+        assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
 
-        let circuits: Vec<GrandProductCircuit<F>> = (0..Self::NUM_MEMORIES)
-            .into_par_iter()
-            .flat_map(|i| {
-                let half = read_fingerprints[i].len() / 2;
+        let _span = trace_span!("InstructionLookups: construct circuits");
+        let _enter = _span.enter();
 
+        let memory_flag_polys =
+            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_bitvectors);
+
+        let read_write_circuits = read_write_leaves
+            .par_iter()
+            .enumerate()
+            .map(|(i, leaves_poly)| {
                 // Split while cloning to save on future cloning in GrandProductCircuit
-                let subtable_index = Self::memory_to_subtable_index(i);
-                let flag = &polynomials.subtable_flag_polys[subtable_index];
-                let (toggled_read_fingerprints_l, toggled_read_fingerprints_r) =
-                    split_poly_flagged(&read_fingerprints[i], &flag);
-                let (toggled_write_fingerprints_l, toggled_write_fingerprints_r) =
-                    split_poly_flagged(&write_fingerprints[i], &flag);
-
-                let (read_circuit, write_circuit) = rayon::join(
-                    || {
-                        GrandProductCircuit::new_split(
-                            DensePolynomial::new(toggled_read_fingerprints_l),
-                            DensePolynomial::new(toggled_read_fingerprints_r),
-                        )
-                    },
-                    || {
-                        GrandProductCircuit::new_split(
-                            DensePolynomial::new(toggled_write_fingerprints_l),
-                            DensePolynomial::new(toggled_write_fingerprints_r),
-                        )
-                    },
-                );
-                vec![read_circuit, write_circuit]
+                let memory_index = i / 2;
+                let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
+                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(&leaves_poly, &flag);
+                GrandProductCircuit::new_split(
+                    DensePolynomial::new(toggled_leaves_l),
+                    DensePolynomial::new(toggled_leaves_r),
+                )
             })
-            .collect();
-        let read_hashes: Vec<F> = circuits
+            .collect::<Vec<GrandProductCircuit<F>>>();
+
+        drop(_enter);
+        drop(_span);
+
+        let _span = trace_span!("InstructionLookups: compute hashes");
+        let _enter = _span.enter();
+
+        let read_write_hashes: Vec<F> = read_write_circuits
             .par_iter()
-            .step_by(2)
             .map(|circuit| circuit.evaluate())
             .collect();
-        let write_hashes: Vec<F> = circuits
-            .par_iter()
-            .skip(1)
-            .step_by(2)
-            .map(|circuit| circuit.evaluate())
-            .collect();
+
+        drop(_enter);
+        drop(_span);
+
+        let _span = trace_span!("InstructionLookups: the rest");
+        let _enter = _span.enter();
 
         // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
-        let expanded_flag_map: Vec<usize> = (0..2 * Self::NUM_MEMORIES)
-            .map(|i| Self::memory_to_subtable_index(i / 2))
-            .collect();
+        let expanded_flag_map: Vec<usize> =
+            (0..2 * preprocessing.num_memories).map(|i| i / 2).collect();
 
-        // Prover has access to subtable_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
+        // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
         let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
-            circuits,
-            polynomials.subtable_flag_polys.clone(),
+            read_write_circuits,
+            memory_flag_polys,
             expanded_flag_map,
-            interleave(read_fingerprints, write_fingerprints).collect(),
+            read_write_leaves,
         );
 
-        (batched_circuits, read_hashes, write_hashes)
+        drop(_enter);
+        drop(_span);
+
+        (batched_circuits, read_write_hashes)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -696,69 +679,63 @@ where
 }
 
 impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>>
-    for InstructionLookups<F, G, InstructionSet, Subtables, C, M>
+    MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>, InstructionLookupsPreprocessing<F>>
+    for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
     InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
 {
-    fn compute_verifier_openings(openings: &mut Self::InitFinalOpenings, opening_point: &Vec<F>) {
-        openings.a_init_final =
-            Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        openings.v_init_final = Some(
-            Subtables::iter()
-                .map(|subtable| subtable.evaluate_mle(opening_point))
-                .collect(),
-        );
-    }
-
-    fn read_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
-        let subtable_flags = Self::subtable_flags(&openings.flag_openings);
-        (0..Self::NUM_MEMORIES)
+    fn read_tuples(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
+        let memory_flags = Self::memory_flags(preprocessing, &openings.flag_openings);
+        (0..preprocessing.num_memories)
             .map(|memory_index| {
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
-                let dim_index = Self::memory_to_dimension_index(memory_index);
+                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                 (
                     openings.dim_openings[dim_index],
                     openings.E_poly_openings[memory_index],
                     openings.read_openings[memory_index],
-                    Some(subtable_flags[subtable_index]),
+                    Some(memory_flags[memory_index]),
                 )
             })
             .collect()
     }
-    fn write_tuples(openings: &Self::ReadWriteOpenings) -> Vec<Self::MemoryTuple> {
-        Self::read_tuples(openings)
+    fn write_tuples(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        openings: &Self::ReadWriteOpenings,
+    ) -> Vec<Self::MemoryTuple> {
+        Self::read_tuples(preprocessing, openings)
             .iter()
             .map(|(a, v, t, flag)| (*a, *v, *t + F::one(), *flag))
             .collect()
     }
-    fn init_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn init_tuples(
+        _preprocessing: &InstructionLookupsPreprocessing<F>,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
 
-        (0..Self::NUM_MEMORIES)
-            .map(|memory_index| {
-                (
-                    a_init,
-                    v_init[Self::memory_to_subtable_index(memory_index)],
-                    F::zero(),
-                    None,
-                )
-            })
+        (0..Self::NUM_SUBTABLES)
+            .map(|subtable_index| (a_init, v_init[subtable_index], F::zero(), None))
             .collect()
     }
-    fn final_tuples(openings: &Self::InitFinalOpenings) -> Vec<Self::MemoryTuple> {
+    fn final_tuples(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        openings: &Self::InitFinalOpenings,
+    ) -> Vec<Self::MemoryTuple> {
         let a_init = openings.a_init_final.unwrap();
         let v_init = openings.v_init_final.as_ref().unwrap();
 
-        (0..Self::NUM_MEMORIES)
+        (0..preprocessing.num_memories)
             .map(|memory_index| {
                 (
                     a_init,
-                    v_init[Self::memory_to_subtable_index(memory_index)],
+                    v_init[preprocessing.memory_to_subtable_index[memory_index]],
                     openings.final_openings[memory_index],
                     None,
                 )
@@ -768,14 +745,14 @@ where
 }
 
 /// Proof of instruction lookups for a single Jolt program execution.
-pub struct InstructionLookupsProof<F, G>
+pub struct InstructionLookupsProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
+    Subtables: LassoSubtable<F> + IntoEnumIterator,
+    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
 {
-    /// Commitments to all polynomials
-    commitment: InstructionCommitment<G>,
-
+    _instructions: PhantomData<InstructionSet>,
     /// "Primary" sumcheck, i.e. proving \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x))
     primary_sumcheck: PrimarySumcheck<F, G>,
 
@@ -783,87 +760,141 @@ where
     memory_checking: MemoryCheckingProof<
         G,
         InstructionPolynomials<F, G>,
-        InstructionReadWriteOpenings<F, G>,
-        InstructionFinalOpenings<F, G>,
+        InstructionReadWriteOpenings<F>,
+        InstructionFinalOpenings<F, Subtables>,
     >,
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     claimed_evaluation: F,
-    openings: PrimarySumcheckOpenings<F, G>,
+    openings: PrimarySumcheckOpenings<F>,
+    opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
 }
 
-pub struct InstructionLookups<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
-{
-    _field: PhantomData<F>,
-    _group: PhantomData<G>,
-    _instructions: PhantomData<InstructionSet>,
-    _subtables: PhantomData<Subtables>,
-    ops: Vec<InstructionSet>,
+#[derive(Clone)]
+pub struct InstructionLookupsPreprocessing<F: PrimeField> {
+    subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
+    instruction_to_memory_indices: Vec<Vec<usize>>,
+    memory_to_subtable_index: Vec<usize>,
+    memory_to_dimension_index: Vec<usize>,
     materialized_subtables: Vec<Vec<F>>,
-    num_lookups: usize,
+    num_memories: usize,
 }
 
-impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    InstructionLookups<F, G, InstructionSet, Subtables, C, M>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
-    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<TypeId> + Into<usize>,
-{
-    const NUM_SUBTABLES: usize = Subtables::COUNT;
-    const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
-    const NUM_MEMORIES: usize = C * Subtables::COUNT;
+impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
+    #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
+    pub fn preprocess<const C: usize, const M: usize, InstructionSet, Subtables>() -> Self
+    where
+        InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+        Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+    {
+        let materialized_subtables = Self::materialize_subtables::<M, Subtables>();
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::new")]
-    pub fn new(ops: Vec<InstructionSet>) -> Self {
-        let materialized_subtables = Self::materialize_subtables();
-        let num_lookups = ops.len().next_power_of_two();
+        let mut subtable_indices: Vec<SubtableIndices> =
+            vec![SubtableIndices::with_capacity(C); Subtables::COUNT];
+        for instruction in InstructionSet::iter() {
+            for (subtable, indices) in instruction.subtables::<F>(C, M) {
+                subtable_indices[Subtables::from(subtable.subtable_id()).into()]
+                    .union_with(&indices);
+            }
+        }
+
+        let mut subtable_to_memory_indices = Vec::with_capacity(Subtables::COUNT);
+        let mut memory_to_subtable_index = vec![];
+        let mut memory_to_dimension_index = vec![];
+
+        let mut memory_index = 0;
+        for (subtable_index, dimension_indices) in subtable_indices.iter().enumerate() {
+            subtable_to_memory_indices
+                .push((memory_index..memory_index + dimension_indices.len()).collect_vec());
+            memory_to_subtable_index.extend(vec![subtable_index; dimension_indices.len()]);
+            memory_to_dimension_index.extend(dimension_indices.iter());
+            memory_index += dimension_indices.len();
+        }
+        let num_memories = memory_index;
+
+        let mut instruction_to_memory_indices = vec![vec![]; InstructionSet::COUNT];
+        for instruction in InstructionSet::iter() {
+            for (subtable, dimension_indices) in instruction.subtables::<F>(C, M) {
+                let memory_indices: Vec<_> = subtable_to_memory_indices
+                    [Subtables::from(subtable.subtable_id()).into()]
+                .iter()
+                .filter(|memory_index| {
+                    dimension_indices.contains(memory_to_dimension_index[**memory_index])
+                })
+                .collect();
+                instruction_to_memory_indices[instruction.to_opcode() as usize]
+                    .extend(memory_indices);
+            }
+        }
 
         Self {
-            _field: PhantomData,
-            _group: PhantomData,
-            _instructions: PhantomData,
-            _subtables: PhantomData,
-            ops,
+            num_memories,
             materialized_subtables,
-            num_lookups,
+            subtable_to_memory_indices,
+            memory_to_subtable_index,
+            memory_to_dimension_index,
+            instruction_to_memory_indices,
         }
     }
 
+    /// Materializes all subtables used by this Jolt instance.
+    #[tracing::instrument(skip_all)]
+    fn materialize_subtables<const M: usize, Subtables>() -> Vec<Vec<F>>
+    where
+        Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount,
+    {
+        let mut subtables = Vec::with_capacity(Subtables::COUNT);
+        for subtable in Subtables::iter() {
+            subtables.push(subtable.materialize(M));
+        }
+        subtables
+    }
+}
+
+impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
+    InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+    InstructionSet: JoltInstruction + Opcode + IntoEnumIterator + EnumCount,
+    Subtables: LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize>,
+{
+    const NUM_SUBTABLES: usize = Subtables::COUNT;
+    const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
+
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
-        &self,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        ops: Vec<InstructionSet>,
+        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
-        random_tape: &mut RandomTape<G>,
-    ) -> InstructionLookupsProof<F, G> {
+    ) -> (
+        InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
+        InstructionPolynomials<F, G>,
+        InstructionCommitment<G>,
+    ) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        let polynomials = self.polynomialize();
+        let polynomials = Self::polynomialize(preprocessing, &ops);
         let batched_polys = polynomials.batch();
-        let commitment = InstructionPolynomials::commit(&batched_polys);
+        let commitment = polynomials.commit(&batched_polys, generators);
 
-        commitment
-            .E_commitment
-            .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+        commitment.E_flag_commitment.iter().for_each(|commitment| {
+            commitment.append_to_transcript(b"E_flag_commitment", transcript)
+        });
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
             b"Jolt instruction lookups",
-            self.ops.len().log_2(),
+            ops.len().log_2(),
         );
 
-        let eq = EqPolynomial::new(r_eq.to_vec());
-        let sumcheck_claim = Self::compute_sumcheck_claim(&self.ops, &polynomials.E_polys, &eq);
+        let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
+        let sumcheck_claim =
+            Self::compute_sumcheck_claim(preprocessing, &ops, &polynomials.E_polys, &eq_evals);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,
@@ -871,13 +902,14 @@ where
             &sumcheck_claim,
         );
 
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::new(r_eq).evals());
-        let num_rounds = self.ops.len().log_2();
+        let mut eq_poly = DensePolynomial::new(eq_evals);
+        let num_rounds = ops.len().log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
 
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals) =
             Self::prove_primary_sumcheck(
+                preprocessing,
                 &F::zero(),
                 num_rounds,
                 &mut eq_poly,
@@ -888,13 +920,16 @@ where
             );
 
         // Create a single opening proof for the flag_evals and memory_evals
-        let sumcheck_openings = PrimarySumcheckOpenings::prove_openings(
+        let sumcheck_openings = PrimarySumcheckOpenings {
+            E_poly_openings: E_evals,
+            flag_openings: flag_evals,
+        };
+        let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            &polynomials,
             &batched_polys,
-            &commitment,
             &r_primary_sumcheck,
-            (E_evals, flag_evals),
+            &sumcheck_openings,
             transcript,
-            random_tape,
         );
 
         let primary_sumcheck = PrimarySumcheck {
@@ -902,33 +937,34 @@ where
             num_rounds,
             claimed_evaluation: sumcheck_claim,
             openings: sumcheck_openings,
+            opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = self.prove_memory_checking(
-            &polynomials,
-            &batched_polys,
-            &commitment,
-            transcript,
-            random_tape,
-        );
+        let memory_checking =
+            Self::prove_memory_checking(preprocessing, &polynomials, &batched_polys, transcript);
 
-        InstructionLookupsProof {
+        (
+            InstructionLookupsProof {
+                _instructions: PhantomData,
+                primary_sumcheck,
+                memory_checking,
+            },
+            polynomials,
             commitment,
-            primary_sumcheck,
-            memory_checking,
-        }
+        )
     }
 
     pub fn verify(
-        proof: InstructionLookupsProof<F, G>,
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        proof: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
+        commitment: InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        proof
-            .commitment
-            .E_commitment
-            .append_to_transcript(b"comm_poly_row_col_ops_val", transcript);
+        commitment.E_flag_commitment.iter().for_each(|commitment| {
+            commitment.append_to_transcript(b"E_flag_commitment", transcript)
+        });
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -958,6 +994,7 @@ where
         assert_eq!(
             eq_eval
                 * Self::combine_lookups(
+                    preprocessing,
                     &proof.primary_sumcheck.openings.E_poly_openings,
                     &proof.primary_sumcheck.openings.flag_openings,
                 ),
@@ -966,41 +1003,47 @@ where
         );
 
         proof.primary_sumcheck.openings.verify_openings(
-            &proof.commitment,
+            &proof.primary_sumcheck.opening_proof,
+            &commitment,
             &r_primary_sumcheck,
             transcript,
         )?;
 
-        Self::verify_memory_checking(proof.memory_checking, &proof.commitment, transcript)?;
+        Self::verify_memory_checking(
+            preprocessing,
+            proof.memory_checking,
+            &commitment,
+            transcript,
+        )?;
 
         Ok(())
     }
 
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
-    fn polynomialize(&self) -> InstructionPolynomials<F, G> {
-        let m: usize = self.ops.len().next_power_of_two();
+    fn polynomialize(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        ops: &Vec<InstructionSet>,
+    ) -> InstructionPolynomials<F, G> {
+        let m: usize = ops.len().next_power_of_two();
 
-        let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(&self.ops);
+        let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
 
-        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
-            .map(|op| Self::instruction_to_memory_indices(&op))
-            .collect();
         let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
-            ..Self::NUM_MEMORIES)
+            ..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
-                let dim_index = Self::memory_to_dimension_index(memory_index);
-                let subtable_index = Self::memory_to_subtable_index(memory_index);
+                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                 let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
 
                 let mut final_cts_i = vec![0usize; M];
                 let mut read_cts_i = vec![0usize; m];
                 let mut subtable_lookups = vec![F::zero(); m];
 
-                for (j, op) in self.ops.iter().enumerate() {
-                    let memories_used: &Vec<usize> =
-                        &instruction_to_memory_indices_map[op.to_opcode() as usize];
+                for (j, op) in ops.iter().enumerate() {
+                    let memories_used =
+                        &preprocessing.instruction_to_memory_indices[op.to_opcode() as usize];
                     if memories_used.contains(&memory_index) {
                         let memory_address = access_sequence[j];
                         debug_assert!(memory_address < M);
@@ -1009,7 +1052,7 @@ where
                         read_cts_i[j] = counter;
                         final_cts_i[memory_address] = counter + 1;
                         subtable_lookups[j] =
-                            self.materialized_subtables[subtable_index][memory_address];
+                            preprocessing.materialized_subtables[subtable_index][memory_address];
                     }
                 }
 
@@ -1044,19 +1087,17 @@ where
             })
             .collect();
 
-        let mut instruction_flag_bitvectors: Vec<Vec<usize>> =
-            vec![vec![0usize; m]; Self::NUM_INSTRUCTIONS];
-        for (j, op) in self.ops.iter().enumerate() {
+        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
+            vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
+        for (j, op) in ops.iter().enumerate() {
             let opcode_index = op.to_opcode() as usize;
             instruction_flag_bitvectors[opcode_index][j] = 1;
         }
 
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
-            .iter()
-            .map(|flag_bitvector| DensePolynomial::from_usize(&flag_bitvector))
+            .par_iter()
+            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
-
-        let subtable_flag_polys = Self::subtable_flag_polys(&instruction_flag_polys);
 
         InstructionPolynomials {
             _group: PhantomData,
@@ -1064,7 +1105,7 @@ where
             read_cts,
             final_cts,
             instruction_flag_polys,
-            subtable_flag_polys,
+            instruction_flag_bitvectors,
             E_polys,
         }
     }
@@ -1086,6 +1127,7 @@ where
     /// - `transcript`: Fiat-shamir transcript.
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         _claim: &F,
         num_rounds: usize,
         eq_poly: &mut DensePolynomial<F>,
@@ -1096,33 +1138,29 @@ where
     ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>) {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
-        for index in 0..Self::NUM_MEMORIES {
-            debug_assert_eq!(memory_polys[index].len(), poly_len);
-        }
-        for index in 0..Self::NUM_INSTRUCTIONS {
-            debug_assert_eq!(flag_polys[index].len(), poly_len);
-        }
-
-        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
-            .map(|op| Self::instruction_to_memory_indices(&op))
-            .collect();
+        memory_polys
+            .iter()
+            .for_each(|E_poly| debug_assert_eq!(E_poly.len(), poly_len));
+        flag_polys
+            .iter()
+            .for_each(|flag_poly| debug_assert_eq!(flag_poly.len(), poly_len));
 
         let mut random_vars: Vec<F> = Vec::with_capacity(num_rounds);
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
         let num_eval_points = degree + 1;
 
         let round_uni_poly = Self::primary_sumcheck_inner_loop(
+            preprocessing,
             &eq_poly,
             &flag_polys,
             &memory_polys,
             num_eval_points,
-            &instruction_to_memory_indices_map,
         );
         compressed_polys.push(round_uni_poly.compress());
         let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
         random_vars.push(r_j);
 
-        let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
+        let _bind_span = trace_span!("BindPolys");
         let _bind_enter = _bind_span.enter();
         eq_poly.bound_poly_var_top(&r_j);
         let mut flag_polys_updated: Vec<DensePolynomial<F>> = flag_polys
@@ -1138,18 +1176,18 @@ where
 
         for _round in 1..num_rounds {
             let round_uni_poly = Self::primary_sumcheck_inner_loop(
+                preprocessing,
                 &eq_poly,
                 &flag_polys_updated,
                 &memory_polys_updated,
                 num_eval_points,
-                &instruction_to_memory_indices_map,
             );
             compressed_polys.push(round_uni_poly.compress());
             let r_j = Self::update_primary_sumcheck_transcript(round_uni_poly, transcript);
             random_vars.push(r_j);
 
             // Bind all polys
-            let _bind_span = tracing::span!(tracing::Level::TRACE, "BindPolys");
+            let _bind_span = trace_span!("BindPolys");
             let _bind_enter = _bind_span.enter();
             eq_poly.bound_poly_var_top(&r_j);
             flag_polys_updated
@@ -1169,12 +1207,8 @@ where
 
         // Polys are fully defined so we can just take the first (and only) evaluation
         // let flag_evals = (0..flag_polys.len()).map(|i| flag_polys[i][0]).collect();
-        let flag_evals = (0..flag_polys_updated.len())
-            .map(|i| flag_polys_updated[i][0])
-            .collect();
-        let memory_evals = (0..memory_polys_updated.len())
-            .map(|i| memory_polys_updated[i][0])
-            .collect();
+        let flag_evals = flag_polys_updated.iter().map(|poly| poly[0]).collect();
+        let memory_evals = memory_polys_updated.iter().map(|poly| poly[0]).collect();
 
         (
             SumcheckInstanceProof::new(compressed_polys),
@@ -1186,23 +1220,22 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::primary_sumcheck_inner_loop")]
     fn primary_sumcheck_inner_loop(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         eq_poly: &DensePolynomial<F>,
         flag_polys: &Vec<DensePolynomial<F>>,
         memory_polys: &Vec<DensePolynomial<F>>,
         num_eval_points: usize,
-        instruction_to_memory_indices_map: &Vec<Vec<usize>>,
     ) -> UniPoly<F> {
         let mle_len = eq_poly.len();
         let mle_half = mle_len / 2;
-
-        let evaluate_mles_iterator = (0..mle_half).into_par_iter();
 
         // Loop over half MLE size (size of MLE next round)
         //   - Compute evaluations of eq, flags, E, at p {0, 1, ..., degree}:
         //       eq(p, _boolean_hypercube_), flags(p, _boolean_hypercube_), E(p, _boolean_hypercube_)
         // After: Sum over MLE elements (with combine)
 
-        let evaluations: Vec<F> = evaluate_mles_iterator
+        let evaluations: Vec<F> = (0..mle_half)
+            .into_par_iter()
             .map(|low_index| {
                 let high_index = mle_half + low_index;
 
@@ -1210,7 +1243,7 @@ where
                 let mut multi_flag_evals: Vec<Vec<F>> =
                     vec![vec![F::zero(); Self::NUM_INSTRUCTIONS]; num_eval_points];
                 let mut multi_memory_evals: Vec<Vec<F>> =
-                    vec![vec![F::zero(); Self::NUM_MEMORIES]; num_eval_points];
+                    vec![vec![F::zero(); preprocessing.num_memories]; num_eval_points];
 
                 eq_evals[0] = eq_poly[low_index];
                 eq_evals[1] = eq_poly[high_index];
@@ -1236,7 +1269,7 @@ where
                 }
 
                 // TODO: Some of these intermediates need not be computed if flags is computed
-                for memory_index in 0..Self::NUM_MEMORIES {
+                for memory_index in 0..preprocessing.num_memories {
                     multi_memory_evals[0][memory_index] = memory_polys[memory_index][low_index];
 
                     multi_memory_evals[1][memory_index] = memory_polys[memory_index][high_index];
@@ -1257,12 +1290,12 @@ where
                 let mut inner_sum = vec![F::zero(); num_eval_points];
                 for instruction in InstructionSet::iter() {
                     let instruction_index = instruction.to_opcode() as usize;
-                    let memory_indices: &Vec<usize> =
-                        &instruction_to_memory_indices_map[instruction_index];
+                    let memory_indices =
+                        &preprocessing.instruction_to_memory_indices[instruction_index];
 
                     for eval_index in 0..num_eval_points {
                         let flag_eval = multi_flag_evals[eval_index][instruction_index];
-                        if flag_eval == F::zero() {
+                        if flag_eval.is_zero() {
                             continue;
                         }; // Early exit if no contribution.
 
@@ -1315,26 +1348,23 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_sumcheck_claim")]
     fn compute_sumcheck_claim(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<InstructionSet>,
         E_polys: &Vec<DensePolynomial<F>>,
-        eq: &EqPolynomial<F>,
+        eq_evals: &Vec<F>,
     ) -> F {
-        let m = ops.len().next_power_of_two();
-
         #[cfg(test)]
-        E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
-
-        let eq_evals = eq.evals();
-
-        let instruction_to_memory_indices_map: Vec<Vec<usize>> = InstructionSet::iter()
-            .map(|op| Self::instruction_to_memory_indices(&op))
-            .collect();
+        {
+            let m = ops.len().next_power_of_two();
+            E_polys.iter().for_each(|E_i| assert_eq!(E_i.len(), m));
+        }
 
         let claim = ops
             .par_iter()
             .enumerate()
             .map(|(k, op)| {
-                let memory_indices = &instruction_to_memory_indices_map[op.to_opcode() as usize];
+                let memory_indices =
+                    &preprocessing.instruction_to_memory_indices[op.to_opcode() as usize];
                 let filtered_operands: Vec<F> = memory_indices
                     .iter()
                     .map(|memory_index| E_polys[*memory_index][k])
@@ -1343,7 +1373,7 @@ where
                 let collation_eval = op.combine_lookups(&filtered_operands, C, M);
                 eq_evals[k] * collation_eval
             })
-            .reduce(|| F::zero(), |a, b| a + b);
+            .sum();
 
         claim
     }
@@ -1353,84 +1383,71 @@ where
     /// \sum_x \tilde{eq}(r, x) * \sum_i flag_i(x) * g_i(E_1(x), ..., E_\alpha(x))
     /// where `vals` corresponds to E_1, ..., E_\alpha,
     /// and `flags` corresponds to the flag_i's
-    fn combine_lookups(vals: &[F], flags: &[F]) -> F {
-        assert_eq!(vals.len(), Self::NUM_MEMORIES);
+    fn combine_lookups(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        vals: &[F],
+        flags: &[F],
+    ) -> F {
+        assert_eq!(vals.len(), preprocessing.num_memories);
         assert_eq!(flags.len(), Self::NUM_INSTRUCTIONS);
 
         let mut sum = F::zero();
         for instruction in InstructionSet::iter() {
             let instruction_index = instruction.to_opcode() as usize;
-            let memory_indices = Self::instruction_to_memory_indices(&instruction);
-            let mut filtered_operands = Vec::with_capacity(memory_indices.len());
-            for index in memory_indices {
-                filtered_operands.push(vals[index]);
-            }
+            let memory_indices =
+                &preprocessing.instruction_to_memory_indices[instruction.to_opcode() as usize];
+            let filtered_operands: Vec<F> = memory_indices.iter().map(|i| vals[*i]).collect();
             sum += flags[instruction_index] * instruction.combine_lookups(&filtered_operands, C, M);
         }
 
         sum
     }
 
-    /// Converts instruction flag values into subtable flag vales. A subtable flag value
-    /// can be computed by summing over the instructions that use that subtable: if a given execution step
-    /// accesses the subtable, it must be executing exactly one of those instructions.
-    fn subtable_flags(instruction_flags: &Vec<F>) -> Vec<F> {
-        let mut subtable_flags = vec![F::zero(); Self::NUM_SUBTABLES];
-        for (i, instruction) in InstructionSet::iter().enumerate() {
-            let instruction_subtables: Vec<Subtables> = instruction
-                .subtables::<F>(C)
-                .iter()
-                .map(|subtable| Subtables::from(subtable.subtable_id()))
-                .collect();
-            for subtable in instruction_subtables {
-                let subtable_index: usize = subtable.into();
-                subtable_flags[subtable_index] += &instruction_flags[i];
+    /// Converts instruction flag values into memory flag values. A memory flag value
+    /// can be computed by summing over the instructions that use that memory: if a given execution step
+    /// accesses the memory, it must be executing exactly one of those instructions.
+    fn memory_flags(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        instruction_flags: &Vec<F>,
+    ) -> Vec<F> {
+        let mut memory_flags = vec![F::zero(); preprocessing.num_memories];
+        for instruction_index in 0..Self::NUM_INSTRUCTIONS {
+            for memory_index in &preprocessing.instruction_to_memory_indices[instruction_index] {
+                memory_flags[*memory_index] += instruction_flags[instruction_index];
             }
         }
-        subtable_flags
+        memory_flags
     }
 
-    /// Converts instruction flag polynomials into subtable flag polynomials. A subtable flag polynomial
-    /// can be computed by summing over the instructions that use that subtable: if a given execution step
-    /// accesses the subtable, it must be executing exactly one of those instructions.
-    fn subtable_flag_polys(
-        instruction_flag_polys: &Vec<DensePolynomial<F>>,
+    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
+    /// can be computed by summing over the instructions that use that memory: if a given execution step
+    /// accesses the memory, it must be executing exactly one of those instructions.
+    #[tracing::instrument(skip_all)]
+    fn memory_flag_polys(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        instruction_flag_bitvectors: &Vec<Vec<u64>>,
     ) -> Vec<DensePolynomial<F>> {
-        let m = instruction_flag_polys[0].len();
-        let subtable_flag_polys = (0..Self::NUM_SUBTABLES)
+        let m = instruction_flag_bitvectors[0].len();
+        let memory_flag_polys = (0..preprocessing.num_memories)
             .into_par_iter()
-            .map(|subtable_index| {
-                let mut subtable_poly = DensePolynomial::new(vec![F::zero(); m]);
-                for (i, instruction) in InstructionSet::iter().enumerate() {
-                    if instruction.subtables::<F>(C).iter().any(|subtable| {
-                        Subtables::from(subtable.subtable_id()).into() == subtable_index
-                    }) {
-                        // TODO(JOLT-81): Do not DensePolynomial<F>::add_assign to compute this value.
-                        subtable_poly += &instruction_flag_polys[i];
+            .map(|memory_index| {
+                let mut memory_flag_bitvector = vec![0u64; m];
+                for instruction_index in 0..Self::NUM_INSTRUCTIONS {
+                    if preprocessing.instruction_to_memory_indices[instruction_index]
+                        .contains(&memory_index)
+                    {
+                        memory_flag_bitvector
+                            .iter_mut()
+                            .zip(&instruction_flag_bitvectors[instruction_index])
+                            .for_each(|(memory_flag, instruction_flag)| {
+                                *memory_flag += instruction_flag
+                            });
                     }
                 }
-                subtable_poly
+                DensePolynomial::from_u64(&memory_flag_bitvector)
             })
             .collect();
-        subtable_flag_polys
-    }
-
-    /// Converts an instruction into the memory indices that it "accesses". Each instruction uses some
-    /// subset of `Subtables`, and each subtable in turn maps to some contiguous range of memory indices.
-    fn instruction_to_memory_indices(op: &InstructionSet) -> Vec<usize> {
-        let instruction_subtables: Vec<Subtables> = op
-            .subtables::<F>(C)
-            .iter()
-            .map(|subtable| Subtables::from(subtable.subtable_id()))
-            .collect();
-
-        let mut memory_indices = Vec::with_capacity(C * instruction_subtables.len());
-        for subtable in instruction_subtables {
-            let index: usize = subtable.into();
-            memory_indices.extend((C * index)..(C * (index + 1)));
-        }
-
-        memory_indices
+        memory_flag_polys
     }
 
     /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression
@@ -1442,16 +1459,6 @@ where
             .max()
             .unwrap()
             + 2 // eq and flag
-    }
-
-    /// Materializes all subtables used by this Jolt instance.
-    #[tracing::instrument(skip_all, name = "InstructionLookups.materialize_subtables")]
-    fn materialize_subtables() -> Vec<Vec<F>> {
-        let mut subtables: Vec<Vec<_>> = Vec::with_capacity(Subtables::COUNT);
-        for subtable in Subtables::iter() {
-            subtables.push(subtable.materialize(M));
-        }
-        subtables
     }
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
@@ -1472,14 +1479,21 @@ where
         subtable_lookup_indices
     }
 
-    /// Maps an index [0, NUM_MEMORIES) -> [0, NUM_SUBTABLES)
-    fn memory_to_subtable_index(i: usize) -> usize {
-        i / C
-    }
-
-    /// Maps an index [0, NUM_MEMORIES) -> [0, C)
-    fn memory_to_dimension_index(i: usize) -> usize {
-        i % C
+    /// Computes the maximum number of group generators needed to commit to instruction
+    /// lookup polynomials using Hyrax, given the maximum trace length.
+    pub fn num_generators(
+        preprocessing: &InstructionLookupsPreprocessing<F>,
+        max_trace_length: usize,
+    ) -> usize {
+        let max_trace_length = max_trace_length.next_power_of_two();
+        let num_read_write_generators =
+            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
+        let num_init_final_generators = matrix_dimensions(
+            (M * preprocessing.num_memories).next_power_of_two().log_2(),
+            1,
+        )
+        .1;
+        std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 
     fn protocol_name() -> &'static [u8] {

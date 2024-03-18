@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::{slt::SLTInstruction, JoltInstruction};
+use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -24,22 +24,30 @@ impl JoltInstruction for BGEInstruction {
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
-        C
+        C + 1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            Box::new(GtMSBSubtable::new()),
-            Box::new(EqMSBSubtable::new()),
-            Box::new(LtuSubtable::new()),
-            Box::new(EqSubtable::new()),
-            Box::new(LtAbsSubtable::new()),
-            Box::new(EqAbsSubtable::new()),
+            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+    }
+
+    fn lookup_entry(&self) -> u64 {
+        ((self.0 as i32) >= (self.1 as i32)).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -51,7 +59,7 @@ impl JoltInstruction for BGEInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
@@ -61,26 +69,39 @@ mod test {
     #[test]
     fn bge_instruction_e2e() {
         let mut rng = test_rng();
-        const C: usize = 8;
+        const C: usize = 4;
         const M: usize = 1 << 16;
 
+        // Random
         for _ in 0..256 {
-            let x = rng.next_u64() as i64;
-            let y = rng.next_u64() as i64;
+            let x = rng.next_u32();
+            let y = rng.next_u32();
 
-            jolt_instruction_test!(BGEInstruction(x as u64, y as u64), (x >= y).into());
-            assert_eq!(
-                BGEInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x >= y).into()
-            );
+            let instruction = BGEInstruction(x as u64, y as u64);
+
+            jolt_instruction_test!(instruction);
         }
+
+        // Ones
         for _ in 0..256 {
-            let x = rng.next_u64() as i64;
-            jolt_instruction_test!(BGEInstruction(x as u64, x as u64), Fr::one());
-            assert_eq!(
-                BGEInstruction(x as u64, x as u64).lookup_entry::<Fr>(C, M),
-                Fr::one()
-            );
+            let x = rng.next_u32();
+            jolt_instruction_test!(BGEInstruction(x as u64, x as u64));
+        }
+
+        // Edge-cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            BGEInstruction(100, 0),
+            BGEInstruction(0, 100),
+            BGEInstruction(1, 0),
+            BGEInstruction(0, u32_max),
+            BGEInstruction(u32_max, 0),
+            BGEInstruction(u32_max, u32_max),
+            BGEInstruction(u32_max, 1 << 8),
+            BGEInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

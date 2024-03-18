@@ -2,14 +2,14 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use common::{self, serializable::Serializable};
+use common::{self, serializable::Serializable, JoltDevice, constants::RAM_START_ADDRESS};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
     Emulator,
 };
 
-use object::{Object, ObjectSection, SectionKind};
+use object::{Object, ObjectSection};
 
 mod decode;
 mod emulator;
@@ -34,12 +34,13 @@ pub fn run_tracer_with_paths(
     elf_location: PathBuf,
     trace_destination: PathBuf,
     bytecode_destination: PathBuf,
+    device_destination: PathBuf,
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     if !elf_location.exists() {
         return Err(format!("Could not find ELF file at location {:?}", elf_location).into());
     }
 
-    let rows = trace(&elf_location);
+    let (rows, device) = trace(&elf_location, Vec::new());
     rows.serialize_to_file(&trace_destination)?;
     println!(
         "Wrote {} rows to         {}.",
@@ -54,13 +55,26 @@ pub fn run_tracer_with_paths(
         instructions.len(),
         bytecode_destination.display()
     );
+
+    device.serialize_to_file(&device_destination)?;
+    println!(
+        "Wrote {} bytes of inputs and outputs to {}.",
+        device.size(),
+        device_destination.display()
+    );
+
+    // let rows: Vec<()> = vec![];
     Ok((rows.len(), instructions.len()))
 }
 
-pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
+pub fn trace(elf: &PathBuf, inputs: Vec<u8>) -> (Vec<RVTraceRow>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());
+
+    let mut jolt_device = JoltDevice::new();
+    jolt_device.inputs = inputs;
+    emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
 
     let mut elf_file = File::open(elf).unwrap();
 
@@ -87,8 +101,11 @@ pub fn trace(elf: &PathBuf) -> Vec<RVTraceRow> {
     let mut rows = emulator.get_mut_cpu().tracer.rows.try_borrow_mut().unwrap();
     let mut output = Vec::new();
     output.append(&mut rows);
+    drop(rows);
 
-    output
+    let device = emulator.get_mut_cpu().get_mut_mmu().jolt_device.clone();
+
+    (output, device)
 }
 
 pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
@@ -98,34 +115,36 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
 
     let obj = object::File::parse(&*elf_contents).unwrap();
 
-    let text_sections = obj
+    let sections = obj
         .sections()
-        .filter(|s| s.kind() == SectionKind::Text)
+        .filter(|s| s.address() >= RAM_START_ADDRESS)
         .collect::<Vec<_>>();
 
     let mut instructions = Vec::new();
-    for section in text_sections {
+    for section in sections {
         let data = section.data().unwrap();
 
         for (chunk, word) in data.chunks(4).enumerate() {
             let word = u32::from_le_bytes(word.try_into().unwrap());
             let address = chunk as u64 * 4 + section.address();
-            let inst = decode_raw(word).unwrap();
 
-            if let Some(trace) = inst.trace {
-                let inst = trace(&inst, &get_xlen(), word, address);
-                instructions.push(inst);
-            } else {
-                instructions.push(ELFInstruction {
-                    address,
-                    opcode: common::RV32IM::from_str("UNIMPL"),
-                    raw: word,
-                    rs1: None,
-                    rs2: None,
-                    rd: None,
-                    imm: None,
-                });
+            if let Ok(inst) = decode_raw(word) {
+                if let Some(trace) = inst.trace {
+                    let inst = trace(&inst, &get_xlen(), word, address);
+                    instructions.push(inst);
+                    continue;
+                }
             }
+            // Unrecognized instruction, or from a ReadOnlyData section
+            instructions.push(ELFInstruction {
+                address,
+                opcode: common::RV32IM::from_str("UNIMPL"),
+                raw: word,
+                rs1: None,
+                rs2: None,
+                rd: None,
+                imm: None,
+            });
         }
     }
 
@@ -139,3 +158,4 @@ fn get_xlen() -> Xlen {
         _ => panic!("Emulator only supports 32 / 64 bit registers."),
     }
 }
+

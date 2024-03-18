@@ -8,6 +8,7 @@ pub mod JoltPaths {
     const TRACE_DIR_NAME: &'static str = "traces";
     const TRACE_FILE_SUFFIX: &'static str = "jolttrace";
     const BYTECODE_FILE_SUFFIX: &'static str = "joltbytecode";
+    const PROVER_DEVICE_FILE_SUFFIX: &'static str = "joltdevice";
     const CIRCUIT_DIR_NAME: &'static str = "circuits";
 
     fn root() -> PathBuf {
@@ -19,7 +20,7 @@ pub mod JoltPaths {
     }
     pub fn elf_path(program_name: &str) -> PathBuf {
         target_dir().join(format!(
-            "riscv32i-unknown-none-elf/release/{}",
+            "riscv32i-unknown-none-elf/guest/{}",
             program_name
         ))
     }
@@ -34,6 +35,12 @@ pub mod JoltPaths {
         target_dir()
             .join(TRACE_DIR_NAME)
             .join(format!("{}.{}", program_name, BYTECODE_FILE_SUFFIX))
+    }
+
+    pub fn jolt_device_path(program_name: &str) -> PathBuf {
+        target_dir()
+            .join(TRACE_DIR_NAME)
+            .join(format!("{}.{}", program_name, PROVER_DEVICE_FILE_SUFFIX))
     }
 
     pub fn circuit_path() -> PathBuf {

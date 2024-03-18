@@ -31,15 +31,15 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
         for idx in 0..M {
             let (x, y) = split_bits(idx, operand_chunk_width);
 
-            let x_sign = F::from(((x >> sign_bit_index) & 1) as u64);
+            let x_sign = F::from_u64(((x >> sign_bit_index) & 1) as u64).unwrap();
 
             let row = (0..(y % WORD_SIZE) as u32)
                 .into_iter()
                 .fold(F::zero(), |acc, i: u32| {
-                    acc + F::from(1_u64 << (WORD_SIZE as u32 - 1 - i)) * x_sign
+                    acc + F::from_u64(1_u64 << (WORD_SIZE as u32 - 1 - i)).unwrap() * x_sign
                 });
 
-            entries.push(F::from(row));
+            entries.push(row);
         }
         entries
     }
@@ -64,7 +64,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
             let k_bits = (k as usize)
                 .get_bits(log_WORD_SIZE)
                 .iter()
-                .map(|bit| F::from(*bit as u64))
+                .map(|bit| if *bit { F::one() } else { F::zero() })
                 .collect::<Vec<F>>(); // big-endian
 
             let mut eq_term = F::one();
@@ -75,7 +75,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
             }
 
             let x_sign_upper = (0..k).into_iter().fold(F::zero(), |acc, i| {
-                acc + F::from(1_u64 << (WORD_SIZE - 1 - i)) * x_sign
+                acc + F::from_u64(1_u64 << (WORD_SIZE - 1 - i)).unwrap() * x_sign
             });
 
             result += eq_term * x_sign_upper;

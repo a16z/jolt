@@ -1,7 +1,7 @@
 cargo-features = ["per-package-target"]
 
 [package]
-name = "hash"
+name = "sha3-guest"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,3 +11,4 @@ forced-target = "riscv32i-unknown-none-elf"
 
 [dependencies]
 sha3 = { version = "0.10.8", default-features = false }
+jolt-sdk = { path = "../../../jolt-sdk" }

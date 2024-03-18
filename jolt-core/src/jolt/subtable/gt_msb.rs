@@ -28,7 +28,7 @@ impl<F: PrimeField> LassoSubtable<F> for GtMSBSubtable<F> {
         for idx in 0..M {
             let (x, y) = split_bits(idx, bits_per_operand);
             let row = (x & high_bit) > (y & high_bit);
-            entries.push(F::from(row));
+            entries.push(if row { F::one() } else { F::zero() });
         }
         entries
     }

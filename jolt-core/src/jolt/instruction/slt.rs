@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
@@ -18,24 +18,24 @@ impl JoltInstruction for SLTInstruction {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
-        debug_assert!(vals.len() % C == 0);
-        let mut vals_by_subtable = vals.chunks_exact(C);
-
-        let gt_msb = vals_by_subtable.next().unwrap();
-        let eq_msb = vals_by_subtable.next().unwrap();
-        let ltu = vals_by_subtable.next().unwrap();
-        let eq = vals_by_subtable.next().unwrap();
-        let lt_abs = vals_by_subtable.next().unwrap();
-        let eq_abs = vals_by_subtable.next().unwrap();
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values(vals, C, M);
+        
+        let gt_msb = vals_by_subtable[0];
+        let eq_msb = vals_by_subtable[1];
+        let ltu = vals_by_subtable[2];
+        let eq = vals_by_subtable[3];
+        let lt_abs = vals_by_subtable[4];
+        let eq_abs = vals_by_subtable[5];
 
         // Accumulator for LTU(x_{<s}, y_{<s})
         let mut ltu_sum = lt_abs[0];
         // Accumulator for EQ(x_{<s}, y_{<s})
         let mut eq_prod = eq_abs[0];
-        for i in 1..C {
-            ltu_sum += ltu[i] * eq_prod;
-            eq_prod *= eq[i];
+
+        for (ltu_i, eq_i) in ltu.iter().zip(eq) {
+            ltu_sum += *ltu_i * eq_prod;
+            eq_prod *= eq_i;
         }
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})
@@ -43,22 +43,30 @@ impl JoltInstruction for SLTInstruction {
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
-        C
+        C + 1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            Box::new(GtMSBSubtable::new()),
-            Box::new(EqMSBSubtable::new()),
-            Box::new(LtuSubtable::new()),
-            Box::new(EqSubtable::new()),
-            Box::new(LtAbsSubtable::new()),
-            Box::new(EqAbsSubtable::new()),
+            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
+            (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(EqAbsSubtable::new()), SubtableIndices::from(0)),
         ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
+    }
+
+    fn lookup_entry(&self) -> u64 {
+        ((self.0 as i32) < (self.1 as i32)).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -70,7 +78,7 @@ impl JoltInstruction for SLTInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One, Zero};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
@@ -78,25 +86,30 @@ mod test {
     use super::SLTInstruction;
 
     #[test]
-    fn slt_instruction_e2e() {
+    fn slt_instruction_32_e2e() {
         let mut rng = test_rng();
-        const C: usize = 8;
+        const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let x = rng.next_u64() as i64;
-            let y = rng.next_u64() as i64;
-
-            jolt_instruction_test!(SLTInstruction(x as u64, y as u64), (x < y).into());
-            assert_eq!(
-                SLTInstruction(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x < y).into()
-            );
+            let x = rng.next_u32() as u64;
+            let y = rng.next_u32() as u64;
+            let instruction = SLTInstruction(x, y);
+            jolt_instruction_test!(instruction);
         }
-        for _ in 0..256 {
-            let x = rng.next_u64() as u64;
-            jolt_instruction_test!(SLTInstruction(x, x), Fr::zero());
-            assert_eq!(SLTInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SLTInstruction(100, 0),
+            SLTInstruction(0, 100),
+            SLTInstruction(1, 0),
+            SLTInstruction(0, u32_max),
+            SLTInstruction(u32_max, 0),
+            SLTInstruction(u32_max, u32_max),
+            SLTInstruction(u32_max, 1 << 8),
+            SLTInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

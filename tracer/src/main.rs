@@ -8,8 +8,14 @@ pub fn run_tracer(program_name: &str) -> Result<(usize, usize), Box<dyn std::err
     let elf_location = JoltPaths::elf_path(program_name);
     let trace_destination = JoltPaths::trace_path(program_name);
     let bytecode_destination = JoltPaths::bytecode_path(program_name);
+    let device_destination = JoltPaths::jolt_device_path(program_name);
 
-    run_tracer_with_paths(elf_location, trace_destination, bytecode_destination)
+    run_tracer_with_paths(
+        elf_location, 
+        trace_destination,
+        bytecode_destination, 
+        device_destination
+    )
 }
 
 pub fn main() {

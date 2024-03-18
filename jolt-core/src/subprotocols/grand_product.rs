@@ -42,6 +42,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "GrandProductCircuit::new")]
     pub fn new(leaves: &DensePolynomial<F>) -> Self {
         let mut left_vec: Vec<DensePolynomial<F>> = Vec::new();
         let mut right_vec: Vec<DensePolynomial<F>> = Vec::new();
@@ -65,6 +66,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "GrandProductCircuit::new_split")]
     pub fn new_split(left_leaves: DensePolynomial<F>, right_leaves: DensePolynomial<F>) -> Self {
         let num_layers = left_leaves.len().log_2() + 1; 
         let mut left_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);

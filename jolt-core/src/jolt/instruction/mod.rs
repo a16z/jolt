@@ -1,15 +1,16 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
 use enum_dispatch::enum_dispatch;
+use fixedbitset::*;
 use rand::prelude::StdRng;
 use std::marker::Sync;
+use std::ops::Range;
 
 use crate::jolt::subtable::LassoSubtable;
-use crate::utils::index_to_field_bitvector;
 use crate::utils::instruction_utils::chunk_operand;
+use std::fmt::Debug;
 
 #[enum_dispatch]
-pub trait JoltInstruction: Sync {
+pub trait JoltInstruction: Sync + Clone + Debug {
     fn operands(&self) -> [u64; 2];
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
@@ -30,43 +31,90 @@ pub trait JoltInstruction: Sync {
     fn g_poly_degree(&self, C: usize) -> usize;
     /// Returns a Vec of the unique subtable types used by this instruction. For some instructions,
     /// e.g. SLL, the list of subtables depends on the dimension `C`.
-    fn subtables<F: PrimeField>(&self, C: usize) -> Vec<Box<dyn LassoSubtable<F>>>;
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)>;
     /// Converts the instruction operand(s) in their native word-sized representation into a Vec
     /// of subtable lookups indices. The returned Vec is length `C`, with elements in [0, `log_M`).
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
-    fn lookup_entry<F: PrimeField>(&self, C: usize, M: usize) -> F {
-        let log_M = log2(M) as usize;
-
-        let subtable_lookup_indices = self.to_indices(C, log2(M) as usize);
-
-        let subtable_lookup_values: Vec<F> = self
-            .subtables::<F>(C)
-            .iter()
-            .flat_map(|subtable| {
-                subtable_lookup_indices.iter().map(|&lookup_index| {
-                    subtable.evaluate_mle(&index_to_field_bitvector(lookup_index, log_M))
-                })
-            })
-            .collect();
-
-        self.combine_lookups(&subtable_lookup_values, C, M)
-    }
+    /// Computes the output lookup entry for this instruction as a u64.
+    fn lookup_entry(&self) -> u64;
     fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
-        assert!(log_M % 2 == 0, "log_M must be even for operand_chunks to work");
+        assert!(
+            log_M % 2 == 0,
+            "log_M must be even for operand_chunks to work"
+        );
         self.operands()
             .iter()
-            .map(|&operand| chunk_operand(operand, C, log_M/2))
+            .map(|&operand| chunk_operand(operand, C, log_M / 2))
             .collect::<Vec<Vec<u64>>>()
             .try_into()
             .unwrap()
     }
     fn random(&self, rng: &mut StdRng) -> Self;
+
+    fn slice_values<'a, F: PrimeField>(&self, vals: &'a [F], C: usize, M: usize) -> Vec<&'a [F]> {
+        let mut offset = 0;
+        let mut slices = vec![];
+        for (_, indices) in self.subtables::<F>(C, M) {
+            slices.push(&vals[offset..offset + indices.len()]);
+            offset += indices.len();
+        }
+        assert_eq!(offset, vals.len());
+        slices
+    }
 }
 
 pub trait Opcode {
     /// Converts a variant of an instruction set enum into its canonical "opcode" value.
     fn to_opcode(&self) -> u8 {
         unsafe { *<*const _>::from(self).cast::<u8>() }
+    }
+}
+
+#[derive(Clone)]
+pub struct SubtableIndices {
+    bitset: FixedBitSet,
+}
+
+impl SubtableIndices {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            bitset: FixedBitSet::with_capacity(capacity),
+        }
+    }
+
+    pub fn union_with(&mut self, other: &Self) {
+        self.bitset.union_with(&other.bitset);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.bitset.ones()
+    }
+
+    pub fn len(&self) -> usize {
+        self.bitset.count_ones(..)
+    }
+
+    pub fn contains(&self, index: usize) -> bool {
+        self.bitset.contains(index)
+    }
+}
+
+impl From<usize> for SubtableIndices {
+    fn from(index: usize) -> Self {
+        let mut bitset = FixedBitSet::new();
+        bitset.grow_and_insert(index);
+        Self { bitset }
+    }
+}
+
+impl From<Range<usize>> for SubtableIndices {
+    fn from(range: Range<usize>) -> Self {
+        let bitset = FixedBitSet::from_iter(range);
+        Self { bitset }
     }
 }
 

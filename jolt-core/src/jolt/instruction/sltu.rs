@@ -3,7 +3,10 @@ use rand::prelude::StdRng;
 
 use super::JoltInstruction;
 use crate::{
-    jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
+    jolt::{
+        instruction::SubtableIndices,
+        subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
+    },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -15,13 +18,17 @@ impl JoltInstruction for SLTUInstruction {
         [self.0, self.1]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+        let vals_by_subtable = self.slice_values(vals, C, M);
+        let ltu = vals_by_subtable[0];
+        let eq = vals_by_subtable[1];
+
         let mut sum = F::zero();
         let mut eq_prod = F::one();
 
         for i in 0..C {
-            sum += vals[i] * eq_prod;
-            eq_prod *= vals[C + i];
+            sum += ltu[i] * eq_prod;
+            eq_prod *= eq[i];
         }
         sum
     }
@@ -30,12 +37,23 @@ impl JoltInstruction for SLTUInstruction {
         C
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
-        vec![Box::new(LtuSubtable::new()), Box::new(EqSubtable::new())]
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        vec![
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+    }
+
+    fn lookup_entry(&self) -> u64 {
+        (self.0 < self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -47,7 +65,7 @@ impl JoltInstruction for SLTUInstruction {
 #[cfg(test)]
 mod test {
     use ark_curve25519::Fr;
-    use ark_std::{test_rng, One, Zero};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
@@ -55,23 +73,34 @@ mod test {
     use super::SLTUInstruction;
 
     #[test]
-    fn sltu_instruction_e2e() {
+    fn sltu_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            jolt_instruction_test!(SLTUInstruction(x, y), (x < y).into());
-            assert_eq!(
-                SLTUInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x < y).into()
-            );
+            let instruction = SLTUInstruction(x, y);
+            jolt_instruction_test!(instruction);
         }
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            jolt_instruction_test!(SLTUInstruction(x, x), Fr::zero());
-            assert_eq!(SLTUInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::zero());
+            jolt_instruction_test!(SLTUInstruction(x, x));
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SLTUInstruction(100, 0),
+            SLTUInstruction(0, 100),
+            SLTUInstruction(1, 0),
+            SLTUInstruction(0, u32_max),
+            SLTUInstruction(u32_max, 0),
+            SLTUInstruction(u32_max, u32_max),
+            SLTUInstruction(u32_max, 1 << 8),
+            SLTUInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

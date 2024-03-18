@@ -87,7 +87,7 @@ Run a generic `SumcheckInstanceProof::prove_arbitrary` assuming the lookup polyn
 
 ### 3. Verifier checks $v_{E_{i}} \stackrel{?}{=} E_{i}(r_z)$
 
-`CombinedTableEvalProof::prove`: Create the combined opening proof from the dense PCS.
+`ConcatenatedPolynomialOpeningProof::prove`: Create the combined opening proof from the dense PCS.
 
 ### 4. Check $E_i \stackrel{?}{=} T_i[\text{dim}_i(j)] \ \forall j \in \{0,1\}^{log(s)}$
 

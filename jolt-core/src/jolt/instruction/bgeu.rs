@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
 
-use super::{sltu::SLTUInstruction, JoltInstruction};
+use super::{sltu::SLTUInstruction, JoltInstruction, SubtableIndices};
 use crate::{
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
@@ -24,12 +24,23 @@ impl JoltInstruction for BGEUInstruction {
         C
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
-        vec![Box::new(LtuSubtable::new()), Box::new(EqSubtable::new())]
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        _: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        vec![
+            (Box::new(LtuSubtable::new()), SubtableIndices::from(0..C)),
+            (Box::new(EqSubtable::new()), SubtableIndices::from(0..C)),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+    }
+
+    fn lookup_entry(&self) -> u64 {
+        (self.0 >= self.1).into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -49,23 +60,57 @@ mod test {
     use super::BGEUInstruction;
 
     #[test]
-    fn bgeu_instruction_e2e() {
+    fn bgeu_instruction_32_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 4;
+        const M: usize = 1 << 16;
+
+        // Random
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let instruction = BGEUInstruction(x, y);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Ones
+        for _ in 0..256 {
+            let x = rng.next_u32() as u64;
+            let instruction = BGEUInstruction(x, x);
+            jolt_instruction_test!(instruction);
+        }
+
+        // Edge-cases
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            BGEUInstruction(100, 0),
+            BGEUInstruction(0, 100),
+            BGEUInstruction(1 , 0),
+            BGEUInstruction(0, u32_max),
+            BGEUInstruction(u32_max, 0),
+            BGEUInstruction(u32_max, u32_max),
+            BGEUInstruction(u32_max, 1 << 8),
+            BGEUInstruction(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn bgeu_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            jolt_instruction_test!(BGEUInstruction(x, y), (x >= y).into());
-            assert_eq!(
-                BGEUInstruction(x, y).lookup_entry::<Fr>(C, M),
-                (x >= y).into()
-            );
+            let instruction = BGEUInstruction(x, y);
+            jolt_instruction_test!(instruction);
         }
         for _ in 0..256 {
             let x = rng.next_u64();
-            jolt_instruction_test!(BGEUInstruction(x, x), Fr::one());
-            assert_eq!(BGEUInstruction(x, x).lookup_entry::<Fr>(C, M), Fr::one());
+            let instruction = BGEUInstruction(x, x);
+            jolt_instruction_test!(instruction);
         }
     }
 }

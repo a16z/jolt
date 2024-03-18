@@ -2,7 +2,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
 
-use super::JoltInstruction;
+use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
@@ -19,36 +19,30 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
-        // The first C are from Identity and the last C are from TruncateOverflow
-        assert!(vals.len() == 2 * C);
-
-        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
-
-        let mut vals_by_subtable = vals.chunks_exact(C);
-        let identity = vals_by_subtable.next().unwrap();
-        let truncate_overflow = vals_by_subtable.next().unwrap();
-
+        assert!(vals.len() == C);
         // The output is the TruncateOverflow(most significant chunk) || Identity of other chunks
-        concatenate_lookups(
-            [
-                &truncate_overflow[0..=msb_chunk_index],
-                &identity[msb_chunk_index + 1..C],
-            ]
-            .concat()
-            .as_slice(),
-            C,
-            log2(M) as usize,
-        )
+        concatenate_lookups(vals, C, log2(M) as usize)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
         1
     }
 
-    fn subtables<F: PrimeField>(&self, _: usize) -> Vec<Box<dyn LassoSubtable<F>>> {
+    fn subtables<F: PrimeField>(
+        &self,
+        C: usize,
+        M: usize,
+    ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
+        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
         vec![
-            Box::new(IdentitySubtable::new()),
-            Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+            (
+                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+                SubtableIndices::from(0..msb_chunk_index + 1),
+            ),
+            (
+                Box::new(IdentitySubtable::new()),
+                SubtableIndices::from(msb_chunk_index + 1..C),
+            ),
         ]
     }
 
@@ -60,6 +54,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for SUBInstruction<WORD_SIZE> {
             C,
             log_M,
         )
+    }
+
+    fn lookup_entry(&self) -> u64 {
+        (self.0 as u32).overflowing_sub(self.1 as u32).0.into()
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
@@ -87,14 +85,23 @@ mod test {
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u32(), rng.next_u32());
-            jolt_instruction_test!(
-                SUBInstruction::<WORD_SIZE>(x as u64, y as u64),
-                (x.overflowing_sub(y)).0.into()
-            );
-            assert_eq!(
-                SUBInstruction::<WORD_SIZE>(x as u64, y as u64).lookup_entry::<Fr>(C, M),
-                (x.overflowing_sub(y).0.into())
-            );
+            let instruction = SUBInstruction::<WORD_SIZE>(x as u64, y as u64);
+            jolt_instruction_test!(instruction);
+        }
+
+        let u32_max: u64 = u32::MAX as u64;
+        let instructions = vec![
+            SUBInstruction::<32>(100, 0),
+            SUBInstruction::<32>(0, 100),
+            SUBInstruction::<32>(1, 0),
+            SUBInstruction::<32>(0, u32_max),
+            SUBInstruction::<32>(u32_max, 0),
+            SUBInstruction::<32>(u32_max, u32_max),
+            SUBInstruction::<32>(u32_max, 1 << 8),
+            SUBInstruction::<32>(1 << 8, u32_max),
+        ];
+        for instruction in instructions {
+            jolt_instruction_test!(instruction);
         }
     }
 }

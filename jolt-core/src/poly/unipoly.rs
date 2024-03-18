@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-
-use super::commitments::{Commitments, MultiCommitGens};
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
@@ -35,7 +33,7 @@ impl<F: PrimeField> UniPoly<F> {
 
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
         let n = evals.len();
-        let xs: Vec<F> = (0..n).map(|x| F::from(x as u64)).collect();
+        let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64).unwrap()).collect();
 
         let mut vandermonde: Vec<Vec<F>> = Vec::with_capacity(n);
         for i in 0..n {
@@ -85,14 +83,6 @@ impl<F: PrimeField> UniPoly<F> {
         CompressedUniPoly {
             coeffs_except_linear_term,
         }
-    }
-
-    pub fn commit<G: CurveGroup<ScalarField = F>>(
-        &self,
-        gens: &MultiCommitGens<G>,
-        blind: &F,
-    ) -> G {
-        Commitments::batch_commit_blinded(&self.coeffs, blind, gens)
     }
 }
 
