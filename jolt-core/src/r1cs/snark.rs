@@ -35,8 +35,7 @@ fn reassemble_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>
 }
 
 /// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
-/// Works 
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(skip_all, name = "reassemble_segments_partial")]
 fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_front: usize, num_back: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
   let trace_len = jolt_witnesses.len();
   let total_length = jolt_witnesses[0].len();
@@ -56,6 +55,8 @@ fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_f
       variable_segment[step] = jolt_witnesses[step][(total_length-num_back) + variable_idx]; 
     }
   });
+
+  drop_in_background_thread(jolt_witnesses);
 
   (front_result, back_result)
 }
@@ -82,8 +83,15 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     }
   }
 
-  #[tracing::instrument(name = "JoltCircuit::get_witnesses_by_step", skip_all)]
-  fn synthesize_witnesses(&self) -> Result<Vec<Vec<F>>, SynthesisError> {
+  #[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
+  pub fn synthesize_state_aux_segments(&self, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    let jolt_witnesses = self.synthesize_witnesses();
+    // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
+    reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
+  }
+
+  #[tracing::instrument(name = "JoltCircuit::synthesize_witnesses", skip_all)]
+  fn synthesize_witnesses(&self) -> Vec<Vec<F>> {
 
     let mut step_z = self.inputs.clone_to_stepwise();
 
@@ -94,13 +102,7 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       R1CSBuilder::<F>::calculate_aux(step);
     });
 
-    Ok(step_z)
-  }
-
-  #[tracing::instrument(name = "synthesize_witness_segments", skip_all)]
-  pub fn synthesize_state_aux_segments(&self, num_state: usize, num_aux: usize) -> Result<(Vec<Vec<F>>, Vec<Vec<F>>), SynthesisError> {
-    let jolt_witnesses = self.synthesize_witnesses()?;
-    Ok(reassemble_segments_partial(jolt_witnesses, num_state, num_aux))
+    step_z
   }
 }
 
@@ -176,7 +178,9 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
       } else {
         self.bytecode_a[step_index] * F::from(4u64) + F::from(RAM_START_ADDRESS)
       };
-      // TODO(sragss): This indexing strategy is stolen from old -- but self.trace_len here is self.bytecode_a.len() -- not sure why we're using that to split inputs.
+      // TODO(sragss / arasu arun): This indexing strategy is stolen from old -- but self.trace_len here is self.bytecode_a.len() -- not sure why we're using that to split inputs.
+
+      // 1 is constant, 0s in slots 1, 2 are filled by aux computation
       step.extend([F::from(1), F::from(0), F::from(0), F::from(step_index as u64), program_counter]);
       let bytecode_a_num_vals = self.bytecode_a.len() / self.trace_len();
       for var_index in 0..bytecode_a_num_vals {
@@ -248,18 +252,18 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
   pub fn trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
-    // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff gets chunked to trace_len
+    // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to trace_len
     let mut chunks: Vec<Vec<F>> = Vec::new();
-    chunks.extend(self.bytecode_a.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.bytecode_v.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.memreg_a_rw.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.memreg_v_reads.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.memreg_v_writes.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.chunks_x.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.chunks_y.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.chunks_query.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.lookup_outputs.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.extend(self.circuit_flags_bits.chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.memreg_a_rw.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.memreg_v_reads.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.memreg_v_writes.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.chunks_x.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.chunks_y.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.chunks_query.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.lookup_outputs.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.circuit_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks
   }
 }
@@ -310,17 +314,23 @@ impl R1CSProof {
       drop(_enter);
 
       // let w_segments_from_circuit = jolt_circuit.synthesize_witness_segments().unwrap();
-      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal).unwrap();
+      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal);
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
       let _enter = cloning_stuff_span.enter();
 
       let inputs_segments = inputs.trace_len_chunks(padded_trace_len);
 
-      let w_segments = io_segments.clone().into_iter()
-        .chain(inputs_segments.iter().cloned())
-        .chain(aux_segments.clone().into_iter())
-        .collect::<Vec<_>>(); 
+      let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
+      // TODO(sragss / arasuarun): rm clones
+      w_segments.par_extend(io_segments.par_iter().cloned());
+      w_segments.par_extend(inputs_segments.into_par_iter());
+      w_segments.par_extend(aux_segments.par_iter().cloned());
+
+      // let w_segments = io_segments.clone().into_iter()
+      //   .chain(inputs_segments.iter().cloned())
+      //   .chain(aux_segments.clone().into_iter())
+      //   .collect::<Vec<_>>(); 
 
       drop(_enter);
       drop(cloning_stuff_span);
