@@ -43,17 +43,17 @@ fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_f
   let mut front_result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_front]; 
   let mut back_result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_back]; 
 
-  // state starts at the beginning
+  // [1 || output_state] starts at the beginning
   front_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
     for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][variable_idx]; // NOTE: 1 is at the end!
+      variable_segment[step] = jolt_witnesses[step][variable_idx+1]; // NOTE: 1 is at the beginning!
     }
   });
 
-  // [aux || 1] is the end, and we skip the 1
+  // [.. || aux] is the end
   back_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
     for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][(total_length-1-num_back) + variable_idx]; 
+      variable_segment[step] = jolt_witnesses[step][(total_length-num_back) + variable_idx]; 
     }
   });
 
@@ -93,43 +93,49 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
   }
 
   #[tracing::instrument(name = "JoltCircuit::get_witnesses_by_step", skip_all)]
-  fn synthesize_witnesses(&self, r1cs_builder: &R1CSBuilder<F>) -> Result<Vec<Vec<F>>, SynthesisError> {
+  fn synthesize_witnesses(&self) -> Result<Vec<Vec<F>>, SynthesisError> {
     let TRACE_LEN = self.inputs[0].len();
-    let NUM_STEPS = self.num_steps;
 
-    let ABC_lens = r1cs_builder.ABCz_lens;
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
-    let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
-      let mut step_inputs: Vec<Vec<F>> = self.inputs.iter().map(|v| {
-        v.iter()
-         .skip(i)
-         .step_by(TRACE_LEN)
-         .cloned()
-         .collect_vec()
-      }).collect_vec();
 
+    let mut step_z: Vec<Vec<F>> = Vec::with_capacity(TRACE_LEN);
+    for _ in 0..TRACE_LEN {
+        let step_i: Vec<F> = Vec::with_capacity(self.inputs.len());
+        step_z.push(step_i);
+    }
+
+    for i in 0..TRACE_LEN {
       let program_counter = if i > 0 && self.inputs[0][i] == F::from(0) {
         F::from(0)
       } else {
           self.inputs[0][i] * F::from(4u64) + F::from(RAM_START_ADDRESS)
       };
+      step_z[i].extend([F::from(1), F::from(0), F::from(0), F::from(i as u64), program_counter]);
+      for j in 0..self.inputs.len() {
+        let max_k = (self.inputs[j].len() - i - 1) / TRACE_LEN;
+        for k in 0..=max_k {
+            step_z[i].push(self.inputs[j][i + k * TRACE_LEN]);
+        }
+    }
+    }    
 
-      // For the non-circom version, we need to pre-prend the inputs.  
-      step_inputs.insert(0, vec![F::from(1), F::from(0), F::from(0), F::from(i as u64), program_counter]);
-      let step_inputs_flat = step_inputs.into_iter().flatten().collect::<Vec<_>>();
+    step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
+      // R1CSBuilder::<F>::fill_aux(Some(step));
+      R1CSBuilder::<F>::calculate_aux(step);
+      if (i==1) {
+        println!("step: {:?}", step);
+      }
+    });
 
-      let step_instance = R1CSBuilder::<F>::get_matrices(Some(step_inputs_flat), Some(ABC_lens)).unwrap(); 
-      step_instance.z.unwrap()
-    }).collect();
     drop(_compute_witness_guard);
 
-    Ok(jolt_witnesses)
+    Ok(step_z)
   }
 
   #[tracing::instrument(name = "synthesize_witness_segments", skip_all)]
-  pub fn synthesize_state_aux_segments(&self, r1cs_builder: &R1CSBuilder<F>, num_state: usize, num_aux: usize) -> Result<(Vec<Vec<F>>, Vec<Vec<F>>), SynthesisError> {
-    let jolt_witnesses = self.synthesize_witnesses(&r1cs_builder)?;
+  pub fn synthesize_state_aux_segments(&self, num_state: usize, num_aux: usize) -> Result<(Vec<Vec<F>>, Vec<Vec<F>>), SynthesisError> {
+    let jolt_witnesses = self.synthesize_witnesses()?;
     Ok(reassemble_segments_partial(jolt_witnesses, num_state, num_aux))
   }
 }
@@ -165,7 +171,8 @@ impl R1CSProof {
 
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(NUM_STEPS, inputs.clone());
       
-      let jolt_shape = R1CSBuilder::<F>::get_matrices(None, None).unwrap(); 
+      let mut jolt_shape = R1CSBuilder::<F>::default(); 
+      R1CSBuilder::<F>::get_matrices(&mut jolt_shape); 
       let constraints_F = jolt_shape.convert_to_field(); 
       let shape_single = R1CSShape::<G1> {
           A: constraints_F.0,
@@ -182,7 +189,7 @@ impl R1CSProof {
       };
 
       // let w_segments_from_circuit = jolt_circuit.synthesize_witness_segments().unwrap();
-      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(&jolt_shape, 4, jolt_shape.num_internal).unwrap();
+      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal).unwrap();
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
       let _enter = cloning_stuff_span.enter();
