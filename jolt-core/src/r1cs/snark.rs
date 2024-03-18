@@ -283,11 +283,12 @@ impl R1CSProof {
       type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
       type F = Spartan2Fr;
 
-      let NUM_STEPS = padded_trace_len;
+      let num_steps = padded_trace_len;
 
       let span = tracing::span!(tracing::Level::TRACE, "JoltCircuit::new_from_inputs");
       let _enter = span.enter();
-      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(NUM_STEPS, inputs.clone());
+      // TODO(sragss / arasuarun): After Spartan is merged we don't need to clone these inputs anymore
+      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(num_steps, inputs.clone());
       drop(_enter);
       
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
@@ -313,7 +314,6 @@ impl R1CSProof {
       };
       drop(_enter);
 
-      // let w_segments_from_circuit = jolt_circuit.synthesize_witness_segments().unwrap();
       let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal);
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
@@ -322,15 +322,10 @@ impl R1CSProof {
       let inputs_segments = inputs.trace_len_chunks(padded_trace_len);
 
       let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
-      // TODO(sragss / arasuarun): rm clones
+      // TODO(sragss / arasuarun): rm clones in favor of references
       w_segments.par_extend(io_segments.par_iter().cloned());
       w_segments.par_extend(inputs_segments.into_par_iter());
       w_segments.par_extend(aux_segments.par_iter().cloned());
-
-      // let w_segments = io_segments.clone().into_iter()
-      //   .chain(inputs_segments.iter().cloned())
-      //   .chain(aux_segments.clone().into_iter())
-      //   .collect::<Vec<_>>(); 
 
       drop(_enter);
       drop(cloning_stuff_span);
@@ -353,7 +348,7 @@ impl R1CSProof {
       .chain(aux_comms.into_iter())
       .collect::<Vec<_>>();
 
-      let (pk, vk) = SNARK::<G1, S, JoltCircuit<F>>::setup_precommitted(shape_single, NUM_STEPS, hyrax_ck).unwrap();
+      let (pk, vk) = SNARK::<G1, S, JoltCircuit<F>>::setup_precommitted(shape_single, num_steps, hyrax_ck).unwrap();
 
       SNARK::prove_precommitted(&pk, w_segments, comm_w_vec).map(|snark| Self {
         proof: snark,
