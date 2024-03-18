@@ -15,7 +15,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
-use crate::r1cs::snark::R1CSProof;
+use crate::r1cs::snark::{R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     jolt::{
@@ -451,9 +451,22 @@ where
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
         // will be the exact witness vector to feed into the R1CS
         // after pre-pending IO and appending the AUX 
-        let inputs: Vec<Vec<F>> = vec![
-            bytecode_a, // prog_a_rw,
-            bytecode_v, // prog_v_rw (with circuit_flags_packed)
+        // let inputs: Vec<Vec<F>> = vec![
+        //     bytecode_a, // prog_a_rw,
+        //     bytecode_v, // prog_v_rw (with circuit_flags_packed)
+        //     memreg_a_rw,
+        //     memreg_v_reads,
+        //     memreg_v_writes,
+        //     chunks_x.clone(),
+        //     chunks_y.clone(),
+        //     chunks_query,
+        //     lookup_outputs.clone(),
+        //     circuit_flags_bits.clone(),
+        // ];
+
+        let inputs: R1CSInputs<spartan2::provider::bn256_grumpkin::bn256::Scalar> = R1CSInputs::from_ark(
+            bytecode_a,
+            bytecode_v,
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
@@ -461,8 +474,8 @@ where
             chunks_y.clone(),
             chunks_query,
             lookup_outputs.clone(),
-            circuit_flags_bits.clone(),
-        ];
+            circuit_flags_bits.clone()
+        );
 
         // Assemble the commitments
         let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
@@ -510,7 +523,7 @@ where
             circuit_flags_comm
         ].concat();
 
-        R1CSProof::prove(
+        R1CSProof::prove::<F>(
             32, C, PADDED_TRACE_LEN, 
             inputs, 
             preprocessing.spartan_generators, 
