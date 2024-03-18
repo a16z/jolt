@@ -9,7 +9,10 @@ extern crate fnv;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
-use common::rv_trace::MemoryState;
+use common::constants::{
+    INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
+};
+use common::rv_trace::{JoltDevice, MemoryState};
 
 use self::fnv::FnvHashMap;
 
@@ -38,6 +41,9 @@ pub struct Mmu {
     plic: Plic,
     clint: Clint,
     uart: Uart,
+
+    pub jolt_device: JoltDevice,
+    tracer: Rc<Tracer>,
 
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
@@ -105,12 +111,14 @@ impl Mmu {
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
-            memory: MemoryWrapper::new(tracer),
+            memory: MemoryWrapper::new(tracer.clone()),
             dtb,
             disk: VirtioBlockDisk::new(),
             plic: Plic::new(),
             clint: Clint::new(),
             uart: Uart::new(terminal),
+            jolt_device: JoltDevice::new(),
+            tracer,
             mstatus: 0,
             page_cache_enabled: false,
             fetch_page_cache: FnvHashMap::default(),
@@ -477,7 +485,7 @@ impl Mmu {
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => self.memory.read_byte(effective_address),
-            false => match effective_address {
+            false => match effective_address as usize {
                 // I don't know why but dtb data seems to be stored from 0x1020 on Linux.
                 // It might be from self.x[0xb] initialization?
                 // And DTB size is arbitray.
@@ -486,6 +494,15 @@ impl Mmu {
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),
                 0x10000000..=0x100000ff => self.uart.load(effective_address),
                 0x10001000..=0x10001FFF => self.disk.load(effective_address),
+                INPUT_START_ADDRESS..=INPUT_END_ADDRESS => {
+                    let value = self.jolt_device.load(effective_address);
+                    self.tracer.push_memory(MemoryState::Read {
+                        address: effective_address,
+                        value: value.into(),
+                    });
+
+                    value
+                }
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
             },
         }
@@ -568,11 +585,31 @@ impl Mmu {
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => self.memory.write_byte(effective_address, value),
-            false => match effective_address {
+            false => match effective_address as usize {
                 0x02000000..=0x0200ffff => self.clint.store(effective_address, value),
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
+                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
+                    let pre_value = self.jolt_device.load(effective_address);
+                    self.tracer.push_memory(MemoryState::Write {
+                        address: effective_address,
+                        pre_value: pre_value.into(),
+                        post_value: value.into(),
+                    });
+
+                    self.jolt_device.store(effective_address, value)
+                }
+                PANIC_ADDRESS => {
+                    let pre_value = self.jolt_device.load(effective_address);
+                    self.tracer.push_memory(MemoryState::Write {
+                        address: effective_address,
+                        pre_value: pre_value.into(),
+                        post_value: value.into(),
+                    });
+
+                    self.jolt_device.store(effective_address, value)
+                }
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
             },
         };
