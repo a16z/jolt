@@ -99,37 +99,42 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
 
-    // Allocate memory
+    // // Allocate memory
     let mut step_z: Vec<Vec<F>> = Vec::with_capacity(TRACE_LEN);
-    for _ in 0..TRACE_LEN {
-        let step_i: Vec<F> = Vec::with_capacity(self.inputs.len());
-        step_z.push(step_i);
-    }
+    // for _ in 0..TRACE_LEN {
+    //     let step_i: Vec<F> = Vec::with_capacity(self.inputs.len());
+    //     step_z.push(step_i);
+    // }
 
-    // Allocate the inputs 
-    step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
+    // // Allocate the inputs 
+    // step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
+
+    // });
+
+    // Allocate the aux
+    let all_step_z = (0..TRACE_LEN).into_par_iter().map(|i| {
+      let mut step_z = Vec::with_capacity(TRACE_LEN); 
       let program_counter = if i > 0 && self.inputs[0][i] == F::from(0) {
           F::from(0)
       } else {
           self.inputs[0][i] * F::from(4u64) + F::from(RAM_START_ADDRESS)
       };
-      step.extend([F::from(1), F::from(0), F::from(0), F::from(i as u64), program_counter]);
+      step_z.extend([F::from(1), F::from(0), F::from(0), F::from(i as u64), program_counter]);
       for j in 0..self.inputs.len() {
           let max_k = (self.inputs[j].len() - i - 1) / TRACE_LEN;
           for k in 0..=max_k {
-              step.push(self.inputs[j][i + k * TRACE_LEN]);
+              step_z.push(self.inputs[j][i + k * TRACE_LEN]);
           }
       }
-    });
 
-    // Allocate the aux
-    step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
-      R1CSBuilder::<F>::calculate_aux(step);
-    });
+      R1CSBuilder::<F>::calculate_aux(&mut step_z);
+      step_z 
+    })
+    .collect::<Vec<Vec<F>>>();
 
     drop(_compute_witness_guard);
 
-    Ok(step_z)
+    Ok(all_step_z)
   }
 
   #[tracing::instrument(name = "synthesize_witness_segments", skip_all)]
