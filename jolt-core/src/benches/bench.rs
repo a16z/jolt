@@ -72,12 +72,13 @@ fn prove_e2e_except_r1cs(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(bytecode_size, memory_size, num_cycles);
+    let preprocessing =
+        RV32IJoltVM::preprocess(bytecode_rows, bytecode_size, memory_size, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
         let _: (_, BytecodePolynomials<Fr, G1Projective>, _) = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
+            &preprocessing.bytecode,
             bytecode_trace,
             &preprocessing.generators,
             &mut transcript,
@@ -116,12 +117,12 @@ fn prove_bytecode(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(bytecode_size, 1, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(bytecode_rows, bytecode_size, 1, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
         let _: (_, BytecodePolynomials<Fr, G1Projective>, _) = RV32IJoltVM::prove_bytecode(
-            bytecode_rows,
+            &preprocessing.bytecode,
             bytecode_trace,
             &preprocessing.generators,
             &mut transcript,
@@ -146,7 +147,7 @@ fn prove_memory(
         .collect();
     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(bytecode_size, memory_size, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(vec![], bytecode_size, memory_size, num_cycles);
 
     let work = Box::new(move || {
         let mut transcript = Transcript::new(b"example");
@@ -168,7 +169,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
         .take(num_cycles)
         .collect();
 
-    let preprocessing = RV32IJoltVM::preprocess(1, 1, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(vec![], 1, 1, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -252,10 +253,15 @@ fn prove_example<T: Serialize>(
             })
             .collect();
 
+        let bytecode_rows: Vec<BytecodeRow> = bytecode
+            .iter()
+            .map(BytecodeRow::from_instruction::<RV32I>)
+            .collect();
+
         let preprocessing: crate::jolt::vm::JoltPreprocessing<
             ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
             ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>,
-        > = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
+        > = RV32IJoltVM::preprocess(bytecode_rows, 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             bytecode,

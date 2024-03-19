@@ -262,7 +262,7 @@ where
         }
     }
 
-    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &Vec<F>) {
         self.identity_poly_opening =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
     }
@@ -797,7 +797,8 @@ where
                 transcript,
             )?;
 
-        self.openings.compute_verifier_openings(&r_grand_product);
+        self.openings
+            .compute_verifier_openings(&NoPreprocessing, &r_grand_product);
 
         let read_hashes: Vec<_> =
             TimestampValidityProof::read_tuples(&NoPreprocessing, &self.openings)

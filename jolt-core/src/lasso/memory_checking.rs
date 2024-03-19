@@ -93,8 +93,18 @@ where
     Self: std::marker::Sync,
 {
     type Preprocessing = NoPreprocessing;
-    type ReadWriteOpenings: StructuredOpeningProof<F, G, Polynomials>;
-    type InitFinalOpenings: StructuredOpeningProof<F, G, Polynomials>;
+    type ReadWriteOpenings: StructuredOpeningProof<
+        F,
+        G,
+        Polynomials,
+        Preprocessing = NoPreprocessing,
+    >;
+    type InitFinalOpenings: StructuredOpeningProof<
+        F,
+        G,
+        Polynomials,
+        Preprocessing = Self::Preprocessing,
+    >;
     /// The data associated with each memory slot. A triple (a, v, t) by default.
     type MemoryTuple = (F, F, F);
 
@@ -390,10 +400,10 @@ where
 
         proof
             .read_write_openings
-            .compute_verifier_openings(&r_read_write);
+            .compute_verifier_openings(&NoPreprocessing, &r_read_write);
         proof
             .init_final_openings
-            .compute_verifier_openings(&r_init_final);
+            .compute_verifier_openings(preprocessing, &r_init_final);
 
         Self::check_fingerprints(
             preprocessing,

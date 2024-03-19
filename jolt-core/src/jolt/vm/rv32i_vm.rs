@@ -141,7 +141,7 @@ where
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Fr, G1Projective};
-    use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+    use common::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS};
     use common::{
         path::JoltPaths,
         rv_trace::{ELFInstruction, RVTraceRow},
@@ -176,7 +176,12 @@ mod tests {
 
         let mut prover_transcript = Transcript::new(b"example");
 
-        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
+        let preprocessing = RV32IJoltVM::preprocess(
+            vec![BytecodeRow::no_op(RAM_START_ADDRESS as usize)],
+            1 << 20,
+            1 << 20,
+            1 << 22,
+        );
 
         let (proof, _, commitment) =
             <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove_instruction_lookups(
@@ -286,6 +291,11 @@ mod tests {
         let program = host::Program::new("fibonacci-guest").input(&9u32);
         let (trace, bytecode, io_device) = program.trace();
 
+        let bytecode_rows: Vec<BytecodeRow> = bytecode
+            .iter()
+            .map(BytecodeRow::from_instruction::<RV32I>)
+            .collect();
+
         let bytecode_trace: Vec<BytecodeRow> = trace
             .iter()
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
@@ -315,7 +325,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(bytecode_rows, 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
             bytecode,
             bytecode_trace,
@@ -403,6 +413,11 @@ mod tests {
         let program = host::Program::new("sha3-guest").input(&[5u8; 32]);
         let (trace, bytecode, io_device) = program.trace();
 
+        let bytecode_rows: Vec<BytecodeRow> = bytecode
+            .iter()
+            .map(BytecodeRow::from_instruction::<RV32I>)
+            .collect();
+
         let bytecode_trace: Vec<BytecodeRow> = trace
             .iter()
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
@@ -432,7 +447,7 @@ mod tests {
             })
             .collect();
 
-        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(bytecode_rows, 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             bytecode,
             bytecode_trace,

@@ -32,6 +32,7 @@ use common::{
     rv_trace::{ELFInstruction, MemoryOp},
 };
 
+use self::bytecode::BytecodePreprocessing;
 use self::instruction_lookups::{
     InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
@@ -50,6 +51,7 @@ where
     pub generators: PedersenGenerators<G>,
     pub spartan_generators: Vec<bn256::G1Affine>,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
+    pub bytecode: BytecodePreprocessing<F>,
 }
 
 pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
@@ -94,6 +96,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
+        bytecode: Vec<BytecodeRow>,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
@@ -106,7 +109,7 @@ where
             ReadWriteMemory::<F, G>::num_generators(max_memory_address, max_trace_length);
         let timestamp_range_check_generators =
             TimestampValidityProof::<F, G>::num_generators(max_trace_length);
-        let preprocessing = InstructionLookupsPreprocessing::preprocess::<
+        let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             C,
             M,
             Self::InstructionSet,
@@ -120,8 +123,11 @@ where
             Self::InstructionSet,
             Self::Subtables,
         >::num_generators(
-            &preprocessing, max_trace_length
+            &instruction_lookups_preprocessing,
+            max_trace_length,
         );
+
+        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
 
         let max_num_generators = max([
             num_bytecode_generators,
@@ -135,7 +141,8 @@ where
         JoltPreprocessing {
             generators: generators.clone(),
             spartan_generators: generators.to_spartan_bn256(),
-            instruction_lookups: preprocessing,
+            instruction_lookups: instruction_lookups_preprocessing,
+            bytecode: bytecode_preprocessing,
         }
     }
 
@@ -157,7 +164,7 @@ where
             .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
             .collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
-            bytecode_rows.clone(),
+            &preprocessing.bytecode,
             bytecode_trace.clone(),
             &preprocessing.generators,
             &mut transcript,
@@ -232,7 +239,12 @@ where
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = Transcript::new(b"Jolt transcript");
-        Self::verify_bytecode(proof.bytecode, commitments.bytecode, &mut transcript)?;
+        Self::verify_bytecode(
+            &preprocessing.bytecode,
+            proof.bytecode,
+            commitments.bytecode,
+            &mut transcript,
+        )?;
         Self::verify_memory(
             proof.read_write_memory,
             commitments.read_write_memory,
@@ -276,7 +288,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_bytecode")]
     fn prove_bytecode(
-        bytecode_rows: Vec<BytecodeRow>,
+        preprocessing: &BytecodePreprocessing<F>,
         trace: Vec<BytecodeRow>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
@@ -285,25 +297,20 @@ where
         BytecodePolynomials<F, G>,
         BytecodeCommitment<G>,
     ) {
-        let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(bytecode_rows, trace);
-        let batched_polys = polys.batch();
-        let commitment = BytecodePolynomials::commit(&polys, &batched_polys, &generators);
-
-        let proof = BytecodeProof::prove_memory_checking(
-            &NoPreprocessing,
-            &polys,
-            &batched_polys,
-            transcript,
-        );
+        let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(preprocessing, trace);
+        let commitment = BytecodePolynomials::commit(&polys, &(), &generators);
+        let proof = BytecodeProof::prove_memory_checking(preprocessing, &polys, &(), transcript);
+        
         (proof, polys, commitment)
     }
 
     fn verify_bytecode(
+        preprocessing: &BytecodePreprocessing<F>,
         proof: BytecodeProof<F, G>,
         commitment: BytecodeCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        BytecodeProof::verify_memory_checking(&NoPreprocessing, proof, &commitment, transcript)
+        BytecodeProof::verify_memory_checking(preprocessing, proof, &commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
