@@ -438,27 +438,29 @@ where
 
         // Assemble the polynomials
         let (bytecode_a, mut bytecode_v) = jolt_polynomials.bytecode.get_polys_r1cs();
-        bytecode_v.extend(packed_flags.iter()); 
+        bytecode_v.par_extend(packed_flags.par_iter()); 
 
         let (memreg_a_rw, memreg_v_reads, memreg_v_writes) = jolt_polynomials.read_write_memory.get_polys_r1cs();
 
-        let chunks_query: Vec<F> = jolt_polynomials.instruction_lookups.dim.par_iter().take(C).flat_map(|poly| poly.evals()).collect();
+        let span = tracing::span!(tracing::Level::INFO, "chunks_query");
+        let _guard = span.enter();
+        let mut chunks_query: Vec<F> = Vec::with_capacity(C * jolt_polynomials.instruction_lookups.dim[0].len());
+        for i in 0..C {
+            chunks_query.par_extend(jolt_polynomials.instruction_lookups.dim[i].evals_ref().par_iter());
+        }
+        drop(_guard);
 
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
         // will be the exact witness vector to feed into the R1CS
         // after pre-pending IO and appending the AUX 
-        // let inputs: Vec<Vec<F>> = vec![
-        //     bytecode_a, // prog_a_rw,
-        //     bytecode_v, // prog_v_rw (with circuit_flags_packed)
-        //     memreg_a_rw,
-        //     memreg_v_reads,
-        //     memreg_v_writes,
-        //     chunks_x.clone(),
-        //     chunks_y.clone(),
-        //     chunks_query,
-        //     lookup_outputs.clone(),
-        //     circuit_flags_bits.clone(),
-        // ];
+
+        let span = tracing::span!(tracing::Level::INFO, "input_cloning");
+        let _guard = span.enter();
+        let input_chunks_x = chunks_x.clone();
+        let input_chunks_y = chunks_y.clone();
+        let input_lookup_outputs = lookup_outputs.clone();
+        let input_circuit_flags_bits = circuit_flags_bits.clone();
+        drop(_guard);
 
         let inputs: R1CSInputs<spartan2::provider::bn256_grumpkin::bn256::Scalar> = R1CSInputs::from_ark(
             bytecode_a,
@@ -466,11 +468,11 @@ where
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
-            chunks_x.clone(),
-            chunks_y.clone(),
+            input_chunks_x,
+            input_chunks_y,
             chunks_query,
-            lookup_outputs.clone(),
-            circuit_flags_bits.clone()
+            input_lookup_outputs,
+            input_circuit_flags_bits
         );
 
         // Assemble the commitments

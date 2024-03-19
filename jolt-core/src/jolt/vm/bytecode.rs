@@ -312,6 +312,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    #[tracing::instrument(skip_all, name = "BytecodePolynomials::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>) {
         let a_read_write_evals = self.a_read_write.evals().clone();
         let v_read_write_evals = [
