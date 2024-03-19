@@ -34,7 +34,7 @@ pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
-    eval_arg: Vec<F>, // TODO(arasuarun): better name
+    eval_arg: Vec<F>, // TODO(arasuarun / sragss): better name
     claimed_witnesss_evals: Vec<F>,
     opening_proof: BatchedHyraxOpeningProof<1, G>
 }
@@ -68,7 +68,7 @@ pub enum SpartanError {
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "SNARK::setup_precommitted")]
-    fn setup_precommitted<C: UniformShapeBuilder<F>>(
+    pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
         circuit: C,
         num_steps: usize,
         generators: HyraxGenerators<1, G>,

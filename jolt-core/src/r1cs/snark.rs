@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
+use merlin::Transcript;
 use spartan2::{
   errors::SpartanError, 
   provider::{
@@ -21,7 +22,9 @@ use rayon::prelude::*;
 use ark_ff::PrimeField as arkPrimeField;
 use ark_std::{Zero, One};
 
-use crate::utils;
+use crate::{r1cs::spartan::UniformSpartanProof, utils};
+
+use super::spartan::UniformShapeBuilder;
 
 const WTNS_GRAPH_BYTES: &[u8] = include_bytes!("./graph.bin");
 
@@ -307,8 +310,13 @@ impl R1CSProof {
       .chain(aux_comms.into_iter())
       .collect::<Vec<_>>();
 
-      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
+      // TODO(sragss / arasuarun): Wire up remainder here.
+      let transcript = Transcript::new(b"transcript");
+      let key = UniformSpartanProof::setup_precommitted(skeleton_circuit, TRACE_LEN, generators)?;
+      let proof = UniformSpartanProof::prove_precommitted(generators, key, w_segments, comm_w_vec, & mut transcript)?;
 
+
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
       SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comm_w_vec).map(|snark| Self {
         proof: snark,
         vk
@@ -319,3 +327,16 @@ impl R1CSProof {
     SNARK::verify_precommitted(&self.proof, &self.vk, &[])
   }
 }
+
+
+// TODO(sragss / arasuarun): Finish impl after ripping out ff::PrimeField garbage
+// impl<F: PrimeField> UniformShapeBuilder<F> for JoltSkeleton<F> {
+//   fn single_step_shape(&self) -> super::r1cs_shape::R1CSShape<F> {
+//     let mut cs: ShapeCS<G> = ShapeCS::new();
+//     self.synthesize      
+//   }
+
+//   fn full_shape(&self, N: usize, single_step_shape: &super::r1cs_shape::R1CSShape<F>) -> super::r1cs_shape::R1CSShape<F> {
+      
+//   }
+// }
