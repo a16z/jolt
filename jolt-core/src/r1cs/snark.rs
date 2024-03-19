@@ -127,7 +127,7 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
           }
       }
 
-      R1CSBuilder::<F>::calculate_aux(&mut step_z);
+      R1CSBuilder::calculate_aux::<F>(&mut step_z);
       step_z 
     })
     .collect::<Vec<Vec<F>>>();
@@ -175,8 +175,8 @@ impl R1CSProof {
 
       let jolt_circuit = JoltCircuit::<F>::new_from_inputs(NUM_STEPS, inputs.clone());
       
-      let mut jolt_shape = R1CSBuilder::<F>::default(); 
-      R1CSBuilder::<F>::get_matrices(&mut jolt_shape); 
+      let mut jolt_shape = R1CSBuilder::default(); 
+      R1CSBuilder::get_matrices(&mut jolt_shape); 
       let constraints_F = jolt_shape.convert_to_field(); 
       let shape_single = R1CSShape::<G1> {
           A: constraints_F.0,
