@@ -168,7 +168,9 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
   #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_stepwise")]
   pub fn clone_to_stepwise(&self) -> Vec<Vec<F>> {
     const PREFIX_VARS_PER_STEP: usize = 5;
-    const AUX_VARS_PER_STEP: usize = 20;
+
+    // AUX_VARS_PER_STEP has to be greater than the number of additional vars pushed by the constraint system
+    const AUX_VARS_PER_STEP: usize = 20; 
     let num_inputs_per_step = self.num_vars_per_step() + PREFIX_VARS_PER_STEP;
 
     let stepwise = (0..self.trace_len()).into_par_iter().map(|step_index| {
