@@ -188,7 +188,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         transcript.append_scalars(b"claims_outer", &[claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
-        let r = transcript.challenge_scalar(b"r")?;
+        let r: F = transcript.challenge_scalar(b"r");
         let claim_inner_joint = claim_Az + r * claim_Bz + r * r * claim_Cz;
 
         let span = tracing::span!(tracing::Level::TRACE, "poly_ABC");
@@ -307,7 +307,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         drop(_enter);
 
         // now batch these together
-        let c = transcript.challenge_scalar(b"c")?;
+        let c: F = transcript.challenge_scalar(b"c");
         // todo!("change batching strategy");
         // let w: PolyEvalWitness<G> = PolyEvalWitness::batch(&w.W.as_slice().iter().map(|v| v.as_ref()).collect::<Vec<_>>(), &c);
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &witness_evals, &c);
@@ -391,7 +391,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         );
 
         // inner sum-check
-        let r = transcript.challenge_scalar(b"r")?;
+        let r: F = transcript.challenge_scalar(b"r");
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r * self.outer_sumcheck_claims.1
             + r * r * self.outer_sumcheck_claims.2;
@@ -412,7 +412,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let eval_Z = {
             let eval_X = {
                 // constant term
-                let mut poly_X = vec![(0, 1.into())];
+                let mut poly_X = vec![(0, F::one())];
                 //remaining inputs
                 // TODO(sragss / arasuarun): I believe this is supposed to be io -- which is empty??
                 // poly_X.extend(
@@ -504,7 +504,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // let eval_vec = &self.eval_W;
 
         let r_y_point = &r_y[n_prefix..];
-        let c = transcript.challenge_scalar(b"c")?;
+        let c: F = transcript.challenge_scalar(b"c");
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &eval_vec, &c);
         let hyrax_commitment_refs: Vec<&HyraxCommitment<1, G>> = self.witness_segment_commitments.iter().map(|commit_ref| commit_ref).collect(); // TODO(sragss): Fix
         self.opening_proof.verify(&generators, &r_y_point, &self.claimed_witnesss_evals, &hyrax_commitment_refs, &mut transcript)
@@ -512,4 +512,50 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         Ok(())
     }
+}
+
+struct SparsePolynomial<F: PrimeField> {
+  num_vars: usize,
+  Z: Vec<(usize, F)>,
+}
+
+impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
+  pub fn new(num_vars: usize, Z: Vec<(usize, Scalar)>) -> Self {
+    SparsePolynomial { num_vars, Z }
+  }
+
+  /// Computes the $\tilde{eq}$ extension polynomial.
+  /// return 1 when a == r, otherwise return 0.
+  fn compute_chi(a: &[bool], r: &[Scalar]) -> Scalar {
+    assert_eq!(a.len(), r.len());
+    let mut chi_i = Scalar::ONE;
+    for j in 0..r.len() {
+      if a[j] {
+        chi_i *= r[j];
+      } else {
+        chi_i *= Scalar::ONE - r[j];
+      }
+    }
+    chi_i
+  }
+
+  // Takes O(n log n)
+  pub fn evaluate(&self, r: &[Scalar]) -> Scalar {
+    assert_eq!(self.num_vars, r.len());
+
+    (0..self.Z.len())
+      .into_par_iter()
+      .map(|i| {
+        let bits = get_bits(self.Z[0].0, r.len());
+        SparsePolynomial::compute_chi(&bits, r) * self.Z[i].1
+      })
+      .sum()
+  }
+}
+
+/// Returns the `num_bits` from n in a canonical order
+fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
+  (0..num_bits)
+    .map(|shift_amount| ((operand & (1 << (num_bits - shift_amount - 1))) > 0))
+    .collect::<Vec<bool>>()
 }
