@@ -224,11 +224,11 @@ fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha2-guest", &[5u8; 32])
+    prove_example("sha2-guest", &vec![5u8; 2048])
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha3-guest", &[5u8; 32])
+    prove_example("sha3-guest", &vec![5u8; 2048])
 }
 
 fn prove_example<T: Serialize>(
