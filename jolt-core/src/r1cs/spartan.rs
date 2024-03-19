@@ -369,7 +369,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let (claim_outer_final, r_x) =
             self.outer_sumcheck_proof
-                .verify(F::zero(), num_rounds_x, 3, &mut transcript)?;
+                .verify::<_, Transcript>(F::zero(), num_rounds_x, 3, &mut transcript)?;
 
         // verify claim_outer_final
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
@@ -395,7 +395,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             + r * self.outer_sumcheck_claims.1
             + r * r * self.outer_sumcheck_claims.2;
 
-        let (claim_inner_final, r_y) = self.inner_sumcheck_proof.verify(
+        let (claim_inner_final, r_y) = self.inner_sumcheck_proof.verify::<_, Transcript>(
             claim_inner_joint,
             num_rounds_y,
             2,
