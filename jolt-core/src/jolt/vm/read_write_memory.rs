@@ -28,8 +28,8 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
 use common::constants::{
-    BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS,
-    REGISTER_COUNT,
+    BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS,
+    PANIC_ADDRESS, RAM_START_ADDRESS, REGISTER_COUNT,
 };
 use common::rv_trace::{ELFInstruction, MemoryOp, RV32IM};
 use common::to_ram_address;
@@ -171,14 +171,24 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let m = memory_trace.len();
         assert!(m.is_power_of_two());
 
-        let remap_address = |a: u64| {
-            assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
+        let remap_address = |a: u64, io_offset: Option<u64>| {
             if a >= RAM_START_ADDRESS {
                 a - RAM_START_ADDRESS + REGISTER_COUNT
-            } else {
+            } else if a >= INPUT_START_ADDRESS && a <= PANIC_ADDRESS {
+                // This memory op is reading program input or writing program output.
+                // This address space is remapped to go after RAM, so the offset will
+                // be computed after we know the max RAM address.
+                if let Some(offset) = io_offset {
+                    a - INPUT_START_ADDRESS + offset
+                } else {
+                    0
+                }
+            } else if a < REGISTER_COUNT {
                 // If a < REGISTER_COUNT, it is one of the registers and doesn't
                 // need to be remapped
                 a
+            } else {
+                panic!("Unexpected address {}", a)
             }
         };
 
@@ -186,24 +196,26 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .iter()
             .flat_map(|step| {
                 step.iter().map(|op| match op {
-                    MemoryOp::Read(a, _) => remap_address(*a),
-                    MemoryOp::Write(a, _) => remap_address(*a),
+                    MemoryOp::Read(a, _) => remap_address(*a, None),
+                    MemoryOp::Write(a, _) => remap_address(*a, None),
                 })
             })
             .max()
             .unwrap_or(0);
         let max_bytecode_address = bytecode
             .iter()
-            .map(|instr| remap_address(instr.address))
+            .map(|instr| remap_address(instr.address, None))
             .max()
             .unwrap_or(0)
             + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
-        let memory_size =
-            max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
+
+        let io_offset = max(max_memory_address, max_bytecode_address);
+        let io_size = PANIC_ADDRESS - INPUT_START_ADDRESS;
+        let memory_size = (io_offset + io_size).next_power_of_two() as usize;
 
         let mut v_init: Vec<u64> = vec![0; memory_size];
         for instr in bytecode {
-            let address = remap_address(instr.address);
+            let address = remap_address(instr.address, None);
             let raw = instr.raw;
             for i in 0..(BYTES_PER_INSTRUCTION as u64) {
                 // Write one byte of raw to v_init
@@ -246,7 +258,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             for (i, memory_access) in step.iter().enumerate() {
                 match memory_access {
                     MemoryOp::Read(a, v) => {
-                        let remapped_a = remap_address(*a);
+                        let remapped_a = remap_address(*a, Some(io_offset));
                         debug_assert_eq!(*v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
@@ -270,7 +282,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             for (i, memory_access) in step.iter().enumerate() {
                 match memory_access {
                     MemoryOp::Write(a, v_new) => {
-                        let remapped_a = remap_address(*a);
+                        let remapped_a = remap_address(*a, Some(io_offset));
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
@@ -354,145 +366,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         )
     }
 
-    // TODO(arasuarun): This is seriously slow and duplicated work from above.
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_r1cs_polys")]
-    pub fn get_r1cs_polys(
-        bytecode: Vec<ELFInstruction>,
-        memory_trace: Vec<MemoryOp>,
-        transcript: &mut Transcript,
-    ) -> [Vec<F>; 4] {
-        let m = memory_trace.len();
-
-        let remap_address = |a: u64| {
-            assert!(a < REGISTER_COUNT || a >= RAM_START_ADDRESS);
-            if a >= RAM_START_ADDRESS {
-                a - RAM_START_ADDRESS + REGISTER_COUNT
-                // TODO(arasuarun): for r1cs, do not substract RAM_START_ADDRESS
-                // a
-            } else {
-                // If a < REGISTER_COUNT, it is one of the registers and doesn't
-                // need to be remapped
-                a
-            }
-        };
-
-        let span = tracing::span!(tracing::Level::DEBUG, "memory_size_calculation");
-        let _enter = span.enter();
-        let max_memory_address = memory_trace
-            .iter()
-            .map(|op| match op {
-                MemoryOp::Read(a, _) => remap_address(*a),
-                MemoryOp::Write(a, _) => remap_address(*a),
-            })
-            .max()
-            .unwrap_or(0);
-        let max_bytecode_address = bytecode
-            .iter()
-            .map(|instr| remap_address(instr.address))
-            .max()
-            .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
-        let memory_size =
-            max(max_memory_address, max_bytecode_address).next_power_of_two() as usize;
-        drop(_enter);
-        drop(span);
-
-        let span = tracing::span!(tracing::Level::DEBUG, "initialize_memory");
-        let _enter = span.enter();
-        let mut v_init: Vec<u64> = vec![0; memory_size];
-        for instr in bytecode {
-            let address = remap_address(instr.address);
-            let raw = instr.raw;
-            for i in 0..(BYTES_PER_INSTRUCTION as u64) {
-                // Write one byte of raw to v_init
-                v_init[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
-            }
-        }
-        drop(_enter);
-        drop(span);
-
-        let span = tracing::span!(tracing::Level::DEBUG, "initialize_vectors");
-        let _enter = span.enter();
-        let mut a_read_write: Vec<u64> = Vec::with_capacity(m);
-        let mut v_read: Vec<u64> = Vec::with_capacity(m);
-        let mut v_write: Vec<u64> = Vec::with_capacity(m);
-
-        let span_clone = tracing::span!(tracing::Level::DEBUG, "clone_avoidance");
-        let _enter_clone = span_clone.enter();
-        let mut v_final: Vec<u64> = v_init.clone(); // TODO(moodlezoup): avoid clone
-        drop(_enter_clone);
-        drop(span_clone);
-
-        let mut t_read: Vec<u64> = Vec::with_capacity(m);
-        let mut t_write: Vec<u64> = Vec::with_capacity(m);
-
-        let span = tracing::span!(tracing::Level::DEBUG, "initialize_t_final");
-        let _enter = span.enter();
-        let mut t_final: Vec<u64> = vec![0; memory_size];
-        drop(_enter);
-        drop(span);
-
-        let mut timestamp: u64 = 0;
-        let span = tracing::span!(tracing::Level::DEBUG, "memory_access_processing");
-        let _enter = span.enter();
-        for memory_access in memory_trace {
-            match memory_access {
-                MemoryOp::Read(a, v) => {
-                    let remapped_a = remap_address(a);
-                    debug_assert_eq!(v, v_final[remapped_a as usize]);
-                    a_read_write.push(remapped_a);
-                    v_read.push(v);
-                    v_write.push(v);
-                    t_read.push(t_final[remapped_a as usize]);
-                    t_write.push(timestamp + 1);
-                    t_final[remapped_a as usize] = timestamp + 1;
-                }
-                MemoryOp::Write(a, v_new) => {
-                    let remapped_a = remap_address(a);
-                    let v_old = v_final[remapped_a as usize];
-                    a_read_write.push(remapped_a);
-                    v_read.push(v_old);
-                    v_write.push(v_new);
-                    v_final[remapped_a as usize] = v_new;
-                    t_read.push(t_final[remapped_a as usize]);
-                    t_write.push(timestamp + 1);
-                    t_final[remapped_a as usize] = timestamp + 1;
-                }
-            }
-            timestamp += 1;
-        }
-        drop(_enter);
-        drop(span);
-
-        // create a closure to convert u64 to F vector
-        let to_f_vec = |v: &Vec<u64>| -> Vec<F> {
-            v.par_iter()
-                .map(|i| F::from_u64(*i).unwrap())
-                .collect::<Vec<F>>()
-        };
-
-        let un_remap_address = |a: &Vec<u64>| {
-            a.iter()
-                .map(|addr| {
-                    if *addr >= REGISTER_COUNT {
-                        addr + RAM_START_ADDRESS - REGISTER_COUNT
-                    } else {
-                        *addr
-                    }
-                })
-                .collect::<Vec<u64>>()
-        };
-
-        [
-            // to_f_vec(&un_remap_address(&a_read_write)),
-            to_f_vec(&a_read_write),
-            to_f_vec(&v_read),
-            to_f_vec(&v_write),
-            to_f_vec(&t_read),
-        ]
-    }
-
-    #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>, Vec<F>) {
         let par_flatten = |polys: &[DensePolynomial<F>]| -> Vec<F> {
             polys

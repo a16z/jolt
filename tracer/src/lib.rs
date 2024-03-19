@@ -21,54 +21,6 @@ pub use common::rv_trace::{
 
 use crate::decode::decode_raw;
 
-/// Runs the tracer with the provided paths.
-///
-/// # Parameters
-///
-/// * `elf_location`: The path to the ELF file.
-/// * `trace_destination`: The path where the trace will be written.
-/// * `bytecode_destination`: The path where the bytecode will be written.
-///
-/// # Returns
-///
-/// * A `Result` containing a tuple of the num trace rows and instructions if successful, or an error if not.
-pub fn run_tracer_with_paths(
-    elf_location: PathBuf,
-    trace_destination: PathBuf,
-    bytecode_destination: PathBuf,
-    device_destination: PathBuf,
-) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-    if !elf_location.exists() {
-        return Err(format!("Could not find ELF file at location {:?}", elf_location).into());
-    }
-
-    let (rows, device) = trace(&elf_location, Vec::new());
-    rows.serialize_to_file(&trace_destination)?;
-    println!(
-        "Wrote {} rows to         {}.",
-        rows.len(),
-        trace_destination.display()
-    );
-
-    let instructions = decode(&elf_location);
-    instructions.serialize_to_file(&bytecode_destination)?;
-    println!(
-        "Wrote {} instructions to {}.",
-        instructions.len(),
-        bytecode_destination.display()
-    );
-
-    device.serialize_to_file(&device_destination)?;
-    println!(
-        "Wrote {} bytes of inputs and outputs to {}.",
-        device.size(),
-        device_destination.display()
-    );
-
-    // let rows: Vec<()> = vec![];
-    Ok((rows.len(), instructions.len()))
-}
-
 pub fn trace(elf: &PathBuf, inputs: Vec<u8>) -> (Vec<RVTraceRow>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));

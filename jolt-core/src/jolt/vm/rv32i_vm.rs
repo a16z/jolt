@@ -148,6 +148,7 @@ mod tests {
         serializable::Serializable,
     };
     use itertools::Itertools;
+    use jolt_sdk::host;
     use merlin::Transcript;
     use rand_core::SeedableRng;
     use std::collections::HashSet;
@@ -281,14 +282,9 @@ mod tests {
     fn fib_e2e() {
         use common::{path::JoltPaths, rv_trace::ELFInstruction};
         let _guard = FIB_FILE_LOCK.lock().unwrap();
-        compiler::compile_example("fibonacci-guest");
 
-        let trace_location = JoltPaths::trace_path("fibonacci-guest");
-        let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
-            .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("fibonacci-guest");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
+        let program = host::Program::new("fibonacci-guest").input(&9u32);
+        let (trace, bytecode, io_device) = program.trace();
 
         let bytecode_trace: Vec<BytecodeRow> = trace
             .iter()
@@ -403,14 +399,9 @@ mod tests {
     #[test]
     fn sha3_e2e() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
-        compiler::compile_example("sha3-guest");
 
-        let trace_location = JoltPaths::trace_path("sha3-guest");
-        let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
-            .expect("deserialization failed");
-        let bytecode_location = JoltPaths::bytecode_path("sha3-guest");
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
+        let program = host::Program::new("sha3-guest").input(&[5u8; 32]);
+        let (trace, bytecode, io_device) = program.trace();
 
         let bytecode_trace: Vec<BytecodeRow> = trace
             .iter()

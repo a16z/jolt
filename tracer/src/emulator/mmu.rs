@@ -485,7 +485,7 @@ impl Mmu {
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => self.memory.read_byte(effective_address),
-            false => match effective_address as usize {
+            false => match effective_address {
                 // I don't know why but dtb data seems to be stored from 0x1020 on Linux.
                 // It might be from self.x[0xb] initialization?
                 // And DTB size is arbitray.
@@ -585,7 +585,7 @@ impl Mmu {
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => self.memory.write_byte(effective_address, value),
-            false => match effective_address as usize {
+            false => match effective_address {
                 0x02000000..=0x0200ffff => self.clint.store(effective_address, value),
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
