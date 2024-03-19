@@ -654,7 +654,7 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address as usize == PANIC_ADDRESS {
+        if address == PANIC_ADDRESS {
             self.panic = true;
             return;
         }
@@ -673,9 +673,9 @@ impl JoltDevice {
 }
 
 fn convert_read_address(address: u64) -> usize {
-    address as usize - INPUT_START_ADDRESS
+    (address - INPUT_START_ADDRESS) as usize
 }
 
 fn convert_write_address(address: u64) -> usize {
-    address as usize - OUTPUT_START_ADDRESS
+    (address - OUTPUT_START_ADDRESS) as usize
 }

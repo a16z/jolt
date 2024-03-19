@@ -9,8 +9,10 @@ use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::rv_trace::{ELFInstruction, MemoryOp, RVTraceRow};
 use criterion::black_box;
+use jolt_sdk::host;
 use merlin::Transcript;
 use rand_core::SeedableRng;
+use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -200,31 +202,26 @@ fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 }
 
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("fibonacci-guest")
+    prove_example("fibonacci-guest", &9u32)
 }
 
 fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha2-guest")
+    prove_example("sha2-guest", &[5u8; 32])
 }
 
 fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha3-guest")
+    prove_example("sha3-guest", &[5u8; 32])
 }
 
-fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+fn prove_example<T: Serialize>(
+    example_name: &str,
+    input: &T,
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
-    use common::{path::JoltPaths, serializable::Serializable};
-    compiler::compile_example(example_name);
+    let program = host::Program::new(example_name).input(input);
 
-    let example_name = example_name.to_string();
     let task = move || {
-        let trace_location = JoltPaths::trace_path(&example_name);
-        let trace: Vec<RVTraceRow> = Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
-            .expect("deserialization failed");
-
-        let bytecode_location = JoltPaths::bytecode_path(&example_name);
-        let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-            .expect("deserialization failed");
+        let (trace, bytecode, io_device) = program.trace();
 
         let bytecode_trace: Vec<BytecodeRow> = trace
             .iter()
@@ -255,7 +252,10 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
             })
             .collect();
 
-        let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<
+            ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
+            ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>,
+        > = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             bytecode,
@@ -272,6 +272,7 @@ fn prove_example(example_name: &str) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
             verification_result.err()
         );
     };
+
     tasks.push((
         tracing::info_span!("Example_E2E"),
         Box::new(task) as Box<dyn FnOnce()>,

@@ -23,7 +23,6 @@ members = [
     "jolt-core",
     "tracer",
     "common",
-    "compiler",
     "jolt-sdk",
     "jolt-sdk/macros",
     "examples/fibonacci",
@@ -32,7 +31,6 @@ members = [
     "examples/sha2-ex/guest",
     "examples/sha3-ex",
     "examples/sha3-ex/guest",
-    "integration-tests",
 ]
 
 [profile.test]

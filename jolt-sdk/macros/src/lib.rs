@@ -10,7 +10,7 @@ use common::constants::{INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRE
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_fn = parse_macro_input!(item as ItemFn);
 
-    let max_input_len = INPUT_END_ADDRESS - INPUT_START_ADDRESS;
+    let max_input_len = (INPUT_END_ADDRESS - INPUT_START_ADDRESS) as usize;
 
     let get_input_slice = quote! {
         let input_ptr = #INPUT_START_ADDRESS as *const u8;
@@ -47,7 +47,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let block = &input_fn.block;
     let block = quote! {let to_return = (|| -> _ { #block })();};
 
-    let max_output_len = OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS;
+    let max_output_len = (OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS) as usize;
     let handle_return = match &input_fn.sig.output {
         ReturnType::Default => quote! {},
         ReturnType::Type(_, _) => quote! {
