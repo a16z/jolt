@@ -142,6 +142,7 @@ where
 mod tests {
     use ark_bn254::{Fr, G1Projective};
     use common::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS};
+    use common::rv_trace::{JoltDevice, RV32IM};
     use common::{
         path::JoltPaths,
         rv_trace::{ELFInstruction, RVTraceRow},
@@ -177,7 +178,16 @@ mod tests {
         let mut prover_transcript = Transcript::new(b"example");
 
         let preprocessing = RV32IJoltVM::preprocess(
-            vec![BytecodeRow::no_op(RAM_START_ADDRESS as usize)],
+            vec![ELFInstruction {
+                address: RAM_START_ADDRESS,
+                opcode: RV32IM::ADD,
+                raw: 0,
+                rs1: None,
+                rs2: None,
+                rd: None,
+                imm: None,
+            }],
+            JoltDevice::new(),
             1 << 20,
             1 << 20,
             1 << 22,
@@ -325,7 +335,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let preprocessing = RV32IJoltVM::preprocess(bytecode_rows, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
             bytecode,
             bytecode_trace,
@@ -447,7 +458,8 @@ mod tests {
             })
             .collect();
 
-        let preprocessing = RV32IJoltVM::preprocess(bytecode_rows, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             bytecode,
             bytecode_trace,

@@ -7,7 +7,7 @@ use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::rv_trace::{ELFInstruction, MemoryOp, RVTraceRow};
+use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RVTraceRow};
 use criterion::black_box;
 use jolt_sdk::host;
 use merlin::Transcript;
@@ -72,8 +72,13 @@ fn prove_e2e_except_r1cs(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing =
-        RV32IJoltVM::preprocess(bytecode_rows, bytecode_size, memory_size, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(
+        bytecode,
+        JoltDevice::new(),
+        bytecode_size,
+        memory_size,
+        num_cycles,
+    );
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -84,7 +89,7 @@ fn prove_e2e_except_r1cs(
             &mut transcript,
         );
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
-            bytecode,
+            &preprocessing.read_write_memory,
             memory_trace,
             &preprocessing.generators,
             &mut transcript,
@@ -112,12 +117,18 @@ fn prove_bytecode(
     let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
-    let bytecode_rows: Vec<BytecodeRow> = (0..bytecode_size)
-        .map(|i| BytecodeRow::random(i, &mut rng))
+    let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
+        .map(|i| ELFInstruction::random(i, &mut rng))
+        .collect();
+
+    let bytecode_rows: Vec<BytecodeRow> = bytecode
+        .iter()
+        .map(|instr| BytecodeRow::from_instruction::<RV32I>(instr))
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(bytecode_rows, bytecode_size, 1, num_cycles);
+    let preprocessing =
+        RV32IJoltVM::preprocess(bytecode, JoltDevice::new(), bytecode_size, 1, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -147,12 +158,18 @@ fn prove_memory(
         .collect();
     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(vec![], bytecode_size, memory_size, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(
+        bytecode,
+        JoltDevice::new(),
+        bytecode_size,
+        memory_size,
+        num_cycles,
+    );
 
     let work = Box::new(move || {
         let mut transcript = Transcript::new(b"example");
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
-            bytecode,
+            &preprocessing.read_write_memory,
             memory_trace,
             &preprocessing.generators,
             &mut transcript,
@@ -169,7 +186,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
         .take(num_cycles)
         .collect();
 
-    let preprocessing = RV32IJoltVM::preprocess(vec![], 1, 1, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(vec![], JoltDevice::new(), 1, 1, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -253,15 +270,10 @@ fn prove_example<T: Serialize>(
             })
             .collect();
 
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
-            .iter()
-            .map(BytecodeRow::from_instruction::<RV32I>)
-            .collect();
-
         let preprocessing: crate::jolt::vm::JoltPreprocessing<
             ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
             ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>,
-        > = RV32IJoltVM::preprocess(bytecode_rows, 1 << 20, 1 << 20, 1 << 22);
+        > = RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             bytecode,
