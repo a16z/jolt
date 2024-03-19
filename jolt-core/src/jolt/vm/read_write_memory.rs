@@ -209,13 +209,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .unwrap_or(0)
             + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
 
-        let io_offset = max(max_memory_address, max_bytecode_address);
+        let io_offset = max(max_memory_address, max_bytecode_address).next_power_of_two();
         let io_size = PANIC_ADDRESS - INPUT_START_ADDRESS;
         let memory_size = (io_offset + io_size).next_power_of_two() as usize;
 
         let mut v_init: Vec<u64> = vec![0; memory_size];
         for instr in bytecode {
-            let address = remap_address(instr.address, None);
+            let address = remap_address(instr.address, Some(io_offset));
             let raw = instr.raw;
             for i in 0..(BYTES_PER_INSTRUCTION as u64) {
                 // Write one byte of raw to v_init
@@ -503,7 +503,8 @@ pub struct MemoryReadWriteOpeningProof<G: CurveGroup> {
     t_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryReadWriteOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>>
+    for MemoryReadWriteOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -630,7 +631,8 @@ where
     t_final: F,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryInitFinalOpenings<F>
+impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>>
+    for MemoryInitFinalOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -673,7 +675,7 @@ where
         )
     }
 
-    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &Vec<F>) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
     }

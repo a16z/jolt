@@ -11,7 +11,7 @@ use strum::{EnumCount, IntoEnumIterator};
 use tracing::trace_span;
 
 use crate::jolt::instruction::SubtableIndices;
-use crate::lasso::memory_checking::MultisetHashes;
+use crate::lasso::memory_checking::{MultisetHashes, NoPreprocessing};
 use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
 };
@@ -354,6 +354,8 @@ where
     G: CurveGroup<ScalarField = F>,
     Subtables: LassoSubtable<F> + IntoEnumIterator,
 {
+    type Preprocessing = InstructionLookupsPreprocessing<F>;
+
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
@@ -387,7 +389,11 @@ where
         )
     }
 
-    fn compute_verifier_openings(&mut self, opening_point: &Vec<F>) {
+    fn compute_verifier_openings(
+        &mut self,
+        _preprocessing: &Self::Preprocessing,
+        opening_point: &Vec<F>,
+    ) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
         self.v_init_final = Some(
