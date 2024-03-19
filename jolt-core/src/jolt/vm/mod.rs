@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use circom_scotia::r1cs;
 use common::constants::NUM_R1CS_POLYS;
+use common::rv_trace::JoltDevice;
 use halo2curves::bn256;
 use itertools::max;
 use merlin::Transcript;
@@ -36,7 +37,9 @@ use self::bytecode::BytecodePreprocessing;
 use self::instruction_lookups::{
     InstructionCommitment, InstructionLookupsPreprocessing, InstructionLookupsProof,
 };
-use self::read_write_memory::{MemoryCommitment, ReadWriteMemory, ReadWriteMemoryProof};
+use self::read_write_memory::{
+    MemoryCommitment, ReadWriteMemory, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
+};
 use self::{
     bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, BytecodeRow},
     instruction_lookups::InstructionPolynomials,
@@ -52,6 +55,7 @@ where
     pub spartan_generators: Vec<bn256::G1Affine>,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
     pub bytecode: BytecodePreprocessing<F>,
+    pub read_write_memory: ReadWriteMemoryPreprocessing,
 }
 
 pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
@@ -96,13 +100,12 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
-        bytecode: Vec<BytecodeRow>,
+        bytecode: Vec<ELFInstruction>,
+        program_io: JoltDevice,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<F, G> {
-        // TODO(moodlezoup): move more stuff into preprocessing
-
         let num_bytecode_generators =
             BytecodePolynomials::<F, G>::num_generators(max_bytecode_size, max_trace_length);
         let num_read_write_memory_generators =
@@ -127,7 +130,14 @@ where
             max_trace_length,
         );
 
-        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
+        let read_write_memory_preprocessing =
+            ReadWriteMemoryPreprocessing::preprocess(&bytecode, program_io);
+
+        let bytecode_rows: Vec<BytecodeRow> = bytecode
+            .iter()
+            .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
+            .collect();
+        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode_rows);
 
         let max_num_generators = max([
             num_bytecode_generators,
@@ -143,6 +153,7 @@ where
             spartan_generators: generators.to_spartan_bn256(),
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
+            read_write_memory: read_write_memory_preprocessing,
         }
     }
 
@@ -179,7 +190,7 @@ where
         );
 
         let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
-            bytecode.clone(),
+            &preprocessing.read_write_memory,
             padded_memory_trace,
             &preprocessing.generators,
             &mut transcript,
@@ -246,6 +257,7 @@ where
             &mut transcript,
         )?;
         Self::verify_memory(
+            &preprocessing.read_write_memory,
             proof.read_write_memory,
             commitments.read_write_memory,
             &mut transcript,
@@ -300,7 +312,7 @@ where
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(preprocessing, trace);
         let commitment = BytecodePolynomials::commit(&polys, &(), &generators);
         let proof = BytecodeProof::prove_memory_checking(preprocessing, &polys, &(), transcript);
-        
+
         (proof, polys, commitment)
     }
 
@@ -315,7 +327,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
-        bytecode: Vec<ELFInstruction>,
+        preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
@@ -324,13 +336,14 @@ where
         ReadWriteMemory<F, G>,
         MemoryCommitment<G>,
     ) {
-        let (memory, read_timestamps) = ReadWriteMemory::new(bytecode, memory_trace, transcript);
+        let (memory, read_timestamps) =
+            ReadWriteMemory::new(preprocessing, memory_trace, transcript);
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> =
             ReadWriteMemory::commit(&memory, &batched_polys, &generators);
 
         let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
-            &NoPreprocessing,
+            preprocessing,
             &memory,
             &batched_polys,
             transcript,
@@ -355,12 +368,13 @@ where
     }
 
     fn verify_memory(
+        preprocessing: &ReadWriteMemoryPreprocessing,
         mut proof: ReadWriteMemoryProof<F, G>,
         commitment: MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
-            &NoPreprocessing,
+            preprocessing,
             proof.memory_checking_proof,
             &commitment,
             transcript,
