@@ -156,6 +156,7 @@ mod tests {
 
     use crate::jolt::instruction::{add::ADDInstruction, JoltInstruction};
     use crate::jolt::vm::bytecode::BytecodeRow;
+    use crate::jolt::vm::read_write_memory::RandomInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I};
     use crate::jolt::vm::MemoryOp;
     use std::sync::Mutex;
@@ -178,15 +179,7 @@ mod tests {
         let mut prover_transcript = Transcript::new(b"example");
 
         let preprocessing = RV32IJoltVM::preprocess(
-            vec![ELFInstruction {
-                address: RAM_START_ADDRESS,
-                opcode: RV32IM::ADD,
-                raw: 0,
-                rs1: None,
-                rs2: None,
-                rd: None,
-                imm: None,
-            }],
+            vec![ELFInstruction::random(0, &mut rng)],
             JoltDevice::new(),
             1 << 20,
             1 << 20,

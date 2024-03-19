@@ -162,7 +162,8 @@ impl ReadWriteMemoryPreprocessing {
             .unwrap_or(0)
             + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
 
-        let mut bytecode_bytes = vec![0u8; (max_bytecode_address - min_bytecode_address + 1) as usize];
+        let mut bytecode_bytes =
+            vec![0u8; (max_bytecode_address - min_bytecode_address + 1) as usize];
         for instr in bytecode.iter() {
             let mut byte_index = instr.address - min_bytecode_address;
             let raw = instr.raw;
@@ -216,6 +217,8 @@ where
     _group: PhantomData<G>,
     /// Size of entire address space (i.e. RAM + registers for RISC-V)
     memory_size: usize,
+    /// The index of the witness `v_init` where the program inputs/outputs start.
+    io_offset: usize,
     /// MLE of initial memory values. RAM is initialized to contain the program bytecode and inputs.
     pub v_init: DensePolynomial<F>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
@@ -266,15 +269,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
-        let mut v_init_index = remap_address(preprocessing.min_bytecode_address, None);
+        let mut v_init_index = remap_address(preprocessing.min_bytecode_address, None) as usize;
         for byte in preprocessing.bytecode_bytes.iter() {
-            v_init[v_init_index as usize] = *byte as u64;
+            v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
         // Copy input bytes
-        v_init_index = io_offset;
+        v_init_index = io_offset as usize;
         for byte in preprocessing.input_bytes.iter() {
-            v_init[v_init_index as usize] = *byte as u64;
+            v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
 
@@ -408,6 +411,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             Self {
                 _group: PhantomData,
                 memory_size,
+                io_offset: io_offset as usize,
                 v_init,
                 a_read_write,
                 v_read,
@@ -678,6 +682,9 @@ where
     v_final: F,
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
+    /// The index of the witness `v_init` where the program inputs/outputs start.
+    // TODO(moodlezoup): Fiat-Shamir this
+    io_offset: usize,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryInitFinalOpenings<F>
@@ -700,6 +707,7 @@ where
             v_init: None,
             v_final,
             t_final,
+            io_offset: polynomials.io_offset,
         }
     }
 
@@ -726,9 +734,24 @@ where
     ) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
-        // TODO(moodlezoup)
-        // self.v_init =
-        //     Some(DensePolynomial::from_u64(&preprocessing.v_init).evaluate(opening_point));
+
+        // TODO(moodlezoup): Compute opening without instantiating v_init polynomial itself
+        let memory_size = opening_point.len().pow2();
+        let mut v_init: Vec<u64> = vec![0; memory_size];
+        // Copy bytecode
+        let mut v_init_index = remap_address(preprocessing.min_bytecode_address, None) as usize;
+        for byte in preprocessing.bytecode_bytes.iter() {
+            v_init[v_init_index] = *byte as u64;
+            v_init_index += 1;
+        }
+        // Copy input bytes
+        v_init_index = self.io_offset;
+        for byte in preprocessing.input_bytes.iter() {
+            v_init[v_init_index] = *byte as u64;
+            v_init_index += 1;
+        }
+
+        self.v_init = Some(DensePolynomial::from_u64(&v_init).evaluate(opening_point));
     }
 
     fn verify_openings(
