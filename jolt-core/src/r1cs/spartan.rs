@@ -69,9 +69,8 @@ pub enum SpartanError {
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "SNARK::setup_precommitted")]
     pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
-        circuit: C,
+        circuit: &C,
         num_steps: usize,
-        generators: HyraxGenerators<1, G>,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
         let shape_single_step = circuit.single_step_shape();
         let shape_full = circuit.full_shape(num_steps, &shape_single_step);
@@ -99,7 +98,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "Spartan2::UPSnark::prove")]
     fn prove_precommitted(
-        prover_generators: HyraxGenerators<1, G>,
         key: &UniformSpartanKey<F>,
         w_segments: Vec<Vec<F>>,
         witness_commitments: Vec<HyraxCommitment<1, G>>,
@@ -307,16 +305,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         drop(_enter);
 
         // now batch these together
-        let c: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
-        // todo!("change batching strategy");
+        // let c: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
         // let w: PolyEvalWitness<G> = PolyEvalWitness::batch(&w.W.as_slice().iter().map(|v| v.as_ref()).collect::<Vec<_>>(), &c);
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &witness_evals, &c);
 
-        // TODO(sragss/arasuarun): switch to hyrax
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> = witness_segment_polys.iter().map(|poly_ref| poly_ref).collect();
         let opening_proof = BatchedHyraxOpeningProof::prove(&witness_segment_polys_ref, &r_y_point, &witness_evals, transcript);
-
-        // todo!("finish the stuff");
 
         // TODO(sragss): Compress commitments?
 
@@ -505,7 +499,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // let eval_vec = &self.eval_W;
 
         let r_y_point = &r_y[n_prefix..];
-        let c: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+        // let c: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
         // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &eval_vec, &c);
         let hyrax_commitment_refs: Vec<&HyraxCommitment<1, G>> = self.witness_segment_commitments.iter().map(|commit_ref| commit_ref).collect(); // TODO(sragss): Fix
         self.opening_proof.verify(&generators, &r_y_point, &self.claimed_witnesss_evals, &hyrax_commitment_refs, transcript)
@@ -559,4 +553,42 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
   (0..num_bits)
     .map(|shift_amount| ((operand & (1 << (num_bits - shift_amount - 1))) > 0))
     .collect::<Vec<bool>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use ark_bn254::{Fr, G1Projective};
+    use ark_std::One;
+
+    use super::*;
+
+
+    #[test]
+    fn simple_spartan_integration() {
+      struct UniformDoubleCircuit {}
+
+      impl<F: PrimeField> UniformShapeBuilder<F> for UniformDoubleCircuit {
+        fn single_step_shape(&self) -> R1CSShape<F> {
+          let a = vec![(0, 0, F::one()), (1, 0, F::one())];
+          let b = vec![(0, 0, F::one()), (1, 0, F::one())];
+          let c = vec![(0, 0, F::from(2u64)), (1, 0, F::one())];
+          R1CSShape::new(2, 1, 0, &a, &b, &c).unwrap()
+        }
+        fn full_shape(&self, N: usize, single_step_shape: &R1CSShape<F>) -> R1CSShape<F> {
+          assert_eq!(N, 1);
+          single_step_shape.clone()
+        }
+      }
+
+      // TODO(sragss / arasuarun): Commit to real witness
+      let witness = vec![vec![Fr::one(), Fr::one()]];
+
+      let mut transcript = Transcript::new(b"test_transcript");
+      let uniform_circuit = UniformDoubleCircuit {};
+
+      let key = UniformSpartanProof::<Fr, G1Projective>::setup_precommitted(&uniform_circuit, 1).unwrap();
+
+      let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(&key, witness, vec![], &mut transcript).unwrap();
+      todo!("Verify the proof");
+    }
 }
