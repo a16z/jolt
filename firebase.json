@@ -1,0 +1,10 @@
+{
+  "hosting": {
+    "public": "book/book",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}

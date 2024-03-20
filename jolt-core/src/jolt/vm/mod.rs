@@ -15,7 +15,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
-use crate::r1cs::snark::R1CSProof;
+use crate::r1cs::snark::{R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     jolt::{
@@ -321,7 +321,6 @@ where
             read_timestamps,
             &memory,
             &batched_polys,
-            &commitment,
             &generators,
             transcript,
         );
@@ -401,25 +400,21 @@ where
         drop(span);
 
         // Derive chunks_x and chunks_y
-        let span = tracing::span!(tracing::Level::INFO, "compute chunks operands");
+        let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
         let _guard = span.enter();
         
-        let mut chunks_x_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); C];
-        let mut chunks_y_vecs: Vec<Vec<F>> = vec![Vec::with_capacity(PADDED_TRACE_LEN); C];
+        let num_chunks = PADDED_TRACE_LEN * C;
+        let mut chunks_x: Vec<F> = vec![F::zero(); num_chunks];
+        let mut chunks_y: Vec<F> = vec![F::zero(); num_chunks];
 
-        for (i, op) in instructions.iter().enumerate() {
+        for (instruction_index, op) in instructions.iter().enumerate() {
             let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
-            for (j, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
-                chunks_x_vecs[j].push(F::from_u64(x as u64).unwrap());
-                chunks_y_vecs[j].push(F::from_u64(y as u64).unwrap());
+            for (chunk_index, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
+                let flat_chunk_index = instruction_index + chunk_index * PADDED_TRACE_LEN;
+                chunks_x[flat_chunk_index] = F::from_u64(x as u64).unwrap();
+                chunks_y[flat_chunk_index] = F::from_u64(y as u64).unwrap();
             }
         }
-
-        chunks_x_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
-        chunks_y_vecs.iter_mut().for_each(|vec| vec.resize(PADDED_TRACE_LEN, F::zero()));
-
-        let chunks_x: Vec<F> = chunks_x_vecs.into_iter().flatten().collect();
-        let chunks_y: Vec<F> = chunks_y_vecs.into_iter().flatten().collect();
 
         drop(_guard);
         drop(span);
@@ -443,28 +438,42 @@ where
 
         // Assemble the polynomials
         let (bytecode_a, mut bytecode_v) = jolt_polynomials.bytecode.get_polys_r1cs();
-        bytecode_v.extend(packed_flags.iter()); 
+        bytecode_v.par_extend(packed_flags.par_iter()); 
 
         let (memreg_a_rw, memreg_v_reads, memreg_v_writes) = jolt_polynomials.read_write_memory.get_polys_r1cs();
-        println!("length of memreg_a_rw and memreg_v_reads are: {} and {}", memreg_a_rw.len(), memreg_v_writes.len());
 
-        let chunks_query: Vec<F> = jolt_polynomials.instruction_lookups.dim.par_iter().take(C).flat_map(|poly| poly.evals()).collect();
+        let span = tracing::span!(tracing::Level::INFO, "chunks_query");
+        let _guard = span.enter();
+        let mut chunks_query: Vec<F> = Vec::with_capacity(C * jolt_polynomials.instruction_lookups.dim[0].len());
+        for i in 0..C {
+            chunks_query.par_extend(jolt_polynomials.instruction_lookups.dim[i].evals_ref().par_iter());
+        }
+        drop(_guard);
 
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
         // will be the exact witness vector to feed into the R1CS
         // after pre-pending IO and appending the AUX 
-        let inputs: Vec<Vec<F>> = vec![
-            bytecode_a, // prog_a_rw,
-            bytecode_v, // prog_v_rw (with circuit_flags_packed)
+
+        let span = tracing::span!(tracing::Level::INFO, "input_cloning");
+        let _guard = span.enter();
+        let input_chunks_x = chunks_x.clone();
+        let input_chunks_y = chunks_y.clone();
+        let input_lookup_outputs = lookup_outputs.clone();
+        let input_circuit_flags_bits = circuit_flags_bits.clone();
+        drop(_guard);
+
+        let inputs: R1CSInputs<spartan2::provider::bn256_grumpkin::bn256::Scalar> = R1CSInputs::from_ark(
+            bytecode_a,
+            bytecode_v,
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
-            chunks_x.clone(),
-            chunks_y.clone(),
+            input_chunks_x,
+            input_chunks_y,
             chunks_query,
-            lookup_outputs.clone(),
-            circuit_flags_bits.clone(),
-        ];
+            input_lookup_outputs,
+            input_circuit_flags_bits
+        );
 
         // Assemble the commitments
         let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
@@ -512,7 +521,7 @@ where
             circuit_flags_comm
         ].concat();
 
-        R1CSProof::prove(
+        R1CSProof::prove::<F>(
             32, C, PADDED_TRACE_LEN, 
             inputs, 
             preprocessing.spartan_generators, 
