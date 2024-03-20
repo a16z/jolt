@@ -74,9 +74,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let num_constraints_total = shape_single_step.num_cons * num_steps;
         let num_aux_total = shape_single_step.num_vars * num_steps;
+        println!("num_aux_total: {num_aux_total}");
 
         let pad_num_constraints = num_constraints_total.next_power_of_two();
         let pad_num_aux = num_aux_total.next_power_of_two();
+        println!("padded_num_aux: {pad_num_aux}");
 
         // TODO(sragss / arasuarun): Verifier key digest
         let vk_digest = F::one();
@@ -293,16 +295,20 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         );
         println!("Prover inner sumcheck r {:?}", inner_sumcheck_r);
         println!("Prover inner sumcheck claims {:?}", _claims_inner);
-        println!("Prover inner sumcheck claims {:?}", _claims_inner[0] * _claims_inner[1]);
+        println!("Prover inner sumcheck combined claims {:?}", _claims_inner[0] * _claims_inner[1]);
         std::thread::spawn(|| drop(poly_ABC));
 
         // The number of prefix bits needed to identify a segment within the witness vector
         // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
         // The +1 is the first element used to separate the inputs and the witness.
+        // TODO(sragss): Are these `.trailing_zeros()` calls in place of log_2()?
         let n_prefix = (key.num_vars_total.trailing_zeros() as usize
-            - key.num_steps.trailing_zeros() as usize)
-            + 1;
-        let r_y_point = &inner_sumcheck_r[(n_prefix -1 )..]; // TODO(sragss): This is a total hack for the unit test!
+            - key.num_steps.trailing_zeros() as usize);
+            // + 1; // TODO(sragss): This is a hack!
+        println!("key.num_vars.trailing_zeros(): {}", key.num_vars_total.trailing_zeros());
+        println!("key.num_steps.trailing_zeros(): {}", key.num_steps.trailing_zeros());
+        println!("n_prefix: {n_prefix}"); // TODO(sragss): For the 2x2 unit test I believe this value should come out to 1.
+        let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
         let span = tracing::span!(tracing::Level::TRACE, "evaluate_segments");
@@ -418,8 +424,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // verify claim_inner_final
         // this should be log (num segments)
         let n_prefix = (key.num_vars_total.trailing_zeros() as usize
-            - key.num_steps.trailing_zeros() as usize)
-            + 1;
+            - key.num_steps.trailing_zeros() as usize);
+            // + 1; // TODO(sragss): HACK!
 
         let eval_Z = {
             let eval_X = {
@@ -512,7 +518,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         println!("Evals[1] {:?}", evals[1]);
         println!("Evals[2] {:?}", evals[2]);
         println!("eval_z {:?}", eval_Z);
-        let claim_inner_final_expected = (evals[0] + r_inner_sumcheck_RLC * evals[1] + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * evals[2]) * eval_Z;
+        let left_expected = evals[0] + r_inner_sumcheck_RLC * evals[1] + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * evals[2];
+        let right_expected = eval_Z;
+        let claim_inner_final_expected = left_expected * right_expected;
+        println!("left_expected (eval ABC): {:?}", left_expected);
+        println!("right_expected (eval Z): {:?}", right_expected);
         if claim_inner_final != claim_inner_final_expected {
             // DEDUPE(arasuarun): add
             println!("Second sumcheck final check failed");
@@ -584,9 +594,9 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::pedersen::PedersenGenerators;
-
     use super::*;
+
+    use crate::poly::pedersen::PedersenGenerators;
 
     use ark_bn254::{Fr, G1Projective};
     use ark_std::One;
@@ -597,10 +607,25 @@ mod tests {
 
       impl<F: PrimeField> UniformShapeBuilder<F> for UniformDoubleCircuit {
         fn single_step_shape(&self) -> R1CSShape<F> {
-          let a = vec![(0, 0, F::one()), (1, 0, F::one())];
-          let b = vec![(0, 0, F::from(2u64)), (1, 0, F::from(2u64))];
-          let c = vec![(0, 0, F::from(2u64)), (1, 0, F::from(2u64))];
-          R1CSShape::new(2, 1, 0, &a, &b, &c).unwrap()
+          let a = vec![
+            (0, 0, F::one()), 
+            (1, 0, F::one()),
+            (2, 0, F::one()),
+            (3, 0, F::one()),
+          ];
+          let b = vec![
+            (0, 0, F::from(2u64)), 
+            (1, 0, F::from(2u64)),
+            (2, 0, F::from(2u64)),
+            (3, 0, F::from(2u64)),
+          ];
+          let c = vec![
+            (0, 0, F::from(2u64)), 
+            (1, 0, F::from(2u64)),
+            (2, 0, F::from(2u64)),
+            (3, 0, F::from(2u64))
+          ];
+          R1CSShape::new(4, 4, 0, &a, &b, &c).unwrap() // TODO(sragss): How is the nuber of variables in R1CS determined? 
         }
       }
 
