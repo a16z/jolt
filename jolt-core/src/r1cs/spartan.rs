@@ -19,7 +19,6 @@ use crate::{
 
 pub struct UniformSpartanKey<F: PrimeField> {
     shape_single_step: R1CSShape<F>, // Single step shape
-    shape_full: R1CSShape<F>,        // Single step shape
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
     num_steps: usize,                // Number of steps
@@ -47,7 +46,6 @@ pub struct PrecommittedR1CSInstance<F: PrimeField, G: CurveGroup<ScalarField = F
 // Trait which will kick out a small and big R1CS shape
 pub trait UniformShapeBuilder<F: PrimeField> {
     fn single_step_shape(&self) -> R1CSShape<F>;
-    fn full_shape(&self, N: usize, single_step_shape: &R1CSShape<F>) -> R1CSShape<F>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -67,13 +65,12 @@ pub enum SpartanError {
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
-    #[tracing::instrument(skip_all, name = "SNARK::setup_precommitted")]
+    #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
     pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
         circuit: &C,
         num_steps: usize,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
         let shape_single_step = circuit.single_step_shape();
-        let shape_full = circuit.full_shape(num_steps, &shape_single_step);
 
         let num_constraints_total = shape_single_step.num_cons * num_steps;
         let num_aux_total = shape_single_step.num_vars * num_steps;
@@ -86,7 +83,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let key = UniformSpartanKey {
             shape_single_step,
-            shape_full,
             num_cons_total: pad_num_constraints,
             num_vars_total: pad_num_aux,
             num_steps,
@@ -96,8 +92,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     }
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
-    #[tracing::instrument(skip_all, name = "Spartan2::UPSnark::prove")]
-    fn prove_precommitted(
+    #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
+    pub fn prove_precommitted(
         key: &UniformSpartanKey<F>,
         w_segments: Vec<Vec<F>>,
         witness_commitments: Vec<HyraxCommitment<1, G>>,
@@ -115,7 +111,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         });
         drop(_guard_u);
 
-        // TODO(sragss/arasuarun/moodlezoup): We can do this by reference in prove_quad_batched_unrolled.
+        // TODO(sragss/arasuarun/moodlezoup): We can do this by reference in prove_quad_batched_unrolled + multiply_vec_uniform
         let span = tracing::span!(tracing::Level::INFO, "witness_batching");
         let _guard = span.enter();
         let mut witness = Vec::with_capacity(witness_segments.len() * witness_segments[0].len());
@@ -208,7 +204,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
             // 1. Evaluate \tilde smallM(r_x, y) for all y
             let compute_eval_table_sparse_single = |small_M: &Vec<(usize, usize, F)>| -> Vec<F> {
-                let mut small_M_evals = vec![F::zero(); key.shape_full.num_vars + 1];
+                let mut small_M_evals = vec![F::zero(); key.shape_single_step.num_vars + 1];
                 for (row, col, val) in small_M.iter() {
                     small_M_evals[*col] += eq_rx_con[*row] * val;
                 }
@@ -328,7 +324,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
-    fn verify_precommitted(
+    pub fn verify_precommitted(
         &self,
         key: &UniformSpartanKey<F>,
         io: &[F],
@@ -557,11 +553,12 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::{Fr, G1Projective};
-    use ark_std::One;
+    use crate::poly::pedersen::PedersenGenerators;
 
     use super::*;
 
+    use ark_bn254::{Fr, G1Projective};
+    use ark_std::One;
 
     #[test]
     fn simple_spartan_integration() {
@@ -574,21 +571,23 @@ mod tests {
           let c = vec![(0, 0, F::from(2u64)), (1, 0, F::one())];
           R1CSShape::new(2, 1, 0, &a, &b, &c).unwrap()
         }
-        fn full_shape(&self, N: usize, single_step_shape: &R1CSShape<F>) -> R1CSShape<F> {
-          assert_eq!(N, 1);
-          single_step_shape.clone()
-        }
       }
 
-      // TODO(sragss / arasuarun): Commit to real witness
-      let witness = vec![vec![Fr::one(), Fr::one()]];
+      let witness = vec![Fr::one(), Fr::one()];
+      let witness_poly = DensePolynomial::new(witness.clone());
 
       let mut transcript = Transcript::new(b"test_transcript");
       let uniform_circuit = UniformDoubleCircuit {};
 
+      let pedersen_generators = PedersenGenerators::<G1Projective>::new(1 << 4, b"generators");
+      let hyrax_generators = HyraxGenerators::<1, G1Projective>::new(witness_poly.get_num_vars(), &pedersen_generators);
+      let witness_commitment = HyraxCommitment::commit(&witness_poly, &hyrax_generators);
+
       let key = UniformSpartanProof::<Fr, G1Projective>::setup_precommitted(&uniform_circuit, 1).unwrap();
 
-      let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(&key, witness, vec![], &mut transcript).unwrap();
-      todo!("Verify the proof");
+      let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(&key, vec![witness], vec![witness_commitment], &mut transcript).expect("should prove");
+
+      let mut transcript = Transcript::new(b"test_transcript");
+      proof.verify_precommitted(&key, &[], hyrax_generators, &mut transcript).expect("should verify");
     }
 }

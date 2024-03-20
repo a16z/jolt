@@ -123,6 +123,7 @@ impl<F: PrimeField> DensePolynomial<F> {
 
         self.Z.resize(n, F::zero());
         self.num_vars -= 1;
+        self.len = n;
     }
 
     #[tracing::instrument(skip_all)]

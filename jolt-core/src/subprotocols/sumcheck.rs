@@ -1082,6 +1082,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   where
     Func: Fn(&F, &F) -> F + Sync,
   {
+    println!("compute_eval_points_quadratic {}", poly_A.len());
     let len = poly_A.len() / 2;
     (0..len)
       .into_par_iter()

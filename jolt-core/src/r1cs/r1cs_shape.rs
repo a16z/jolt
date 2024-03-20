@@ -190,11 +190,11 @@ impl<F: PrimeField> R1CSShape<F> {
     #[tracing::instrument(skip_all, name = "R1CSShape::multiply_vec_uniform")]
     pub fn multiply_vec_uniform(
         &self,
-        W: &[F],
-        X: &[F],
+        full_witness_vector: &[F],
+        io: &[F],
         num_steps: usize,
     ) -> Result<(Vec<F>, Vec<F>, Vec<F>), SpartanError> {
-        if W.len() + X.len() != (self.num_io + self.num_vars) * num_steps {
+        if full_witness_vector.len() + io.len() != (self.num_io + self.num_vars) * num_steps {
             return Err(SpartanError::InvalidWitnessLength);
         }
 
@@ -202,12 +202,12 @@ impl<F: PrimeField> R1CSShape<F> {
         //     [W, 1, X]
         // without actually concatenating W and X, which would be expensive.
         let virtual_z_vector = |index: usize| {
-            if index < W.len() {
-                W[index]
-            } else if index == W.len() {
+            if index < full_witness_vector.len() {
+                full_witness_vector[index]
+            } else if index == full_witness_vector.len() {
                 F::one()
             } else {
-                X[index - W.len() - 1]
+                io[index - full_witness_vector.len() - 1]
             }
         };
 

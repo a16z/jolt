@@ -59,7 +59,7 @@ where
     bytecode: BytecodeProof<F, G>,
     read_write_memory: ReadWriteMemoryProof<F, G>,
     instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-    r1cs: R1CSProof,
+    r1cs: R1CSProof<F, G>,
 }
 
 pub struct JoltPolynomials<F, G>
@@ -232,11 +232,12 @@ where
             commitments.instruction_lookups,
             &mut transcript,
         )?;
-        proof
-            .r1cs
-            .verify()
-            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        Ok(())
+        todo!("make prove_r1cs return (proof, commitment) store on Jolt commitments, pass generators here");
+        // proof
+        //     .r1cs
+        //     .verify(preprocessing., &mut transcript)
+        //     .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+        // Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
@@ -361,7 +362,7 @@ where
         jolt_polynomials: &JoltPolynomials<F, G>,
         jolt_commitments: &JoltCommitments<G>,
         transcript: &mut Transcript,
-    ) -> R1CSProof {
+    ) -> R1CSProof<F, G> {
         let N_FLAGS = 17;
         let TRACE_LEN = trace.len();
         let PADDED_TRACE_LEN = TRACE_LEN.next_power_of_two();
@@ -462,7 +463,7 @@ where
         let input_circuit_flags_bits = circuit_flags_bits.clone();
         drop(_guard);
 
-        let inputs: R1CSInputs<spartan2::provider::bn256_grumpkin::bn256::Scalar> = R1CSInputs::from_ark(
+        let inputs: R1CSInputs<F> = R1CSInputs::new(
             bytecode_a,
             bytecode_v,
             memreg_a_rw,
@@ -521,12 +522,15 @@ where
             circuit_flags_comm
         ].concat();
 
-        R1CSProof::prove::<F>(
-            32, C, PADDED_TRACE_LEN, 
-            inputs, 
-            preprocessing.spartan_generators, 
-            &jolt_commitments_spartan, 
-        ).expect("R1CS proof failed")
+        todo!("finish");
+        // let proof = R1CSProof::prove::<F>(
+        //     32, C, PADDED_TRACE_LEN, 
+        //     inputs, 
+        //     preprocessing.spartan_generators, 
+        //     &jolt_commitments_spartan, 
+        // )?;
+
+        // (proof, commitment)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
