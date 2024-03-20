@@ -46,7 +46,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxGenerators<RATIO, G> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
     row_commitments: Vec<G>,
 }

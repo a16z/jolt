@@ -629,7 +629,7 @@ mod tests {
         }
       }
 
-      let witness = vec![Fr::one(), Fr::one()];
+      let witness = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
       let witness_poly = DensePolynomial::new(witness.clone());
 
       let mut transcript = Transcript::new(b"test_transcript");
@@ -642,6 +642,56 @@ mod tests {
       let key = UniformSpartanProof::<Fr, G1Projective>::setup_precommitted(&uniform_circuit, 1).unwrap();
 
       let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(&key, vec![witness], vec![witness_commitment], &mut transcript).expect("should prove");
+
+      let mut transcript = Transcript::new(b"test_transcript");
+      proof.verify_precommitted(&key, &[], hyrax_generators, &mut transcript).expect("should verify");
+    }
+
+    #[test]
+    fn multi_step_spartan_integration() {
+      struct UniformDoubleCircuit {}
+
+      impl<F: PrimeField> UniformShapeBuilder<F> for UniformDoubleCircuit {
+        fn single_step_shape(&self) -> R1CSShape<F> {
+          let a = vec![
+            (0, 0, F::one()), 
+            (1, 0, F::one()),
+            (2, 0, F::one()),
+            (3, 0, F::one()),
+          ];
+          let b = vec![
+            (0, 0, F::from(2u64)), 
+            (1, 0, F::from(2u64)),
+            (2, 0, F::from(2u64)),
+            (3, 0, F::from(2u64)),
+          ];
+          let c = vec![
+            (0, 0, F::from(2u64)), 
+            (1, 0, F::from(2u64)),
+            (2, 0, F::from(2u64)),
+            (3, 0, F::from(2u64))
+          ];
+          R1CSShape::new(4, 4, 0, &a, &b, &c).unwrap() // TODO(sragss): How is the nuber of variables in R1CS determined? 
+        }
+      }
+
+      const NUM_STEPS: usize = 2;
+
+      let witness = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
+      let witnesses = vec![witness.clone(); NUM_STEPS];
+      let witness_poly = DensePolynomial::new(witness.clone());
+
+      let mut transcript = Transcript::new(b"test_transcript");
+      let uniform_circuit = UniformDoubleCircuit {};
+
+      let pedersen_generators = PedersenGenerators::<G1Projective>::new(1 << 4, b"generators");
+      let hyrax_generators = HyraxGenerators::<1, G1Projective>::new(witness_poly.get_num_vars(), &pedersen_generators);
+      let witness_commitment = HyraxCommitment::commit(&witness_poly, &hyrax_generators);
+      let witness_commitments = vec![witness_commitment; NUM_STEPS];
+
+      let key = UniformSpartanProof::<Fr, G1Projective>::setup_precommitted(&uniform_circuit, NUM_STEPS).unwrap();
+
+      let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(&key, witnesses, witness_commitments, &mut transcript).expect("should prove");
 
       let mut transcript = Transcript::new(b"test_transcript");
       proof.verify_precommitted(&key, &[], hyrax_generators, &mut transcript).expect("should verify");
