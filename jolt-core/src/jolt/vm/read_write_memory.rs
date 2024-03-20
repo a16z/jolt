@@ -31,8 +31,9 @@ use common::rv_trace::{ELFInstruction, MemoryOp, RV32IM};
 use common::to_ram_address;
 use common::{
     constants::{
-        BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS,
-        PANIC_ADDRESS, RAM_START_ADDRESS, REGISTER_COUNT,
+        memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS,
+        MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, PANIC_ADDRESS,
+        RAM_START_ADDRESS, RAM_WITNESS_OFFSET, REGISTER_COUNT,
     },
     rv_trace::JoltDevice,
 };
@@ -149,6 +150,9 @@ pub struct ReadWriteMemoryPreprocessing {
 impl ReadWriteMemoryPreprocessing {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryPreprocessing::preprocess")]
     pub fn preprocess(bytecode: &Vec<ELFInstruction>, program_io: JoltDevice) -> Self {
+        assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
+        assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+
         let min_bytecode_address = bytecode
             .iter()
             .map(|instr| instr.address)
@@ -188,18 +192,9 @@ impl ReadWriteMemoryPreprocessing {
     }
 }
 
-fn remap_address(a: u64, io_offset: Option<u64>) -> u64 {
-    if a >= RAM_START_ADDRESS {
-        a - RAM_START_ADDRESS + REGISTER_COUNT
-    } else if a >= INPUT_START_ADDRESS && a <= PANIC_ADDRESS {
-        // This memory op is reading program input or writing program output.
-        // This address space is remapped to go after RAM, so the offset will
-        // be computed after we know the max RAM address.
-        if let Some(offset) = io_offset {
-            a - INPUT_START_ADDRESS + offset
-        } else {
-            0
-        }
+fn remap_address(a: u64) -> u64 {
+    if a >= INPUT_START_ADDRESS {
+        memory_address_to_witness_index(a) as u64
     } else if a < REGISTER_COUNT {
         // If a < REGISTER_COUNT, it is one of the registers and doesn't
         // need to be remapped
@@ -215,10 +210,8 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     _group: PhantomData<G>,
-    /// Size of entire address space (i.e. RAM + registers for RISC-V)
+    /// Size of entire address space (i.e. registers + IO + RAM)
     memory_size: usize,
-    /// The index of the witness `v_init` where the program inputs/outputs start.
-    io_offset: usize,
     /// MLE of initial memory values. RAM is initialized to contain the program bytecode and inputs.
     pub v_init: DensePolynomial<F>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
@@ -252,30 +245,23 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .iter()
             .flat_map(|step| {
                 step.iter().map(|op| match op {
-                    MemoryOp::Read(a, _) => remap_address(*a, None),
-                    MemoryOp::Write(a, _) => remap_address(*a, None),
+                    MemoryOp::Read(a, _) => remap_address(*a),
+                    MemoryOp::Write(a, _) => remap_address(*a),
                 })
             })
             .max()
             .unwrap_or(0);
 
-        let io_offset = max(
-            max_trace_address,
-            remap_address(preprocessing.max_bytecode_address, None),
-        )
-        .next_power_of_two();
-        let io_size = PANIC_ADDRESS - INPUT_START_ADDRESS;
-        let memory_size = (io_offset + io_size).next_power_of_two() as usize;
-
+        let memory_size = (RAM_WITNESS_OFFSET + max_trace_address).next_power_of_two() as usize;
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
-        let mut v_init_index = remap_address(preprocessing.min_bytecode_address, None) as usize;
+        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address);
         for byte in preprocessing.bytecode_bytes.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
         // Copy input bytes
-        v_init_index = io_offset as usize;
+        v_init_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
         for byte in preprocessing.input_bytes.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
@@ -316,7 +302,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             for (i, memory_access) in step.iter().enumerate() {
                 match memory_access {
                     MemoryOp::Read(a, v) => {
-                        let remapped_a = remap_address(*a, Some(io_offset));
+                        let remapped_a = remap_address(*a);
                         debug_assert_eq!(*v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
@@ -340,7 +326,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             for (i, memory_access) in step.iter().enumerate() {
                 match memory_access {
                     MemoryOp::Write(a, v_new) => {
-                        let remapped_a = remap_address(*a, Some(io_offset));
+                        let remapped_a = remap_address(*a);
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
@@ -411,7 +397,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             Self {
                 _group: PhantomData,
                 memory_size,
-                io_offset: io_offset as usize,
                 v_init,
                 a_read_write,
                 v_read,
@@ -686,9 +671,6 @@ where
     v_final: F,
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
-    /// The index of the witness `v_init` where the program inputs/outputs start.
-    // TODO(moodlezoup): Fiat-Shamir this
-    io_offset: usize,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryInitFinalOpenings<F>
@@ -711,7 +693,6 @@ where
             v_init: None,
             v_final,
             t_final,
-            io_offset: polynomials.io_offset,
         }
     }
 
@@ -743,13 +724,13 @@ where
         let memory_size = opening_point.len().pow2();
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
-        let mut v_init_index = remap_address(preprocessing.min_bytecode_address, None) as usize;
+        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address);
         for byte in preprocessing.bytecode_bytes.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
         // Copy input bytes
-        v_init_index = self.io_offset;
+        v_init_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
         for byte in preprocessing.input_bytes.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;

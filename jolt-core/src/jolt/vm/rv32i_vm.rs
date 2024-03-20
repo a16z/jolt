@@ -141,7 +141,10 @@ where
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Fr, G1Projective};
-    use common::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS};
+    use common::constants::{
+        INPUT_END_ADDRESS, INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, OUTPUT_END_ADDRESS,
+        OUTPUT_START_ADDRESS, RAM_START_ADDRESS,
+    };
     use common::rv_trace::{JoltDevice, RV32IM};
     use common::{
         path::JoltPaths,
@@ -288,7 +291,6 @@ mod tests {
 
     #[test]
     fn fib_e2e() {
-        use common::{path::JoltPaths, rv_trace::ELFInstruction};
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
         let program = host::Program::new("fibonacci-guest").input(&9u32);
@@ -415,7 +417,45 @@ mod tests {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
 
         let program = host::Program::new("sha3-guest").input(&[5u8; 32]);
-        let (trace, bytecode, io_device) = program.trace();
+        let (mut trace, bytecode, io_device) = program.trace();
+        println!("trace.len() {}", trace.len());
+        println!("the problem: {:#?}", trace[17212]);
+        // RVTraceRow {
+        //     instruction: ELFInstruction {
+        //         address: 2147486456,
+        //         opcode: SB,
+        //         raw: 45252771,
+        //         rs1: Some(
+        //             5,
+        //         ),
+        //         rs2: Some(
+        //             11,
+        //         ),
+        //         rd: None,
+        //         imm: Some(
+        //             33,
+        //         ),
+        //     },
+        //     register_state: RegisterState {
+        //         rs1_val: Some(
+        //             2147471360,
+        //         ),
+        //         rs2_val: Some(
+        //             2522612688,
+        //         ),
+        //         rd_pre_val: None,
+        //         rd_post_val: None,
+        //     },
+        //     memory_state: Some(
+        //         Write {
+        //             address: 2147471393,
+        //             pre_value: 0,
+        //             post_value: 208,
+        //         },
+        //     ),
+        // }
+        trace.split_off(17212);
+        // trace.split_off(17213);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .iter()

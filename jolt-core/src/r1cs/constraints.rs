@@ -3,15 +3,14 @@
 use smallvec::SmallVec;
 use smallvec::smallvec;
 use ff::PrimeField; 
+use common::constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET};
 
 /* Compiler Variables */
 const C: usize = 4; 
 const N_FLAGS: usize = 17; 
 const W: usize = 32;
 const LOG_M: usize = 16; 
-const PROG_START_ADDR: usize = 2147483664;
-const RAM_START_ADDRESS: usize = 0x80000000; 
-const MEMORY_ADDRESS_OFFSET: usize = 0x80000000 - 0x20; 
+const MEMORY_ADDRESS_OFFSET: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; 
 // "memreg ops per step" 
 const MOPS: usize = 7;
 /* End of Compiler Variables */
