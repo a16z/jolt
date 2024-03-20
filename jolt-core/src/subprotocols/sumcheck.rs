@@ -897,6 +897,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             transcript,
             b"challenge_nextround",
         );
+        println!("Prover r_i {:?}", r_i);
         r.push(r_i);
         polys.push(poly.compress());
 
@@ -999,7 +1000,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
     //derive the verifier's challenge for the next round
-    let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+    let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
     r.push(r_i);
     polys.push(poly.compress());
 
@@ -1047,7 +1048,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
       //derive the verifier's challenge for the next round
-      let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
+      let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
       r.push(r_i);
       polys.push(poly.compress());
@@ -1146,6 +1147,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             // verify degree bound
             if poly.degree() != degree_bound {
+                println!("Degree mismatch!");
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
                     poly.degree(),
@@ -1160,6 +1162,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar(b"challenge_nextround");
+            println!("Verifier Sumcheck r_i {:?}", r_i);
 
             r.push(r_i);
 
