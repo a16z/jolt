@@ -83,7 +83,7 @@ fn GET_INDEX(input_type: InputType, offset: usize) -> usize {
 const SMALLVEC_SIZE: usize = 4;
 
 #[derive(Debug)]
-pub struct R1CSBuilder<'a, F: PrimeField> {
+pub struct R1CSBuilder {
     pub A: Vec<(usize, usize, i64)>,
     pub B: Vec<(usize, usize, i64)>,
     pub C: Vec<(usize, usize, i64)>,
@@ -92,7 +92,6 @@ pub struct R1CSBuilder<'a, F: PrimeField> {
     pub num_inputs: usize, 
     pub num_aux: usize, 
     pub num_internal: usize, 
-    pub z: Option<&'a mut Vec<F>>,
 }
 
 fn subtract_vectors(mut x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> SmallVec<[(usize, i64); SMALLVEC_SIZE]> {
@@ -135,7 +134,7 @@ fn i64_to_f<F: PrimeField>(num: i64) -> F {
     }
 }
 
-impl<F: PrimeField> R1CSBuilder<'_, F> {
+impl R1CSBuilder {
     fn new_constraint(&mut self, a: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, b: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, c: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) {
         let row: usize = self.num_constraints; 
         let prepend_row = |vec: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, matrix: &mut Vec<(usize, usize, i64)>| {
@@ -149,19 +148,7 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
         self.num_constraints += 1;
     }
 
-    fn get_val_from_lc(&self, lc: &[(usize, i64)]) -> F {
-        if let Some(z) = self.z.as_ref() {
-            lc.iter().map(|(idx, coeff)| z[*idx] * i64_to_f::<F>(*coeff)).sum()
-        } else {
-            F::ZERO
-        }
-    }
-
     fn assign_aux(&mut self) -> usize {
-        if let Some(z) = self.z.as_mut() {
-            assert!(z.len() == self.num_variables);
-            z.push(F::ZERO);
-        }
         let idx = self.num_variables; 
         self.num_aux += 1;
         self.num_variables += 1;
@@ -201,11 +188,6 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
             constraint_A.push((start_idx + i, 1 << (i*L)));
         }
 
-        if self.z.is_some() {
-            let result_value = self.get_val_from_lc(&constraint_A);
-            self.z.as_mut().unwrap()[result_idx] = result_value;
-        }
-
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
         result_idx
     }
@@ -221,22 +203,12 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
             constraint_A.push((start_idx + i, 1 << ((N-1-i)*L)));
         }
 
-        if self.z.is_some() {
-            let result_value = self.get_val_from_lc(&constraint_A);
-            self.z.as_mut().unwrap()[result_idx] = result_value;
-        }
-
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
         result_idx
     }
 
     fn multiply(&mut self, x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> usize {
         let xy_idx = Self::assign_aux(self); 
-        if self.z.is_some() {
-            let x = self.get_val_from_lc(&x);
-            let y = self.get_val_from_lc(&y);
-            self.z.as_mut().unwrap()[xy_idx] = x * y;
-        }
 
         R1CSBuilder::constr_abc(self, 
             x, 
@@ -249,13 +221,6 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
 
     fn if_else(&mut self, choice: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) -> usize {
         let z_idx = Self::assign_aux(self);
-        if self.z.is_some() {
-            let choice_val = self.get_val_from_lc(&choice);
-            let x_val = self.get_val_from_lc(&x);
-            let y_val = self.get_val_from_lc(&y);
-            let z_val = if choice_val == F::ZERO { x_val } else { y_val };
-            self.z.as_mut().unwrap()[z_idx] = z_val;
-        }
 
         let y_minus_x = subtract_vectors(y, x.clone()); 
         let z_minus_x = subtract_vectors(smallvec![(z_idx, 1)], x);
@@ -283,21 +248,11 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
         let constraint_B = smallvec![ONE];
         let constraint_C = smallvec![(right_idx, 1)];
 
-        if assign && self.z.is_some() {
-            self.z.as_mut().unwrap()[right_idx] = self.get_val_from_lc(&constraint_A);
-        }
-
         self.new_constraint(constraint_A, constraint_B, constraint_C); 
     }
 
     fn constr_prod_0(&mut self, x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, z: SmallVec<[(usize, i64); SMALLVEC_SIZE]>) {
         let xy_idx = Self::assign_aux(self); 
-
-        if self.z.is_some() {
-            let x_val = self.get_val_from_lc(&x);
-            let y_val = self.get_val_from_lc(&y);
-            self.z.as_mut().unwrap()[xy_idx] = x_val * y_val;
-        }
 
         R1CSBuilder::constr_abc(self, 
             x, 
@@ -322,11 +277,10 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
             num_inputs: 0, // technically inputs are also aux, so keep this 0
             num_aux: GET_TOTAL_LEN()-1, // dont' include the constant  
             num_internal: 0, 
-            z: None, 
         }
     }
 
-    pub fn get_matrices(instance: &mut R1CSBuilder<F>) {
+    pub fn get_matrices(instance: &mut R1CSBuilder) {
         // Parse the input indices 
         let opcode = GET_INDEX(InputType::ProgVRW, 0);
         let rs1 = GET_INDEX(InputType::ProgVRW, 1);
@@ -580,7 +534,8 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
         R1CSBuilder::move_constant_to_end(instance);
     }
 
-    pub fn calculate_aux(inputs: &mut Vec<F>) {
+  #[tracing::instrument(name = "R1CSBuilder::calculate_aux", skip_all)]
+    pub fn calculate_aux<F: PrimeField>(inputs: &mut Vec<F>) {
         // Parse the input indices 
         let opcode = GET_INDEX(InputType::ProgVRW, 0);
         let rs1 = GET_INDEX(InputType::ProgVRW, 1);
@@ -753,11 +708,6 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
     }
 
     fn move_constant_to_end(&mut self) {
-        if let Some(z) = &mut self.z {
-            z.remove(0);
-            z.push(F::ONE);
-        }
-
         let modify_matrix= |mat: &mut Vec<(usize, usize, i64)>| {
             for &mut (_, ref mut value, _) in mat {
                 if *value != 0 {
@@ -774,7 +724,7 @@ impl<F: PrimeField> R1CSBuilder<'_, F> {
     }
 
     #[tracing::instrument(skip_all, name = "Shape::convert_to_field")]
-    pub fn convert_to_field(&self) -> (Vec<(usize, usize, F)>, Vec<(usize, usize, F)>, Vec<(usize, usize, F)>) {
+    pub fn convert_to_field<F: PrimeField>(&self) -> (Vec<(usize, usize, F)>, Vec<(usize, usize, F)>, Vec<(usize, usize, F)>) {
         (
             self.A.par_iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
             self.B.par_iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),

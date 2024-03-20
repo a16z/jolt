@@ -92,14 +92,13 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
 
   #[tracing::instrument(name = "JoltCircuit::synthesize_witnesses", skip_all)]
   fn synthesize_witnesses(&self) -> Vec<Vec<F>> {
-
     let mut step_z = self.inputs.clone_to_stepwise();
 
     // Compute the aux
     let span = tracing::span!(tracing::Level::INFO, "calc_aux");
     let _guard = span.enter();
     step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
-      R1CSBuilder::<F>::calculate_aux(step);
+      R1CSBuilder::calculate_aux(step);
     });
 
     step_z
@@ -295,8 +294,8 @@ impl R1CSProof {
       
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
-      let mut jolt_shape = R1CSBuilder::<F>::default(); 
-      R1CSBuilder::<F>::get_matrices(&mut jolt_shape); 
+      let mut jolt_shape = R1CSBuilder::default(); 
+      R1CSBuilder::get_matrices(&mut jolt_shape); 
       let constraints_F = jolt_shape.convert_to_field(); 
       let shape_single = R1CSShape::<G1> {
           A: constraints_F.0,
