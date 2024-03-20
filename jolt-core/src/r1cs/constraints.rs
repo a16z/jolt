@@ -536,9 +536,9 @@ impl R1CSBuilder {
     pub fn calculate_aux<F: PrimeField>(inputs: &mut Vec<F>) {
         // Parse the input indices 
         let opcode = GET_INDEX(InputType::ProgVRW, 0);
-        let rs1 = GET_INDEX(InputType::ProgVRW, 1);
-        let rs2 = GET_INDEX(InputType::ProgVRW, 2);
-        let rd = GET_INDEX(InputType::ProgVRW, 3);
+        let rd = GET_INDEX(InputType::ProgVRW, 1);
+        let rs1 = GET_INDEX(InputType::ProgVRW, 2);
+        let rs2 = GET_INDEX(InputType::ProgVRW, 3);
         let immediate_before_processing = GET_INDEX(InputType::ProgVRW, 4);
         let op_flags_packed = GET_INDEX(InputType::ProgVRW, 5);
 
