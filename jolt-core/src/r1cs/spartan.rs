@@ -154,12 +154,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted(
         key: &UniformSpartanKey<F>,
-        w_segments: Vec<Vec<F>>,
+        witness_segments: Vec<Vec<F>>,
         witness_commitments: &Vec<HyraxCommitment<1, G>>,
         transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
-        let witness_segments = w_segments;
-
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
