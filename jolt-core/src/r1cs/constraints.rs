@@ -532,7 +532,6 @@ impl R1CSBuilder {
         R1CSBuilder::move_constant_to_end(instance);
     }
 
-  #[tracing::instrument(name = "R1CSBuilder::calculate_aux", skip_all)]
     pub fn calculate_aux<F: PrimeField>(inputs: &mut Vec<F>) {
         // Parse the input indices 
         let opcode = GET_INDEX(InputType::ProgVRW, 0);
