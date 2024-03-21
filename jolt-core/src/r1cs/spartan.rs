@@ -74,11 +74,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let num_constraints_total = shape_single_step.num_cons * num_steps;
         let num_aux_total = shape_single_step.num_vars * num_steps;
-        println!("num_aux_total: {num_aux_total}");
 
         let pad_num_constraints = num_constraints_total.next_power_of_two();
         let pad_num_aux = num_aux_total.next_power_of_two();
-        println!("padded_num_aux: {pad_num_aux}");
 
         // TODO(sragss / arasuarun): Verifier key digest
         let vk_digest = F::one();
@@ -137,8 +135,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
             .collect::<Vec<F>>();
 
-        // println!("\nProver Tau {:?}", tau);
-
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
         // poly_Az is the polynomial extended from the vector Az
         let (mut poly_Az, mut poly_Bz, mut poly_Cz) = {
@@ -150,9 +146,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 DensePolynomial::new(poly_Cz),
             )
         };
-        // println!("A_z {:?}", poly_Az);
-        // println!("B_z {:?}", poly_Bz);
-        // println!("C_z {:?}", poly_Cz);
 
         let comb_func_outer = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F, poly_D_comp: &F| -> F {
                 // Below is an optimized form of: *poly_A_comp * (*poly_B_comp * *poly_C_comp - *poly_D_comp)
@@ -184,16 +177,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
-        // println!("Prover first sumcheck eq(r_x) claim: {:?}", outer_sumcheck_claims[0]);
         let (claim_Az, claim_Bz, claim_Cz): (F, F, F) =
             (outer_sumcheck_claims[1], outer_sumcheck_claims[2], outer_sumcheck_claims[3]);
-        // let local_compute_claim = outer_sumcheck_claims[0] * (outer_sumcheck_claims[1] * outer_sumcheck_claims[2] - outer_sumcheck_claims[3]);
-        // println!("Prover: tau * (A * B - C): {:?}", local_compute_claim);
         <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"claims_outer", &[claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
         let r_inner_sumcheck_RLC: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"r");
-        println!("\nProver r_inner_sumcheck_RLC: {:?}", r_inner_sumcheck_RLC);
         let claim_inner_joint = claim_Az + r_inner_sumcheck_RLC * claim_Bz + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
 
         let span = tracing::span!(tracing::Level::TRACE, "poly_ABC");
@@ -293,9 +282,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             comb_func,
             transcript,
         );
-        println!("Prover inner sumcheck r {:?}", inner_sumcheck_r);
-        println!("Prover inner sumcheck claims {:?}", _claims_inner);
-        println!("Prover inner sumcheck combined claims {:?}", _claims_inner[0] * _claims_inner[1]);
         std::thread::spawn(|| drop(poly_ABC));
 
         // The number of prefix bits needed to identify a segment within the witness vector
@@ -305,9 +291,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let n_prefix = (key.num_vars_total.trailing_zeros() as usize
             - key.num_steps.trailing_zeros() as usize)
             + 1; // TODO(sragss): This is a hack!
-        println!("key.num_vars.trailing_zeros(): {}", key.num_vars_total.trailing_zeros());
-        println!("key.num_steps.trailing_zeros(): {}", key.num_steps.trailing_zeros());
-        println!("n_prefix: {n_prefix}"); // TODO(sragss): For the 2x2 unit test I believe this value should come out to 1.
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
@@ -315,14 +298,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let _enter = span.enter();
         let witness_segment_polys: Vec<DensePolynomial<F>> = witness_segments.into_iter().map(|segment| DensePolynomial::new(segment)).collect();
         let chi = EqPolynomial::new(r_y_point.to_owned()).evals();
-        println!("witness_segment_polys len {}", witness_segment_polys.len());
         let witness_evals: Vec<F> = witness_segment_polys.iter().map(|segment| segment.evaluate_at_chi_low_optimized(&chi)).collect();
         drop(_enter);
 
-        // now batch these together
-        // let c: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
-        // let w: PolyEvalWitness<G> = PolyEvalWitness::batch(&w.W.as_slice().iter().map(|v| v.as_ref()).collect::<Vec<_>>(), &c);
-        // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &witness_evals, &c);
 
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> = witness_segment_polys.iter().map(|poly_ref| poly_ref).collect();
         let opening_proof = BatchedHyraxOpeningProof::prove(&witness_segment_polys_ref, &r_y_point, &witness_evals, transcript);
@@ -352,15 +330,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         transcript: &mut Transcript
     ) -> Result<(), SpartanError> {
         let N_SEGMENTS = self.witness_segment_commitments.len();
-        println!("N_SEGMENTS: {N_SEGMENTS}");
-
-        // construct an instance using the provided commitment to the witness and IO
-        // let comm_W_vec = self.witness_segment_commitments.iter()
-        //   .map(|c| Commitment::<G>::decompress(c).unwrap())
-        //   .collect::<Vec::<<<G as Group>::CE as CommitmentEngineTrait<G>>::Commitment>>();
 
         assert_eq!(io.len(), 0);
-        // let witness_segment_commitments = PrecommittedR1CSInstance::new(&hollow_S, comm_W_vec.clone(), io)?;
 
         // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
@@ -377,7 +348,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let tau = (0..num_rounds_x)
             .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
             .collect::<Vec<F>>();
-        println!("\nVerifier tau: {:?}", tau);
 
         let (claim_outer_final, r_x) =
             self.outer_sumcheck_proof
@@ -385,13 +355,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 .map_err(|_| SpartanError::InvalidSumcheckProof)?;
 
         // verify claim_outer_final
-        println!("verify claim_outer_final");
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
         let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
-        println!("Verifier first sumcheck eq(r_x) claim: {:?}", taus_bound_rx);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
-        println!("Sumcheck verify claim_outer_final: {:?}", claim_outer_final);
-        println!("Verifier evaluation claim_outer_final_expected {:?}", claim_outer_final_expected);
         if claim_outer_final != claim_outer_final_expected {
             return Err(SpartanError::InvalidSumcheckProof);
         }
@@ -409,7 +375,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // inner sum-check
         let r_inner_sumcheck_RLC: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"r");
-        println!("\nVerifier r_inner_sumcheck_rlc: {:?}", r_inner_sumcheck_RLC);
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r_inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
@@ -420,7 +385,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             2,
             transcript,
         ).map_err(|_| SpartanError::InvalidSumcheckProof)?;
-        println!("Verifier inner sumcheck r: {inner_sumcheck_r:?}");
 
         // verify claim_inner_final
         // this should be log (num segments)
@@ -443,7 +407,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                     .evaluate(&inner_sumcheck_r[1..])
             };
 
-            println!("eval_X: {:?}", eval_X);
 
             // evaluate the segments of W
             let r_y_witness = &inner_sumcheck_r[1..n_prefix]; // skip the first as it's used to separate the inputs and the witness
@@ -514,32 +477,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             key.num_steps,
         );
 
-        println!("Verifier computes on their own:");
-        println!("Evals[0] {:?}", evals[0]);
-        println!("Evals[1] {:?}", evals[1]);
-        println!("Evals[2] {:?}", evals[2]);
-        println!("eval_z {:?}", eval_Z);
         let left_expected = evals[0] + r_inner_sumcheck_RLC * evals[1] + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * evals[2];
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
-        println!("left_expected (eval ABC): {:?}", left_expected);
-        println!("right_expected (eval Z): {:?}", right_expected);
         if claim_inner_final != claim_inner_final_expected {
             // DEDUPE(arasuarun): add
-            println!("Second sumcheck final check failed");
-            println!("Verifier claim_inner_final (from sumcheck): {:?}", claim_inner_final);
-            println!("Verifier claim_inner_final_expected (verifier computation): {:?}", claim_inner_final_expected);
             return Err(SpartanError::InvalidSumcheckProof);
         }
 
-        // we now combine evaluation claims at the same point rz into one
-        // let comm_vec = self.witness_segment_commitments;
-        // let eval_vec = &self.eval_W;
-
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        // let c: F = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"c");
-        // let u: PolyEvalInstance<G> = PolyEvalInstance::batch(&comm_vec, &r_y_point, &eval_vec, &c);
-        let hyrax_commitment_refs: Vec<&HyraxCommitment<1, G>> = self.witness_segment_commitments.iter().map(|commit_ref| commit_ref).collect(); // TODO(sragss): Fix
+        let hyrax_commitment_refs: Vec<&HyraxCommitment<1, G>> = self.witness_segment_commitments.iter().map(|commit_ref| commit_ref).collect();
         self.opening_proof.verify(&generators, &r_y_point, &self.claimed_witnesss_evals, &hyrax_commitment_refs, transcript)
             .map_err(|_| SpartanError::InvalidHyraxProof)?;
 

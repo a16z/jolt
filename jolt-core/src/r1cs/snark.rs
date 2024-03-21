@@ -345,10 +345,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let input_comms = prior_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
-      println!("io_comms.len(): {}", io_comms.len());
-      println!("input_comms.len(): {}", input_comms.len());
-      println!("aux_comms.len(): {}", aux_comms.len());
-
       // TODO(sragss): Likely want to append this commitment to jolt_commitments
       let witness_segment_commitments = io_comms.into_iter()
         .chain(input_comms.iter().map(|comm| HyraxCommitment::from(comm.clone())))

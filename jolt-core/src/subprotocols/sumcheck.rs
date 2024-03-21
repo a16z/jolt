@@ -897,7 +897,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             transcript,
             b"challenge_nextround",
         );
-        println!("Prover r_i {:?}", r_i);
         r.push(r_i);
         polys.push(poly.compress());
 
@@ -906,7 +905,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         // bound all tables to the verifier's challenege
         rayon::join(
-            || poly_A.bound_poly_var_top(&r_i),
+            || poly_A.bound_poly_var_top_par(&r_i),
             || {
             rayon::join(
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
@@ -1083,7 +1082,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   where
     Func: Fn(&F, &F) -> F + Sync,
   {
-    println!("compute_eval_points_quadratic {}", poly_A.len());
     let len = poly_A.len() / 2;
     (0..len)
       .into_par_iter()
@@ -1147,7 +1145,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             // verify degree bound
             if poly.degree() != degree_bound {
-                println!("Degree mismatch!");
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
                     poly.degree(),
@@ -1162,7 +1159,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar(b"challenge_nextround");
-            println!("Verifier Sumcheck r_i {:?}", r_i);
 
             r.push(r_i);
 
