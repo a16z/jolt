@@ -33,6 +33,7 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     (col_size, row_size)
 }
 
+#[derive(Clone)]
 pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }

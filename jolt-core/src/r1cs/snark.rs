@@ -3,7 +3,7 @@ use crate::{jolt::{self, vm::JoltCommitments}, poly::{dense_mlpoly::DensePolynom
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
 use ark_ec::CurveGroup;
-use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
+use common::{constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS}, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
 use itertools::Itertools;
 // use spartan2::{
 //   errors::SpartanError, provider::{
@@ -270,8 +270,14 @@ impl<F: PrimeField> R1CSInputs<F> {
 }
 
 pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
-  key: UniformSpartanKey<F>,
-  proof: UniformSpartanProof<F, G>
+  pub key: UniformSpartanKey<F>,
+  proof: UniformSpartanProof<F, G>,
+  pub commitments: R1CSCommitments<F, G>
+}
+
+pub struct R1CSCommitments<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+  witness_segment_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  generators: HyraxGenerators<NUM_R1CS_POLYS, G>
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
@@ -281,8 +287,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       _C: usize, 
       padded_trace_len: usize, 
       inputs: R1CSInputs<F>,
-      hyrax_generators: HyraxGenerators<1, G>,
-      jolt_commitments: &JoltCommitments<G>,
+      generators: HyraxGenerators<1, G>,
+      prior_commitments: &Vec<HyraxCommitment<1, G>>,
+      transcript: &mut Transcript
   ) -> Result<Self, SpartanError> {
       let num_steps = padded_trace_len;
 
@@ -296,15 +303,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
       R1CSBuilder::get_matrices(&mut jolt_shape); 
-      let constraints_F = jolt_shape.convert_to_field(); 
-      let shape_single = R1CSShape::<F> {
-          A: constraints_F.0,
-          B: constraints_F.1,
-          C: constraints_F.2,
-          num_cons: jolt_shape.num_constraints,
-          num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
-          num_io: jolt_shape.num_inputs,
-      };
+      let key = UniformSpartanProof::<F,G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
+      // let constraints_F = jolt_shape.convert_to_field(); 
+      // let shape_single = R1CSShape::<F> {
+      //     A: constraints_F.0,
+      //     B: constraints_F.1,
+      //     C: constraints_F.2,
+      //     num_cons: jolt_shape.num_constraints,
+      //     num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
+      //     num_io: jolt_shape.num_inputs,
+      // };
       drop(_enter);
       drop(span);
 
@@ -329,29 +337,40 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
         let _g = span.enter();
         segments.into_par_iter().map(|segment| {
-          HyraxCommitment::commit(&DensePolynomial::new(segment), &hyrax_generators)
+          HyraxCommitment::commit(&DensePolynomial::new(segment), &generators)
         }).collect()
       };
-      
+
       let io_comms: Vec<HyraxCommitment<1, G>> = commit_segments(io_segments);
-      let input_comms = jolt_commitments; 
+      let input_comms = prior_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
-      todo!("finish!");
+      println!("io_comms.len(): {}", io_comms.len());
+      println!("input_comms.len(): {}", input_comms.len());
+      println!("aux_comms.len(): {}", aux_comms.len());
+
       // TODO(sragss): Likely want to append this commitment to jolt_commitments
-      // let witness_commitments = io_comms.into_iter()
-      //   .chain(input_comms.iter().map(|comm| HyraxCommitment::from(comm.clone())))
-      //   .chain(aux_comms.into_iter())
-      //   .collect::<Vec<_>>();
+      let witness_segment_commitments = io_comms.into_iter()
+        .chain(input_comms.iter().map(|comm| HyraxCommitment::from(comm.clone())))
+        .chain(aux_comms.into_iter())
+        .collect::<Vec<_>>();
+
+      let r1cs_commitments = R1CSCommitments::<F,G> {
+        witness_segment_commitments,
+        generators
+      };
 
       // TODO(sragss / arasuarun): Wire up remainder here.
-      // let transcript = Transcript::new(b"transcript");
-      // let key = UniformSpartanProof::setup_precommitted(&shape_single, padded_trace_len)?;
-      // UniformSpartanProof::prove_precommitted(&key, w_segments, &witness_commitments, &mut transcript)
+      let proof = UniformSpartanProof::prove_precommitted(&key, w_segments, &r1cs_commitments.witness_segment_commitments, transcript).expect("UniformSpartanProof failed");
+      Ok(R1CSProof::<F, G> {
+        proof,
+        key,
+        commitments: r1cs_commitments
+      })
   }
 
-  pub fn verify(&self, generators: HyraxGenerators<1, G>, transcript: &mut Transcript) -> Result<(), SpartanError> {
-    self.proof.verify_precommitted(&self.key, &[], generators, transcript)
+  pub fn verify(&self, transcript: &mut Transcript) -> Result<(), SpartanError> {
+    self.proof.verify_precommitted(&self.key, &[], &self.commitments.generators, transcript)
   }
 }
 
@@ -369,18 +388,6 @@ impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
         num_io: jolt_shape.num_inputs,
     };
 
-    shape_single
+    shape_single.pad_vars()
   }
 }
-
-// TODO(sragss / arasuarun): Finish impl after ripping out ff::PrimeField garbage
-// impl<F: PrimeField> UniformShapeBuilder<F> for JoltSkeleton<F> {
-//   fn single_step_shape(&self) -> super::r1cs_shape::R1CSShape<F> {
-//     let mut cs: ShapeCS<G> = ShapeCS::new();
-//     self.synthesize      
-//   }
-
-//   fn full_shape(&self, N: usize, single_step_shape: &super::r1cs_shape::R1CSShape<F>) -> super::r1cs_shape::R1CSShape<F> {
-      
-//   }
-// }

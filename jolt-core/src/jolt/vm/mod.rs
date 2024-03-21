@@ -15,7 +15,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
-use crate::r1cs::snark::{R1CSInputs, R1CSProof};
+use crate::r1cs::snark::{R1CSCommitments, R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::{
     jolt::{
@@ -191,6 +191,7 @@ where
             instruction_lookups: instruction_lookups_commitment,
         };
 
+        // Note: Some of the commitments in r1cs_commitments are duplicates of elsewhere.
         let r1cs_proof = Self::prove_r1cs(
             preprocessing,
             instructions,
@@ -232,12 +233,11 @@ where
             commitments.instruction_lookups,
             &mut transcript,
         )?;
-        todo!("make prove_r1cs return (proof, commitment) store on Jolt commitments, pass generators here");
-        // proof
-        //     .r1cs
-        //     .verify(preprocessing., &mut transcript)
-        //     .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
-        // Ok(())
+        proof
+            .r1cs
+            .verify(&mut transcript)
+            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
@@ -364,13 +364,13 @@ where
         transcript: &mut Transcript,
     ) -> R1CSProof<F, G> {
         let N_FLAGS = 17;
-        let TRACE_LEN = trace.len();
-        let PADDED_TRACE_LEN = TRACE_LEN.next_power_of_two();
+        let trace_len = trace.len();
+        let padded_trace_len = trace_len.next_power_of_two();
 
         let log_M = log2(M) as usize;
 
         let hyrax_generators: HyraxGenerators<NUM_R1CS_POLYS, G> =
-            HyraxGenerators::new(PADDED_TRACE_LEN.trailing_zeros() as usize, &preprocessing.generators);
+            HyraxGenerators::new(padded_trace_len.trailing_zeros() as usize, &preprocessing.generators);
 
         /* Assemble the polynomials and commitments from the rest of Jolt.
         The ones that are extra, just for R1CS are: 
@@ -396,7 +396,7 @@ where
                 })
             })
             .collect();
-        packed_flags.extend(vec![F::zero(); PADDED_TRACE_LEN - packed_flags.len()]);
+        packed_flags.extend(vec![F::zero(); padded_trace_len - packed_flags.len()]);
         drop(_enter);
         drop(span);
 
@@ -404,14 +404,14 @@ where
         let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
         let _guard = span.enter();
         
-        let num_chunks = PADDED_TRACE_LEN * C;
+        let num_chunks = padded_trace_len * C;
         let mut chunks_x: Vec<F> = vec![F::zero(); num_chunks];
         let mut chunks_y: Vec<F> = vec![F::zero(); num_chunks];
 
         for (instruction_index, op) in instructions.iter().enumerate() {
             let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
             for (chunk_index, (x, y)) in chunks_x_op.into_iter().zip(chunks_y_op.into_iter()).enumerate() {
-                let flat_chunk_index = instruction_index + chunk_index * PADDED_TRACE_LEN;
+                let flat_chunk_index = instruction_index + chunk_index * padded_trace_len;
                 chunks_x[flat_chunk_index] = F::from_u64(x as u64).unwrap();
                 chunks_y[flat_chunk_index] = F::from_u64(y as u64).unwrap();
             }
@@ -422,15 +422,15 @@ where
 
         // Derive lookup_outputs 
         let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
-        lookup_outputs.resize(PADDED_TRACE_LEN, F::zero());
+        lookup_outputs.resize(padded_trace_len, F::zero());
 
         // Derive circuit flags
         let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
         let _enter = span.enter();
-        let mut circuit_flags_bits = vec![F::zero(); PADDED_TRACE_LEN * N_FLAGS];
+        let mut circuit_flags_bits = vec![F::zero(); padded_trace_len * N_FLAGS];
         circuit_flags.chunks(N_FLAGS).enumerate().for_each(|(chunk_index, chunk)| {
             chunk.iter().enumerate().for_each(|(trace_index, &flag)| {
-                let index = chunk_index + trace_index * PADDED_TRACE_LEN;
+                let index = chunk_index + trace_index * padded_trace_len;
                 circuit_flags_bits[index] = flag;
             });
         });
@@ -479,36 +479,37 @@ where
         // Assemble the commitments
         let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
         let _guard = span.enter();
-        let bytecode_comms =  vec![
-            jolt_commitments.bytecode.read_write_commitments[0].to_spartan_bn256(), // a
-            jolt_commitments.bytecode.read_write_commitments[2].to_spartan_bn256(), // opcode, 
-            jolt_commitments.bytecode.read_write_commitments[4].to_spartan_bn256(), // rs1
-            jolt_commitments.bytecode.read_write_commitments[5].to_spartan_bn256(), // rs2
-            jolt_commitments.bytecode.read_write_commitments[3].to_spartan_bn256(), // rd
-            jolt_commitments.bytecode.read_write_commitments[6].to_spartan_bn256(), // imm
+        // TODO(sragss): JoltCommitment::convert_to_pre_r1cs();
+        let bytecode_comms: Vec<HyraxCommitment<1, G>> =  vec![
+            jolt_commitments.bytecode.read_write_commitments[0].clone(), // a
+            jolt_commitments.bytecode.read_write_commitments[2].clone(), // opcode, 
+            jolt_commitments.bytecode.read_write_commitments[4].clone(), // rs1
+            jolt_commitments.bytecode.read_write_commitments[5].clone(), // rs2
+            jolt_commitments.bytecode.read_write_commitments[3].clone(), // rd
+            jolt_commitments.bytecode.read_write_commitments[6].clone(), // imm
         ];
         drop(_guard);
 
-        let commit_to_chunks = |data: Vec<F>| -> Vec<Vec<bn256::G1Affine>> {
-            data.par_chunks(PADDED_TRACE_LEN).map(|chunk| {
-                HyraxCommitment::commit(&DensePolynomial::new(chunk.to_vec()), &hyrax_generators).to_spartan_bn256()
+        let commit_to_chunks = |data: Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+            data.par_chunks(padded_trace_len).map(|chunk| {
+                HyraxCommitment::commit(&DensePolynomial::new(chunk.to_vec()), &hyrax_generators)
             }).collect()
         };
         
-        let span = tracing::span!(tracing::Level::INFO, "chunk_lookup_flags_commitments");
+        let span = tracing::span!(tracing::Level::INFO, "new_commitments");
         let _guard = span.enter();
         let chunks_x_comms = commit_to_chunks(chunks_x);
         let chunks_y_comms = commit_to_chunks(chunks_y);
         let lookup_outputs_comms = commit_to_chunks(lookup_outputs);
-        let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators).to_spartan_bn256()];
+        let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators)];
         let circuit_flags_comm = commit_to_chunks(circuit_flags_bits);
         drop(_guard);
         
 
         let span = tracing::span!(tracing::Level::INFO, "conversions");
         let _guard = span.enter();
-        let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.par_iter().map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>(); 
-        let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment.par_iter().take(C).map(|x| x.to_spartan_bn256()).collect::<Vec<Vec<bn256::G1Affine>>>();
+        let memory_comms = jolt_commitments.read_write_memory.a_v_read_write_commitments.clone();
+        let dim_read_comms = jolt_commitments.instruction_lookups.dim_read_commitment[0..C].to_vec();
         drop(_guard);
 
         let jolt_commitments_spartan = [
@@ -522,15 +523,17 @@ where
             circuit_flags_comm
         ].concat();
 
-        todo!("finish");
-        // let proof = R1CSProof::prove::<F>(
-        //     32, C, PADDED_TRACE_LEN, 
-        //     inputs, 
-        //     preprocessing.spartan_generators, 
-        //     &jolt_commitments_spartan, 
-        // )?;
+        let proof  = R1CSProof::prove::<F>(
+            32, 
+            C, 
+            padded_trace_len, 
+            inputs, 
+            hyrax_generators.clone(),
+            &jolt_commitments_spartan, 
+            transcript
+        ).expect("proof failed");
 
-        // (proof, commitment)
+        proof
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]

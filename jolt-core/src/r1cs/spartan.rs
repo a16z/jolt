@@ -98,7 +98,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     pub fn prove_precommitted(
         key: &UniformSpartanKey<F>,
         w_segments: Vec<Vec<F>>,
-        witness_commitments: Vec<HyraxCommitment<1, G>>,
+        witness_commitments: &Vec<HyraxCommitment<1, G>>,
         transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
         let witness_segments = w_segments;
@@ -303,8 +303,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // The +1 is the first element used to separate the inputs and the witness.
         // TODO(sragss): Are these `.trailing_zeros()` calls in place of log_2()?
         let n_prefix = (key.num_vars_total.trailing_zeros() as usize
-            - key.num_steps.trailing_zeros() as usize);
-            // + 1; // TODO(sragss): This is a hack!
+            - key.num_steps.trailing_zeros() as usize)
+            + 1; // TODO(sragss): This is a hack!
         println!("key.num_vars.trailing_zeros(): {}", key.num_vars_total.trailing_zeros());
         println!("key.num_steps.trailing_zeros(): {}", key.num_steps.trailing_zeros());
         println!("n_prefix: {n_prefix}"); // TODO(sragss): For the 2x2 unit test I believe this value should come out to 1.
@@ -332,7 +332,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
       // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
       let outer_sumcheck_claims = (outer_sumcheck_claims[1], outer_sumcheck_claims[2], outer_sumcheck_claims[3]);
       Ok(UniformSpartanProof {
-        witness_segment_commitments: witness_commitments,
+        witness_segment_commitments: witness_commitments.clone(),
         outer_sumcheck_proof,
         outer_sumcheck_claims,
         inner_sumcheck_proof,
@@ -348,10 +348,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         &self,
         key: &UniformSpartanKey<F>,
         io: &[F],
-        generators: HyraxGenerators<1, G>,
+        generators: &HyraxGenerators<1, G>,
         transcript: &mut Transcript
     ) -> Result<(), SpartanError> {
         let N_SEGMENTS = self.witness_segment_commitments.len();
+        println!("N_SEGMENTS: {N_SEGMENTS}");
 
         // construct an instance using the provided commitment to the witness and IO
         // let comm_W_vec = self.witness_segment_commitments.iter()
@@ -424,8 +425,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // verify claim_inner_final
         // this should be log (num segments)
         let n_prefix = (key.num_vars_total.trailing_zeros() as usize
-            - key.num_steps.trailing_zeros() as usize);
-            // + 1; // TODO(sragss): HACK!
+            - key.num_steps.trailing_zeros() as usize)
+            + 1; // TODO(sragss): HACK!
 
         let eval_Z = {
             let eval_X = {

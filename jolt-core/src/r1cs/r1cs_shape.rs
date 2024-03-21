@@ -338,6 +338,65 @@ impl<F: PrimeField> R1CSShape<F> {
         }
     }
 
+    /// Same as above but can have different length of constraints and num_variables
+    pub fn pad_vars(&self) -> Self {
+        // equalize the number of variables and constraints
+        // let m = max(self.num_vars, self.num_cons).next_power_of_two();
+        let m_vars = self.num_vars.next_power_of_two();
+        //let m_cons = self.num_cons.next_power_of_two();
+        let m_cons = self.num_cons;
+
+        // check if the provided R1CSShape is already as required
+        if self.num_vars == m_vars && self.num_cons == m_cons {
+            return self.clone();
+        }
+
+        // check if the number of variables are as expected, then
+        // we simply set the number of constraints to the next power of two
+        if self.num_vars == m_vars {
+            return R1CSShape {
+                num_cons: m_cons,
+                num_vars: m_vars,
+                num_io: self.num_io,
+                A: self.A.clone(),
+                B: self.B.clone(),
+                C: self.C.clone(),
+            };
+        }
+
+        // otherwise, we need to pad the number of variables and renumber variable accesses
+        let num_vars_padded = m_vars;
+        let num_cons_padded = m_cons;
+        let apply_pad = |M: &[(usize, usize, F)]| -> Vec<(usize, usize, F)> {
+            M.par_iter()
+                .map(|(r, c, v)| {
+                    (
+                        *r,
+                        if c >= &self.num_vars {
+                            c + num_vars_padded - self.num_vars
+                        } else {
+                            *c
+                        },
+                        *v,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let A_padded = apply_pad(&self.A);
+        let B_padded = apply_pad(&self.B);
+        let C_padded = apply_pad(&self.C);
+
+        R1CSShape {
+            num_cons: num_cons_padded,
+            num_vars: num_vars_padded,
+            num_io: self.num_io,
+            A: A_padded,
+            B: B_padded,
+            C: C_padded,
+        }
+    }
+
     // TODO(sragss / arasuarun): Fix and use for single step unit testing.
     // Checks if the R1CS instance is satisfiable given a witness and its shape
     // pub fn is_sat<G: CurveGroup<ScalarField = F>>(
