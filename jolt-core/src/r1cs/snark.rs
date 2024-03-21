@@ -206,7 +206,7 @@ impl<F: PrimeField> R1CSInputs<F> {
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
   pub fn trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
-    // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to trace_len
+    // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to padded_trace_len
     let mut chunks: Vec<Vec<F>> = Vec::new();
     chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));

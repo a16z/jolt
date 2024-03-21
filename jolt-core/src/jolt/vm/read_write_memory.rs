@@ -506,9 +506,19 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>, Vec<F>) {
-        let a_polys = self.a_read_write.iter().flat_map(|poly| poly.evals()).collect::<Vec<F>>();
-        let v_read_polys = self.v_read.iter().flat_map(|poly| poly.evals()).collect::<Vec<F>>();
-        let v_write_polys = self.v_write.iter().flat_map(|poly| poly.evals()).collect::<Vec<F>>();
+        let par_flatten = |polys: &[DensePolynomial<F>]| -> Vec<F> {
+            polys.par_iter()
+                .flat_map(|poly| poly.evals_ref())
+                .cloned()
+                .collect::<Vec<F>>()
+        };
+        let (a_polys, (v_read_polys, v_write_polys)): (Vec<F>, (Vec<F>, Vec<F>)) = rayon::join(
+            || par_flatten(&self.a_read_write),
+            || rayon::join(
+                || par_flatten(&self.v_read),
+                || par_flatten(&self.v_write)
+            )
+        );
         (a_polys, v_read_polys, v_write_polys)
     }
 
