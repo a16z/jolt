@@ -58,7 +58,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
         };
 
         let ram_byte_read = |index: usize| match self.memory_state {
-            Some(MemoryState::Read { address, value }) => (value >> (index * 8)) as u8,
+            Some(MemoryState::Read { address, value }) => (self.register_state.rd_post_val.unwrap() >> (index * 8)) as u8,
             Some(MemoryState::Write {
                 address,
                 pre_value,
