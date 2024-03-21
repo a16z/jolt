@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use crate::utils::mul_0_1_optimized;
 
-use super::spartan::SpartanError;
+use super::spartan::{IndexablePoly, SpartanError};
 
 /// A type that holds the shape of the R1CS matrices
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,9 +188,9 @@ impl<F: PrimeField> R1CSShape<F> {
     }
 
     #[tracing::instrument(skip_all, name = "R1CSShape::multiply_vec_uniform")]
-    pub fn multiply_vec_uniform(
+    pub fn multiply_vec_uniform<P: IndexablePoly<F>>(
         &self,
-        full_witness_vector: &[F],
+        full_witness_vector: &P,
         io: &[F],
         num_steps: usize,
     ) -> Result<(Vec<F>, Vec<F>, Vec<F>), SpartanError> {

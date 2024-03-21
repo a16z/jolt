@@ -3,6 +3,7 @@
 
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
@@ -933,11 +934,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
   // passing them in as a single `MultilinearPolynomial`, which would require
   // an expensive concatenation. We defer the actual instantation of a
   // `MultilinearPolynomial` to the end of the 0th round.
-  pub fn prove_quad_unrolled<G, Func>(
+  pub fn prove_quad_unrolled<G, Func, P: IndexablePoly<F>>(
     claim: &F,
     num_rounds: usize,
     poly_A: &mut DensePolynomial<F>,
-    W: &Vec<F>,
+    W: &P,
     X: &Vec<F>,
     comb_func: Func,
     transcript: &mut Transcript,
@@ -1017,8 +1018,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         // `W` and `X`.
         let zero = F::zero();
         let one = [F::one()];
-        let Z_iter = W
-          .par_iter()
+        let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
+        let Z_iter = W_iter
           .chain(one.par_iter())
           .chain(X.par_iter())
           .chain(rayon::iter::repeatn(&zero, len));

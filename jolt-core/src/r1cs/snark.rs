@@ -262,7 +262,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let inputs_segments = inputs.trace_len_chunks(padded_trace_len);
 
       let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
-      // TODO(sragss / arasuarun): rm clones in favor of references
+      // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
       w_segments.par_extend(io_segments.par_iter().cloned());
       w_segments.par_extend(inputs_segments.into_par_iter());
       w_segments.par_extend(aux_segments.par_iter().cloned());

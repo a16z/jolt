@@ -4,6 +4,7 @@ use merlin::Transcript;
 use rayon::prelude::*;
 use thiserror::Error;
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
+use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::transcript::ProofTranscript;
 use crate::utils::transcript::AppendToTranscript;
 
@@ -25,29 +26,6 @@ pub struct UniformSpartanKey<F: PrimeField> {
     vk_digest: F,                    // digest of the verifier's key
 }
 
-/// A succinct proof of knowledge of a witness to a relaxed R1CS instance
-/// The proof is produced using Spartan's combination of the sum-check and
-/// the commitment to a vector viewed as a polynomial commitment
-pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    witness_segment_commitments: Vec<HyraxCommitment<1, G>>,
-    outer_sumcheck_proof: SumcheckInstanceProof<F>,
-    outer_sumcheck_claims: (F, F, F),
-    inner_sumcheck_proof: SumcheckInstanceProof<F>,
-    eval_arg: Vec<F>, // TODO(arasuarun / sragss): better name
-    claimed_witnesss_evals: Vec<F>,
-    opening_proof: BatchedHyraxOpeningProof<1, G>
-}
-
-pub struct PrecommittedR1CSInstance<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    comm_W: Vec<HyraxCommitment<1, G>>,
-    X: Vec<F>,
-}
-
-// Trait which will kick out a small and big R1CS shape
-pub trait UniformShapeBuilder<F: PrimeField> {
-    fn single_step_shape(&self) -> R1CSShape<F>;
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
     /// returned if the supplied row or col in (row,col,val) tuple is out of range
@@ -62,6 +40,87 @@ pub enum SpartanError {
     /// returned when an invalid Hyrax proof is provided
     #[error("InvalidHyraxProof")]
     InvalidHyraxProof,
+}
+
+// Trait which will kick out a small and big R1CS shape
+pub trait UniformShapeBuilder<F: PrimeField> {
+    fn single_step_shape(&self) -> R1CSShape<F>;
+}
+
+// TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
+// and can run all the normal DensePolynomial ops.
+pub struct SegmentedPaddedWitness<F: PrimeField> {
+  total_len: usize,
+  segments: Vec<Vec<F>>,
+  segment_len: usize,
+  zero: F
+}
+
+impl<F: PrimeField> SegmentedPaddedWitness<F> {
+  pub fn new(total_len: usize, segments: Vec<Vec<F>>) -> Self {
+      let segment_len = segments[0].len();
+      for segment in &segments {
+          assert_eq!(segment.len(), segment_len, "All segments must be the same length");
+      }
+      SegmentedPaddedWitness {
+          total_len,
+          segments,
+          segment_len,
+          zero: F::ZERO
+      }
+  }
+
+  pub fn len(&self) -> usize {
+      self.total_len
+  }
+
+  pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
+    let chi = EqPolynomial::new(point).evals();
+    self.segments.iter().map(|segment| compute_dotproduct_low_optimized(&chi, segment)).collect()
+  }
+
+  pub fn into_dense_polys(self) -> Vec<DensePolynomial<F>> {
+    self.segments.into_iter().map(|poly| DensePolynomial::new(poly)).collect()
+  }
+}
+
+impl<F: PrimeField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &Self::Output {
+      if index >= self.segments.len() * self.segment_len {
+        &self.zero
+      } else if index >= self.total_len {
+        panic!("index too high");
+      } else {
+        let segment_index = index / self.segment_len;
+        let inner_index = index % self.segment_len;
+        &self.segments[segment_index][inner_index]
+      }
+    }
+}
+
+pub trait IndexablePoly<F: PrimeField>: std::ops::Index<usize, Output = F> + Sync {
+    fn len(&self) -> usize;
+}
+
+impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
+    fn len(&self) -> usize {
+        self.total_len
+    }
+}
+
+/// A succinct proof of knowledge of a witness to a relaxed R1CS instance
+/// The proof is produced using Spartan's combination of the sum-check and
+/// the commitment to a vector viewed as a polynomial commitment
+pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+    witness_segment_commitments: Vec<HyraxCommitment<1, G>>,
+    outer_sumcheck_proof: SumcheckInstanceProof<F>,
+    outer_sumcheck_claims: (F, F, F),
+    inner_sumcheck_proof: SumcheckInstanceProof<F>,
+    eval_arg: Vec<F>, // TODO(arasuarun / sragss): better name
+    claimed_witnesss_evals: Vec<F>,
+    opening_proof: BatchedHyraxOpeningProof<1, G>
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
@@ -111,19 +170,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         });
         drop(_guard_u);
 
-        // TODO(sragss/arasuarun/moodlezoup): We can do this by reference in prove_quad_batched_unrolled + multiply_vec_uniform
-        let span = tracing::span!(tracing::Level::INFO, "witness_batching");
-        let _guard = span.enter();
-        let mut witness = Vec::with_capacity(witness_segments.len() * witness_segments[0].len());
-        witness_segments.iter().for_each(|segment| {
-            witness.par_extend(segment);
-        });
-        drop(_guard);
-
-        let span = tracing::span!(tracing::Level::INFO, "witness_resizing");
-        let _guard = span.enter();
-        witness.resize(key.num_vars_total, F::zero());
-        drop(_guard);
+        let segmented_padded_witness = SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
 
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),
@@ -139,7 +186,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // poly_Az is the polynomial extended from the vector Az
         let (mut poly_Az, mut poly_Bz, mut poly_Cz) = {
             let (poly_Az, poly_Bz, poly_Cz) =
-                key.shape_single_step.multiply_vec_uniform(&witness, &vec![], key.num_steps)?; // TODO(sragss): witness_commitments param is wrong [W, 1, X] -- I think it's just IO??
+                key.shape_single_step.multiply_vec_uniform(&segmented_padded_witness, &vec![], key.num_steps)?;
             (
                 DensePolynomial::new(poly_Az),
                 DensePolynomial::new(poly_Bz),
@@ -273,12 +320,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             }
         };
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
-        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) = SumcheckInstanceProof::prove_quad_unrolled::<G, _>(
+        let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) = SumcheckInstanceProof::prove_quad_unrolled::<G, _, _>(
             &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
             num_rounds_y,
             &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-            &witness,
-            &vec![], // TODO(sragss): I believe this is IO??
+            &segmented_padded_witness,
+            &vec![],
             comb_func,
             transcript,
         );
@@ -296,16 +343,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // Evaluate each segment on r_y_point
         let span = tracing::span!(tracing::Level::TRACE, "evaluate_segments");
         let _enter = span.enter();
-        let witness_segment_polys: Vec<DensePolynomial<F>> = witness_segments.into_iter().map(|segment| DensePolynomial::new(segment)).collect();
-        let chi = EqPolynomial::new(r_y_point.to_owned()).evals();
-        let witness_evals: Vec<F> = witness_segment_polys.iter().map(|segment| segment.evaluate_at_chi_low_optimized(&chi)).collect();
+        let witness_evals = segmented_padded_witness.evaluate_all(r_y_point.to_owned());
         drop(_enter);
 
 
+        let witness_segment_polys: Vec<DensePolynomial<F>> = segmented_padded_witness.into_dense_polys();
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> = witness_segment_polys.iter().map(|poly_ref| poly_ref).collect();
         let opening_proof = BatchedHyraxOpeningProof::prove(&witness_segment_polys_ref, &r_y_point, &witness_evals, transcript);
-
-        // TODO(sragss): Compress commitments?
 
       // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
       let outer_sumcheck_claims = (outer_sumcheck_claims[1], outer_sumcheck_claims[2], outer_sumcheck_claims[3]);
