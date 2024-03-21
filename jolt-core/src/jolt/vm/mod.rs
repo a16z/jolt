@@ -28,7 +28,7 @@ use crate::{
     lasso::memory_checking::NoPreprocessing,
 };
 use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION,
+    constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
     field_conversion::IntoSpartan,
     rv_trace::{ELFInstruction, MemoryOp},
 };
@@ -373,6 +373,9 @@ where
         commitment: MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
+        assert!(preprocessing.input_bytes.len() <= MAX_INPUT_SIZE as usize);
+        assert!(preprocessing.output_bytes.len() <= MAX_OUTPUT_SIZE as usize);
+
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
             proof.memory_checking_proof,
