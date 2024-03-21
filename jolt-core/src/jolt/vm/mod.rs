@@ -17,6 +17,7 @@ use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::{R1CSCommitments, R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::thread::drop_in_background_thread;
 use crate::{
     jolt::{
         instruction::{JoltInstruction, Opcode},
@@ -204,6 +205,8 @@ where
             &jolt_commitments, 
             &mut transcript,
         );
+
+        drop_in_background_thread(jolt_polynomials);
 
         let jolt_proof = JoltProof {
             bytecode: bytecode_proof,
