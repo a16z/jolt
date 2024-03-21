@@ -10,16 +10,18 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use super::Jolt;
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, bne::BNEInstruction, or::ORInstruction, sb::SBInstruction,
-    sh::SHInstruction, sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction,
-    sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction,
-    xor::XORInstruction, JoltInstruction, Opcode, SubtableIndices,
+    bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
+    or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
+    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
+    sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction, Opcode,
+    SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
     gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-    or::OrSubtable, sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
-    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, LassoSubtable, SubtableId,
+    or::OrSubtable, sign_extend::SignExtendByteSubtable, sll::SllSubtable,
+    sra_sign::SraSignSubtable, srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable,
+    xor::XorSubtable, LassoSubtable, SubtableId,
 };
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
@@ -87,6 +89,8 @@ instruction_set!(
   BGE: BGEInstruction,
   BGEU: BGEUInstruction,
   BNE: BNEInstruction,
+  LB: LBInstruction,
+  LH: LHInstruction,
   OR: ORInstruction,
   SB: SBInstruction,
   SH: SHInstruction,
@@ -110,6 +114,7 @@ subtable_enum!(
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
   OR: OrSubtable<F>,
+  SIGN_EXTEND: SignExtendByteSubtable<F>,
   SLL0: SllSubtable<F, 0, WORD_SIZE>,
   SLL1: SllSubtable<F, 1, WORD_SIZE>,
   SLL2: SllSubtable<F, 2, WORD_SIZE>,

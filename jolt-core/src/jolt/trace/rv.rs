@@ -4,6 +4,8 @@ use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
 use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
+use crate::jolt::instruction::lb::LBInstruction;
+use crate::jolt::instruction::lh::LHInstruction;
 use crate::jolt::instruction::or::ORInstruction;
 use crate::jolt::instruction::sb::SBInstruction;
 use crate::jolt::instruction::sh::SHInstruction;
@@ -16,7 +18,7 @@ use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::vm::rv32i_vm::RV32I;
-use common::rv_trace::{ELFInstruction, RVTraceRow, RV32IM};
+use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RV32IM};
 
 impl TryFrom<&ELFInstruction> for RV32I {
     type Error = &'static str;
@@ -60,6 +62,12 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::SH => Ok(SHInstruction::default().into()),
             RV32IM::SW => Ok(SWInstruction::default().into()),
 
+            RV32IM::LB => Ok(LBInstruction::default().into()),
+            RV32IM::LH => Ok(LHInstruction::default().into()),
+            RV32IM::LW => Ok(SWInstruction::default().into()),
+            RV32IM::LBU => Ok(SBInstruction::default().into()),
+            RV32IM::LHU => Ok(SHInstruction::default().into()),
+
             _ => Err("No corresponding RV32I instruction")
         }
     }
@@ -82,7 +90,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::SLT  => Ok(SLTInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::SLTU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
-            RV32IM::ADDI  => Ok(ADDInstruction::<32>(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
+            RV32IM::ADDI  => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
             RV32IM::XORI  => Ok(XORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
             RV32IM::ORI   => Ok(ORInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
             RV32IM::ANDI  => Ok(ANDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
@@ -107,7 +115,20 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::SH => Ok(SHInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::SW => Ok(SWInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
+            RV32IM::LB => Ok(LBInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
+            RV32IM::LH => Ok(LHInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
+            RV32IM::LW => Ok(SWInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
+            RV32IM::LBU => Ok(SBInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
+            RV32IM::LHU => Ok(SHInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
+
             _ => Err("No corresponding RV32I instruction")
         }
+    }
+}
+
+fn load_value(row: &RVTraceRow) -> u64 {
+    match row.memory_state.as_ref().unwrap() {
+        MemoryState::Read { address, value } => *value,
+        _ => panic!("Unexpected Write"),
     }
 }

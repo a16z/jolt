@@ -329,19 +329,21 @@ impl R1CSBuilder {
         let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
 
         /*
-            signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
-            signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
-            signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
-         */
-        let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
-        let _y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
-        let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
-
-        /*
             signal mem_v_bytes[MOPS()-3] <== subarray(3, MOPS()-3, MOPS())(memreg_v_writes);
             signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
         */
         let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 3), 8, MOPS-3); 
+
+        /*
+            signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
+            signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
+            signal _y <== if_else()([is_store_instr, _y, load_or_store_value]);
+            signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
+         */
+        let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
+        let _y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
+        let _y = R1CSBuilder::if_else_simple(instance, is_load_instr, _y, load_or_store_value);
+        let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
 
         /* 
             signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
@@ -413,13 +415,13 @@ impl R1CSBuilder {
             smallvec![]
         );
 
-    /* Verify the chunks of x and y for concat instructions. 
-        signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
-        (combined_x_chunks - x) * is_concat === 0; 
+        /* Verify the chunks of x and y for concat instructions. 
+            signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
+            (combined_x_chunks - x) * is_concat === 0; 
 
-        Note that a wire value need not be assigned for combined x_chunks. 
-        Repeat for y. 
-    */
+            Note that a wire value need not be assigned for combined x_chunks. 
+            Repeat for y. 
+        */
         R1CSBuilder::constr_abc(
             instance,  
             concat_constraint_vecs(
@@ -479,7 +481,7 @@ impl R1CSBuilder {
             rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
         */
         let rd_val = GET_INDEX(InputType::MemregVWrites, 2);
-        R1CSBuilder::constr_abc(instance, smallvec![(is_load_instr, 1)], smallvec![(rd_val, 1), (load_or_store_value, -1)], smallvec![]);
+        R1CSBuilder::constr_abc(instance, smallvec![(is_load_instr, 1)], smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], smallvec![]);
         R1CSBuilder::constr_prod_0(
             instance, 
             smallvec![(rd, 1)], 
@@ -573,7 +575,18 @@ impl R1CSBuilder {
         let rs1_val = GET_INDEX(InputType::MemregVReads, 0);
         let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
 
-        // 2. let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
+        // 2. let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 3), 8, MOPS-3);
+        let load_or_store_value = inputs.len();
+        inputs.push({
+            let mut val = F::zero(); 
+            let (L, N) = (8, MOPS-3);
+            for i in 0..N {
+                val += inputs[GET_INDEX(InputType::MemregVWrites, 3) + i] * F::from(1u64<<(i*L));
+            }
+            val 
+        });
+
+        // 3. let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
         let x = inputs.len(); 
         inputs.push(
             if inputs[GET_INDEX(InputType::OpFlags, 0)].is_zero() {
@@ -584,7 +597,7 @@ impl R1CSBuilder {
         );
 
 
-        // 3. let _y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
+        // 4a. let _y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
         let _y = inputs.len();
         inputs.push(
             if inputs[GET_INDEX(InputType::OpFlags, 1)].is_zero() {
@@ -595,7 +608,18 @@ impl R1CSBuilder {
         );
 
 
-        // 4. let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0));
+        // 4b. let _y = R1CSBuilder::if_else_simple(instance, is_load_instr, _y, load_or_store_value);
+        inputs.push(
+            if inputs[is_load_instr].is_zero() {
+                inputs[_y]
+            } else {
+                inputs[load_or_store_value]
+            }
+        );
+        let _y = inputs.len() - 1;
+
+
+        // 5. let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0));
         let y = inputs.len();
         inputs.push(
             if inputs[is_advice_instr].is_zero() {
@@ -604,17 +628,6 @@ impl R1CSBuilder {
                 inputs[GET_INDEX(InputType::LookupOutput, 0)]
             }
         );
-
-        // 5. let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 3), 8, MOPS-3);
-        let load_or_store_value = inputs.len();
-        inputs.push({
-            let mut val = F::zero(); 
-            let (L, N) = (8, MOPS-3);
-            for i in 0..N {
-                val += inputs[GET_INDEX(InputType::MemregVWrites, 3) + i] * F::from(1u64<<(i*L));
-            }
-            val 
-        });
 
         // 6. let immediate_signed = R1CSBuilder::if_else(instance, smallvec![(sign_imm_flag, 1)], smallvec![(immediate, 1)], smallvec![(immediate, 1), (0, -ALL_ONES - 1)]);
         let immediate_signed = inputs.len();

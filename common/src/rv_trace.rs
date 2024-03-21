@@ -377,6 +377,14 @@ impl ELFInstruction {
             | RV32IM::SLTU
             | RV32IM::SLTI
             | RV32IM::SLTIU
+            | RV32IM::SB
+            | RV32IM::SH
+            | RV32IM::SW
+            | RV32IM::LB
+            | RV32IM::LH
+            | RV32IM::LW
+            | RV32IM::LBU
+            | RV32IM::LHU
             | RV32IM::BEQ
             | RV32IM::BNE
             | RV32IM::BLT
