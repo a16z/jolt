@@ -172,38 +172,30 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let segmented_padded_witness = SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
 
-        let (num_rounds_x, num_rounds_y) = (
-            usize::try_from(key.num_cons_total.ilog2()).unwrap(),
-            (usize::try_from(key.num_vars_total.ilog2()).unwrap() + 1),
-        );
+        let num_rounds_x = key.num_cons_total.ilog2() as usize;
+        let num_rounds_y = key.num_vars_total.ilog2() as usize + 1;
 
         // outer sum-check
         let tau = (0..num_rounds_x)
             .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
             .collect::<Vec<F>>();
 
+        let (Az, Bz, Cz) = key.shape_single_step.multiply_vec_uniform(&segmented_padded_witness, &vec![], key.num_steps)?;
+        let mut poly_Az = DensePolynomial::new(Az);
+        let mut poly_Bz = DensePolynomial::new(Bz);
+        let mut poly_Cz = DensePolynomial::new(Cz);
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
-        // poly_Az is the polynomial extended from the vector Az
-        let (mut poly_Az, mut poly_Bz, mut poly_Cz) = {
-            let (poly_Az, poly_Bz, poly_Cz) =
-                key.shape_single_step.multiply_vec_uniform(&segmented_padded_witness, &vec![], key.num_steps)?;
-            (
-                DensePolynomial::new(poly_Az),
-                DensePolynomial::new(poly_Bz),
-                DensePolynomial::new(poly_Cz),
-            )
-        };
 
-        let comb_func_outer = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F, poly_D_comp: &F| -> F {
-                // Below is an optimized form of: *poly_A_comp * (*poly_B_comp * *poly_C_comp - *poly_D_comp)
-                if poly_B_comp.is_zero() || poly_C_comp.is_zero() {
-                    if poly_D_comp.is_zero() {
+        let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
+                // Below is an optimized form of: *A * (*B * *C - *D)
+                if B.is_zero() || C.is_zero() {
+                    if D.is_zero() {
                         F::zero()
                     } else {
-                        *poly_A_comp * (-(*poly_D_comp))
+                        *A * (-(*D))
                     }
                 } else {
-                    *poly_A_comp * (*poly_B_comp * *poly_C_comp - *poly_D_comp)
+                    *A * (*B * *C - *D)
                 }
             };
 
