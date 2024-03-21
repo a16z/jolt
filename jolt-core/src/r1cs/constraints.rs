@@ -3,6 +3,7 @@
 use smallvec::SmallVec;
 use smallvec::smallvec;
 use ff::PrimeField; 
+use rayon::prelude::*;
 
 /* Compiler Variables */
 const C: usize = 4; 
@@ -125,6 +126,7 @@ fn concat_constraint_vecs(mut x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: Sma
 }
 
 fn i64_to_f<F: PrimeField>(num: i64) -> F {
+    // TODO(sragss): Make from_u64
     if num < 0 {
         F::ZERO - F::from((-num) as u64)
     } else {
@@ -721,11 +723,12 @@ impl R1CSBuilder {
                        || modify_matrix(&mut self.C)));
     }
 
+    #[tracing::instrument(skip_all, name = "Shape::convert_to_field")]
     pub fn convert_to_field<F: PrimeField>(&self) -> (Vec<(usize, usize, F)>, Vec<(usize, usize, F)>, Vec<(usize, usize, F)>) {
         (
-            self.A.iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
-            self.B.iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
-            self.C.iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
+            self.A.par_iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
+            self.B.par_iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
+            self.C.par_iter().map(|(row, idx, val)| (*row, *idx, i64_to_f::<F>(*val))).collect(),
         )
     }
 }
