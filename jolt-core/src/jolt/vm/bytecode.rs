@@ -1,5 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use halo2curves::group::Curve;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
@@ -311,6 +312,19 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
     }
 
+    pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>) {
+        let a_read_write_evals = self.a_read_write.evals().clone();
+        let v_read_write_evals = [
+            self.v_read_write.opcode.evals(),
+            self.v_read_write.rs1.evals(),
+            self.v_read_write.rs2.evals(),
+            self.v_read_write.rd.evals(),
+            self.v_read_write.imm.evals(),
+        ].concat();
+
+        (a_read_write_evals, v_read_write_evals)
+    }
+
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn r1cs_polys_from_bytecode(
         mut bytecode: Vec<ELFRow>,
@@ -337,7 +351,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         for (trace_index, trace) in trace.iter().take(num_ops).enumerate() {
             let address = trace.address * 4 + RAM_START_ADDRESS as usize;
             // debug_assert!(address < code_size);
-            a_read_write_usize[trace_index] = address;
+            a_read_write_usize[trace_index] = trace.address;
             let counter = final_cts[trace.address];
             read_cts[trace_index] = counter;
             final_cts[trace.address] = counter + 1;
@@ -439,6 +453,12 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     // - t_final, v_init_final
     pub init_final_commitments: ConcatenatedPolynomialCommitment<G>,
 }
+
+// impl<G: CurveGroup> BytecodeCommitment<G> {
+//     pub fn get_polys_r1cs(&self) -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+//         self.read_write_commitments
+//     } 
+// }
 
 impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
 where

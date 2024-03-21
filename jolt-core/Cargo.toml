@@ -67,7 +67,8 @@ compiler = { path = "../compiler" }
 # witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval" }
 ruint = "1.11.1"
-spartan2 = { git = "https://github.com/a16z/Spartan2.git" }
+spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "dedupe/full"}
+# spartan2 = { path = "../Spartan2/" }
 ark-bn254 = "0.4.0"
 lazy_static = "1.4.0"
 halo2curves = "0.6.1"
@@ -75,6 +76,7 @@ fixedbitset = "0.5.0"
 
 [build-dependencies]
 common = { path = "../common" }
+# witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval", features = ["build-witness"] }
 
 [lib]
 name = "liblasso"

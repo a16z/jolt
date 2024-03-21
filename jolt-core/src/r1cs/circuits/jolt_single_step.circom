@@ -7,6 +7,8 @@ function C() {return 4;}
 function PROG_START_ADDR() {return 2147483664;}
 function N_FLAGS() {return 17;}
 function LOG_M() { return 16; }
+function RAM_START_ADDRESS() { return 0x80000000; }
+function MEMORY_ADDRESS_OFFSET() { return 0x80000000 - 0x20; }
 /* End of Compiler Variables */
 
 function L_CHUNK() { return LOG_M()/2; } 
@@ -123,8 +125,10 @@ template JoltStep() {
 
     signal input op_flags[N_FLAGS()];
 
+    signal PC <== input_state[PC_IDX()];
     /* Enforce that prog_a_rw === input_state.pc */
-    prog_a_rw === input_state[PC_IDX()];
+    // TODO(arasuarun): fix the preprocessing jump instruction!
+    // (prog_a_rw * 4 + RAM_START_ADDRESS()) * prog_a_rw === input_state[PC_IDX()];
         
     /* Constraints for op_flags: 
         1. Verify they combine to form op_flags_packed
@@ -169,7 +173,7 @@ template JoltStep() {
     rd === memreg_a_rw[2]; // the correctness of the write value will be handled later
 
     /******* Assigning operands x and y */
-    signal x <== if_else()([op_flags[0], rs1_val, prog_a_rw]); // TODO: change this for virtual instructions
+    signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
 
     signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
     signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
@@ -182,16 +186,15 @@ template JoltStep() {
     signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
 
     /* Verify all 4 (or 8) addresses involved. The starting should be rs1_val + immediate. 
-    TODO(arasuarun): simplify below
+    Verify that the following are equal for load/store instructions: 
+    * let immediate_signed = if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1])
+    * calculated memory address: rs1_val + immediate_signed 
+    * claimed memory address: memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET()
     */
-    signal is_load_store_instr <== is_load_instr + is_store_instr;
-    signal immediate_absolute <== if_else()([sign_imm_flag, immediate, ALL_ONES() - immediate + 1]);
-    signal sign_of_immediate <== 1-2*sign_imm_flag;
-    signal immediate_signed <== sign_of_immediate * immediate_absolute;
-    signal _load_store_addr <== rs1_val + immediate_signed;
-    signal load_store_addr <== is_load_store_instr * _load_store_addr;
 
-    memreg_a_rw[3] === (is_load_instr + is_store_instr) * load_store_addr; 
+    signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
+    (is_load_instr + is_store_instr) * ((rs1_val + immediate_signed) - (memreg_a_rw[3] + MEMORY_ADDRESS_OFFSET())) === 0;
+
 
     for (var i=1; i<MOPS()-3; i++) {
         // the first three are rs1, rs2, rd so memory starts are index 3
@@ -213,21 +216,23 @@ template JoltStep() {
     // /******** Constraints for Lookup Query Chunking  */
 
     /* Create the lookup query 
-        - First, obtain z.
+        - First, obtain combined_z_chunks (which should be the query)
+        - Verify that the query is structured correctly, based on the instruction.
         - Then verify that the chunks of x, y, z are correct. 
+
+    Constraints to check correctness of chunks_query 
+        If NOT a concat query: chunks_query === chunks_z 
+        If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
+    For concat, queries the tests are done later. 
     */
+    signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
+    is_add_instr * (combined_z_chunks - (x + y)) === 0; 
+    is_sub_instr * (combined_z_chunks - (x + (ALL_ONES() - y + 1))) === 0; 
 
-    // Store the right query format into z
-    signal z_concat <== x * (2**W()) + y;
-    signal z_add <== x + y;
-    signal z_sub <== x + (ALL_ONES() - y + 1);
-    signal z_mul <== x * y;
-
-    signal z__4 <== is_concat * z_concat;
-    signal z__3 <== z__4 + is_add_instr * z_add;
-    signal z__2 <== z__3 + is_sub_instr * z_sub;
-    signal z__1 <== z__2 + is_mul_instr * z_mul;
-    signal z <== z__1;
+    // This creates a big aux witness value only for mul instructions. 
+    signal is_mul_x <== is_mul_instr * x; 
+    signal is_mul_xy <== is_mul_instr * y;
+    is_mul_instr * (combined_z_chunks - is_mul_xy) === 0;
 
     // verify chunks_x
     signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
@@ -237,14 +242,7 @@ template JoltStep() {
     signal combined_y_chunks <== combine_chunks(C(), L_CHUNK())(chunks_y);
     (combined_y_chunks-y) * is_concat === 0;
 
-    /* Constraints to check correctness of chunks_query 
-        If NOT a concat query: chunks_query === chunks_z 
-        If its a concat query: then chunks_query === zip(chunks_x, chunks_y)
-    */
-    signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
-    (combined_z_chunks-z) * (1-(is_concat)) === 0;
-
-    // the concat checks: 
+    /* Query construction tests for concat queries */ 
     // the most significant chunk has a shorter length!
     signal chunk_y_used[C()]; 
     for (var i=0; i<C(); i++) {
@@ -271,7 +269,7 @@ template JoltStep() {
     component rd_test_lookup = prodZeroTest(3);
     rd_test_lookup.in <== [rd, if_update_rd_with_lookup_output, (rd_val - lookup_output)]; 
     component rd_test_jump = prodZeroTest(3); 
-    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
+    rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (PC + 4))]; 
 
     // TODO: LUI - add another flag for lui (again)
     // is_lui * (rd_val - immediate) === 0;

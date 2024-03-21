@@ -6,9 +6,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ff::PrimeField as GenericPrimeField;
 use halo2curves::group::prime::PrimeCurveAffine;
 use halo2curves::CurveAffine;
-
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use spartan2::provider::bn256_grumpkin::bn256::Affine as Spartan2Affine;
 use spartan2::provider::bn256_grumpkin::bn256::Scalar as Spartan2Fr;
+
 pub fn ark_to_spartan<ArkF: ArkPrimeField>(ark: ArkF) -> Spartan2Fr {
     let bigint: <ArkF as ArkPrimeField>::BigInt = ark.into_bigint();
     let bytes = bigint.to_bytes_le();
@@ -80,6 +81,7 @@ pub fn spartan_to_ark_unsafe<FF: GenericPrimeField<Repr = [u8; 32]>, AF: ArkPrim
     }
     ark
 }
+
 pub trait IntoArk: CurveAffine {
     type ArkConfig: SWCurveConfig;
 
@@ -121,6 +123,25 @@ pub trait IntoSpartan: ark_ec::AffineRepr {
                 Self::SpartanAffine::from_xy(
                     <Self::SpartanAffine as CurveAffine>::Base::from_repr(x).unwrap(),
                     <Self::SpartanAffine as CurveAffine>::Base::from_repr(y).unwrap(),
+                )
+                .unwrap()
+            }
+        }
+    }
+
+    fn to_spartan_bn256(&self) -> halo2curves::bn256::G1Affine {
+        match self.xy() {
+            None => halo2curves::bn256::G1Affine::identity(),
+            Some((x, y)) => {
+                let [x, y] = [x,y].map(|ark_f| {
+                    let mut ff_repr = <<halo2curves::bn256::G1Affine as CurveAffine>::Base as GenericPrimeField>::Repr::default();
+                    let ff_bytes = ff_repr.as_mut();
+                    ark_f.serialize_compressed(ff_bytes).unwrap();
+                    ff_repr
+                });
+                halo2curves::bn256::G1Affine::from_xy(
+                    <halo2curves::bn256::G1Affine as CurveAffine>::Base::from_repr(x).unwrap(),
+                    <halo2curves::bn256::G1Affine as CurveAffine>::Base::from_repr(y).unwrap(),
                 )
                 .unwrap()
             }

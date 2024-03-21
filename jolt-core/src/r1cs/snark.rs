@@ -1,26 +1,20 @@
 use std::collections::HashMap;
 
-use common::{path::JoltPaths, field_conversion::{ark_to_spartan_unsafe, ff_to_ruint, ff_to_ruints, ruint_to_ff, spartan_to_ark_unsafe}};
+use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
 use spartan2::{
-  errors::SpartanError,
-  VerifierKey,
-  traits::{
-    snark::RelaxedR1CSSNARKTrait,
-      upsnark::{PrecommittedSNARKTrait, UniformSNARKTrait},
-      Group,
-  },
-  SNARK,
+  errors::SpartanError, 
   provider::{
-      bn256_grumpkin::bn256::{self, Scalar as Spartan2Fr, Point as SpartanG1},
-      hyrax_pc::HyraxEvaluationEngine as SpartanHyraxEE,
-  },
-  spartan::upsnark::R1CSSNARK,
+      bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
+      hyrax_pc::{HyraxCommitment as SpartanHyraxCommitment, HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
+  }, 
+  spartan::upsnark::R1CSSNARK, traits::{
+    commitment::CommitmentEngineTrait, upsnark::PrecommittedSNARKTrait, Group
+  }, VerifierKey, SNARK
 };
 use bellpepper_core::{
-  Circuit, ConstraintSystem, LinearCombination, SynthesisError, Variable, Index, num::AllocatedNum,
+  Circuit, ConstraintSystem, SynthesisError, num::AllocatedNum,
 };
 use ff::PrimeField;
-use ruint::aliases::U256;
 use circom_scotia::r1cs::CircomConfig;
 use rayon::prelude::*;
 
@@ -35,26 +29,28 @@ const NUM_CHUNKS: usize = 4;
 const NUM_FLAGS: usize = 17;
 const SEGMENT_LENS: [usize; 11] = [4, 1, 6, 7, 7, 7, NUM_CHUNKS, NUM_CHUNKS, NUM_CHUNKS, 1, NUM_FLAGS];
 
+type CommitmentKey<G> = <<G as Group>::CE as CommitmentEngineTrait<G>>::CommitmentKey;
+
 /// Remap [[1, a1, a2, a3], [1, b1, b2, b3], ...]  -> [1, a1, b1, ..., a2, b2, ..., a3, b3, ...]
-#[tracing::instrument(skip_all, name = "JoltCircuit::reassemble_by_segments")]
-fn reassemble_by_segments<F: ff::PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
-  let num_steps = jolt_witnesses.len();
-  let num_vars = jolt_witnesses[0].len() - 1;
+#[tracing::instrument(skip_all, name = "JoltCircuit::assemble_by_segments")]
+fn reassemble_by_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<F> {
+  get_segments(jolt_witnesses).into_iter().flatten().collect()
+}
 
-  let total_size = num_steps * (num_vars) + 1;
-  let mut total: Vec<F> = Vec::with_capacity(total_size);
-  total.push(F::ONE);
+/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
+#[tracing::instrument(skip_all)]
+fn get_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
+  let num_witnesses = jolt_witnesses.len();
+  let witness_len = jolt_witnesses[0].len();
+  let mut result: Vec<Vec<F>> = vec![vec![F::ZERO; num_witnesses]; witness_len - 1]; // ignore 1 at the start 
 
-  total.par_extend((0..(total_size - 1)).into_par_iter().map(|i| {
-    let var_index: usize = i / num_steps;
-    let step_index: usize = i % num_steps;
+  result.par_iter_mut().enumerate().for_each(|(trace_index, trace_step)| {
+    for witness_index in 0..num_witnesses {
+      trace_step[witness_index] = jolt_witnesses[witness_index][trace_index + 1];
+    }
+  });
 
-    jolt_witnesses[step_index][var_index + 1]
-  }));
-
-  utils::thread::drop_in_background_thread(jolt_witnesses);
-
-  total
+  result 
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,11 +76,9 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
       inputs: inputs,
     }
   }
-}
 
-impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
-  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
-  fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+  #[tracing::instrument(name = "JoltCircuit::get_witnesses_by_step", skip_all)]
+  fn get_witnesses_by_step(&self) -> Result<Vec<Vec<F>>, SynthesisError> {
     let r1cs_path = JoltPaths::r1cs_path();
     let wtns_path = JoltPaths::witness_generator_path();
 
@@ -109,10 +103,10 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
 
     // TODO(sragss / arasuarun): Current chunking strategy is a mess and unnecessary. Can be handled with better indexing.
     // for variable [v], step_inputs[v][j] is the variable input for step j
-    let inputs_chunked : Vec<Vec<_>> = self.inputs
-      .into_par_iter()
-      .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
-      .collect();
+    // let inputs_chunked : Vec<Vec<_>> = self.inputs
+    //   .into_par_iter()
+    //   .map(|inner_vec| inner_vec.chunks(inner_vec.len()/TRACE_LEN).map(|chunk| chunk.to_vec()).collect())
+    //   .collect();
 
     let graph = witness::init_graph(WTNS_GRAPH_BYTES).unwrap();
     let wtns_buffer_size = witness::get_inputs_size(&graph);
@@ -121,9 +115,22 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     let compute_witness_span = tracing::span!(tracing::Level::INFO, "compute_witness_loop");
     let _compute_witness_guard = compute_witness_span.enter();
     let jolt_witnesses: Vec<Vec<F>> = (0..NUM_STEPS).into_par_iter().map(|i| {
-      let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(spartan_to_ark_unsafe).collect()).collect();
+      // let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = inputs_chunked.iter().map(|v| v[i].iter().cloned().map(spartan_to_ark_unsafe).collect()).collect();
+      let mut step_inputs: Vec<Vec<ark_bn254::Fr>> = self.inputs.iter().map(|v| {
+        v.iter()
+         .skip(i)
+         .step_by(TRACE_LEN)
+         .cloned()
+         .map(spartan_to_ark_unsafe)
+         .collect()
+      }).collect();
 
-      step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(inputs_chunked[0][i][0])]); // [step_counter, program_counter]
+      let program_counter = if i > 0 && self.inputs[0][i] == F::from(0) {
+        F::from(0)
+      } else {
+          self.inputs[0][i] * F::from(4u64) + F::from(RAM_START_ADDRESS)
+      };
+      step_inputs.push(vec![ark_bn254::Fr::from(i as u64), spartan_to_ark_unsafe(program_counter)]);
 
       let input_map: HashMap<String, Vec<ark_bn254::Fr>> = variable_names
         .iter()
@@ -143,18 +150,26 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
     }).collect();
     drop(_compute_witness_guard);
 
+    Ok(jolt_witnesses)
+  }
+}
+
+impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
+  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
+  fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+    let jolt_witnesses = self.get_witnesses_by_step()?;
+
     let witness_variable_wise = reassemble_by_segments(jolt_witnesses);
 
     let allocate_vars_span = tracing::span!(tracing::Level::INFO, "allocate_vars");
     let _allocate_vars_guard = allocate_vars_span.enter();
-    (1..witness_variable_wise.len()).for_each(|i| {
+    (0..witness_variable_wise.len()).for_each(|i| {
         let f = witness_variable_wise[i];
-        let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", if i < cfg.r1cs.num_inputs { "public" } else { "aux" }, i)), || Ok(f)).unwrap();
+        let _ = AllocatedNum::alloc(cs.namespace(|| format!("{}_{}", "aux", i)), || Ok(f)).unwrap();
     });
     drop(_allocate_vars_guard);
 
     utils::thread::drop_in_background_thread(witness_variable_wise);
-    utils::thread::drop_in_background_thread(inputs_chunked);
 
     Ok(())
   }
@@ -196,6 +211,25 @@ impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltSkeleton<F> {
 }
 
 
+#[tracing::instrument(name = "get_w_segments", skip_all)]
+pub fn get_w_segments<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: &JoltCircuit<F>) -> Result<(Vec<Vec<F>>), SynthesisError> {
+  let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
+  Ok(get_segments(jolt_witnesses))
+}
+
+pub fn precommit_with_ck<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(ck: &CommitmentKey<G>, w_segments: Vec<Vec<F>>) -> Result<(Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
+  let N_SEGMENTS = w_segments.len();
+
+  // for each segment, commit to it using CE::<G>::commit(ck, &self.W) 
+  let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
+    .into_par_iter()
+    .map(|i| {
+      G::CE::commit(&ck, &w_segments[i]) 
+    }).collect();
+
+  Ok(commitments)
+}
+
 pub struct R1CSProof  {
   proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
   vk: VerifierKey<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>>,
@@ -203,11 +237,13 @@ pub struct R1CSProof  {
 
 impl R1CSProof {
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-  pub fn prove<ArkF: ark_ff::PrimeField>(
+  pub fn prove<ArkF: ark_ff::PrimeField> (
       W: usize, 
       C: usize, 
       TRACE_LEN: usize, 
-      inputs: Vec<Vec<ArkF>>
+      inputs_ark: Vec<Vec<ArkF>>, 
+      generators: Vec<bn256::Affine>,
+      jolt_commitments: &Vec<Vec<bn256::Affine>>,
   ) -> Result<Self, SpartanError> {
       type G1 = SpartanG1;
       type EE = SpartanHyraxEE<SpartanG1>;
@@ -216,228 +252,70 @@ impl R1CSProof {
 
       let NUM_STEPS = TRACE_LEN;
 
-
-    let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
-    let _enter = span.enter();
-    let inputs_ff = inputs
-      .into_par_iter()
-      .map(|input| input
-          .into_par_iter()
-          .map(|x| {
-              ark_to_spartan_unsafe(x)
-          })
-          .collect::<Vec<Spartan2Fr>>()
-      ).collect::<Vec<Vec<Spartan2Fr>>>();
+      let span = tracing::span!(tracing::Level::TRACE, "convert_ark_to_spartan_fr");
+      let _enter = span.enter();
+      let inputs: Vec<Vec<Spartan2Fr>> = inputs_ark.into_par_iter().map(|vec| vec.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<ArkF, Spartan2Fr>(ark_item)).collect()).collect();
       drop(_enter);
+      drop(span);
 
-      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs_ff[0][0], inputs_ff);
+      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(W, C, NUM_STEPS, inputs[0][0], inputs.clone());
       let num_steps = jolt_circuit.num_steps;
       let skeleton_circuit = JoltSkeleton::<F>::from_num_steps(num_steps);
 
-      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps).unwrap();
+      // Obtain public key 
+      let hyrax_ck = HyraxCommitmentKey::<G1> {
+          ck: spartan2::provider::pedersen::from_gens_bn256(generators)
+      };
 
-      SNARK::prove(&pk, jolt_circuit).map(|snark| Self {
+      // Assemble w_segments 
+
+      // TODO(arasuarun): this will be replaced with a handwritten circuit that assigns IO and Aux directly 
+      let w_segments_from_circuit = get_w_segments::<G1, S, F>(&jolt_circuit).unwrap();
+
+      let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
+      let _enter = cloning_stuff_span.enter();
+
+      let io_segments = w_segments_from_circuit[0..4].to_vec();
+      let inputs_segments: Vec<Vec<F>> = inputs.into_iter().flat_map(|input| {
+        input.chunks(TRACE_LEN).map(|chunk| chunk.to_vec()).collect::<Vec<_>>()
+      }).collect();
+      let aux_segments = w_segments_from_circuit[4+inputs_segments.len()..].to_vec();
+
+      let w_segments = io_segments.clone().into_iter()
+        .chain(inputs_segments.iter().cloned())
+        .chain(aux_segments.clone().into_iter())
+        .collect::<Vec<_>>(); 
+
+      drop(_enter);
+      drop(cloning_stuff_span);
+
+      // Commit to segments
+      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<_> {
+        let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
+        let _g = span.enter();
+        segments.into_par_iter().map(|segment| {
+          <G1 as Group>::CE::commit(&hyrax_ck, &segment) 
+        }).collect()
+      };
+      
+      let io_comms = commit_segments(io_segments);
+      let input_comms = jolt_commitments; 
+      let aux_comms = commit_segments(aux_segments);
+
+      let comm_w_vec = io_comms.into_iter()
+      .chain(input_comms.iter().map(|comm| SpartanHyraxCommitment::from(comm.clone())))
+      .chain(aux_comms.into_iter())
+      .collect::<Vec<_>>();
+
+      let (pk, vk) = SNARK::<G1, S, JoltSkeleton<F>>::setup_precommitted(skeleton_circuit, num_steps, hyrax_ck).unwrap();
+
+      SNARK::prove_precommitted(&pk, jolt_circuit, w_segments, comm_w_vec).map(|snark| Self {
         proof: snark,
         vk
       })
   }
 
   pub fn verify(&self) -> Result<(), SpartanError> {
-    SNARK::verify(&self.proof, &self.vk, &[])
+    SNARK::verify_precommitted(&self.proof, &self.vk, &[])
   }
-}
-
-mod test {
-  use spartan2::{
-    provider::bn256_grumpkin::bn256,
-    traits::Group,
-    SNARK,
-  };
-
-
-  #[test]
-  fn test_all_zeros() {
-    type G1 = bn256::Point;
-    type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
-    type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-
-    type F = <G1 as Group>::Scalar;
-
-    let N = 1; 
-    let W = 64;
-    let c = 6;
-
-    let prog_a_rw = vec![F::zero(); N * 6];
-    let prog_v_rw = vec![F::zero(); N * 6];
-    let prog_t_reads = vec![F::zero(); N * 6];
-    let memreg_a_rw = vec![F::zero(); N * 3+(W/8)];
-    let memreg_v_reads = vec![F::zero(); N * 3+(W/8)];
-    let memreg_v_writes = vec![F::zero(); N * 3+(W/8)];
-    let memreg_t_reads = vec![F::zero(); N * c];
-    let chunks_x = vec![F::zero(); N * c];
-    let chunks_y=  vec![F::zero(); N * c];
-    let chunks_query = vec![F::zero(); N];
-    let lookup_outputs = vec![F::zero(); N];
-    let op_flags = vec![F::zero(); N * 15];
-
-    let inputs = vec![
-      prog_a_rw,
-      prog_v_rw,
-      prog_t_reads,
-      memreg_a_rw,
-      memreg_v_reads, 
-      memreg_v_writes,
-      memreg_t_reads, 
-      chunks_x, 
-      chunks_y,
-      chunks_query,
-      lookup_outputs,
-      op_flags,
-    ];
-
-    // TODO(arasuarun): Need to switch to single step.
-    unimplemented!("Test needs to be ported to jolt_single_step.circom");
-    // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(32, 3, inputs);
-    // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-    // assert!(res_verifier.is_ok());
-  }
-
-  #[test]
-  fn test_add() {
-    type G1 = bn256::Point;
-    type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
-    type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-
-    type F = <G1 as Group>::Scalar;
-
-    let N = 1; 
-    let W = 64;
-    let c = 6;
-
-    let mut prog_a_rw = vec![F::zero(); N * 6];
-    let mut prog_v_rw = vec![F::zero(); N * 6];
-    let mut prog_t_reads = vec![F::zero(); N * 6];
-    let mut memreg_a_rw = vec![F::zero(); N * 3+(W/8)];
-    let mut memreg_v_reads = vec![F::zero(); N * 3+(W/8)];
-    let mut memreg_v_writes = vec![F::zero(); N * 3+(W/8)];
-    let mut memreg_t_reads = vec![F::zero(); N * c];
-    let mut chunks_x = vec![F::zero(); N * c];
-    let mut chunks_y=  vec![F::zero(); N * c];
-    let mut chunks_query = vec![F::zero(); c];
-    let mut lookup_outputs = vec![F::zero(); N];
-    let mut op_flags = vec![F::zero(); N * 15];
-
-    // prog_v_rw: (ADD, rs1= 1, rs2=2, rd=3, imm=0, op_flags_packed=12)
-    prog_v_rw = vec![F::from(10), F::from(1), F::from(2), F::from(3), F::from(0), F::from(128)];
-
-    // memreg_a_rw: (rs1=1, rs2=2, rd=3)
-    memreg_a_rw[0] = F::from(1);
-    memreg_a_rw[1] = F::from(2);
-    memreg_a_rw[10] = F::from(3);
-
-    // suppose rs1 stores 1, rs2 stores 6, rd has 0
-    memreg_v_reads[0] = F::from(1);
-    memreg_v_reads[1] = F::from(6);
-    memreg_v_reads[10] = F::from(0);
-
-    memreg_v_writes[0] = F::from(1);
-    memreg_v_writes[1] = F::from(6);
-    memreg_v_writes[10] = F::from(7);
-
-    chunks_x[c-1] = F::from(0);
-    chunks_y[c-1] = F::from(0);
-    chunks_query[c-1] = F::from(0);
-
-    op_flags[7] = F::from(1); // is_add_instr
-
-    let inputs = vec![
-      prog_a_rw,
-      prog_v_rw,
-      prog_t_reads,
-      memreg_a_rw,
-      memreg_v_reads, 
-      memreg_v_writes,
-      memreg_t_reads, 
-      chunks_x, 
-      chunks_y,
-      chunks_query,
-      lookup_outputs,
-      op_flags,
-    ];
-
-    // TODO(arasuarun): Need to switch to single step.
-    unimplemented!("Test needs to be ported to jolt_single_step.circom");
-    // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
-    // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-    // assert!(res_verifier.is_ok());
-  }
-
-  #[test]
-  fn test_add_should_fail() {
-    type G1 = bn256::Point;
-    type EE = spartan2::provider::ipa_pc::EvaluationEngine<G1>;
-    type S = spartan2::spartan::snark::RelaxedR1CSSNARK<G1, EE>;
-
-    type F = <G1 as Group>::Scalar;
-
-    let N = 1; 
-    let W = 64;
-    let c = 6;
-
-    let mut prog_a_rw = vec![F::zero(); N * 6];
-    let mut prog_v_rw = vec![F::zero(); N * 6];
-    let mut prog_t_reads = vec![F::zero(); N * 6];
-    let mut memreg_a_rw = vec![F::zero(); N * 3+(W/8)];
-    let mut memreg_v_reads = vec![F::zero(); N * 3+(W/8)];
-    let mut memreg_v_writes = vec![F::zero(); N * 3+(W/8)];
-    let mut memreg_t_reads = vec![F::zero(); N * c];
-    let mut chunks_x = vec![F::zero(); N * c];
-    let mut chunks_y=  vec![F::zero(); N * c];
-    let mut chunks_query = vec![F::zero(); c];
-    let mut lookup_outputs = vec![F::zero(); N];
-    let mut op_flags = vec![F::zero(); N * 15];
-
-    prog_v_rw = vec![F::from(10), F::from(1), F::from(2), F::from(3), F::from(0), F::from(128)];
-
-    // ERROR: this should be rs1 = 1
-    memreg_a_rw[0] = F::from(16);
-    memreg_a_rw[1] = F::from(2);
-    memreg_a_rw[10] = F::from(3);
-
-    memreg_v_reads[0] = F::from(1);
-    memreg_v_reads[1] = F::from(6);
-    memreg_v_reads[10] = F::from(0);
-
-    memreg_v_writes[0] = F::from(1);
-    memreg_v_writes[1] = F::from(6);
-    memreg_v_writes[10] = F::from(7);
-
-    chunks_x[c-1] = F::from(0);
-    chunks_y[c-1] = F::from(0);
-    chunks_query[c-1] = F::from(0);
-
-    op_flags[7] = F::from(1); // is_add_instr
-
-    let inputs = vec![
-      prog_a_rw,
-      prog_v_rw,
-      prog_t_reads,
-      memreg_a_rw,
-      memreg_v_reads, 
-      memreg_v_writes,
-      memreg_t_reads, 
-      chunks_x, 
-      chunks_y,
-      chunks_query,
-      lookup_outputs,
-      op_flags,
-    ];
-
-    // TODO(arasuarun): Need to switch to single step.
-    unimplemented!("Test needs to be ported to jolt_single_step.circom");
-    // let jolt_circuit = JoltCircuit::<<G1 as Group>::Scalar>::new_from_inputs(64, 6, inputs);
-    // let res_verifier = run_jolt_spartan_with_circuit::<G1, S>(jolt_circuit);
-    // assert!(res_verifier.is_err());
-  }
-
 }
