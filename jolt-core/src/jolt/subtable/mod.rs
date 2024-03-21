@@ -30,6 +30,7 @@ pub mod identity;
 pub mod lt_abs;
 pub mod ltu;
 pub mod or;
+pub mod sign_extend;
 pub mod sll;
 pub mod sra_sign;
 pub mod srl;

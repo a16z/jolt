@@ -124,6 +124,8 @@ pub mod beq;
 pub mod bge;
 pub mod bgeu;
 pub mod bne;
+pub mod lb;
+pub mod lh;
 pub mod or;
 pub mod sb;
 pub mod sh;
