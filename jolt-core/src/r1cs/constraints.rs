@@ -370,8 +370,7 @@ impl R1CSBuilder {
         }
 
         // is_store_instr * (load_or_store_value - rs2_val) === 0;
-        // R1CSBuilder::constr_abc(instance, smallvec![(is_store_instr, 1)], smallvec![(load_or_store_value, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], smallvec![]);
-        R1CSBuilder::constr_abc(instance, smallvec![(is_store_instr, 1)], smallvec![(load_or_store_value, 1), (rs2_val, -1)], smallvec![]);
+        R1CSBuilder::constr_abc(instance, smallvec![(is_store_instr, 1)], smallvec![(load_or_store_value, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], smallvec![]);
 
 
         /* Create the lookup query 

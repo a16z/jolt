@@ -125,12 +125,15 @@ pub mod bge;
 pub mod bgeu;
 pub mod bne;
 pub mod or;
+pub mod sb;
+pub mod sh;
 pub mod sll;
 pub mod slt;
 pub mod sltu;
 pub mod sra;
 pub mod srl;
 pub mod sub;
+pub mod sw;
 pub mod xor;
 
 #[cfg(test)]

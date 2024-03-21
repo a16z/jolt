@@ -10,9 +10,10 @@ use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 use super::Jolt;
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
-    bgeu::BGEUInstruction, bne::BNEInstruction, or::ORInstruction, sll::SLLInstruction,
-    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, xor::XORInstruction, JoltInstruction, Opcode, SubtableIndices,
+    bgeu::BGEUInstruction, bne::BNEInstruction, or::ORInstruction, sb::SBInstruction,
+    sh::SHInstruction, sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction,
+    sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction,
+    xor::XORInstruction, JoltInstruction, Opcode, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -87,6 +88,9 @@ instruction_set!(
   BGEU: BGEUInstruction,
   BNE: BNEInstruction,
   OR: ORInstruction,
+  SB: SBInstruction,
+  SH: SHInstruction,
+  SW: SWInstruction,
   SLL: SLLInstruction<WORD_SIZE>,
   SLT: SLTInstruction,
   SLTU: SLTUInstruction,
@@ -116,6 +120,7 @@ subtable_enum!(
   SRL2: SrlSubtable<F, 2, WORD_SIZE>,
   SRL3: SrlSubtable<F, 3, WORD_SIZE>,
   TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
+  TRUNCATE_BYTE: TruncateOverflowSubtable<F, 8>,
   XOR: XorSubtable<F>
 );
 
@@ -418,8 +423,6 @@ mod tests {
 
         let program = host::Program::new("sha3-guest").input(&[5u8; 32]);
         let (mut trace, bytecode, io_device) = program.trace();
-        println!("the problem: {:#?}", trace[17212]);
-        // trace.split_off(17213);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .iter()
