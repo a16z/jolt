@@ -58,14 +58,14 @@ fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_stat
   reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
 }
 
-#[tracing::instrument(name = "JoltCircuit::synthesize_witnesses", skip_all)]
+#[tracing::instrument(name = "synthesize_witnesses", skip_all)]
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
   let mut step_z = inputs.clone_to_stepwise();
 
   // Compute the aux
   let span = tracing::span!(tracing::Level::INFO, "calc_aux");
   let _guard = span.enter();
-  step_z.par_chunks_mut(1 << 16).for_each(|step| {
+  step_z.par_chunks_mut(1 << 12).for_each(|step| {
     for i in 0..step.len() {
       R1CSBuilder::calculate_aux(&mut step[i]);
     }
