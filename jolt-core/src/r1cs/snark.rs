@@ -205,7 +205,7 @@ impl<F: PrimeField> R1CSInputs<F> {
   }
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
-  pub fn trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
+  pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
     // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to padded_trace_len
     let mut chunks: Vec<Vec<F>> = Vec::new();
     chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
@@ -256,10 +256,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
 
-      let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
+      let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_to_witness_segments");
       let _enter = cloning_stuff_span.enter();
-
-      let inputs_segments = inputs.trace_len_chunks(padded_trace_len);
+      let inputs_segments = inputs.clone_to_trace_len_chunks(padded_trace_len);
 
       let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
       // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
