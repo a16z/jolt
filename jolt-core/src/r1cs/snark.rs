@@ -1,22 +1,9 @@
-use crate::{jolt::{self, vm::JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::thread::drop_in_background_thread};
+use crate::{poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::thread::drop_in_background_thread};
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
 use ark_ec::CurveGroup;
-use common::{constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS}, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
-use itertools::Itertools;
-// use spartan2::{
-//   errors::SpartanError, provider::{
-//       bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
-//       hyrax_pc::{HyraxCommitment as SpartanHyraxCommitment, HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
-//   }, r1cs::R1CSShape, spartan::upsnark::R1CSSNARK, traits::{
-//     commitment::CommitmentEngineTrait, upsnark::PrecommittedSNARKTrait, Group
-//   }, VerifierKey, SNARK
-// };
-use bellpepper_core::{
-  Circuit, ConstraintSystem, SynthesisError
-};
-// use ff::PrimeField;
+use common::constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS};
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -64,62 +51,28 @@ fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_f
   (front_result, back_result)
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct JoltCircuit<F: PrimeField> {
-  num_steps: usize,
-  inputs: R1CSInputs<F>,
+#[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
+fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+  let jolt_witnesses = synthesize_witnesses(inputs);
+  // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
+  reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
 }
 
-impl<F: PrimeField> JoltCircuit<F> {
-  pub fn new_from_inputs(num_steps: usize, inputs: R1CSInputs<F>) -> Self {
-    JoltCircuit{
-      num_steps: num_steps,
-      inputs: inputs,
+#[tracing::instrument(name = "JoltCircuit::synthesize_witnesses", skip_all)]
+fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
+  let mut step_z = inputs.clone_to_stepwise();
+
+  // Compute the aux
+  let span = tracing::span!(tracing::Level::INFO, "calc_aux");
+  let _guard = span.enter();
+  step_z.par_chunks_mut(1 << 16).for_each(|step| {
+    for i in 0..step.len() {
+      R1CSBuilder::calculate_aux(&mut step[i]);
     }
-  }
+  });
 
-  #[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
-  pub fn synthesize_state_aux_segments(&self, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-    let jolt_witnesses = self.synthesize_witnesses();
-    // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
-    reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
-  }
-
-  #[tracing::instrument(name = "JoltCircuit::synthesize_witnesses", skip_all)]
-  fn synthesize_witnesses(&self) -> Vec<Vec<F>> {
-    let mut step_z = self.inputs.clone_to_stepwise();
-
-    // Compute the aux
-    let span = tracing::span!(tracing::Level::INFO, "calc_aux");
-    let _guard = span.enter();
-    step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
-      R1CSBuilder::calculate_aux(step);
-    });
-
-    step_z
-  }
+  step_z
 }
-
-
-// #[tracing::instrument(name = "get_w_segments", skip_all)]
-// pub fn get_w_segments<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(jolt_circuit: &JoltCircuit<F>) -> Result<(Vec<Vec<F>>), SynthesisError> {
-//   let jolt_witnesses = jolt_circuit.get_witnesses_by_step()?;
-//   Ok(get_segments(jolt_witnesses))
-// }
-
-// pub fn precommit_with_ck<G: Group<Scalar = F>, S: PrecommittedSNARKTrait<G>, F: PrimeField<Repr = [u8; 32]>>(ck: &CommitmentKey<G>, w_segments: Vec<Vec<F>>) -> Result<(Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment>), SynthesisError> {
-//   let N_SEGMENTS = w_segments.len();
-
-//   // for each segment, commit to it using CE::<G>::commit(ck, &self.W) 
-//   let commitments: Vec<<G::CE as CommitmentEngineTrait<G>>::Commitment> = (0..N_SEGMENTS)
-//     .into_par_iter()
-//     .map(|i| {
-//       G::CE::commit(&ck, &w_segments[i]) 
-//     }).collect();
-
-//   Ok(commitments)
-// }
-
 
 #[derive(Clone, Debug, Default)]
 pub struct R1CSInputs<F: PrimeField> {
@@ -293,30 +246,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
   ) -> Result<Self, SpartanError> {
       let num_steps = padded_trace_len;
 
-      let span = tracing::span!(tracing::Level::TRACE, "JoltCircuit::new_from_inputs");
-      let _enter = span.enter();
-      // TODO(sragss / arasuarun): After Spartan is merged we don't need to clone these inputs anymore
-      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(num_steps, inputs.clone());
-      drop(_enter);
-      
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
       R1CSBuilder::get_matrices(&mut jolt_shape); 
       let key = UniformSpartanProof::<F,G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
-      // let constraints_F = jolt_shape.convert_to_field(); 
-      // let shape_single = R1CSShape::<F> {
-      //     A: constraints_F.0,
-      //     B: constraints_F.1,
-      //     C: constraints_F.2,
-      //     num_cons: jolt_shape.num_constraints,
-      //     num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
-      //     num_io: jolt_shape.num_inputs,
-      // };
       drop(_enter);
       drop(span);
 
-      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal);
+      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
       let _enter = cloning_stuff_span.enter();
@@ -336,7 +274,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let commit_segments = |segments: Vec<Vec<F>>| -> Vec<HyraxCommitment<1, G>> {
         let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
         let _g = span.enter();
-        segments.into_par_iter().map(|segment| {
+        segments.into_iter().map(|segment| {
           HyraxCommitment::commit(&DensePolynomial::new(segment), &generators)
         }).collect()
       };
@@ -345,7 +283,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let input_comms = prior_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
-      // TODO(sragss): Likely want to append this commitment to jolt_commitments
       let witness_segment_commitments = io_comms.into_iter()
         .chain(input_comms.iter().map(|comm| HyraxCommitment::from(comm.clone())))
         .chain(aux_comms.into_iter())
@@ -356,7 +293,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         generators
       };
 
-      // TODO(sragss / arasuarun): Wire up remainder here.
       let proof = UniformSpartanProof::prove_precommitted(&key, w_segments, &r1cs_commitments.witness_segment_commitments, transcript).expect("UniformSpartanProof failed");
       Ok(R1CSProof::<F, G> {
         proof,
