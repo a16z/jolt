@@ -454,31 +454,6 @@ where
         }
         drop(_guard);
 
-        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
-        // will be the exact witness vector to feed into the R1CS
-        // after pre-pending IO and appending the AUX 
-
-        let span = tracing::span!(tracing::Level::INFO, "input_cloning");
-        let _guard = span.enter();
-        let input_chunks_x = chunks_x.clone();
-        let input_chunks_y = chunks_y.clone();
-        let input_lookup_outputs = lookup_outputs.clone();
-        let input_circuit_flags_bits = circuit_flags_bits.clone();
-        drop(_guard);
-
-        let inputs: R1CSInputs<F> = R1CSInputs::new(
-            bytecode_a,
-            bytecode_v,
-            memreg_a_rw,
-            memreg_v_reads,
-            memreg_v_writes,
-            input_chunks_x,
-            input_chunks_y,
-            chunks_query,
-            input_lookup_outputs,
-            input_circuit_flags_bits
-        );
-
         // Assemble the commitments
         let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
         let _guard = span.enter();
@@ -493,19 +468,19 @@ where
         ];
         drop(_guard);
 
-        let commit_to_chunks = |data: Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+        let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
             data.par_chunks(padded_trace_len).map(|chunk| {
-                HyraxCommitment::commit(&DensePolynomial::new(chunk.to_vec()), &hyrax_generators)
+                HyraxCommitment::commit_slice(chunk, &hyrax_generators)
             }).collect()
         };
         
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
         let _guard = span.enter();
-        let chunks_x_comms = commit_to_chunks(chunks_x);
-        let chunks_y_comms = commit_to_chunks(chunks_y);
-        let lookup_outputs_comms = commit_to_chunks(lookup_outputs);
-        let packed_flags_comm = vec![HyraxCommitment::commit(&DensePolynomial::new(packed_flags), &hyrax_generators)];
-        let circuit_flags_comm = commit_to_chunks(circuit_flags_bits);
+        let chunks_x_comms = commit_to_chunks(&chunks_x);
+        let chunks_y_comms = commit_to_chunks(&chunks_y);
+        let lookup_outputs_comms = commit_to_chunks(&lookup_outputs);
+        let packed_flags_comm = vec![HyraxCommitment::commit_slice(&packed_flags, &hyrax_generators)];
+        let circuit_flags_comm = commit_to_chunks(&circuit_flags_bits);
         drop(_guard);
         
 
@@ -525,6 +500,22 @@ where
             lookup_outputs_comms,
             circuit_flags_comm
         ].concat();
+
+        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
+        // will be the exact witness vector to feed into the R1CS
+        // after pre-pending IO and appending the AUX 
+        let inputs: R1CSInputs<F> = R1CSInputs::new(
+            bytecode_a,
+            bytecode_v,
+            memreg_a_rw,
+            memreg_v_reads,
+            memreg_v_writes,
+            chunks_x,
+            chunks_y,
+            chunks_query,
+            lookup_outputs,
+            circuit_flags_bits
+        );
 
         let proof  = R1CSProof::prove::<F>(
             32, 
