@@ -89,6 +89,11 @@ impl BytecodeRow {
         }
     }
 
+    /// Packs the instruction's circuit flags and instruction flags into a single u64 bitvector.
+    /// The layout is:
+    ///     circuit flags || instruction flags
+    /// where instruction flags is a one-hot bitvector corresponding to the instruction's 
+    /// index in the `InstructionSet` enum.
     pub fn bitflags<InstructionSet>(instruction: &ELFInstruction) -> u64
     where
         InstructionSet: JoltInstructionSet,
