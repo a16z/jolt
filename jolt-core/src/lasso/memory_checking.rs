@@ -1129,11 +1129,9 @@ mod tests {
                     circuits.push(write_circuit);
                 }
 
-                let expanded_flag_map = vec![0, 0, 1, 1];
                 let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
                     circuits,
                     vec![polynomials.flags_0.clone(), polynomials.flags_1.clone()],
-                    expanded_flag_map,
                     read_write_leaves,
                 );
 

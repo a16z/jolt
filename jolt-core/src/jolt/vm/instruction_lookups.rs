@@ -663,15 +663,10 @@ where
         let _span = trace_span!("InstructionLookups: the rest");
         let _enter = _span.enter();
 
-        // self.memory_to_subtable map has to be expanded because we've doubled the number of "grand products memorys": [read_0, write_0, ... read_NUM_MEMOREIS, write_NUM_MEMORIES]
-        let expanded_flag_map: Vec<usize> =
-            (0..2 * preprocessing.num_memories).map(|i| i / 2).collect();
-
         // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
         let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
             read_write_circuits,
             memory_flag_polys,
-            expanded_flag_map,
             read_write_leaves,
         );
 

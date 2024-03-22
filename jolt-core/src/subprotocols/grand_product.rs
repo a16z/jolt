@@ -139,7 +139,6 @@ pub struct BatchedGrandProductCircuit<F: PrimeField> {
 
     flags_present: bool,
     flags: Option<Vec<DensePolynomial<F>>>,
-    flag_map: Option<Vec<usize>>,
     fingerprint_polys: Option<Vec<DensePolynomial<F>>>,
 }
 
@@ -147,10 +146,8 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
     pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
         Self {
             circuits,
-
             flags_present: false,
             flags: None,
-            flag_map: None,
             fingerprint_polys: None,
         }
     }
@@ -158,19 +155,14 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
     pub fn new_batch_flags(
         circuits: Vec<GrandProductCircuit<F>>,
         flags: Vec<DensePolynomial<F>>,
-        flag_map: Vec<usize>,
         fingerprint_polys: Vec<DensePolynomial<F>>,
     ) -> Self {
-        assert_eq!(circuits.len(), flag_map.len());
         assert_eq!(circuits.len(), fingerprint_polys.len());
-        flag_map.iter().for_each(|i| assert!(*i < flags.len()));
 
         Self {
             circuits,
-
             flags_present: true,
             flags: Some(flags),
-            flag_map: Some(flag_map),
             fingerprint_polys: Some(fingerprint_polys),
         }
     }
@@ -200,8 +192,7 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
             // Each of these is needed exactly once, transfer ownership rather than clone.
             let fingerprint_polys = self.fingerprint_polys.take().unwrap();
             let flags = self.flags.take().unwrap();
-            let flag_map = self.flag_map.take().unwrap();
-            CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, flag_map, num_rounds)
+            CubicSumcheckParams::new_flags(fingerprint_polys, flags, eq, num_rounds)
         } else {
             // If flags is present layer_id 1 corresponds to circuits.left_vec/right_vec[0]
             let layer_id = if self.flags_present {
@@ -505,8 +496,6 @@ mod grand_product_circuit_tests {
         let read_leaf_poly = DensePolynomial::new(read_leaves);
         let write_leaf_poly = DensePolynomial::new(write_leaves);
 
-        let flag_map = vec![0, 0];
-
         let fingerprint_polys = vec![
             DensePolynomial::new(read_fingerprints),
             DensePolynomial::new(write_fingerprints),
@@ -522,7 +511,6 @@ mod grand_product_circuit_tests {
         let batch = BatchedGrandProductCircuit::new_batch_flags(
             vec![read_gpc, write_gpc],
             vec![flag_poly.clone()],
-            flag_map,
             fingerprint_polys.clone(),
         );
 
