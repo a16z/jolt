@@ -42,6 +42,7 @@ merlin = "3.0.0"
 num-integer = "0.1.45"
 pasta_curves = "0.5.1"
 plotters = "0.3.5"
+postcard = { version = "1.0.8", default-features = false, features = ["use-std"] }
 rand = "0.7.3"
 rand_chacha = { version = "0.3.0", default-features = false }
 rand_core = { version = "0.5", default-features = false }
@@ -61,7 +62,7 @@ tracing-texray = "0.2.0"
 zeroize = { version = "1", default-features = false }
 
 common = { path = "../common" }
-jolt-sdk = { path = "../jolt-sdk", features = ["std"] }
+tracer = { path = "../tracer" }
 
 # witness = { git = "https://github.com/philsippl/circom-witness-rs" }
 witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval" }
@@ -78,6 +79,7 @@ serde = { version = "1.0.*", default-features = false }
 
 [build-dependencies]
 common = { path = "../common" }
+
 # witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval", features = ["build-witness"] }
 
 [lib]

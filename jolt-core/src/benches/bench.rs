@@ -5,11 +5,11 @@ use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction,
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
+use crate::host;
 use ark_bn254::{Fr, G1Projective};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RVTraceRow};
 use criterion::black_box;
-use jolt_sdk::host;
 use merlin::Transcript;
 use rand_core::SeedableRng;
 use serde::Serialize;

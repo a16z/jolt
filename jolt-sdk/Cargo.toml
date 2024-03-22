@@ -13,12 +13,13 @@ repository = "https://github.com/a16z/lasso"
 edition="2021"
 
 [features]
-std = ["dep:tracer", "dep:common", "postcard/use-std"]
+std = ["dep:tracer", "dep:common", "dep:jolt-core", "postcard/use-std"]
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
 serde = { version = "1.0.*", default-features = false }
 
 jolt-sdk-macros = { path = "./macros" }
+jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
 common = { path = "../common", optional = true }
