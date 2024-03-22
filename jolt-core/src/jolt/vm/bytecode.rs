@@ -5,7 +5,7 @@ use rand::rngs::StdRng;
 use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet, Opcode};
+use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet};
 use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
@@ -101,7 +101,7 @@ impl BytecodeRow {
 
         // instruction flag
         if let Ok(jolt_instruction) = InstructionSet::try_from(instruction) {
-            bitvector <<= jolt_instruction.to_opcode();
+            bitvector <<= InstructionSet::enum_index(&jolt_instruction);
             bitvector |= 1;
         }
 

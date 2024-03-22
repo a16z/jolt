@@ -70,15 +70,10 @@ pub trait JoltInstruction: Sync + Clone + Debug {
 }
 
 pub trait JoltInstructionSet:
-    JoltInstruction + Opcode + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction>
+    JoltInstruction + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction>
 {
-    // Marker trait
-}
-
-pub trait Opcode {
-    /// Converts a variant of an instruction set enum into its canonical "opcode" value.
-    fn to_opcode(&self) -> u8 {
-        unsafe { *<*const _>::from(self).cast::<u8>() }
+    fn enum_index(instruction: &Self) -> usize {
+        unsafe { *<*const _>::from(instruction).cast::<u8>() as usize }
     }
 }
 

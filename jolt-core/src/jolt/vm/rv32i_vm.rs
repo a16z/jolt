@@ -14,7 +14,7 @@ use crate::jolt::instruction::{
     or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
     slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
     sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction,
-    JoltInstructionSet, Opcode, SubtableIndices,
+    JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -33,7 +33,6 @@ macro_rules! instruction_set {
         #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro)]
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
-        impl Opcode for $enum_name {}
         impl JoltInstructionSet for $enum_name {}
         impl $enum_name {
             pub fn random_instruction(rng: &mut StdRng) -> Self {
@@ -50,8 +49,6 @@ macro_rules! instruction_set {
     };
 }
 
-// TODO(moodlezoup): Consider replacing From<TypeId> and Into<usize> with
-//     combined trait/function to_enum_index(subtable: &dyn LassoSubtable<F>) => usize
 /// Generates an enum out of a list of LassoSubtable types. All LassoSubtable methods
 /// are callable on the enum type via enum_dispatch.
 macro_rules! subtable_enum {
