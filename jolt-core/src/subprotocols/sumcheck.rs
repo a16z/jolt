@@ -317,8 +317,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                     let mut evals = (F::zero(), F::zero(), F::zero());
 
                     for (coeff, poly_A, poly_B) in multizip((coeffs, &params.poly_As, &params.poly_Bs)) {
+                        // We want to compute:
+                        //     evals.0 += coeff * poly_A[low_index] * poly_B[low_index]
+                        //     evals.1 += coeff * (2 * poly_A[high_index] - poly_A[low_index]) * (2 * poly_B[high_index] - poly_B[low_index])
+                        //     evals.0 += coeff * (3 * poly_A[high_index] - 2 * poly_A[low_index]) * (3 * poly_B[high_index] - 2 * poly_B[low_index])
+                        // which naively requires 3 multiplications by `coeff`.
+                        // By computing these values `A_low` and `A_high`, we only use 2 multiplications by `coeff`.
                         let A_low = *coeff * poly_A[low_index];
                         let A_high = *coeff * poly_A[high_index];
+
                         let m_a = A_high - A_low;
                         let m_b = poly_B[high_index] - poly_B[low_index];
 
