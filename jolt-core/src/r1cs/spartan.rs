@@ -675,7 +675,7 @@ mod tests {
         let uniform_circuit = UniformDoubleCircuit {};
 
         let pedersen_generators = PedersenGenerators::<G1Projective>::new(1 << 4, b"generators");
-        let hyrax_generators = HyraxGenerators::<1, G1Projective>::new(
+        let hyrax_generators = HyraxGenerators::<NUM_R1CS_POLYS, G1Projective>::new(
             witness_poly.get_num_vars(),
             &pedersen_generators,
         );
@@ -736,7 +736,7 @@ mod tests {
         let uniform_circuit = UniformDoubleCircuit {};
 
         let pedersen_generators = PedersenGenerators::<G1Projective>::new(1 << 4, b"generators");
-        let hyrax_generators = HyraxGenerators::<1, G1Projective>::new(
+        let hyrax_generators = HyraxGenerators::<NUM_R1CS_POLYS, G1Projective>::new(
             witness_poly.get_num_vars(),
             &pedersen_generators,
         );
