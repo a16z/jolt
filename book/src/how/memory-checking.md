@@ -1,7 +1,11 @@
 # Offline Memory Checking
-Offline memory checking is a method that enables a prover to demonstrate to a verifier that a read/write memory was used correctly. In such a memory system, values $v$ can be written to addresses $a$ and subsequently retrieved. This technique allows the verifier to efficiently confirm that the prover adhered to the memory's rules.
+Offline memory checking is a method that enables a prover to demonstrate to a verifier that a read/write memory was used correctly. In such a memory system, values $v$ can be written to addresses $a$ and subsequently retrieved. This technique allows the verifier to efficiently confirm that the prover adhered to the memory's rules (i.e., that the value returned by any read operation is indeed the most recent value that was written to that memory cell). 
 
-Jolt utilizes offline memory checking in the Bytecode prover, Lookup prover, and RAM prover.
+Jolt utilizes offline memory checking in the Bytecode prover, Lookup prover (for VM instruction execution), and RAM prover. The RAM prover must support a read-write memory. The Bytecode prover and Lookup prover need only support read-only memories.  In the case of the Bytecode prover, the memory is initialized to contain the Bytecode of the RISC-V program, and the memory is never modified (it's read-only). And the lookup tables used for VM instruction execution are determined entirely by the RISC-V instruction set.
+
+(The term "offline memory checking" refers to techniques that check the correctness of all read operations "all at once", after the reads have all occurred--or in SNARK settings, after the purported values returned by the reads have been committed. Off-line checking techniques do not determine as _a read happens_ whether or not it was correct. They only ascertain, when all the reads are checked at once, whether or not all of the reads were correct. 
+
+This is in contrast to "online memory checking" techniques like Merkle hashing that immediately confirm that a memory read was done correctly by insisting that each read includes an authentication path. Merkle hashing is much more expensive on a per-read basis for SNARK provers, and offline memory checking suffices for SNARK design. This is why Lasso and Jolt use offline memory checking techniques rather than online). 
 
 ## Initialization Algorithm
 ### `TODO`: 
