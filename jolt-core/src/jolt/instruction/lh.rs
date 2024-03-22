@@ -3,31 +3,27 @@ use rand::prelude::StdRng;
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
-    sign_extend::SignExtendByteSubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
+    identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable,
 };
-use crate::utils::instruction_utils::chunk_and_concatenate_operands;
+use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct LHInstruction(pub u64, pub u64);
+pub struct LHInstruction(pub u64);
 
 impl JoltInstruction for LHInstruction {
     fn operands(&self) -> [u64; 2] {
-        [self.0, self.1]
+        [0, self.0]
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        assert!(vals.len() == 3);
+        assert!(vals.len() == 2);
 
-        let half = vals[0] * F::from_u64(1 << 8).unwrap() + vals[1];
-        let sign_extension = vals[2];
+        let half = vals[0];
+        let sign_extension = vals[1];
 
-        let mut result = half;
-        for i in 2..C {
-            result += F::from_u64(1 << (8 * i)).unwrap() * sign_extension;
-        }
-        result
+        half + F::from_u64(1 << 16).unwrap() * sign_extension
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -44,32 +40,30 @@ impl JoltInstruction for LHInstruction {
         assert!(M == 1 << 16);
         vec![
             (
-                // Truncate all but the lowest eight bits of the last two chunks,
-                // which contains the lower 16 bits of the loaded value.
-                Box::new(TruncateOverflowSubtable::<F, 8>::new()),
-                SubtableIndices::from(C - 2..C),
+                Box::new(IdentitySubtable::<F>::new()),
+                SubtableIndices::from(C - 1),
             ),
             (
                 // Sign extend the lowest 16 bits of the loaded value,
                 // Which will be in the second-to-last chunk.
-                Box::new(SignExtendByteSubtable::<F>::new()),
-                SubtableIndices::from(C - 2),
+                Box::new(SignExtendSubtable::<F, 16>::new()),
+                SubtableIndices::from(C - 1),
             ),
         ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-        chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+        chunk_operand_usize(self.0, C, log_M)
     }
 
     fn lookup_entry(&self) -> u64 {
         // Sign-extend lower 16 bits of the loaded value
-        (self.1 & 0xffff) as i16 as i32 as u32 as u64
+        (self.0 & 0xffff) as i16 as i32 as u32 as u64
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        Self(rng.next_u32() as u64)
     }
 }
 
@@ -89,21 +83,18 @@ mod test {
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            let instruction = LHInstruction(x, y);
+            let x = rng.next_u32() as u64;
+            let instruction = LHInstruction(x);
             jolt_instruction_test!(instruction);
         }
 
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            LHInstruction(100, 0),
-            LHInstruction(0, 100),
-            LHInstruction(1, 0),
-            LHInstruction(0, u32_max),
-            LHInstruction(u32_max, 0),
-            LHInstruction(u32_max, u32_max),
-            LHInstruction(u32_max, 1 << 8),
-            LHInstruction(1 << 8, u32_max),
+            LHInstruction(0),
+            LHInstruction(1),
+            LHInstruction(100),
+            LHInstruction(u32_max),
+            LHInstruction(1 << 8),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

@@ -3,22 +3,22 @@ use ark_std::log2;
 use rand::prelude::StdRng;
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
-use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
+use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct SHInstruction(pub u64, pub u64);
+pub struct SHInstruction(pub u64);
 
 impl JoltInstruction for SHInstruction {
     fn operands(&self) -> [u64; 2] {
-        [self.0, self.1]
+        [0, self.0]
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], _: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
-        assert!(vals.len() == 2);
-        concatenate_lookups(vals, 2, log2(M) as usize / 2)
+        assert!(vals.len() == 1);
+        vals[0]
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -34,23 +34,23 @@ impl JoltInstruction for SHInstruction {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
         vec![(
-            Box::new(TruncateOverflowSubtable::<F, 8>::new()),
-            SubtableIndices::from(C - 2..C),
+            Box::new(IdentitySubtable::<F>::new()),
+            SubtableIndices::from(C - 1),
         )]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-        chunk_and_concatenate_operands(self.0, self.1, C, log_M)
+        chunk_operand_usize(self.0, C, log_M)
     }
 
     fn lookup_entry(&self) -> u64 {
         // Lower 16 bits of the rs2 value
-        self.1 & 0xffff
+        self.0 & 0xffff
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
         use rand_core::RngCore;
-        Self(rng.next_u32() as u64, rng.next_u32() as u64)
+        Self(rng.next_u32() as u64)
     }
 }
 
@@ -70,21 +70,18 @@ mod test {
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
-            let instruction = SHInstruction(x, y);
+            let x = rng.next_u32() as u64;
+            let instruction = SHInstruction(x);
             jolt_instruction_test!(instruction);
         }
 
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            SHInstruction(100, 0),
-            SHInstruction(0, 100),
-            SHInstruction(1, 0),
-            SHInstruction(0, u32_max),
-            SHInstruction(u32_max, 0),
-            SHInstruction(u32_max, u32_max),
-            SHInstruction(u32_max, 1 << 8),
-            SHInstruction(1 << 8, u32_max),
+            SHInstruction(0),
+            SHInstruction(1),
+            SHInstruction(100),
+            SHInstruction(u32_max),
+            SHInstruction(1 << 8),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

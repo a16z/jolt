@@ -111,15 +111,15 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
             RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address, row.imm_u64()).into()),
 
-            RV32IM::SB => Ok(SBInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SH => Ok(SHInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::SW => Ok(SWInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::SB => Ok(SBInstruction(row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::SH => Ok(SHInstruction(row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::SW => Ok(SWInstruction(row.register_state.rs2_val.unwrap()).into()),
 
-            RV32IM::LB => Ok(LBInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
-            RV32IM::LH => Ok(LHInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
-            RV32IM::LW => Ok(SWInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
-            RV32IM::LBU => Ok(SBInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
-            RV32IM::LHU => Ok(SHInstruction(row.register_state.rs1_val.unwrap(), load_value(row)).into()),
+            RV32IM::LB => Ok(LBInstruction(load_value(row)).into()),
+            RV32IM::LH => Ok(LHInstruction(load_value(row)).into()),
+            RV32IM::LW => Ok(SWInstruction(load_value(row)).into()),
+            RV32IM::LBU => Ok(SBInstruction(load_value(row)).into()),
+            RV32IM::LHU => Ok(SHInstruction(load_value(row)).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

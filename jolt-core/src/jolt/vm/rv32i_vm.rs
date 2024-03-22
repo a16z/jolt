@@ -19,7 +19,7 @@ use crate::jolt::instruction::{
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
     gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-    or::OrSubtable, sign_extend::SignExtendByteSubtable, sll::SllSubtable,
+    or::OrSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable,
     sra_sign::SraSignSubtable, srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable,
     xor::XorSubtable, LassoSubtable, SubtableId,
 };
@@ -114,7 +114,8 @@ subtable_enum!(
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
   OR: OrSubtable<F>,
-  SIGN_EXTEND: SignExtendByteSubtable<F>,
+  SIGN_EXTEND_8: SignExtendSubtable<F, 8>,
+  SIGN_EXTEND_16: SignExtendSubtable<F, 16>,
   SLL0: SllSubtable<F, 0, WORD_SIZE>,
   SLL1: SllSubtable<F, 1, WORD_SIZE>,
   SLL2: SllSubtable<F, 2, WORD_SIZE>,
