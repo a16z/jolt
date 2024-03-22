@@ -139,6 +139,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         ReturnType::Type(_, ty) => quote! { -> (#ty, ())},
     };
 
+    let guest_crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
+
     let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
     let prove_fn = quote! {
         #[cfg(not(feature = "guest"))]
@@ -147,7 +149,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
             println!("Proving...");
 
-            let program = Program::new("sha3-guest");
+            let program = Program::new(#guest_crate_name);
             #(#args;)*
             let output_bytes = program.trace_analyze();
             #handle_return
