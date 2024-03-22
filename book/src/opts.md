@@ -14,6 +14,10 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
 - The optimization described in Section 3.2 of [this paper](https://eprint.iacr.org/2024/108.pdf) by Angus Gruen applies to a subset of the invocations of the sum-check protocol in Jolt, including the first of two sum-checks in Spartan and all sum-checks in Grand Product arguments within memory-checking procedures (Lasso, Spice). 
 
+    Anticipated speedup: 3% of total prover time.
+
+- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir.
+
     Anticipated speedup: 3% of total prover time. 
 
 - On reads to registers or RAM, the value written back to the memory cell by the memory-checking procedure is committed separately from the value returned by the read, and an R1CS constraint is included to force equality. Really, a single value can be committed and the constraint omitted.  
