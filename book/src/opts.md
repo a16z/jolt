@@ -16,6 +16,10 @@ Anticipated speedup: 3% of overall prover time. <check>
 
 Anticipated speedup: 3% of total prover time. 
 
+- On reads to registers or RAM, the value written back to the memory cell by the memory-checking procedure is committed separately from the value returned by the read, and an R1CS constraint is included to force equality. Really, a single value can be committed and the constraint omitted.  
+
+Anticipated speedup: 1% of total prover time. 
+
 - SP1 implements word-addressable memory (the CPU has to read an entire 64-bit word of memory at once). Jolt currently implements byte-addressable memory (the RISC-V CPU is allowed to read one byte at a time, as required by the RISC-V specification). 
 
 Most benchmarks get compiled into RISC-V programs that mostly read entire words at once. Switching to word-addressable memory will improve Jolt’s speed on these benchmarks by 5%. 
