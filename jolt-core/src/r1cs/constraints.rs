@@ -568,7 +568,7 @@ impl R1CSBuilder {
             if inputs[is_lui_auipc].is_zero() {
                 inputs[immediate_before_processing]
             } else {
-                inputs[immediate_before_processing] * F::from(1u64<<12)
+                inputs[immediate_before_processing] * F::from_u64(1u64<<12).unwrap()
             }
         );
 
@@ -613,7 +613,7 @@ impl R1CSBuilder {
             let mut val = F::zero(); 
             let (L, N) = (8, MOPS-3);
             for i in 0..N {
-                val += inputs[GET_INDEX(InputType::MemregVWrites, 3) + i] * F::from(1u64<<(i*L));
+                val += inputs[GET_INDEX(InputType::MemregVWrites, 3) + i] * F::from_u64(1u64<<(i*L)).unwrap();
             }
             val 
         });
