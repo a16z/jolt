@@ -12,7 +12,7 @@ Anticipated speedup: 7% of prover time.
 
 Anticipated speedup: 3% of overall prover time. <check>
 
-- The optimization described in Section 3.2 of this paper by Angus Gruen applies to a subset of the invocations of the sum-check protocol in Jolt, including the first of two sum-checks in Spartan and all sum-checks in Grand Product arguments within memory-checking procedures (Lasso, Spice). 
+- The optimization described in Section 3.2 of [this paper](https://eprint.iacr.org/2024/108.pdf) by Angus Gruen applies to a subset of the invocations of the sum-check protocol in Jolt, including the first of two sum-checks in Spartan and all sum-checks in Grand Product arguments within memory-checking procedures (Lasso, Spice). 
 
 Anticipated speedup: 3% of total prover time. 
 
