@@ -44,10 +44,14 @@ pub mod host {
                 .args(&[
                     "build",
                     "--release",
+                    "--features",
+                    "guest",
                     "-p",
                     &self.guest,
                     "--target-dir",
                     "/tmp/jolt-guest-target",
+                    "--target",
+                    "riscv32i-unknown-none-elf"
                 ])
                 .output()
                 .expect("failed to build guest");
@@ -67,8 +71,8 @@ pub mod host {
             (trace, instructions, io_device)
         }
 
-        pub fn trace_analyze(self) {
-            let (rows, _, _) = self.trace();
+        pub fn trace_analyze(self) -> Vec<u8> {
+            let (rows, _, device) = self.trace();
 
             let mut counts = HashMap::<RV32IM, u64>::new();
             for row in rows {
@@ -87,6 +91,8 @@ pub mod host {
             for (op, count) in counts {
                 println!("{:?}: {}", op, count)
             }
+
+            device.outputs
         }
     }
 }

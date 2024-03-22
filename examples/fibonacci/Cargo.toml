@@ -1,4 +1,4 @@
-cargo-features = ["per-package-target"]
+#cargo-features = ["per-package-target"]
 
 [package]
 name = "fibonacci"

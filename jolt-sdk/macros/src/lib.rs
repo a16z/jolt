@@ -8,7 +8,8 @@ use common::constants::{INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRE
 
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input_fn = parse_macro_input!(item as ItemFn);
+    let item_clone = item.clone();
+    let input_fn = parse_macro_input!(item_clone as ItemFn);
 
     let max_input_len = (INPUT_END_ADDRESS - INPUT_START_ADDRESS) as usize;
 
@@ -62,9 +63,12 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 
     let transformed_fn = quote! {
+        #[cfg(feature = "guest")]
         use core::arch::global_asm;
+        #[cfg(feature = "guest")]
         use core::panic::PanicInfo;
         
+        #[cfg(feature = "guest")]
         global_asm!("\
             .global _start\n\
             .extern _STACK_PTR\n\
@@ -74,6 +78,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 	            j .\n\
         ");
         
+        #[cfg(feature = "guest")]
         #[no_mangle]
         pub extern "C" fn main() {
             let mut offset = 0;
@@ -84,6 +89,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             #handle_return
         }
         
+        #[cfg(feature = "guest")]
         #[panic_handler]
         fn panic(_info: &PanicInfo) -> ! {
             unsafe {
@@ -94,5 +100,76 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    transformed_fn.into()
+    let input_fn = parse_macro_input!(item as ItemFn);
+    let fn_name = &input_fn.sig.ident;
+    let inputs = &input_fn.sig.inputs;
+    let output = &input_fn.sig.output;
+    let body = &input_fn.block;
+
+    let mut args = Vec::new();
+    for arg in &input_fn.sig.inputs {
+        if let syn::FnArg::Typed(PatType { pat, .. }) = arg {
+            if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
+                let arg_name = &pat_ident.ident;
+                let arg_set = quote! {
+                    let program = program.input(&#arg_name);
+                };
+
+
+                args.push(arg_set);
+            } else {
+                panic!("cannot parse arg");
+            }
+        } else {
+            panic!("cannot parse arg");
+        }
+    }
+
+    let handle_return = match &input_fn.sig.output {
+        ReturnType::Default => quote! {
+            let ret_val = ();
+        },
+        ReturnType::Type(_, ty) => quote! {
+            let ret_val = jolt_sdk::postcard::from_bytes::<#ty>(&output_bytes).unwrap();
+        }
+    };
+    
+    let new_output_ty = match &input_fn.sig.output {
+        ReturnType::Default => quote! { -> ((), ()) },
+        ReturnType::Type(_, ty) => quote! { -> (#ty, ())},
+    };
+
+    let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
+    let prove_fn = quote! {
+        #[cfg(not(feature = "guest"))]
+        pub fn #prove_fn_name(#inputs) #new_output_ty {
+            use jolt_sdk::host::Program;
+
+            println!("Proving...");
+
+            let program = Program::new("sha3-guest");
+            #(#args;)*
+            let output_bytes = program.trace_analyze();
+            #handle_return
+
+            (ret_val, ())
+        }
+    };
+
+    let execute_fn_name = syn::Ident::new(&format!("execute_{}", fn_name), fn_name.span());
+    let execute_fn = quote! {
+        #[cfg(not(feature = "guest"))]
+        pub fn #execute_fn_name(#inputs) #output {
+            #body
+        }
+    };
+
+    let output = quote! {
+        #transformed_fn
+        #prove_fn
+        #execute_fn
+    };
+
+    output.into()
 }
+
