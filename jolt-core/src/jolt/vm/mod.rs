@@ -501,7 +501,7 @@ where
         let span = tracing::span!(tracing::Level::INFO, "bytecode_commitment_conversions");
         let _guard = span.enter();
         // TODO(sragss): JoltCommitment::convert_to_pre_r1cs();
-        let bytecode_comms: Vec<HyraxCommitment<1, G>> = vec![
+        let bytecode_comms: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> = vec![
             jolt_commitments.bytecode.read_write_commitments[0].clone(), // a
             jolt_commitments.bytecode.read_write_commitments[2].clone(), // opcode,
             jolt_commitments.bytecode.read_write_commitments[3].clone(), // rd

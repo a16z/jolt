@@ -240,8 +240,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       _C: usize, 
       padded_trace_len: usize, 
       inputs: R1CSInputs<F>,
-      generators: HyraxGenerators<1, G>,
-      prior_commitments: &Vec<HyraxCommitment<1, G>>,
+      generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+      prior_commitments: &Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
       transcript: &mut Transcript
   ) -> Result<Self, SpartanError> {
       let num_steps = padded_trace_len;
@@ -270,7 +270,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(cloning_stuff_span);
 
       // Commit to segments
-      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<HyraxCommitment<1, G>> {
+      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
         let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
         let _g = span.enter();
         segments.into_iter().map(|segment| {
@@ -278,7 +278,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         }).collect()
       };
 
-      let io_comms: Vec<HyraxCommitment<1, G>> = commit_segments(io_segments);
+      let io_comms = commit_segments(io_segments);
       let input_comms = prior_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
