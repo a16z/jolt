@@ -13,9 +13,6 @@ use crate::utils::instruction_utils::{
 #[derive(Copy, Clone, Default, Debug)]
 pub struct ADDInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-pub type ADD32Instruction = ADDInstruction<32>;
-pub type ADD64Instruction = ADDInstruction<64>;
-
 impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
     fn operands(&self) -> [u64; 2] {
         [self.0, self.1]

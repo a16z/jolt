@@ -9,13 +9,13 @@ use emulator::{
     Emulator,
 };
 
-use object::{Object, ObjectSection, SectionKind};
+use object::{Object, ObjectSection};
 
 mod decode;
 mod emulator;
 mod trace;
 
-pub use common::{ELFInstruction, MemoryState, RVTraceRow, RegisterState};
+pub use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RegisterState, RV32IM};
 
 use crate::decode::decode_raw;
 
@@ -121,7 +121,7 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
             // Unrecognized instruction, or from a ReadOnlyData section
             instructions.push(ELFInstruction {
                 address,
-                opcode: common::RV32IM::from_str("UNIMPL"),
+                opcode: RV32IM::from_str("UNIMPL"),
                 raw: word,
                 rs1: None,
                 rs2: None,
