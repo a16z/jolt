@@ -47,7 +47,7 @@ $$
 This multiset hashing process is represented by a binary tree of multiplication gates and is computed using an [optimized GKR protocol](https://eprint.iacr.org/2013/351.pdf).
 
 ## References
-- [Original Paper on offline memory checking, forming the technical underpinnings of Lasso](https://www.researchgate.net/publication/226386605_Checking_the_correctness_of_memories/link/0c960526fe9ab32634000000/download?_tp=eyJjb250ZXh0Ijp7ImZpcnN0UGFnZSI6InB1YmxpY2F0aW9uIiwicGFnZSI6InB1YmxpY2F0aW9uIn19)
+- [Original BEGKN paper on offline memory checking, forming the technical underpinnings of Lasso](https://www.researchgate.net/publication/226386605_Checking_the_correctness_of_memories/link/0c960526fe9ab32634000000/download?_tp=eyJjb250ZXh0Ijp7ImZpcnN0UGFnZSI6InB1YmxpY2F0aW9uIiwicGFnZSI6InB1YmxpY2F0aW9uIn19)
 - [Spice Protocol for read-write memories (see Fig. 2)](https://eprint.iacr.org/2018/907.pdf)
 - [Spartan Protocol](https://eprint.iacr.org/2019/550.pdf)
 - [Lasso Protocol for read-only memories a.k.a. lookups](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf)
