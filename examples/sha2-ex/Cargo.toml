@@ -1,5 +1,3 @@
-# cargo-features = ["per-package-target"]
-
 [package]
 name = "sha2-ex"
 version = "0.1.0"
