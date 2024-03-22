@@ -33,6 +33,7 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     (col_size, row_size)
 }
 
+#[derive(Clone)]
 pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
@@ -46,7 +47,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxGenerators<RATIO, G> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
     row_commitments: Vec<G>,
 }
@@ -61,12 +62,22 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
         let ell = poly.get_num_vars();
         assert_eq!(n, ell.pow2());
 
+        Self::commit_slice(poly.evals_ref(), gens)
+    }
+
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::commit_slice")]
+    pub fn commit_slice(
+        eval_slice: &[G::ScalarField],
+        gens: &HyraxGenerators<RATIO, G>,
+    ) -> Self {
+        let n = eval_slice.len();
+        let ell = n.log_2();
+
         let (L_size, R_size) = matrix_dimensions(ell, RATIO);
         assert_eq!(L_size * R_size, n);
 
         let gens = CurveGroup::normalize_batch(&gens.gens.generators);
-        let row_commitments = poly
-            .evals_ref()
+        let row_commitments = eval_slice
             .par_chunks(R_size)
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();

@@ -1,21 +1,11 @@
-use crate::{jolt, utils::thread::drop_in_background_thread};
+use crate::{poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::thread::drop_in_background_thread};
 
-use super::constraints::R1CSBuilder; 
+use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
-use common::{constants::RAM_START_ADDRESS, field_conversion::{ark_to_spartan_unsafe, spartan_to_ark_unsafe}, path::JoltPaths};
-use itertools::Itertools;
-use spartan2::{
-  errors::SpartanError, provider::{
-      bn256_grumpkin::bn256::{self, Point as SpartanG1, Scalar as Spartan2Fr},
-      hyrax_pc::{HyraxCommitment as SpartanHyraxCommitment, HyraxCommitmentKey, HyraxEvaluationEngine as SpartanHyraxEE},
-  }, r1cs::R1CSShape, spartan::upsnark::R1CSSNARK, traits::{
-    commitment::CommitmentEngineTrait, upsnark::PrecommittedSNARKTrait, Group
-  }, VerifierKey, SNARK
-};
-use bellpepper_core::{
-  Circuit, ConstraintSystem, SynthesisError
-};
-use ff::PrimeField;
+use ark_ec::CurveGroup;
+use common::constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS};
+use ark_ff::PrimeField;
+use merlin::Transcript;
 use rayon::prelude::*;
 
 /// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
@@ -61,58 +51,31 @@ fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_f
   (front_result, back_result)
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct JoltCircuit<F: ff::PrimeField<Repr=[u8; 32]>> {
-  num_steps: usize,
-  inputs: R1CSInputs<F>,
+#[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
+fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+  let jolt_witnesses = synthesize_witnesses(inputs);
+  // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
+  reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
 }
 
-// This is a placeholder trait to satisfy Spartan's requirements. 
-impl<F: ff::PrimeField<Repr = [u8; 32]>> Circuit<F> for JoltCircuit<F> {
-  #[tracing::instrument(skip_all, name = "JoltCircuit::synthesize")]
-  fn synthesize<CS: ConstraintSystem<F>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-    Ok(())
-  }
-}
+#[tracing::instrument(name = "synthesize_witnesses", skip_all)]
+fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
+  let mut step_z = inputs.clone_to_stepwise();
 
-impl<F: ff::PrimeField<Repr=[u8;32]>> JoltCircuit<F> {
-  pub fn new_from_inputs(num_steps: usize, inputs: R1CSInputs<F>) -> Self {
-    JoltCircuit{
-      num_steps: num_steps,
-      inputs: inputs,
+  // Compute the aux
+  let span = tracing::span!(tracing::Level::INFO, "calc_aux");
+  let _guard = span.enter();
+  step_z.par_chunks_mut(1 << 12).for_each(|step| {
+    for i in 0..step.len() {
+      R1CSBuilder::calculate_aux(&mut step[i]);
     }
-  }
+  });
 
-  #[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
-  pub fn synthesize_state_aux_segments(&self, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-    let jolt_witnesses = self.synthesize_witnesses();
-    // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
-    reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
-  }
-
-  #[tracing::instrument(name = "JoltCircuit::synthesize_witnesses", skip_all)]
-  fn synthesize_witnesses(&self) -> Vec<Vec<F>> {
-    let mut step_z = self.inputs.clone_to_stepwise();
-
-    // Compute the aux
-    let span = tracing::span!(tracing::Level::INFO, "calc_aux");
-    let _guard = span.enter();
-    step_z.par_iter_mut().enumerate().for_each(|(i, step)| {
-      R1CSBuilder::calculate_aux(step);
-    });
-
-    step_z
-  }
-}
-
-
-pub struct R1CSProof  {
-  proof: SNARK<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>, JoltCircuit<Spartan2Fr>>,
-  vk: VerifierKey<SpartanG1, R1CSSNARK<SpartanG1, SpartanHyraxEE<SpartanG1>>>,
+  step_z
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct R1CSInputs<F: ff::PrimeField<Repr=[u8;32]>> {
+pub struct R1CSInputs<F: PrimeField> {
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
     memreg_a_rw: Vec<F>,
@@ -125,30 +88,20 @@ pub struct R1CSInputs<F: ff::PrimeField<Repr=[u8;32]>> {
     circuit_flags_bits: Vec<F>,
 }
 
-impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
-  #[tracing::instrument(skip_all, name = "R1CSInputs::from_ark")]
-  pub fn from_ark<AF: ark_ff::PrimeField>(
-    bytecode_a: Vec<AF>,
-    bytecode_v: Vec<AF>,
-    memreg_a_rw: Vec<AF>,
-    memreg_v_reads: Vec<AF>,
-    memreg_v_writes: Vec<AF>,
-    chunks_x: Vec<AF>,
-    chunks_y: Vec<AF>,
-    chunks_query: Vec<AF>,
-    lookup_outputs: Vec<AF>,
-    circuit_flag_bits: Vec<AF>
+impl<F: PrimeField> R1CSInputs<F> {
+  #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
+  pub fn new(
+    bytecode_a: Vec<F>,
+    bytecode_v: Vec<F>,
+    memreg_a_rw: Vec<F>,
+    memreg_v_reads: Vec<F>,
+    memreg_v_writes: Vec<F>,
+    chunks_x: Vec<F>,
+    chunks_y: Vec<F>,
+    chunks_query: Vec<F>,
+    lookup_outputs: Vec<F>,
+    circuit_flags_bits: Vec<F>
   ) -> Self {
-    let bytecode_a: Vec<F> = bytecode_a.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let bytecode_v: Vec<F> = bytecode_v.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let memreg_a_rw: Vec<F> = memreg_a_rw.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let memreg_v_reads: Vec<F> = memreg_v_reads.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let memreg_v_writes: Vec<F> = memreg_v_writes.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let chunks_x: Vec<F> = chunks_x.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let chunks_y: Vec<F> = chunks_y.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let chunks_query: Vec<F> = chunks_query.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let lookup_outputs: Vec<F> = lookup_outputs.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
-    let circuit_flags_bits: Vec<F> = circuit_flag_bits.into_par_iter().map(|ark_item| ark_to_spartan_unsafe::<AF, F>(ark_item)).collect();
 
     Self {
       bytecode_a,
@@ -182,7 +135,7 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
       // TODO(sragss / arasu arun): This indexing strategy is stolen from old -- but self.trace_len here is self.bytecode_a.len() -- not sure why we're using that to split inputs.
 
       // 1 is constant, 0s in slots 1, 2 are filled by aux computation
-      step.extend([F::from(1), F::from(0), F::from(0), F::from(step_index as u64), program_counter]);
+      step.extend([F::from(1u64), F::from(0u64), F::from(0u64), F::from(step_index as u64), program_counter]);
       let bytecode_a_num_vals = self.bytecode_a.len() / self.trace_len();
       for var_index in 0..bytecode_a_num_vals {
         step.push(self.bytecode_a[var_index * self.trace_len() + step_index]);
@@ -252,8 +205,8 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
   }
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
-  pub fn trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
-    // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to trace_len
+  pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
+    // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to padded_trace_len
     let mut chunks: Vec<Vec<F>> = Vec::new();
     chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
@@ -269,61 +222,46 @@ impl<F: ff::PrimeField<Repr=[u8;32]>> R1CSInputs<F> {
   }
 }
 
-impl R1CSProof {
+pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
+  pub key: UniformSpartanKey<F>,
+  proof: UniformSpartanProof<F, G>,
+  pub commitments: R1CSCommitments<F, G>
+}
+
+pub struct R1CSCommitments<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+  witness_segment_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  generators: HyraxGenerators<NUM_R1CS_POLYS, G>
+}
+
+impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
   #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
   pub fn prove<ArkF: ark_ff::PrimeField> (
       _W: usize, 
       _C: usize, 
       padded_trace_len: usize, 
-      inputs: R1CSInputs<bn256::Scalar>,
-      generators: Vec<bn256::Affine>,
-      jolt_commitments: &Vec<Vec<bn256::Affine>>,
+      inputs: R1CSInputs<F>,
+      generators: HyraxGenerators<1, G>,
+      prior_commitments: &Vec<HyraxCommitment<1, G>>,
+      transcript: &mut Transcript
   ) -> Result<Self, SpartanError> {
-      type G1 = SpartanG1;
-      type EE = SpartanHyraxEE<SpartanG1>;
-      type S = spartan2::spartan::upsnark::R1CSSNARK<G1, EE>;
-      type F = Spartan2Fr;
-
       let num_steps = padded_trace_len;
 
-      let span = tracing::span!(tracing::Level::TRACE, "JoltCircuit::new_from_inputs");
-      let _enter = span.enter();
-      // TODO(sragss / arasuarun): After Spartan is merged we don't need to clone these inputs anymore
-      let jolt_circuit = JoltCircuit::<F>::new_from_inputs(num_steps, inputs.clone());
-      drop(_enter);
-      
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
       R1CSBuilder::get_matrices(&mut jolt_shape); 
-      let constraints_F = jolt_shape.convert_to_field(); 
-      let shape_single = R1CSShape::<G1> {
-          A: constraints_F.0,
-          B: constraints_F.1,
-          C: constraints_F.2,
-          num_cons: jolt_shape.num_constraints,
-          num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
-          num_io: jolt_shape.num_inputs,
-      };
+      let key = UniformSpartanProof::<F,G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
       drop(_enter);
+      drop(span);
 
-      // Obtain public key 
-      let span = tracing::span!(tracing::Level::TRACE, "convert_ck_to_spartan");
-      let _enter = span.enter();
-      let hyrax_ck = HyraxCommitmentKey::<G1> {
-          ck: spartan2::provider::pedersen::from_gens_bn256(generators)
-      };
-      drop(_enter);
+      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
 
-      let (io_segments, aux_segments) = jolt_circuit.synthesize_state_aux_segments(4, jolt_shape.num_internal);
-
-      let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_stuff");
+      let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_to_witness_segments");
       let _enter = cloning_stuff_span.enter();
-
-      let inputs_segments = inputs.trace_len_chunks(padded_trace_len);
+      let inputs_segments = inputs.clone_to_trace_len_chunks(padded_trace_len);
 
       let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
-      // TODO(sragss / arasuarun): rm clones in favor of references
+      // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
       w_segments.par_extend(io_segments.par_iter().cloned());
       w_segments.par_extend(inputs_segments.into_par_iter());
       w_segments.par_extend(aux_segments.par_iter().cloned());
@@ -332,32 +270,55 @@ impl R1CSProof {
       drop(cloning_stuff_span);
 
       // Commit to segments
-      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<_> {
+      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<HyraxCommitment<1, G>> {
         let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
         let _g = span.enter();
-        segments.into_par_iter().map(|segment| {
-          <G1 as Group>::CE::commit(&hyrax_ck, &segment) 
+        segments.into_iter().map(|segment| {
+          HyraxCommitment::commit(&DensePolynomial::new(segment), &generators)
         }).collect()
       };
-      
-      let io_comms = commit_segments(io_segments);
-      let input_comms = jolt_commitments; 
+
+      let io_comms: Vec<HyraxCommitment<1, G>> = commit_segments(io_segments);
+      let input_comms = prior_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
-      let comm_w_vec = io_comms.into_iter()
-      .chain(input_comms.iter().map(|comm| SpartanHyraxCommitment::from(comm.clone())))
-      .chain(aux_comms.into_iter())
-      .collect::<Vec<_>>();
+      let witness_segment_commitments = io_comms.into_iter()
+        .chain(input_comms.iter().map(|comm| HyraxCommitment::from(comm.clone())))
+        .chain(aux_comms.into_iter())
+        .collect::<Vec<_>>();
 
-      let (pk, vk) = SNARK::<G1, S, JoltCircuit<F>>::setup_precommitted(shape_single, num_steps, hyrax_ck).unwrap();
+      let r1cs_commitments = R1CSCommitments::<F,G> {
+        witness_segment_commitments,
+        generators
+      };
 
-      SNARK::prove_precommitted(&pk, w_segments, comm_w_vec).map(|snark| Self {
-        proof: snark,
-        vk
+      let proof = UniformSpartanProof::prove_precommitted(&key, w_segments, &r1cs_commitments.witness_segment_commitments, transcript).expect("UniformSpartanProof failed");
+      Ok(R1CSProof::<F, G> {
+        proof,
+        key,
+        commitments: r1cs_commitments
       })
   }
 
-  pub fn verify(&self) -> Result<(), SpartanError> {
-    SNARK::verify_precommitted(&self.proof, &self.vk, &[])
+  pub fn verify(&self, transcript: &mut Transcript) -> Result<(), SpartanError> {
+    self.proof.verify_precommitted(&self.key, &[], &self.commitments.generators, transcript)
+  }
+}
+
+impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
+  fn single_step_shape(&self) -> R1CSShape<F> {
+    let mut jolt_shape = R1CSBuilder::default(); 
+    R1CSBuilder::get_matrices(&mut jolt_shape); 
+    let constraints_F = jolt_shape.convert_to_field(); 
+    let shape_single = R1CSShape::<F> {
+        A: constraints_F.0,
+        B: constraints_F.1,
+        C: constraints_F.2,
+        num_cons: jolt_shape.num_constraints,
+        num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
+        num_io: jolt_shape.num_inputs,
+    };
+
+    shape_single.pad_vars()
   }
 }

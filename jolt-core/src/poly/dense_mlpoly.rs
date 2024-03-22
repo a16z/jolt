@@ -86,6 +86,18 @@ impl<F: PrimeField> DensePolynomial<F> {
         self.len = n;
     }
 
+    pub fn bound_poly_var_top_par(&mut self, r: &F) {
+        let n = self.len() / 2;
+        let (left, right) = self.Z.split_at_mut(n);
+
+        left.par_iter_mut().zip(right.par_iter()).for_each(|(a, b)| {
+            *a += *r * (*b - *a);
+        });
+
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
     pub fn bound_poly_var_top_many_ones(&mut self, r: &F) {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);
@@ -102,6 +114,26 @@ impl<F: PrimeField> DensePolynomial<F> {
                 }
             });
 
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    /// Bounds the polynomial's most significant index bit to 'r' optimized for a
+    /// high P(eval = 0).
+    #[tracing::instrument(skip_all)]
+    pub fn bound_poly_var_top_zero_optimized(&mut self, r: &F) {
+        let n = self.len() / 2;
+
+        let (left, right) = self.Z.split_at_mut(n);
+
+        left.par_iter_mut()
+            .zip(right.par_iter())
+            .filter(|(&mut a, &b)| a != b)
+            .for_each(|(a, b)| {
+                *a += *r * (*b - *a);
+            });
+
+        self.Z.resize(n, F::zero());
         self.num_vars -= 1;
         self.len = n;
     }
@@ -193,6 +225,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     pub fn evaluate_at_chi_low_optimized(&self, chis: &Vec<F>) -> F {
+        assert_eq!(self.Z.len(), chis.len());
         compute_dotproduct_low_optimized(&self.Z, &chis)
     }
 
