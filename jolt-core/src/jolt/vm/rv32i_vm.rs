@@ -158,7 +158,6 @@ mod tests {
     };
     use common::rv_trace::{JoltDevice, RV32IM};
     use common::{
-        path::JoltPaths,
         rv_trace::{ELFInstruction, RVTraceRow},
         serializable::Serializable,
     };
@@ -236,70 +235,6 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn fib_r1cs() {
-    //     let _guard = FIB_FILE_LOCK.lock().unwrap();
-    //     compiler::cached_compile_example("fibonacci");
-
-    //     let trace_location = JoltPaths::trace_path("fibonacci");
-    //     let loaded_trace: Vec<RVTraceRow> =
-    //         Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
-    //             .expect("deserialization failed");
-    //     let bytecode_location = JoltPaths::bytecode_path("fibonacci");
-    //     let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-    //         .expect("deserialization failed");
-    //     let bytecode_rows: Vec<BytecodeRow> = bytecode.clone().iter().map(BytecodeRow::from).collect();
-
-    //     let converted_trace: Vec<RVTraceRow> = loaded_trace
-    //         .into_iter()
-    //         .map(|common| RVTraceRow::from_common(common))
-    //         .collect();
-
-    //     let bytecode_trace: Vec<BytecodeRow> = converted_trace
-    //         .iter()
-    //         .map(|row| row.to_bytecode_trace())
-    //         .collect();
-
-    //     let instructions_r1cs: Vec<RV32I> = converted_trace
-    //         .clone()
-    //         .into_iter()
-    //         .flat_map(|row| {
-    //             let instructions = row.to_jolt_instructions();
-    //             if instructions.is_empty() {
-    //                 vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
-    //             } else {
-    //                 instructions
-    //             }
-    //         })
-    //         .collect();
-
-    //     let memory_trace_r1cs = converted_trace
-    //         .clone()
-    //         .into_iter()
-    //         .flat_map(|row| row.to_ram_ops())
-    //         .collect_vec();
-
-    //     let circuit_flags = converted_trace
-    //         .clone()
-    //         .iter()
-    //         .flat_map(|row| row.to_circuit_flags::<Fr>())
-    //         .collect::<Vec<_>>();
-
-    //     let mut transcript = Transcript::new(b"Jolt transcript");
-
-    //     let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
-    //     <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
-    //         preprocessing,
-    //         instructions_r1cs,
-    //         bytecode_rows,
-    //         bytecode_trace,
-    //         bytecode,
-    //         memory_trace_r1cs,
-    //         circuit_flags,
-    //         &mut transcript,
-    //     );
-    // }
-
     #[test]
     fn fib_e2e() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
@@ -358,70 +293,6 @@ mod tests {
             verification_result.err()
         );
     }
-
-    // #[test]
-    // fn sha3_r1cs() {
-    //     use common::{path::JoltPaths, serializable::Serializable, ELFInstruction};
-    //     compiler::cached_compile_example("sha3-ex");
-
-    //     let trace_location = JoltPaths::trace_path("sha3-ex");
-    //     let loaded_trace: Vec<RVTraceRow> =
-    //         Vec::<RVTraceRow>::deserialize_from_file(&trace_location)
-    //             .expect("deserialization failed");
-    //     let bytecode_location = JoltPaths::bytecode_path("sha3-ex");
-    //     let bytecode = Vec::<ELFInstruction>::deserialize_from_file(&bytecode_location)
-    //         .expect("deserialization failed");
-    //     let bytecode_rows: Vec<BytecodeRow> = bytecode.clone().iter().map(BytecodeRow::from).collect();
-
-    //     let converted_trace: Vec<RVTraceRow> = loaded_trace
-    //         .into_iter()
-    //         .map(|common| RVTraceRow::from_common(common))
-    //         .collect();
-
-    //     let bytecode_trace: Vec<BytecodeRow> = converted_trace
-    //         .iter()
-    //         .map(|row| row.to_bytecode_trace())
-    //         .collect();
-
-    //     // R1CS expects a single lookup instruction per
-    //     let instructions_r1cs: Vec<RV32I> = converted_trace
-    //         .clone()
-    //         .into_iter()
-    //         .flat_map(|row| {
-    //             let instructions = row.to_jolt_instructions();
-    //             if instructions.is_empty() {
-    //                 vec![ADDInstruction::<32>(0_u64, 0_u64).into()]
-    //             } else {
-    //                 instructions
-    //             }
-    //         })
-    //         .collect();
-
-    //     let memory_trace_r1cs = converted_trace
-    //         .clone()
-    //         .into_iter()
-    //         .flat_map(|row| row.to_ram_ops())
-    //         .collect_vec();
-
-    //     let circuit_flags = converted_trace
-    //         .clone()
-    //         .iter()
-    //         .flat_map(|row| row.to_circuit_flags())
-    //         .collect::<Vec<_>>();
-
-    //     let mut transcript = Transcript::new(b"Jolt transcript");
-    //     let preprocessing = RV32IJoltVM::preprocess(1 << 20, 1 << 20, 1 << 20);
-    //     <RV32IJoltVM as Jolt<'_, _, G1Projective, C, M>>::prove_r1cs(
-    //         preprocessing,
-    //         instructions_r1cs,
-    //         bytecode_rows,
-    //         bytecode_trace,
-    //         bytecode,
-    //         memory_trace_r1cs,
-    //         circuit_flags,
-    //         &mut transcript,
-    //     );
-    // }
 
     #[test]
     fn sha3_e2e() {
