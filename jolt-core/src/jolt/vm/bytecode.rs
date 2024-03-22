@@ -101,8 +101,12 @@ impl BytecodeRow {
 
         // instruction flag
         if let Ok(jolt_instruction) = InstructionSet::try_from(instruction) {
-            bitvector <<= InstructionSet::enum_index(&jolt_instruction);
+            let instruction_index = InstructionSet::enum_index(&jolt_instruction);
+            bitvector <<= instruction_index;
             bitvector |= 1;
+            bitvector <<= InstructionSet::COUNT - instruction_index - 1;
+        } else {
+            bitvector <<= InstructionSet::COUNT - 1;
         }
 
         bitvector
