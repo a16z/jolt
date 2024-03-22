@@ -642,6 +642,10 @@ impl RV32IM {
     }
 }
 
+/// Represented as a "peripheral device" in the RISC-V emulator, this captures
+/// all reads from the reserved memory address space for program inputs and all writes
+/// to the reserved memory address space for program outputs.
+/// The inputs and outputs are part of the public inputs to the proof.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
