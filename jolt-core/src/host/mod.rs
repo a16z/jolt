@@ -1,4 +1,3 @@
-
 use core::{str::FromStr, u8};
 use std::{
     collections::HashMap,
@@ -7,12 +6,11 @@ use std::{
     process::Command,
 };
 
-use serde::Serialize;
 use postcard;
+use serde::Serialize;
 
 use common::rv_trace::{JoltDevice, RVTraceRow, RV32IM};
 use tracer::ELFInstruction;
-
 
 pub struct Program {
     guest: String,
@@ -34,7 +32,7 @@ impl Program {
         self
     }
 
-    pub fn trace(self) -> (Vec<RVTraceRow>, Vec<ELFInstruction>, JoltDevice) {
+    pub fn build(&mut self) -> PathBuf {
         let output = Command::new("cargo")
             .args(&[
                 "build",
@@ -46,7 +44,7 @@ impl Program {
                 "--target-dir",
                 "/tmp/jolt-guest-target",
                 "--target",
-                "riscv32i-unknown-none-elf"
+                "riscv32i-unknown-none-elf",
             ])
             .output()
             .expect("failed to build guest");
@@ -58,8 +56,11 @@ impl Program {
             "/tmp/jolt-guest-target/riscv32i-unknown-none-elf/release/{}",
             self.guest
         );
-        let elf = PathBuf::from_str(&elf).unwrap();
+        PathBuf::from_str(&elf).unwrap()
+    }
 
+    pub fn trace(mut self) -> (Vec<RVTraceRow>, Vec<ELFInstruction>, JoltDevice) {
+        let elf = self.build();
         let instructions = tracer::decode(&elf);
         let (trace, io_device) = tracer::trace(&elf, self.input);
 

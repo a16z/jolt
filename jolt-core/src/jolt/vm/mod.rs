@@ -1,30 +1,24 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
-use circom_scotia::r1cs;
 use common::constants::NUM_R1CS_POLYS;
 use common::rv_trace::JoltDevice;
 use halo2curves::bn256;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
-use strum::IntoEnumIterator;
 
+use crate::jolt::{
+    instruction::JoltInstruction, subtable::JoltSubtableSet,
+    vm::timestamp_range_check::TimestampValidityProof,
+};
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::{R1CSCommitments, R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
-use crate::{
-    jolt::{
-        instruction::JoltInstruction, subtable::JoltSubtableSet,
-        vm::timestamp_range_check::TimestampValidityProof,
-    },
-    lasso::memory_checking::NoPreprocessing,
-};
 use common::{
     constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
     field_conversion::IntoSpartan,
@@ -97,7 +91,6 @@ where
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
         bytecode: Vec<ELFInstruction>,
-        program_io: JoltDevice,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
@@ -126,8 +119,7 @@ where
             max_trace_length,
         );
 
-        let read_write_memory_preprocessing =
-            ReadWriteMemoryPreprocessing::preprocess(&bytecode, program_io);
+        let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .iter()
@@ -155,6 +147,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
+        program_io: JoltDevice,
         bytecode: Vec<ELFInstruction>,
         bytecode_trace: Vec<BytecodeRow>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
@@ -186,6 +179,7 @@ where
         );
 
         let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
+            program_io,
             &preprocessing.read_write_memory,
             padded_memory_trace,
             &preprocessing.generators,
@@ -241,7 +235,7 @@ where
     }
 
     fn verify(
-        preprocessing: JoltPreprocessing<F, G>,
+        mut preprocessing: JoltPreprocessing<F, G>,
         proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {
@@ -253,7 +247,7 @@ where
             &mut transcript,
         )?;
         Self::verify_memory(
-            &preprocessing.read_write_memory,
+            &mut preprocessing.read_write_memory,
             proof.read_write_memory,
             commitments.read_write_memory,
             &mut transcript,
@@ -323,6 +317,7 @@ where
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
+        program_io: JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         generators: &PedersenGenerators<G>,
@@ -333,7 +328,7 @@ where
         MemoryCommitment<G>,
     ) {
         let (memory, read_timestamps) =
-            ReadWriteMemory::new(preprocessing, memory_trace, transcript);
+            ReadWriteMemory::new(&program_io, preprocessing, memory_trace, transcript);
         let batched_polys = memory.batch();
         let commitment: MemoryCommitment<G> =
             ReadWriteMemory::commit(&memory, &batched_polys, &generators);
@@ -355,6 +350,7 @@ where
 
         (
             ReadWriteMemoryProof {
+                program_io,
                 memory_checking_proof,
                 timestamp_validity_proof,
             },
@@ -364,13 +360,15 @@ where
     }
 
     fn verify_memory(
-        preprocessing: &ReadWriteMemoryPreprocessing,
+        preprocessing: &mut ReadWriteMemoryPreprocessing,
         mut proof: ReadWriteMemoryProof<F, G>,
         commitment: MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        assert!(preprocessing.input_bytes.len() <= MAX_INPUT_SIZE as usize);
-        assert!(preprocessing.output_bytes.len() <= MAX_OUTPUT_SIZE as usize);
+        assert!(proof.program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
+        assert!(proof.program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+
+        preprocessing.program_io = Some(proof.program_io);
 
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
@@ -512,9 +510,9 @@ where
         drop(_guard);
 
         let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
-            data.par_chunks(padded_trace_len).map(|chunk| {
-                HyraxCommitment::commit_slice(chunk, &hyrax_generators)
-            }).collect()
+            data.par_chunks(padded_trace_len)
+                .map(|chunk| HyraxCommitment::commit_slice(chunk, &hyrax_generators))
+                .collect()
         };
 
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
@@ -522,7 +520,10 @@ where
         let chunks_x_comms = commit_to_chunks(&chunks_x);
         let chunks_y_comms = commit_to_chunks(&chunks_y);
         let lookup_outputs_comms = commit_to_chunks(&lookup_outputs);
-        let packed_flags_comm = vec![HyraxCommitment::commit_slice(&packed_flags, &hyrax_generators)];
+        let packed_flags_comm = vec![HyraxCommitment::commit_slice(
+            &packed_flags,
+            &hyrax_generators,
+        )];
         let circuit_flags_comm = commit_to_chunks(&circuit_flags_bits);
         drop(_guard);
 
@@ -548,9 +549,9 @@ where
         ]
         .concat();
 
-        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
+        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks
         // will be the exact witness vector to feed into the R1CS
-        // after pre-pending IO and appending the AUX 
+        // after pre-pending IO and appending the AUX
         let inputs: R1CSInputs<F> = R1CSInputs::new(
             bytecode_a,
             bytecode_v,
@@ -561,14 +562,14 @@ where
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags_bits
+            circuit_flags_bits,
         );
 
-        let proof  = R1CSProof::prove::<F>(
-            32, 
-            C, 
-            padded_trace_len, 
-            inputs, 
+        let proof = R1CSProof::prove::<F>(
+            32,
+            C,
+            padded_trace_len,
+            inputs,
             hyrax_generators.clone(),
             &jolt_commitments_spartan,
             transcript,

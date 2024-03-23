@@ -151,21 +151,13 @@ where
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Fr, G1Projective};
-    use common::constants::{
-        INPUT_END_ADDRESS, INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, OUTPUT_END_ADDRESS,
-        OUTPUT_START_ADDRESS, RAM_START_ADDRESS,
-    };
-    use common::rv_trace::{JoltDevice, RV32IM};
-    use common::{
-        rv_trace::{ELFInstruction, RVTraceRow},
-        serializable::Serializable,
-    };
-    use itertools::Itertools;
-    use jolt_sdk::host;
+    use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+    use common::rv_trace::ELFInstruction;
     use merlin::Transcript;
     use rand_core::SeedableRng;
     use std::collections::HashSet;
 
+    use crate::host;
     use crate::jolt::instruction::{add::ADDInstruction, JoltInstruction};
     use crate::jolt::vm::bytecode::BytecodeRow;
     use crate::jolt::vm::read_write_memory::RandomInstruction;
@@ -192,7 +184,6 @@ mod tests {
 
         let preprocessing = RV32IJoltVM::preprocess(
             vec![ELFInstruction::random(0, &mut rng)],
-            JoltDevice::new(),
             1 << 20,
             1 << 20,
             1 << 22,
@@ -275,9 +266,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
+            io_device,
             bytecode,
             bytecode_trace,
             memory_trace,
@@ -334,9 +325,9 @@ mod tests {
             })
             .collect();
 
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            io_device,
             bytecode,
             bytecode_trace,
             memory_trace,

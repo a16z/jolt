@@ -862,7 +862,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction, ReadWriteMemoryPreprocessing};
+    use crate::jolt::vm::read_write_memory::{
+        random_memory_trace, RandomInstruction, ReadWriteMemoryPreprocessing,
+    };
 
     use super::*;
     use ark_curve25519::{EdwardsProjective, Fr};
@@ -883,9 +885,14 @@ mod tests {
 
         let mut transcript: Transcript = Transcript::new(b"test_transcript");
 
-        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode, JoltDevice::new());
+        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(&preprocessing, memory_trace, &mut transcript);
+            ReadWriteMemory::new(
+                &JoltDevice::new(),
+                &preprocessing,
+                memory_trace,
+                &mut transcript,
+            );
         let batched_polys = rw_memory.batch();
         let generators = PedersenGenerators::new(1 << 10, b"Test generators");
         let commitments = rw_memory.commit(&batched_polys, &generators);
