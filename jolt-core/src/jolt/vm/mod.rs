@@ -3,7 +3,6 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use common::constants::NUM_R1CS_POLYS;
 use common::rv_trace::JoltDevice;
-use halo2curves::bn256;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -21,7 +20,6 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use common::{
     constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
-    field_conversion::IntoSpartan,
     rv_trace::{ELFInstruction, MemoryOp},
 };
 
@@ -46,7 +44,6 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     pub generators: PedersenGenerators<G>,
-    pub spartan_generators: Vec<bn256::G1Affine>,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
@@ -82,8 +79,6 @@ pub struct JoltCommitments<G: CurveGroup> {
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize>
-where
-    G::Affine: IntoSpartan,
 {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
@@ -138,7 +133,6 @@ where
 
         JoltPreprocessing {
             generators: generators.clone(),
-            spartan_generators: generators.to_spartan_bn256(),
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,

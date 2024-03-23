@@ -26,21 +26,17 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 ark-std = { version = "0.4.0", default-features = false }
-bellpepper-core = "0.2.1"
 clap = { version = "4.3.10", features = ["derive"] }
 colored = "2.0.0"
-circom-scotia = "0.1.2"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 dhat = "0.3.2"
 digest = "0.8.1"
 enum_dispatch = "0.3.12"
 eyre = "0.6.9"
-ff = "0.13.0"
 hashbrown = "0.14.0"
 itertools = "0.10.0"
 merlin = "3.0.0"
 num-integer = "0.1.45"
-pasta_curves = "0.5.1"
 plotters = "0.3.5"
 postcard = { version = "1.0.8", default-features = false, features = ["use-std"] }
 rand = "0.7.3"
@@ -64,14 +60,8 @@ zeroize = { version = "1", default-features = false }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 
-# witness = { git = "https://github.com/philsippl/circom-witness-rs" }
-witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval" }
-ruint = "1.11.1"
-spartan2 = { git = "https://github.com/a16z/Spartan2.git", branch = "feat/remove-circom" }
-# spartan2 = { path = "../Spartan2/" }
 ark-bn254 = "0.4.0"
 lazy_static = "1.4.0"
-halo2curves = "0.6.1"
 fixedbitset = "0.5.0"
 thiserror = "1.0.58"
 smallvec = "1.13.1"
@@ -79,8 +69,6 @@ serde = { version = "1.0.*", default-features = false }
 
 [build-dependencies]
 common = { path = "../common" }
-
-# witness = { git = "https://github.com/sragss/circom-witness-rs", branch = "non-ruint-eval", features = ["build-witness"] }
 
 [lib]
 name = "liblasso"
