@@ -15,6 +15,7 @@ use tracer::ELFInstruction;
 pub struct Program {
     guest: String,
     input: Vec<u8>,
+    pub elf: Option<PathBuf>,
 }
 
 impl Program {
@@ -22,6 +23,7 @@ impl Program {
         Self {
             guest: guest.to_string(),
             input: Vec::new(),
+            elf: None,
         }
     }
 
@@ -32,35 +34,38 @@ impl Program {
         self
     }
 
-    pub fn build(&mut self) -> PathBuf {
-        let output = Command::new("cargo")
-            .args(&[
-                "build",
-                "--release",
-                "--features",
-                "guest",
-                "-p",
-                &self.guest,
-                "--target-dir",
-                "/tmp/jolt-guest-target",
-                "--target",
-                "riscv32i-unknown-none-elf",
-            ])
-            .output()
-            .expect("failed to build guest");
+    pub fn build(&mut self) {
+        if self.elf.is_none() {
+            let output = Command::new("cargo")
+                .args(&[
+                    "build",
+                    "--release",
+                    "--features",
+                    "guest",
+                    "-p",
+                    &self.guest,
+                    "--target-dir",
+                    "/tmp/jolt-guest-target",
+                    "--target",
+                    "riscv32i-unknown-none-elf",
+                ])
+                .output()
+                .expect("failed to build guest");
 
-        io::stdout().write(&output.stdout).unwrap();
-        io::stderr().write(&output.stderr).unwrap();
+            io::stdout().write(&output.stdout).unwrap();
+            io::stderr().write(&output.stderr).unwrap();
 
-        let elf = format!(
-            "/tmp/jolt-guest-target/riscv32i-unknown-none-elf/release/{}",
-            self.guest
-        );
-        PathBuf::from_str(&elf).unwrap()
+            let elf = format!(
+                "/tmp/jolt-guest-target/riscv32i-unknown-none-elf/release/{}",
+                self.guest
+            );
+            self.elf = Some(PathBuf::from_str(&elf).unwrap());
+        }
     }
 
     pub fn trace(mut self) -> (Vec<RVTraceRow>, Vec<ELFInstruction>, JoltDevice) {
-        let elf = self.build();
+        self.build();
+        let elf = self.elf.unwrap();
         let instructions = tracer::decode(&elf);
         let (trace, io_device) = tracer::trace(&elf, self.input);
 

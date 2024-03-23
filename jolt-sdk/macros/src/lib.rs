@@ -4,7 +4,9 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, ItemFn, PatType, ReturnType};
 
-use common::constants::{INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS};
+use common::constants::{
+    INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
+};
 
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -22,9 +24,8 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut args = Vec::new();
     for arg in input_fn.sig.inputs {
-        if let syn::FnArg::Typed(PatType { pat,ty, .. }) = arg {
+        if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
             if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
-
                 let arg_name = &pat_ident.ident;
                 let arg_type = &ty;
 
@@ -58,26 +59,25 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             };
 
             jolt_sdk::postcard::to_slice(&to_return, output_slice).unwrap();
-        }
+        },
     };
-
 
     let transformed_fn = quote! {
         #[cfg(feature = "guest")]
         use core::arch::global_asm;
         #[cfg(feature = "guest")]
         use core::panic::PanicInfo;
-        
+
         #[cfg(feature = "guest")]
         global_asm!("\
             .global _start\n\
             .extern _STACK_PTR\n\
             .section .text.boot\n\
             _start:	la sp, _STACK_PTR\n\
-	            jal main\n\
-	            j .\n\
+                jal main\n\
+                j .\n\
         ");
-        
+
         #[cfg(feature = "guest")]
         #[no_mangle]
         pub extern "C" fn main() {
@@ -88,7 +88,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             #block
             #handle_return
         }
-        
+
         #[cfg(feature = "guest")]
         #[panic_handler]
         fn panic(_info: &PanicInfo) -> ! {
@@ -115,7 +115,6 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let program = program.input(&#arg_name);
                 };
 
-
                 args.push(arg_set);
             } else {
                 panic!("cannot parse arg");
@@ -131,30 +130,113 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         },
         ReturnType::Type(_, ty) => quote! {
             let ret_val = jolt_sdk::postcard::from_bytes::<#ty>(&output_bytes).unwrap();
-        }
-    };
-    
-    let new_output_ty = match &input_fn.sig.output {
-        ReturnType::Default => quote! { -> ((), ()) },
-        ReturnType::Type(_, ty) => quote! { -> (#ty, ())},
+        },
     };
 
     let guest_crate_name = std::env::var("CARGO_PKG_NAME").unwrap();
 
+    let imports = quote! {
+        #[cfg(not(feature = "guest"))]
+        use jolt_sdk::{
+            CurveGroup,
+            PrimeField,
+            host::Program,
+            JoltPreprocessing,
+            Jolt,
+            JoltCommitments,
+            RV32IJoltVM,
+            RV32I,
+            RV32IJoltProof,
+            BytecodeRow,
+            MemoryOp,
+            MEMORY_OPS_PER_INSTRUCTION,
+            instruction::add::ADDInstruction,
+        };
+    };
+
+    let preprocess_fn_name = syn::Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
+    let preprocess_fn = quote! {
+        #[cfg(not(feature = "guest"))]
+        pub fn #preprocess_fn_name<F: PrimeField, G: CurveGroup<ScalarField = F>>() -> (Program, JoltPreprocessing<F, G>) {
+            use jolt_sdk::tracer;
+
+            let mut program = Program::new(#guest_crate_name);
+            program.build();
+            let bytecode = tracer::decode(&program.elf.as_ref().unwrap());
+
+            // TODO(moodlezoup): Feed in size parameters via macro
+            let preprocessing: JoltPreprocessing<F, G> = RV32IJoltVM::preprocess(
+                bytecode,
+                1 << 20,
+                1 << 20,
+                1 << 22
+            );
+
+            (program, preprocessing)
+        }
+    };
+
+    let prove_output_ty = match &input_fn.sig.output {
+        ReturnType::Default => quote! { -> ((), RV32IJoltProof<F, G>, JoltCommitments<G>) },
+        ReturnType::Type(_, ty) => quote! { -> (#ty, RV32IJoltProof<F, G>, JoltCommitments<G>)},
+    };
+
     let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
     let prove_fn = quote! {
         #[cfg(not(feature = "guest"))]
-        pub fn #prove_fn_name(#inputs) #new_output_ty {
-            use jolt_sdk::host::Program;
-
-            println!("Proving...");
-
-            let program = Program::new(#guest_crate_name);
+        pub fn #prove_fn_name<F: PrimeField, G: CurveGroup<ScalarField = F>>(
+            mut program: Program,
+            preprocessing: JoltPreprocessing<F, G>,
+            #inputs
+        ) #prove_output_ty {
             #(#args;)*
-            let output_bytes = program.trace_analyze();
-            #handle_return
 
-            (ret_val, ())
+            let (trace, bytecode, io_device) = program.trace();
+
+            // TODO(moodlezoup): Move this into Program::trace
+            let bytecode_trace: Vec<BytecodeRow> = trace
+                .iter()
+                .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
+                .collect();
+
+            let instruction_trace: Vec<RV32I> = trace
+                .iter()
+                .map(|row| {
+                    if let Ok(jolt_instruction) = RV32I::try_from(row) {
+                        jolt_instruction
+                    } else {
+                        ADDInstruction(0_u64, 0_u64).into()
+                    }
+                })
+                .collect();
+
+            let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
+                trace.iter().map(|row| row.into()).collect();
+            let circuit_flags = trace
+                .iter()
+                .flat_map(|row| {
+                    row.instruction
+                        .to_circuit_flags()
+                        .iter()
+                        .map(|&flag| flag.into())
+                        .collect::<Vec<F>>()
+                })
+                .collect();
+
+            let output_bytes = io_device.outputs.clone();
+
+            let (jolt_proof, jolt_commitments) = RV32IJoltVM::prove(
+                io_device,
+                bytecode,
+                bytecode_trace,
+                memory_trace,
+                instruction_trace,
+                circuit_flags,
+                preprocessing,
+            );
+
+            #handle_return
+            (ret_val, jolt_proof, jolt_commitments)
         }
     };
 
@@ -167,11 +249,12 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let output = quote! {
+        #imports
         #transformed_fn
+        #preprocess_fn
         #prove_fn
         #execute_fn
     };
 
     output.into()
 }
-

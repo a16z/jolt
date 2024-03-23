@@ -6,7 +6,7 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::Jolt;
+use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
@@ -143,6 +143,8 @@ where
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
 }
+
+pub type RV32IJoltProof<F, G> = JoltProof<C, M, F, G, RV32I, RV32ISubtables<F>>;
 
 // ==================== TEST ====================
 
