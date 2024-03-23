@@ -112,7 +112,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
                 let arg_name = &pat_ident.ident;
                 let arg_set = quote! {
-                    let program = program.input(&#arg_name);
+                    let mut program = program.input(&#arg_name);
                 };
 
                 args.push(arg_set);
@@ -161,8 +161,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             use jolt_sdk::tracer;
 
             let mut program = Program::new(#guest_crate_name);
-            program.build();
-            let bytecode = tracer::decode(&program.elf.as_ref().unwrap());
+            let bytecode = program.decode();
 
             // TODO(moodlezoup): Feed in size parameters via macro
             let preprocessing: JoltPreprocessing<F, G> = RV32IJoltVM::preprocess(
@@ -191,37 +190,9 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         ) #prove_output_ty {
             #(#args;)*
 
-            let (trace, bytecode, io_device) = program.trace();
-
-            // TODO(moodlezoup): Move this into Program::trace
-            let bytecode_trace: Vec<BytecodeRow> = trace
-                .iter()
-                .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-                .collect();
-
-            let instruction_trace: Vec<RV32I> = trace
-                .iter()
-                .map(|row| {
-                    if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                        jolt_instruction
-                    } else {
-                        ADDInstruction(0_u64, 0_u64).into()
-                    }
-                })
-                .collect();
-
-            let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-                trace.iter().map(|row| row.into()).collect();
-            let circuit_flags = trace
-                .iter()
-                .flat_map(|row| {
-                    row.instruction
-                        .to_circuit_flags()
-                        .iter()
-                        .map(|&flag| flag.into())
-                        .collect::<Vec<F>>()
-                })
-                .collect();
+            let bytecode = program.decode();
+            let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+                program.trace();
 
             let output_bytes = io_device.outputs.clone();
 

@@ -5,7 +5,7 @@ pub fn main() {
     let input: &[u8] = &[5u8; 2048];
     let (program, preprocessing) = guest::preprocess_sha3::<Fr, G1Projective>();
     let start = Instant::now();
-    let (output, proof, commitments) =
+    let (output, _proof, _commitments) =
         guest::prove_sha3::<Fr, G1Projective>(program, preprocessing, input);
     let end = Instant::now();
     let duration = end.duration_since(start);

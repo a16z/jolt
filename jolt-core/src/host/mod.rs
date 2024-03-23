@@ -6,11 +6,21 @@ use std::{
     process::Command,
 };
 
+use ark_ff::PrimeField;
 use postcard;
+use rayon::prelude::*;
 use serde::Serialize;
 
-use common::rv_trace::{JoltDevice, RVTraceRow, RV32IM};
+use common::{
+    constants::MEMORY_OPS_PER_INSTRUCTION,
+    rv_trace::{JoltDevice, MemoryOp, RV32IM},
+};
 use tracer::ELFInstruction;
+
+use crate::jolt::{
+    instruction::add::ADDInstruction,
+    vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+};
 
 pub struct Program {
     guest: String,
@@ -63,17 +73,69 @@ impl Program {
         }
     }
 
-    pub fn trace(mut self) -> (Vec<RVTraceRow>, Vec<ELFInstruction>, JoltDevice) {
+    pub fn decode(&mut self) -> Vec<ELFInstruction> {
         self.build();
-        let elf = self.elf.unwrap();
-        let instructions = tracer::decode(&elf);
-        let (trace, io_device) = tracer::trace(&elf, self.input);
-
-        (trace, instructions, io_device)
+        let elf = self.elf.as_ref().unwrap();
+        tracer::decode(elf)
     }
 
-    pub fn trace_analyze(self) -> Vec<u8> {
-        let (rows, _, device) = self.trace();
+    // TODO(moodlezoup): Make this generic over InstructionSet
+    pub fn trace<F: PrimeField>(
+        mut self,
+    ) -> (
+        JoltDevice,
+        Vec<BytecodeRow>,
+        Vec<RV32I>,
+        Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
+        Vec<F>,
+    ) {
+        self.build();
+        let elf = self.elf.unwrap();
+        let (trace, io_device) = tracer::trace(&elf, self.input);
+
+        let bytecode_trace: Vec<BytecodeRow> = trace
+            .par_iter()
+            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
+            .collect();
+
+        let instruction_trace: Vec<RV32I> = trace
+            .par_iter()
+            .map(|row| {
+                if let Ok(jolt_instruction) = RV32I::try_from(row) {
+                    jolt_instruction
+                } else {
+                    // TODO(moodlezoup): Add a `padding` function to InstructionSet trait
+                    ADDInstruction(0_u64, 0_u64).into()
+                }
+            })
+            .collect();
+
+        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
+            trace.par_iter().map(|row| row.into()).collect();
+        let circuit_flag_trace = trace
+            .par_iter()
+            .flat_map(|row| {
+                row.instruction
+                    .to_circuit_flags()
+                    .iter()
+                    .map(|&flag| flag.into())
+                    .collect::<Vec<F>>()
+            })
+            .collect();
+
+        (
+            io_device,
+            bytecode_trace,
+            instruction_trace,
+            memory_trace,
+            circuit_flag_trace,
+        )
+    }
+
+    pub fn trace_analyze(mut self) -> Vec<u8> {
+        self.build();
+        let elf = self.elf.unwrap();
+        let (rows, device) = tracer::trace(&elf, self.input);
 
         let mut counts = HashMap::<RV32IM, u64>::new();
         for row in rows {

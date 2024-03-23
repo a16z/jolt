@@ -1,5 +1,4 @@
 use crate::host;
-use crate::jolt::instruction::add::ADDInstruction;
 use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, BytecodeRow};
 use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
 use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction, ReadWriteMemory};
@@ -7,8 +6,7 @@ use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp};
+use common::rv_trace::{ELFInstruction, JoltDevice};
 use criterion::black_box;
 use merlin::Transcript;
 use rand_core::SeedableRng;
@@ -225,39 +223,12 @@ fn prove_example<T: Serialize>(
     input: &T,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
-    let program = host::Program::new(example_name).input(input);
+    let mut program = host::Program::new(example_name).input(input);
 
     let task = move || {
-        let (trace, bytecode, io_device) = program.trace();
-
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .iter()
-            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = trace
-            .iter()
-            .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
-                } else {
-                    ADDInstruction(0_u64, 0_u64).into()
-                }
-            })
-            .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.iter().map(|row| row.into()).collect();
-        let circuit_flags = trace
-            .iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<Fr>>()
-            })
-            .collect();
+        let bytecode = program.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            program.trace();
 
         let preprocessing: crate::jolt::vm::JoltPreprocessing<
             ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
@@ -269,7 +240,7 @@ fn prove_example<T: Serialize>(
             bytecode,
             bytecode_trace,
             memory_trace,
-            instructions_r1cs,
+            instruction_trace,
             circuit_flags,
             preprocessing.clone(),
         );
