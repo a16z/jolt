@@ -8,9 +8,9 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Anticipated speedup: 7% of prover time. 
 
-- When Spartan is applied to the R1CS arising in Jolt, the prover’s work in the first round involves computation over 64-bit integers, not arbitrary field elements. The implementation does not yet take advantage of this: each multiplication in the first round is currently implemented via a 256-bit Montgomery multiplication rather than a primitive 64-bit multiplication. This is about half of the prover’s total work in this sum-check invocation.
+- When Spartan is applied to the R1CS arising in Jolt, the prover’s work in the first round involves computation over 64-bit integers, not arbitrary field elements. The implementation does not yet take advantage of this: each multiplication in the first round is currently implemented via a 256-bit Montgomery multiplication rather than a primitive 64-bit multiplication. This is about half of the prover’s total work in this sum-check invocation. (The same optimization applies for computing the three matrix-vector multiplications needed to compute Az, Bz, and Cz before beginning this first sum-check).  
 
-    Anticipated speedup: 3% of overall prover time. <check>
+    Anticipated speedup: 4% of overall prover time. <check>
 
 - The optimization described in Section 3.2 of [this paper](https://eprint.iacr.org/2024/108.pdf) by Angus Gruen applies to a subset of the invocations of the sum-check protocol in Jolt, including the first of two sum-checks in Spartan and all sum-checks in Grand Product arguments within memory-checking procedures (Lasso, Spice). 
 
