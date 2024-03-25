@@ -21,6 +21,11 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 - Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir.
 
     Anticipated speedup: 3% of total prover time.
+
+- Make it fast to commit to slightly negative values (one group op per value) just as it's fast for small positive values. 
+
+    Anticipated speedup: 2% of total prover time.
+  
 - In the first sum-check in Spartan, the prover pre-computes a table of evaluations of (the multilinear extension of) the equality function eq(a, b) with the first vector a fixed to a random value. Leaving a few variables off of b and handling them differently will reduce the cost of building this table to negligible.
 
     Anticipated speedup: 1%-2% of total prover time. 
