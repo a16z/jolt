@@ -1,17 +1,10 @@
-use std::time::Instant;
-
 pub fn main() {
-    let (program, preprocessing) = guest::preprocess_sha3();
+    let (prove_sha3, verify_sha3) = guest::build_sha3();
 
     let input: &[u8] = &[5u8; 32];
+    let (output, proof) = prove_sha3(input);
+    let is_valid = verify_sha3(proof);
 
-    let start = Instant::now();
-
-    let (output, _proof) = guest::prove_sha3(program, preprocessing, input);
-
-    let end = Instant::now();
-    let duration = end.duration_since(start);
-
-    println!("prover time: {}ms", duration.as_millis());
     println!("output: {}", hex::encode(output));
+    println!("valid: {}", is_valid);
 }

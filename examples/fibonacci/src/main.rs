@@ -8,3 +8,7 @@ pub fn main() {
     println!("valid: {}", is_valid);
 }
 
+pub fn main() {
+    let guest = guest:b
+}
+
