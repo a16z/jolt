@@ -7,8 +7,3 @@ pub fn main() {
     println!("output: {}", output);
     println!("valid: {}", is_valid);
 }
-
-pub fn main() {
-    let guest = guest:b
-}
-
