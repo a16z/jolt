@@ -157,37 +157,50 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let preprocess_fn_name = syn::Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
     let preprocess_fn = quote! {
         #[cfg(not(feature = "guest"))]
-        pub fn #preprocess_fn_name<F: PrimeField, G: CurveGroup<ScalarField = F>>() -> (Program, JoltPreprocessing<F, G>) {
+        pub fn #preprocess_fn_name() -> (Program, JoltPreprocessing<jolt_sdk::F, jolt_sdk::G>) {
             use jolt_sdk::tracer;
 
             let mut program = Program::new(#guest_crate_name);
             let bytecode = program.decode();
 
             // TODO(moodlezoup): Feed in size parameters via macro
-            let preprocessing: JoltPreprocessing<F, G> = RV32IJoltVM::preprocess(
-                bytecode,
-                1 << 20,
-                1 << 20,
-                1 << 22
-            );
+            let preprocessing: JoltPreprocessing<jolt_sdk::F, jolt_sdk::G> = 
+                RV32IJoltVM::preprocess(
+                    bytecode,
+                    1 << 20,
+                    1 << 20,
+                    1 << 22
+                );
 
             (program, preprocessing)
         }
     };
 
     let prove_output_ty = match &input_fn.sig.output {
-        ReturnType::Default => quote! { -> ((), RV32IJoltProof<F, G>, JoltCommitments<G>) },
-        ReturnType::Type(_, ty) => quote! { -> (#ty, RV32IJoltProof<F, G>, JoltCommitments<G>)},
+        ReturnType::Default => quote! { 
+            (
+                (),
+                RV32IJoltProof<jolt_sdk::F, jolt_sdk::G>,
+                JoltCommitments<jolt_sdk::G>,
+            ) 
+        },
+        ReturnType::Type(_, ty) => quote! { 
+            (
+                #ty,
+                RV32IJoltProof<jolt_sdk::F, jolt_sdk::G>,
+                JoltCommitments<jolt_sdk::G>,
+            )
+        },
     };
 
     let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
     let prove_fn = quote! {
         #[cfg(not(feature = "guest"))]
-        pub fn #prove_fn_name<F: PrimeField, G: CurveGroup<ScalarField = F>>(
+        pub fn #prove_fn_name(
             mut program: Program,
-            preprocessing: JoltPreprocessing<F, G>,
+            preprocessing: JoltPreprocessing<jolt_sdk::F, jolt_sdk::G>,
             #inputs
-        ) #prove_output_ty {
+        ) -> #prove_output_ty {
             #(#args;)*
 
             let bytecode = program.decode();

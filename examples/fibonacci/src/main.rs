@@ -1,5 +1,6 @@
 pub fn main() {
-    let (output, _proof) = guest::prove_fib(50);
+    let (program, preprocessing) = guest::preprocess_fib();
+    let (output, _proof, _commitments) = guest::prove_fib(program, preprocessing, 50);
     println!("output: {}", output);
 }
 

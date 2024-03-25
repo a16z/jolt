@@ -10,6 +10,8 @@ pub use ark_ec::CurveGroup;
 #[cfg(feature = "std")]
 pub use ark_ff::PrimeField;
 #[cfg(feature = "std")]
+pub use ark_bn254::{Fr as F, G1Projective as G};
+#[cfg(feature = "std")]
 pub use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
 #[cfg(feature = "std")]
 pub use liblasso::host;
