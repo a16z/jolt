@@ -38,3 +38,4 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Most benchmarks get compiled into RISC-V programs that mostly read entire words at once. Switching to word-addressable memory will improve Jolt’s speed on these benchmarks by 5%. 
 
+<b> Total anticipated prover time reduction </b>: 30%-35%. 
