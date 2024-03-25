@@ -16,4 +16,4 @@
     - [Install](./dev/install.md)
     - [Tools](./dev/tools.md)
 - [Known optimizations still to be implemented](./opts.md)
-- [Other tasks](./taks.md)
+- [Other tasks](./tasks.md)
