@@ -4,21 +4,33 @@ version = "0.1.0"
 authors = [
     "Michael Zhu <mzhu@a16z.com>",
     "Sam Ragsdale <sragsdale@a16z.com>",
-    "Noah Citron <ncitron@a16z.com>"
+    "Noah Citron <ncitron@a16z.com>",
 ]
 description = "SDK for Jolt"
 license = "MIT"
 homepage = "https://github.com/a16z/lasso/README.md"
 repository = "https://github.com/a16z/lasso"
-edition="2021"
+edition = "2021"
 
 [features]
-std = ["dep:tracer", "dep:common", "postcard/use-std"]
+std = [
+    "dep:tracer",
+    "dep:common",
+    "dep:jolt-core",
+    "dep:ark-ec",
+    "dep:ark-ff",
+    "dep:ark-bn254",
+    "postcard/use-std",
+]
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
 serde = { version = "1.0.*", default-features = false }
 
 jolt-sdk-macros = { path = "./macros" }
+jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
 common = { path = "../common", optional = true }
+ark-ec = { version = "0.4.2", default-features = false, optional = true }
+ark-ff = { version = "0.4.2", default-features = false, optional = true }
+ark-bn254 = { version = "0.4.0", default-features = false, optional = true }

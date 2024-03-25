@@ -1,4 +1,4 @@
-use crate::jolt::instruction::add::ADDInstruction;
+use crate::host;
 use crate::jolt::vm::bytecode::{random_bytecode_trace, BytecodePolynomials, BytecodeRow};
 use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
 use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction, ReadWriteMemory};
@@ -6,10 +6,8 @@ use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
-use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RVTraceRow};
+use common::rv_trace::{ELFInstruction, JoltDevice};
 use criterion::black_box;
-use jolt_sdk::host;
 use merlin::Transcript;
 use rand_core::SeedableRng;
 use serde::Serialize;
@@ -72,13 +70,7 @@ fn prove_e2e_except_r1cs(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(
-        bytecode,
-        JoltDevice::new(),
-        bytecode_size,
-        memory_size,
-        num_cycles,
-    );
+    let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, memory_size, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -89,6 +81,7 @@ fn prove_e2e_except_r1cs(
             &mut transcript,
         );
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
+            JoltDevice::new(),
             &preprocessing.read_write_memory,
             memory_trace,
             &preprocessing.generators,
@@ -127,8 +120,7 @@ fn prove_bytecode(
         .collect();
     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing =
-        RV32IJoltVM::preprocess(bytecode, JoltDevice::new(), bytecode_size, 1, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, 1, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -158,17 +150,12 @@ fn prove_memory(
         .collect();
     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(
-        bytecode,
-        JoltDevice::new(),
-        bytecode_size,
-        memory_size,
-        num_cycles,
-    );
+    let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, memory_size, num_cycles);
 
     let work = Box::new(move || {
         let mut transcript = Transcript::new(b"example");
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
+            JoltDevice::new(),
             &preprocessing.read_write_memory,
             memory_trace,
             &preprocessing.generators,
@@ -186,7 +173,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
         .take(num_cycles)
         .collect();
 
-    let preprocessing = RV32IJoltVM::preprocess(vec![], JoltDevice::new(), 1, 1, num_cycles);
+    let preprocessing = RV32IJoltVM::preprocess(vec![], 1, 1, num_cycles);
     let mut transcript = Transcript::new(b"example");
 
     let work = Box::new(move || {
@@ -236,50 +223,24 @@ fn prove_example<T: Serialize>(
     input: &T,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
-    let program = host::Program::new(example_name).input(input);
+    let mut program = host::Program::new(example_name).input(input);
 
     let task = move || {
-        let (trace, bytecode, io_device) = program.trace();
-
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .iter()
-            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = trace
-            .iter()
-            .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
-                } else {
-                    ADDInstruction(0_u64, 0_u64).into()
-                }
-            })
-            .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.iter().map(|row| row.into()).collect();
-        let circuit_flags = trace
-            .iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<Fr>>()
-            })
-            .collect();
+        let bytecode = program.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            program.trace();
 
         let preprocessing: crate::jolt::vm::JoltPreprocessing<
             ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
             ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>,
-        > = RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 22);
+        > = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            io_device,
             bytecode,
             bytecode_trace,
             memory_trace,
-            instructions_r1cs,
+            instruction_trace,
             circuit_flags,
             preprocessing.clone(),
         );

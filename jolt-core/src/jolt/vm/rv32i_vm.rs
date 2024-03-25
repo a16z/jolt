@@ -1,13 +1,12 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use common::field_conversion::IntoSpartan;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::Jolt;
+use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
@@ -140,37 +139,27 @@ impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    G::Affine: IntoSpartan,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
 }
+
+pub type RV32IJoltProof<F, G> = JoltProof<C, M, F, G, RV32I, RV32ISubtables<F>>;
 
 // ==================== TEST ====================
 
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Fr, G1Projective};
-    use common::constants::{
-        INPUT_END_ADDRESS, INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, OUTPUT_END_ADDRESS,
-        OUTPUT_START_ADDRESS, RAM_START_ADDRESS,
-    };
-    use common::rv_trace::{JoltDevice, RV32IM};
-    use common::{
-        rv_trace::{ELFInstruction, RVTraceRow},
-        serializable::Serializable,
-    };
-    use itertools::Itertools;
-    use jolt_sdk::host;
+    use common::rv_trace::ELFInstruction;
     use merlin::Transcript;
     use rand_core::SeedableRng;
     use std::collections::HashSet;
 
-    use crate::jolt::instruction::{add::ADDInstruction, JoltInstruction};
-    use crate::jolt::vm::bytecode::BytecodeRow;
+    use crate::host;
+    use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::read_write_memory::RandomInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M, RV32I};
-    use crate::jolt::vm::MemoryOp;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -192,7 +181,6 @@ mod tests {
 
         let preprocessing = RV32IJoltVM::preprocess(
             vec![ELFInstruction::random(0, &mut rng)],
-            JoltDevice::new(),
             1 << 20,
             1 << 20,
             1 << 22,
@@ -238,50 +226,18 @@ mod tests {
     fn fib_e2e() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
-        let program = host::Program::new("fibonacci-guest").input(&9u32);
-        let (trace, bytecode, io_device) = program.trace();
+        let mut program = host::Program::new("fibonacci-guest").input(&9u32);
+        let bytecode = program.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            program.trace();
 
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
-            .iter()
-            .map(BytecodeRow::from_instruction::<RV32I>)
-            .collect();
-
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .iter()
-            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = trace
-            .iter()
-            .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
-                } else {
-                    ADDInstruction(0_u64, 0_u64).into()
-                }
-            })
-            .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.iter().map(|row| row.into()).collect();
-        let circuit_flags = trace
-            .iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<Fr>>()
-            })
-            .collect::<Vec<_>>();
-
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
+            io_device,
             bytecode,
             bytecode_trace,
             memory_trace,
-            instructions_r1cs,
+            instruction_trace,
             circuit_flags,
             preprocessing.clone(),
         );
@@ -297,50 +253,18 @@ mod tests {
     fn sha3_e2e() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
 
-        let program = host::Program::new("sha3-guest").input(&[5u8; 32]);
-        let (mut trace, bytecode, io_device) = program.trace();
+        let mut program = host::Program::new("sha3-guest").input(&[5u8; 32]);
+        let bytecode = program.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            program.trace();
 
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
-            .iter()
-            .map(BytecodeRow::from_instruction::<RV32I>)
-            .collect();
-
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .iter()
-            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-            .collect();
-
-        let instructions_r1cs: Vec<RV32I> = trace
-            .iter()
-            .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
-                } else {
-                    ADDInstruction(0_u64, 0_u64).into()
-                }
-            })
-            .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.iter().map(|row| row.into()).collect();
-        let circuit_flags = trace
-            .iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<Fr>>()
-            })
-            .collect();
-
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), io_device, 1 << 20, 1 << 20, 1 << 20);
+        let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            io_device,
             bytecode,
             bytecode_trace,
             memory_trace,
-            instructions_r1cs,
+            instruction_trace,
             circuit_flags,
             preprocessing.clone(),
         );

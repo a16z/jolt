@@ -9,6 +9,7 @@
 #![allow(long_running_const_eval)]
 
 pub mod benches;
+pub mod host;
 pub mod jolt;
 pub mod lasso;
 mod msm;

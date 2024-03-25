@@ -4,7 +4,6 @@ use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::cmp::max;
 #[cfg(test)]
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -12,7 +11,6 @@ use std::marker::PhantomData;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
-        NoPreprocessing,
     },
     poly::{
         dense_mlpoly::DensePolynomial,
@@ -27,16 +25,13 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized},
 };
-use common::rv_trace::{ELFInstruction, MemoryOp, RV32IM};
-use common::to_ram_address;
-use common::{
-    constants::{
-        memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS,
-        MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, PANIC_ADDRESS,
-        RAM_START_ADDRESS, RAM_WITNESS_OFFSET, REGISTER_COUNT,
-    },
-    rv_trace::JoltDevice,
+use common::constants::{
+    memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MAX_INPUT_SIZE,
+    MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS,
+    RAM_WITNESS_OFFSET, REGISTER_COUNT,
 };
+use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
+use common::to_ram_address;
 
 use super::timestamp_range_check::TimestampValidityProof;
 
@@ -129,6 +124,7 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
+    pub program_io: JoltDevice,
     pub memory_checking_proof: MemoryCheckingProof<
         G,
         ReadWriteMemory<F, G>,
@@ -141,18 +137,18 @@ where
 #[derive(Clone)]
 pub struct ReadWriteMemoryPreprocessing {
     min_bytecode_address: u64,
-    max_bytecode_address: u64,
     pub bytecode_bytes: Vec<u8>,
-    pub input_bytes: Vec<u8>,
-    pub output_bytes: Vec<u8>,
+    // HACK: The verifier will populate this field by copying it
+    // over from the `ReadWriteMemoryProof`. Having `program_io` in
+    // this preprocessing struct allows the verifier to access it
+    // to compute the v_init and v_final openings, with no impact
+    // on existing function signatures.
+    pub program_io: Option<JoltDevice>,
 }
 
 impl ReadWriteMemoryPreprocessing {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryPreprocessing::preprocess")]
-    pub fn preprocess(bytecode: &Vec<ELFInstruction>, program_io: JoltDevice) -> Self {
-        assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
-        assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
-
+    pub fn preprocess(bytecode: &Vec<ELFInstruction>) -> Self {
         let min_bytecode_address = bytecode
             .iter()
             .map(|instr| instr.address)
@@ -178,16 +174,10 @@ impl ReadWriteMemoryPreprocessing {
             }
         }
 
-        let input_bytes = program_io.inputs;
-        let mut output_bytes = program_io.outputs;
-        output_bytes.push(program_io.panic as u8);
-
         Self {
             min_bytecode_address,
-            max_bytecode_address,
             bytecode_bytes,
-            input_bytes,
-            output_bytes,
+            program_io: None,
         }
     }
 }
@@ -234,10 +224,14 @@ where
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
+        program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         transcript: &mut Transcript,
     ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
+        assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
+        assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+
         let m = memory_trace.len();
         assert!(m.is_power_of_two());
 
@@ -262,7 +256,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         }
         // Copy input bytes
         v_init_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
-        for byte in preprocessing.input_bytes.iter() {
+        for byte in program_io.inputs.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
@@ -727,7 +721,7 @@ where
         }
         // Copy input bytes
         v_init_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
-        for byte in preprocessing.input_bytes.iter() {
+        for byte in preprocessing.program_io.as_ref().unwrap().inputs.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
@@ -961,9 +955,13 @@ mod tests {
 
         let mut transcript = Transcript::new(b"test_transcript");
 
-        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode, JoltDevice::new());
-        let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) =
-            ReadWriteMemory::new(&preprocessing, memory_trace, &mut transcript);
+        let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
+        let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) = ReadWriteMemory::new(
+            &JoltDevice::new(),
+            &preprocessing,
+            memory_trace,
+            &mut transcript,
+        );
         let batched_polys = rw_memory.batch();
         let generators = PedersenGenerators::new(1 << 10, b"test");
         let commitments = rw_memory.commit(&batched_polys, &generators);
@@ -974,8 +972,9 @@ mod tests {
             &batched_polys,
             &mut transcript,
         );
-
+        
         let mut transcript = Transcript::new(b"test_transcript");
+        preprocessing.program_io = Some(JoltDevice::new());
         ReadWriteMemoryProof::verify_memory_checking(
             &preprocessing,
             proof,

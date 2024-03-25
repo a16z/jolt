@@ -1,9 +1,10 @@
-use jolt_sdk::host::Program;
-
 pub fn main() {
-    let input: &[u8] = &[5u8; 32];
-    Program::new("sha3-guest").input(&input).trace_analyze();
+    let (prove_sha3, verify_sha3) = guest::build_sha3();
 
-    // let (_, device) = Program::new("sha3-guest").input(&input).trace();
-    // println!("{}", hex::encode(device.outputs));
+    let input: &[u8] = &[5u8; 32];
+    let (output, proof) = prove_sha3(input);
+    let is_valid = verify_sha3(proof);
+
+    println!("output: {}", hex::encode(output));
+    println!("valid: {}", is_valid);
 }

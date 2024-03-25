@@ -1,10 +1,14 @@
-use jolt_sdk::host::Program;
+pub fn main() {
+    let (prove_fib, verify_fib) = guest::build_fib();
+
+    let (output, proof) = prove_fib(50);
+    let is_valid = verify_fib(proof);
+
+    println!("output: {}", output);
+    println!("valid: {}", is_valid);
+}
 
 pub fn main() {
-    let input = 9u32;
-    Program::new("fibonacci-guest").input(&input).trace_analyze();
-
-    // let device = Program::new("fibonacci-guest").input(&input).trace();
-    // let result: u32 = jolt_sdk::postcard::from_bytes(&device.outputs).unwrap();
-    // println!("{:?}", result);
+    let guest = guest:b
 }
+
