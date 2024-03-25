@@ -7,7 +7,7 @@ $$ H := \sum_{b_1 \in \{0,1\}} \sum_{b_2 \in \{0,1\}} \cdots \sum_{b_v \in \{0,1
 
 In order to execute the protocol, the verifier needs to be able to evaluate $g(r_1, \ldots, r_v)$ for a randomly chosen vector $(r_1, \ldots, r_v) \in \mathbb{F}^v$. Hence, from the verifier's perspective, the sum-check protocol _reduces_ the task 
 of summing $g$'s evaluations over $2^v$ inputs (namely, all inputs in $\{0, 1}^{v}$) to the task of evaluating $g$
-at a \emph{single} input in $(r_1, \ldots, r_v) \in \mathbb{F}^v$.
+at a _single_ input in $(r_1, \ldots, r_v) \in \mathbb{F}^v$.
 
 The protocol proceeds in $v$ rounds as follows. In the first round, the prover sends a polynomial $g_1(X_1)$, and claims that 
 
