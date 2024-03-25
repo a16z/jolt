@@ -18,7 +18,7 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Anticipated speedup: 3% of total prover time.
 
-- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir.
+- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir. See [this github issue](https://github.com/a16z/Lasso/issues/208).
 
     Anticipated speedup: 3% of total prover time.
 
@@ -38,4 +38,4 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Most benchmarks get compiled into RISC-V programs that mostly read entire words at once. Switching to word-addressable memory will improve Jolt’s speed on these benchmarks by 5%. 
 
-<b> Total anticipated prover time reduction </b>: 30%-35%. 
+<b> Total anticipated prover time reduction</b>: 30%-35%. 
