@@ -5,4 +5,3 @@ A conversational background on lookups can be found [here](https://a16zcrypto.co
 
 ## Lasso
 A detailed engineering overview of Lasso can be found [here](https://www.youtube.com/watch?v=iDcXj9Vx3zY).
-![Lasso SVG](../imgs/lasso.svg)
