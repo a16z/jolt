@@ -1,4 +1,4 @@
-# Sumcheck
+# The Sum-check Protocol
 *Adapted from the [Thaler13](https://eprint.iacr.org/2013/351.pdf) exposition. For a detailed introduction to sumcheck see Chapter 4.1 of [the textbook](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.pdf).*
 
 Suppose we are given a $v$-variate polynomial $g$ defined over a finite field $\mathbb{F}$. The purpose of the sumcheck protocol is to compute the sum:
@@ -13,7 +13,7 @@ The protocol proceeds in $v$ rounds as follows. In the first round, the prover s
 
 $$ g_1(X_1) = \sum_{x_2, \ldots, x_v \in \{0,1\}^{v-1}} g(X_1, x_2, \ldots, x_v). $$
 
-Observe that if $g_1$ is as claimed, then $H = g_1(0) + g_1(1)$. Also observe that the polynomial $g_1(X_1)$ has degree $\text{deg}_1(g)$, the degree of variable $x_1$ in $g$. Hence $g_1$ can be specified with $\text{deg}_1(g) + 1$ field elements. In our implementation, $P$ will specify $g$ by sending the evaluation of $g$ at each point in the set $\{0,1, \ldots, \text{deg}_1(g)\}$.
+Observe that if $g_1$ is as claimed, then $H = g_1(0) + g_1(1)$. Also observe that the polynomial $g_1(X_1)$ has degree $\text{deg}_1(g)$, the degree of variable $x_1$ in $g$. Hence $g_1$ can be specified with $\text{deg}_1(g) + 1$ field elements. In our implementation, $P$ will specify $g$ by sending the evaluation of $g_1$ at each point in the set $\{0,1, \ldots, \text{deg}_1(g)\}$. (Actually, the prover does _not_ need to send $g_1(1)$, since since the verifier can _infer_ that $g_1(1) = H-g_1(0)$, as if this were not the case, the verifier would reject). 
 
 Then, in round $j > 1$, $V$ chooses a value $r_{j-1}$ uniformly at random from $\mathbb{F}$ and sends $r_{j-1}$ to $P$. We will often refer to this step by saying that variable $j - 1$ gets bound to value $r_{j-1}$. In return, the prover sends a polynomial $g_j(X_j)$, and claims that
 
