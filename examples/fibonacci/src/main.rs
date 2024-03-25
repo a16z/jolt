@@ -1,6 +1,10 @@
 pub fn main() {
-    let (program, preprocessing) = guest::preprocess_fib();
-    let (output, _proof, _commitments) = guest::prove_fib(program, preprocessing, 50);
+    let (prove_fib, verify_fib) = guest::build_fib();
+
+    let (output, proof) = prove_fib(50);
+    let is_valid = verify_fib(proof);
+
     println!("output: {}", output);
+    println!("valid: {}", is_valid);
 }
 

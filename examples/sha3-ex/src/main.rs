@@ -7,7 +7,7 @@ pub fn main() {
 
     let start = Instant::now();
 
-    let (output, _proof, _commitments) = guest::prove_sha3(program, preprocessing, input);
+    let (output, _proof) = guest::prove_sha3(program, preprocessing, input);
 
     let end = Instant::now();
     let duration = end.duration_since(start);

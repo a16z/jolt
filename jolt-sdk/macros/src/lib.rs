@@ -23,6 +23,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let mut args = Vec::new();
+    let mut arg_types = Vec::new();
     for arg in input_fn.sig.inputs {
         if let syn::FnArg::Typed(PatType { pat, ty, .. }) = arg {
             if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
@@ -35,6 +36,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
 
                 args.push(arg_fetch);
+                arg_types.push(arg_type.clone());
             } else {
                 panic!("cannot parse arg");
             }
@@ -178,18 +180,10 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let prove_output_ty = match &input_fn.sig.output {
         ReturnType::Default => quote! { 
-            (
-                (),
-                RV32IJoltProof<jolt_sdk::F, jolt_sdk::G>,
-                JoltCommitments<jolt_sdk::G>,
-            ) 
+            ((), jolt_sdk::Proof) 
         },
         ReturnType::Type(_, ty) => quote! { 
-            (
-                #ty,
-                RV32IJoltProof<jolt_sdk::F, jolt_sdk::G>,
-                JoltCommitments<jolt_sdk::G>,
-            )
+            (#ty, jolt_sdk::Proof)
         },
     };
 
@@ -220,9 +214,68 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             );
 
             #handle_return
-            (ret_val, jolt_proof, jolt_commitments)
+
+            let proof = jolt_sdk::Proof {
+                proof: jolt_proof,
+                commitments: jolt_commitments,
+            };
+
+            (ret_val, proof)
         }
     };
+
+    let input_types: Vec<&syn::Type> = input_fn.sig.inputs.iter().map(|fn_arg| {
+        if let syn::FnArg::Typed(pat_type) = fn_arg {
+            &*pat_type.ty
+        } else {
+            panic!("unreachable");
+        }
+    }).collect();
+
+    let input_names: Vec<&syn::PatIdent> = input_fn.sig.inputs.iter().map(|fn_arg| {
+        if let syn::FnArg::Typed(pat_type) = fn_arg {
+            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+                pat_ident
+            } else {
+                panic!("unreachable");
+            }
+        } else {
+            panic!("unreachable");
+        }
+    }).collect();
+
+    let get_fn_name = syn::Ident::new(&format!("build_{}", fn_name), fn_name.span());
+    let get_prover_verifier_fn = quote! {
+        #[cfg(not(feature = "guest"))]
+        pub fn #get_fn_name() -> (
+            impl Fn(#(#input_types),*) -> #prove_output_ty,
+            impl Fn(jolt_sdk::Proof) -> bool
+        ) {
+
+            let (program, preprocessing) = #preprocess_fn_name();
+            let program = std::rc::Rc::new(program);
+            let preprocessing = std::rc::Rc::new(preprocessing);
+
+            let program_cp = program.clone();
+            let preprocessing_cp = preprocessing.clone();
+
+            let prove_closure = move |#inputs| {
+                let program = (*program).clone();
+                let preprocessing = (*preprocessing).clone();
+                #prove_fn_name(program, preprocessing, #(#input_names),*)
+            };
+
+
+            let verify_closure = move |proof: jolt_sdk::Proof| {
+                let program = (*program_cp).clone();
+                let preprocessing = (*preprocessing_cp).clone();
+                RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments).is_ok()
+            };
+
+            (prove_closure, verify_closure)
+        }
+    };
+
 
     let execute_fn_name = syn::Ident::new(&format!("execute_{}", fn_name), fn_name.span());
     let execute_fn = quote! {
@@ -237,6 +290,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #transformed_fn
         #preprocess_fn
         #prove_fn
+        #get_prover_verifier_fn
         #execute_fn
     };
 

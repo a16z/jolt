@@ -22,6 +22,7 @@ use crate::jolt::{
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
 };
 
+#[derive(Clone)]
 pub struct Program {
     guest: String,
     input: Vec<u8>,
