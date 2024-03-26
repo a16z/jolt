@@ -422,7 +422,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 })
             })
             .collect();
-        packed_flags.extend(vec![F::zero(); padded_trace_len - packed_flags.len()]);
+        packed_flags.resize(padded_trace_len, F::zero());
         drop(_enter);
         drop(span);
 
@@ -470,10 +470,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(_enter);
         drop(span);
 
-        // Assemble the polynomials
-        let (bytecode_a, mut bytecode_v) = jolt_polynomials.bytecode.get_polys_r1cs();
-        bytecode_v.par_extend(packed_flags.par_iter());
-
+        let (bytecode_a, bytecode_v) = jolt_polynomials.bytecode.get_polys_r1cs();
         let (memreg_a_rw, memreg_v_reads, memreg_v_writes) =
             jolt_polynomials.read_write_memory.get_polys_r1cs();
 
@@ -510,8 +507,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // will be the exact witness vector to feed into the R1CS
         // after pre-pending IO and appending the AUX
         let inputs: R1CSInputs<F> = R1CSInputs::new(
+            padded_trace_len,
             bytecode_a,
             bytecode_v,
+            packed_flags,
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,

@@ -76,8 +76,10 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
 
 #[derive(Clone, Debug, Default)]
 pub struct R1CSInputs<F: PrimeField> {
+    padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
+    packed_flags: Vec<F>,
     memreg_a_rw: Vec<F>,
     memreg_v_reads: Vec<F>,
     memreg_v_writes: Vec<F>,
@@ -91,8 +93,10 @@ pub struct R1CSInputs<F: PrimeField> {
 impl<F: PrimeField> R1CSInputs<F> {
   #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
   pub fn new(
+    padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
+    packed_flags: Vec<F>,
     memreg_a_rw: Vec<F>,
     memreg_v_reads: Vec<F>,
     memreg_v_writes: Vec<F>,
@@ -103,9 +107,23 @@ impl<F: PrimeField> R1CSInputs<F> {
     circuit_flags_bits: Vec<F>
   ) -> Self {
 
+    assert!(bytecode_a.len() % padded_trace_len == 0);
+    assert!(bytecode_v.len() % padded_trace_len == 0);
+    assert!(packed_flags.len() % padded_trace_len == 0);
+    assert!(memreg_a_rw.len() % padded_trace_len == 0);
+    assert!(memreg_v_reads.len() % padded_trace_len == 0);
+    assert!(memreg_v_writes.len() % padded_trace_len == 0);
+    assert!(chunks_x.len() % padded_trace_len == 0);
+    assert!(chunks_y.len() % padded_trace_len == 0);
+    assert!(chunks_query.len() % padded_trace_len == 0);
+    assert!(lookup_outputs.len() % padded_trace_len == 0);
+    assert!(circuit_flags_bits.len() % padded_trace_len == 0);
+
     Self {
+      padded_trace_len,
       bytecode_a,
       bytecode_v,
+      packed_flags,
       memreg_a_rw,
       memreg_v_reads,
       memreg_v_writes,
@@ -132,50 +150,28 @@ impl<F: PrimeField> R1CSInputs<F> {
       } else {
         self.bytecode_a[step_index] * F::from(4u64) + F::from(RAM_START_ADDRESS)
       };
-      // TODO(sragss / arasu arun): This indexing strategy is stolen from old -- but self.trace_len here is self.bytecode_a.len() -- not sure why we're using that to split inputs.
 
       // 1 is constant, 0s in slots 1, 2 are filled by aux computation
       step.extend([F::from(1u64), F::from(0u64), F::from(0u64), F::from(step_index as u64), program_counter]);
-      let bytecode_a_num_vals = self.bytecode_a.len() / self.trace_len();
-      for var_index in 0..bytecode_a_num_vals {
-        step.push(self.bytecode_a[var_index * self.trace_len() + step_index]);
-      }
-      let bytecode_v_num_vals = self.bytecode_v.len() / self.trace_len();
-      for var_index in 0..bytecode_v_num_vals {
-        step.push(self.bytecode_v[var_index * self.trace_len() + step_index]);
-      }
-      let memreg_a_rw_num_vals = self.memreg_a_rw.len() / self.trace_len();
-      for var_index in 0..memreg_a_rw_num_vals {
-        step.push(self.memreg_a_rw[var_index * self.trace_len() + step_index]);
-      }
-      let memreg_v_reads_num_vals = self.memreg_v_reads.len() / self.trace_len();
-      for var_index in 0..memreg_v_reads_num_vals {
-        step.push(self.memreg_v_reads[var_index * self.trace_len() + step_index]);
-      }
-      let memreg_v_writes_num_vals = self.memreg_v_writes.len() / self.trace_len();
-      for var_index in 0..memreg_v_writes_num_vals {
-        step.push(self.memreg_v_writes[var_index * self.trace_len() + step_index]);
-      }
-      let chunks_x_num_vals = self.chunks_x.len() / self.trace_len();
-      for var_index in 0..chunks_x_num_vals {
-        step.push(self.chunks_x[var_index * self.trace_len() + step_index]);
-      }
-      let chunks_y_num_vals = self.chunks_y.len() / self.trace_len();
-      for var_index in 0..chunks_y_num_vals {
-        step.push(self.chunks_y[var_index * self.trace_len() + step_index]);
-      }
-      let chunks_query_num_vals = self.chunks_query.len() / self.trace_len();
-      for var_index in 0..chunks_query_num_vals {
-        step.push(self.chunks_query[var_index * self.trace_len() + step_index]);
-      }
-      let lookup_outputs_num_vals = self.lookup_outputs.len() / self.trace_len();
-      for var_index in 0..lookup_outputs_num_vals {
-        step.push(self.lookup_outputs[var_index * self.trace_len() + step_index]);
-      }
-      let circuit_flags_bits_num_vals = self.circuit_flags_bits.len() / self.trace_len();
-      for var_index in 0..circuit_flags_bits_num_vals {
-        step.push(self.circuit_flags_bits[var_index * self.trace_len() + step_index]);
-      }
+
+      let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
+        let num_vals = data.len() / self.padded_trace_len;
+        for var_index in 0..num_vals {
+          step.push(data[var_index * self.padded_trace_len + step_index]);
+        }
+      };
+
+      push_to_step(&self.bytecode_a, &mut step);
+      push_to_step(&self.bytecode_v, &mut step);
+      push_to_step(&self.packed_flags, &mut step);
+      push_to_step(&self.memreg_a_rw, &mut step);
+      push_to_step(&self.memreg_v_reads, &mut step);
+      push_to_step(&self.memreg_v_writes, &mut step);
+      push_to_step(&self.chunks_x, &mut step);
+      push_to_step(&self.chunks_y, &mut step);
+      push_to_step(&self.chunks_query, &mut step);
+      push_to_step(&self.lookup_outputs, &mut step);
+      push_to_step(&self.circuit_flags_bits, &mut step);
 
       assert_eq!(num_inputs_per_step, step.len());
 
@@ -187,13 +183,14 @@ impl<F: PrimeField> R1CSInputs<F> {
 
 
   pub fn trace_len(&self) -> usize {
-      self.bytecode_a.len()
+    self.padded_trace_len
   }
 
   pub fn num_vars_per_step(&self) -> usize {
     let trace_len = self.trace_len();
     self.bytecode_a.len() / trace_len
       + self.bytecode_v.len() / trace_len
+      + self.packed_flags.len() / trace_len
       + self.memreg_a_rw.len() / trace_len
       + self.memreg_v_reads.len() / trace_len
       + self.memreg_v_writes.len() / trace_len
@@ -210,6 +207,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     let mut chunks: Vec<Vec<F>> = Vec::new();
     chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.packed_flags.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_a_rw.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_v_reads.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_v_writes.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
@@ -279,8 +277,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       inputs: R1CSInputs<F>,
       generators: &HyraxGenerators<NUM_R1CS_POLYS, G>,
   ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSInternalCommitments<G>), SpartanError> {
-      let num_steps = padded_trace_len;
-
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
@@ -374,7 +370,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       combined_commitments.push(&r1cs_commitments.packed_flags);
 
-      // TODO(sragss): bytecode_v ?? is this just packed flags?
       combined_commitments.extend(ram_a_v_commitments.iter());
 
       combined_commitments.extend(r1cs_commitments.chunks_x.iter());
