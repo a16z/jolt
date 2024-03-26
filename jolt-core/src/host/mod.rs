@@ -1,9 +1,6 @@
 use core::{str::FromStr, u8};
 use std::{
-    collections::HashMap,
-    io::{self, Write},
-    path::PathBuf,
-    process::Command,
+    collections::HashMap, fs::{self, File}, io::{self, Write}, path::PathBuf, process::Command
 };
 
 use ark_ff::PrimeField;
@@ -26,6 +23,7 @@ use crate::jolt::{
 pub struct Program {
     guest: String,
     input: Vec<u8>,
+    linker_program_length: usize,
     pub elf: Option<PathBuf>,
 }
 
@@ -34,6 +32,7 @@ impl Program {
         Self {
             guest: guest.to_string(),
             input: Vec::new(),
+            linker_program_length: 10 * 1024 * 1024,
             elf: None,
         }
     }
@@ -45,9 +44,16 @@ impl Program {
         self
     }
 
+    pub fn linker_program_length(mut self, len: usize) -> Self {
+        self.linker_program_length = len;
+        self
+    }
+
     pub fn build(&mut self) {
         if self.elf.is_none() {
+            self.save_linker(self.linker_program_length);
             let output = Command::new("cargo")
+                .envs([("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))])
                 .args(&[
                     "build",
                     "--release",
@@ -158,4 +164,49 @@ impl Program {
 
         device.outputs
     }
+
+    fn save_linker(&self, program_length: usize) {
+        let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
+        if let Some(parent) = linker_path.parent() {
+            fs::create_dir_all(parent).expect("could not create linker file");
+        }
+
+        let linker_script = LINKER_SCRIPT_TEMPLATE
+            .replace("{PROGRAM_LENGTH}", &program_length.to_string());
+
+        let mut file = File::create(linker_path).expect("could not create linker file");
+        file.write(linker_script.as_bytes()).expect("could not save linker");
+    }
+
+    fn linker_path(&self) -> String {
+        format!("/tmp/jolt-guest-linkers/{}.ld", self.guest)
+    }
 }
+
+const LINKER_SCRIPT_TEMPLATE: &str = r#"
+MEMORY {
+  program (rwx) : ORIGIN = 0x80000000, LENGTH = {PROGRAM_LENGTH}
+}
+
+SECTIONS {
+  .text.boot : {
+    *(.text.boot)
+  } > program
+
+  .text : {
+    *(.text)
+  } > program
+
+  .data : {
+    *(.data)
+  } > program
+
+  .bss : {
+    *(.bss)
+  } > program
+
+  . = ALIGN(8);
+  . = . + 4096;
+  _STACK_PTR = .;
+}
+"#;
