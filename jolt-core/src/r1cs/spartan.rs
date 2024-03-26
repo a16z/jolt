@@ -186,18 +186,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     pub fn prove_precommitted(
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
-        // witness_commitments: &Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-
-        // let span_u = tracing::span!(tracing::Level::INFO, "absorb_u");
-        // let _guard_u = span_u.enter();
-        // witness_commitments.iter().for_each(|commitment| {
-        //     commitment.append_to_transcript(b"U", transcript);
-        // });
-        // drop(_guard_u);
 
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
@@ -410,7 +402,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             outer_sumcheck_claims[3],
         );
         Ok(UniformSpartanProof {
-            // witness_segment_commitments: witness_commitments.clone(),
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
@@ -436,9 +427,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-        // self.witness_segment_commitments
-        //     .iter()
-        //     .for_each(|commitment| commitment.append_to_transcript(b"U", transcript));
 
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),
@@ -587,10 +575,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        // let hyrax_commitment_refs: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = witness_segment_commitments
-        //     .iter()
-        //     .map(|commit_ref| commit_ref)
-        //     .collect();
         self.opening_proof
             .verify(
                 &generators,
