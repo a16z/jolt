@@ -381,7 +381,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         memory_trace: Vec<MemoryOp>,
         circuit_flags: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
-        // jolt_commitments: &JoltCommitments<G>,
         transcript: &mut Transcript,
     ) -> (R1CSProof<F, G>, R1CSUniqueCommitments<G>) {
         let N_FLAGS = 17;

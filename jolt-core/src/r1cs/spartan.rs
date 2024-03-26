@@ -39,20 +39,20 @@ pub enum SpartanError {
     InvalidSumcheckProof,
 
     /// returned when the recusive sumcheck proof fails
-    #[error("InvalidOuterSumcheckRecursive")]
-    InvalidOuterSumcheckRecursive,
+    #[error("InvalidOuterSumcheckProof")]
+    InvalidOuterSumcheckProof,
 
     /// returned when the final sumcheck opening proof fails
-    #[error("InvalidOuterSumcheckFinal")]
-    InvalidOuterSumcheckFinal,
+    #[error("InvalidOuterSumcheckClaim")]
+    InvalidOuterSumcheckClaim,
 
     /// returned when the recusive sumcheck proof fails
-    #[error("InvalidInnerSumcheckRecursive")]
-    InvalidInnerSumcheckRecursive,
+    #[error("InvalidInnerSumcheckProof")]
+    InvalidInnerSumcheckProof,
 
     /// returned when the final sumcheck opening proof fails
-    #[error("InvalidInnerSumcheckFinal")]
-    InvalidInnerSumcheckFinal,
+    #[error("InvalidInnerSumcheckClaim")]
+    InvalidInnerSumcheckClaim,
 
     /// returned if the supplied witness is not of the right length
     #[error("InvalidWitnessLength")]
@@ -145,7 +145,6 @@ impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    // witness_segment_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
@@ -441,14 +440,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let (claim_outer_final, r_x) = self
             .outer_sumcheck_proof
             .verify::<G, Transcript>(F::zero(), num_rounds_x, 3, transcript)
-            .map_err(|_| SpartanError::InvalidOuterSumcheckRecursive)?;
+            .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
 
         // verify claim_outer_final
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
         let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
-            return Err(SpartanError::InvalidOuterSumcheckFinal);
+            return Err(SpartanError::InvalidOuterSumcheckClaim);
         }
 
         <Transcript as ProofTranscript<G>>::append_scalars(
@@ -472,7 +471,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
             .verify::<G, Transcript>(claim_inner_joint, num_rounds_y, 2, transcript)
-            .map_err(|_| SpartanError::InvalidInnerSumcheckRecursive)?;
+            .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // verify claim_inner_final
         // this should be log (num segments)
@@ -571,7 +570,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let claim_inner_final_expected = left_expected * right_expected;
         if claim_inner_final != claim_inner_final_expected {
             // DEDUPE(arasuarun): add
-            return Err(SpartanError::InvalidInnerSumcheckFinal);
+            return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
