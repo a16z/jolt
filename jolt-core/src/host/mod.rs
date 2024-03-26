@@ -23,7 +23,7 @@ use crate::jolt::{
 pub struct Program {
     guest: String,
     input: Vec<u8>,
-    linker_program_length: usize,
+    memory_size: usize,
     pub elf: Option<PathBuf>,
 }
 
@@ -32,7 +32,7 @@ impl Program {
         Self {
             guest: guest.to_string(),
             input: Vec::new(),
-            linker_program_length: 10 * 1024 * 1024,
+            memory_size: 10 * 1024 * 1024,
             elf: None,
         }
     }
@@ -44,14 +44,14 @@ impl Program {
         self
     }
 
-    pub fn linker_program_length(mut self, len: usize) -> Self {
-        self.linker_program_length = len;
+    pub fn memory_size(mut self, len: usize) -> Self {
+        self.memory_size = len;
         self
     }
 
     pub fn build(&mut self) {
         if self.elf.is_none() {
-            self.save_linker(self.linker_program_length);
+            self.save_linker(self.memory_size);
             let output = Command::new("cargo")
                 .envs([("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))])
                 .args(&[
@@ -165,14 +165,14 @@ impl Program {
         device.outputs
     }
 
-    fn save_linker(&self, program_length: usize) {
+    fn save_linker(&self, memory_size: usize) {
         let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
         if let Some(parent) = linker_path.parent() {
             fs::create_dir_all(parent).expect("could not create linker file");
         }
 
         let linker_script = LINKER_SCRIPT_TEMPLATE
-            .replace("{PROGRAM_LENGTH}", &program_length.to_string());
+            .replace("{MEMORY_SIZE}", &memory_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
         file.write(linker_script.as_bytes()).expect("could not save linker");
@@ -185,7 +185,7 @@ impl Program {
 
 const LINKER_SCRIPT_TEMPLATE: &str = r#"
 MEMORY {
-  program (rwx) : ORIGIN = 0x80000000, LENGTH = {PROGRAM_LENGTH}
+  program (rwx) : ORIGIN = 0x80000000, LENGTH = {MEMORY_SIZE}
 }
 
 SECTIONS {

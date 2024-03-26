@@ -3,7 +3,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, Ident, ItemFn, PatType, ReturnType, Type};
+use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, LitInt, Meta, MetaNameValue, NestedMeta, PatType, ReturnType, Type};
 
 use common::constants::{
     INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
@@ -11,18 +11,19 @@ use common::constants::{
 
 #[proc_macro_attribute]
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr = parse_macro_input!(attr as AttributeArgs);
     let func = parse_macro_input!(item as ItemFn);
     MacroBuilder::new(attr, func).build()
 }
 
 struct MacroBuilder {
-    attr: TokenStream,
+    attr: AttributeArgs,
     func: ItemFn,
     func_args: Vec<(Ident, Box<Type>)>,
 }
 
 impl MacroBuilder {
-    fn new(attr: TokenStream, func: ItemFn) -> Self {
+    fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let func_args = Self::get_func_args(&func);
         Self {
             attr,
@@ -109,6 +110,7 @@ impl MacroBuilder {
      }
 
     fn make_preproccess_func(&self) -> TokenStream2 {
+        let set_mem_size = self.make_set_memory_size();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
 
@@ -123,6 +125,7 @@ impl MacroBuilder {
                 #imports
 
                 let mut program = Program::new(#guest_name);
+                #set_mem_size
                 let bytecode = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
@@ -297,6 +300,28 @@ impl MacroBuilder {
                 instruction::add::ADDInstruction,
                 tracer,
             };
+        }
+    }
+
+    fn make_set_memory_size(&self) -> TokenStream2 {
+        if self.attr.len() == 1 {
+            match &self.attr[0] {
+                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+                    let ident = &path.get_ident().expect("Expected identifier");
+                    if ident.to_string() != "memory_size" {
+                        panic!("only allowed attribute is memory_size");
+                    }
+
+                    quote! {
+                        let mut program = program.memory_size(#lit);
+                    }
+                },
+                _ => panic!("expected integer literal"),
+            }
+        } else if self.attr.len() > 1 {
+            panic!("only one attribute expected");
+        } else {
+            quote!()
         }
     }
 
