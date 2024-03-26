@@ -1,13 +1,13 @@
-cargo-features = ["per-package-target"]
-
 [package]
 name = "sha3-guest"
 version = "0.1.0"
 edition = "2021"
 
-forced-target = "riscv32i-unknown-none-elf"
+[features]
+guest = []
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+path = "src/main.rs"
 
 [dependencies]
 sha3 = { version = "0.10.8", default-features = false }

@@ -338,6 +338,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       })
   }
 
+  // TODO(sragss): Only param should be 'JoltCommitments<G>'
   fn format_commitments(
     jolt_commitments: &JoltCommitments<G>,
     C: usize
@@ -371,9 +372,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       combined_commitments.push(&bytecode_read_write_commitments[5]); // rs2
       combined_commitments.push(&bytecode_read_write_commitments[6]); // imm
 
-      // TODO(sragss): bytecode_v ?? is this just packed flags?
       combined_commitments.push(&r1cs_commitments.packed_flags);
 
+      // TODO(sragss): bytecode_v ?? is this just packed flags?
       combined_commitments.extend(ram_a_v_commitments.iter());
 
       combined_commitments.extend(r1cs_commitments.chunks_x.iter());

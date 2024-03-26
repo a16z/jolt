@@ -759,7 +759,6 @@ impl R1CSBuilder {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use spartan2::provider::bn256_grumpkin::bn256::Scalar as F;
 
         // #[test]
         // fn test_get_matrices() {

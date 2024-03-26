@@ -3,7 +3,6 @@ pub fn to_ram_address(index: usize) -> usize {
 }
 
 pub mod constants;
-pub mod field_conversion;
 pub mod parallel;
 pub mod rv_trace;
 pub mod serializable;

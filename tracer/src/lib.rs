@@ -2,7 +2,7 @@
 
 use std::{fs::File, io::Read, path::PathBuf};
 
-use common::{self, constants::RAM_START_ADDRESS, serializable::Serializable};
+use common::{self, constants::RAM_START_ADDRESS};
 use emulator::{
     cpu::{self, Xlen},
     default_terminal::DefaultTerminal,
@@ -21,6 +21,7 @@ pub use common::rv_trace::{
 
 use crate::decode::decode_raw;
 
+#[tracing::instrument(skip_all)]
 pub fn trace(elf: &PathBuf, inputs: Vec<u8>) -> (Vec<RVTraceRow>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
@@ -62,6 +63,7 @@ pub fn trace(elf: &PathBuf, inputs: Vec<u8>) -> (Vec<RVTraceRow>, JoltDevice) {
     (output, device)
 }
 
+#[tracing::instrument(skip_all)]
 pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();

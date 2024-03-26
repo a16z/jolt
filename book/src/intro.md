@@ -6,7 +6,13 @@ Jolt powers succinct proofs of execution of programs written in any high level l
 
 Jolt zkVMs have an simple programming model, requiring only 50-100 LOC to implement new VM instructions.
 
-The Jolt codebase currently targets the Risc-V instruction set which is supported by most high-level language compilers, but the code is intended to be extensible and usable by any ISA.
+The Jolt codebase currently targets the RISC-V instruction set which is supported by most high-level language compilers, but the code is intended to be extensible and usable by any ISA. 
+
+The only property of the ISA that Jolt requires is that each 
+primitive instruction is "decomposable". This means that evaluating the instruction on on or two 32-bit or 64-bit inputs can be done
+via a procedure of the following form. Decompose each input into, say, 8-bit chunks, 
+apply one or more specified functions to these chunks (one from each input), and 
+reconstruct the output of the original instruction from the outputs of the functions operating on the chunks. 
 
 ## Related reading
 - [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
@@ -20,4 +26,4 @@ The Jolt codebase currently targets the Risc-V instruction set which is supporte
 ## Credits
 [Lasso](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf) was written by Srinath Setty, Justin Thaler and Riad Wahby. [Jolt](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler.
 
-Jolt was initially forked from Srinath Setty's work on [microsoft/Spartan](https://github.com/microsoft/spartan), specifically the [arkworks-rs/Spartan](https://github.com/arkworks-rs/spartan) fork in order to use the excellent Arkworks-rs prime field arthmetic library. For witness generation Jolt uses Phil Sippl's [circom-witness-rs library](https://github.com/philsippl/circom-witness-rs). The circuits are written with [Circom](https://github.com/iden3/circom). Jolt's R1CS is checked by [our fork](https://github.com/a16z/spartan2) of [microsoft/Spartan2](https://github.com/microsoft/Spartan2), which is optimized to the case of uniform R1CS constraints. Both implementations of Spartan2 use the EF's Privacy Scaling Exploration team's [halo2curves](https://github.com/privacy-scaling-explorations/halo2curves) for prime field arithmetic.
+Jolt was initially forked from Srinath Setty's work on [microsoft/Spartan](https://github.com/microsoft/spartan), specifically the [arkworks-rs/Spartan](https://github.com/arkworks-rs/spartan) fork in order to use the excellent Arkworks-rs prime field arthmetic library. Jolt's R1CS is also proven using a version of Spartan (forked from the [microsoft/Spartan2](https://github.com/microsoft/Spartan2) codebase) optimized to the case of uniform R1CS constraints.
