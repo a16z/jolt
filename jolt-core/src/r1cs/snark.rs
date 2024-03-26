@@ -334,25 +334,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       })
   }
 
-  // TODO(sragss): Only param should be 'JoltCommitments<G>'
   fn format_commitments(
     jolt_commitments: &JoltCommitments<G>,
     C: usize
   ) -> Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>{
-        // Canonical ordering of all r1cs witness_segments / commitments
-        // io   [PC_0, step_counter_0, PC_1, step_counter_1, ...., PC_{padded_trace_len}, step_counter_{padded_trace_len}]
-        // bytecode
-        // packed_flags ??
-        // bytecode_v
-        // memreg_a_rw
-        // memreg_v_reads
-        // chunks_x
-        // chunks_y
-        // chunks_query
-        // lookup_outputs
-        // circuit_flags
-        // aux
-
       let r1cs_commitments = &jolt_commitments.r1cs;
       let bytecode_read_write_commitments = &jolt_commitments.bytecode.read_write_commitments;
       let ram_a_v_commitments = &jolt_commitments.read_write_memory.a_v_read_write_commitments;
