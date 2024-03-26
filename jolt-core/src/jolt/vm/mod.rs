@@ -253,10 +253,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &commitments.instruction_lookups,
             &mut transcript,
         )?;
-        proof
-            .r1cs
-            .verify(commitments, C, &mut transcript)
-            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))?;
+        Self::verify_r1cs(proof.r1cs, commitments, &mut transcript)?;
         Ok(())
     }
 
@@ -539,6 +536,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             hyrax_generators
         );
 
+        r1cs_commitments.append_to_transcript(transcript);
+
         let proof  = R1CSProof::prove(
             key,
             witness_segments,
@@ -547,6 +546,17 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         .expect("proof failed");
 
         (proof, r1cs_commitments)
+    }
+
+    fn verify_r1cs(
+        proof: R1CSProof<F, G>,
+        commitments: JoltCommitments<G>,
+        transcript: &mut Transcript,
+    ) -> Result<(), ProofVerifyError> {
+        commitments.r1cs.append_to_transcript(transcript);
+        proof
+            .verify(commitments, C, transcript)
+            .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]

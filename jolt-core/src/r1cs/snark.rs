@@ -1,4 +1,5 @@
-use crate::{jolt::vm::{Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::thread::drop_in_background_thread};
+use crate::{jolt::vm::{Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
+use crate::utils::transcript::AppendToTranscript;
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
@@ -260,6 +261,17 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
             generators,
         }
     }
+
+    #[tracing::instrument(skip_all, name = "R1CSUniqueCommitments::append_to_transcript")]
+    pub fn append_to_transcript(&self, transcript: &mut Transcript) {
+      self.internal_commitments.io.iter().for_each(|comm| comm.append_to_transcript(b"io", transcript));
+      self.internal_commitments.aux.iter().for_each(|comm| comm.append_to_transcript(b"aux", transcript));
+      self.chunks_x.iter().for_each(|comm| comm.append_to_transcript(b"chunk_x", transcript));
+      self.chunks_y.iter().for_each(|comm| comm.append_to_transcript(b"chunk_y", transcript));
+      self.lookup_outputs.iter().for_each(|comm| comm.append_to_transcript(b"lookup_outputs", transcript));
+      self.packed_flags.append_to_transcript(b"packed_flags", transcript);
+      self.circuit_flags.iter().for_each(|comm| comm.append_to_transcript(b"circuit_flags", transcript));
+    }
 }
 
 pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
@@ -269,7 +281,7 @@ pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
   /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
-  #[tracing::instrument(skip_all, name = "R1CSProof::prepare")]
+  #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
   pub fn compute_witness_commit(
       _W: usize, 
       _C: usize, 
