@@ -960,7 +960,7 @@ where
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         proof: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-        commitment: InstructionCommitment<G>,
+        commitment: &InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());

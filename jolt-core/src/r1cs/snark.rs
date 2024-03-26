@@ -1,4 +1,5 @@
-use crate::{poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::thread::drop_in_background_thread};
+use crate::{jolt::vm::{Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
+use crate::utils::transcript::AppendToTranscript;
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
@@ -76,8 +77,10 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
 
 #[derive(Clone, Debug, Default)]
 pub struct R1CSInputs<F: PrimeField> {
+    padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
+    packed_flags: Vec<F>,
     memreg_a_rw: Vec<F>,
     memreg_v_reads: Vec<F>,
     memreg_v_writes: Vec<F>,
@@ -91,8 +94,10 @@ pub struct R1CSInputs<F: PrimeField> {
 impl<F: PrimeField> R1CSInputs<F> {
   #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
   pub fn new(
+    padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
+    packed_flags: Vec<F>,
     memreg_a_rw: Vec<F>,
     memreg_v_reads: Vec<F>,
     memreg_v_writes: Vec<F>,
@@ -103,9 +108,23 @@ impl<F: PrimeField> R1CSInputs<F> {
     circuit_flags_bits: Vec<F>
   ) -> Self {
 
+    assert!(bytecode_a.len() % padded_trace_len == 0);
+    assert!(bytecode_v.len() % padded_trace_len == 0);
+    assert!(packed_flags.len() % padded_trace_len == 0);
+    assert!(memreg_a_rw.len() % padded_trace_len == 0);
+    assert!(memreg_v_reads.len() % padded_trace_len == 0);
+    assert!(memreg_v_writes.len() % padded_trace_len == 0);
+    assert!(chunks_x.len() % padded_trace_len == 0);
+    assert!(chunks_y.len() % padded_trace_len == 0);
+    assert!(chunks_query.len() % padded_trace_len == 0);
+    assert!(lookup_outputs.len() % padded_trace_len == 0);
+    assert!(circuit_flags_bits.len() % padded_trace_len == 0);
+
     Self {
+      padded_trace_len,
       bytecode_a,
       bytecode_v,
+      packed_flags,
       memreg_a_rw,
       memreg_v_reads,
       memreg_v_writes,
@@ -132,50 +151,28 @@ impl<F: PrimeField> R1CSInputs<F> {
       } else {
         self.bytecode_a[step_index] * F::from(4u64) + F::from(RAM_START_ADDRESS)
       };
-      // TODO(sragss / arasu arun): This indexing strategy is stolen from old -- but self.trace_len here is self.bytecode_a.len() -- not sure why we're using that to split inputs.
 
       // 1 is constant, 0s in slots 1, 2 are filled by aux computation
       step.extend([F::from(1u64), F::from(0u64), F::from(0u64), F::from(step_index as u64), program_counter]);
-      let bytecode_a_num_vals = self.bytecode_a.len() / self.trace_len();
-      for var_index in 0..bytecode_a_num_vals {
-        step.push(self.bytecode_a[var_index * self.trace_len() + step_index]);
-      }
-      let bytecode_v_num_vals = self.bytecode_v.len() / self.trace_len();
-      for var_index in 0..bytecode_v_num_vals {
-        step.push(self.bytecode_v[var_index * self.trace_len() + step_index]);
-      }
-      let memreg_a_rw_num_vals = self.memreg_a_rw.len() / self.trace_len();
-      for var_index in 0..memreg_a_rw_num_vals {
-        step.push(self.memreg_a_rw[var_index * self.trace_len() + step_index]);
-      }
-      let memreg_v_reads_num_vals = self.memreg_v_reads.len() / self.trace_len();
-      for var_index in 0..memreg_v_reads_num_vals {
-        step.push(self.memreg_v_reads[var_index * self.trace_len() + step_index]);
-      }
-      let memreg_v_writes_num_vals = self.memreg_v_writes.len() / self.trace_len();
-      for var_index in 0..memreg_v_writes_num_vals {
-        step.push(self.memreg_v_writes[var_index * self.trace_len() + step_index]);
-      }
-      let chunks_x_num_vals = self.chunks_x.len() / self.trace_len();
-      for var_index in 0..chunks_x_num_vals {
-        step.push(self.chunks_x[var_index * self.trace_len() + step_index]);
-      }
-      let chunks_y_num_vals = self.chunks_y.len() / self.trace_len();
-      for var_index in 0..chunks_y_num_vals {
-        step.push(self.chunks_y[var_index * self.trace_len() + step_index]);
-      }
-      let chunks_query_num_vals = self.chunks_query.len() / self.trace_len();
-      for var_index in 0..chunks_query_num_vals {
-        step.push(self.chunks_query[var_index * self.trace_len() + step_index]);
-      }
-      let lookup_outputs_num_vals = self.lookup_outputs.len() / self.trace_len();
-      for var_index in 0..lookup_outputs_num_vals {
-        step.push(self.lookup_outputs[var_index * self.trace_len() + step_index]);
-      }
-      let circuit_flags_bits_num_vals = self.circuit_flags_bits.len() / self.trace_len();
-      for var_index in 0..circuit_flags_bits_num_vals {
-        step.push(self.circuit_flags_bits[var_index * self.trace_len() + step_index]);
-      }
+
+      let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
+        let num_vals = data.len() / self.padded_trace_len;
+        for var_index in 0..num_vals {
+          step.push(data[var_index * self.padded_trace_len + step_index]);
+        }
+      };
+
+      push_to_step(&self.bytecode_a, &mut step);
+      push_to_step(&self.bytecode_v, &mut step);
+      push_to_step(&self.packed_flags, &mut step);
+      push_to_step(&self.memreg_a_rw, &mut step);
+      push_to_step(&self.memreg_v_reads, &mut step);
+      push_to_step(&self.memreg_v_writes, &mut step);
+      push_to_step(&self.chunks_x, &mut step);
+      push_to_step(&self.chunks_y, &mut step);
+      push_to_step(&self.chunks_query, &mut step);
+      push_to_step(&self.lookup_outputs, &mut step);
+      push_to_step(&self.circuit_flags_bits, &mut step);
 
       assert_eq!(num_inputs_per_step, step.len());
 
@@ -187,13 +184,14 @@ impl<F: PrimeField> R1CSInputs<F> {
 
 
   pub fn trace_len(&self) -> usize {
-      self.bytecode_a.len()
+    self.padded_trace_len
   }
 
   pub fn num_vars_per_step(&self) -> usize {
     let trace_len = self.trace_len();
     self.bytecode_a.len() / trace_len
       + self.bytecode_v.len() / trace_len
+      + self.packed_flags.len() / trace_len
       + self.memreg_a_rw.len() / trace_len
       + self.memreg_v_reads.len() / trace_len
       + self.memreg_v_writes.len() / trace_len
@@ -210,6 +208,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     let mut chunks: Vec<Vec<F>> = Vec::new();
     chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.packed_flags.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_a_rw.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_v_reads.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_v_writes.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
@@ -222,30 +221,74 @@ impl<F: PrimeField> R1CSInputs<F> {
   }
 }
 
-pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
-  pub key: UniformSpartanKey<F>,
-  proof: UniformSpartanProof<F, G>,
-  pub commitments: R1CSCommitments<F, G>
+/// Derived elements exclusive to the R1CS circuit.
+pub struct R1CSInternalCommitments<G: CurveGroup> {
+  io: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  aux: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
-pub struct R1CSCommitments<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-  witness_segment_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+/// Commitments unique to R1CS.
+pub struct R1CSUniqueCommitments<G: CurveGroup> {
+  internal_commitments: R1CSInternalCommitments<G>,
+
+  chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  lookup_outputs: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  packed_flags: HyraxCommitment<NUM_R1CS_POLYS, G>,
+  circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+
   generators: HyraxGenerators<NUM_R1CS_POLYS, G>
 }
 
+impl<G: CurveGroup> R1CSUniqueCommitments<G> {
+    pub fn new(
+        internal_commitments: R1CSInternalCommitments<G>,
+        chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+        chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+        lookup_outputs: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+        packed_flags: HyraxCommitment<NUM_R1CS_POLYS, G>,
+        circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+        generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    ) -> Self {
+      // TODO(sragss): Assert the sizes make sense.
+        Self {
+            internal_commitments,
+            chunks_x,
+            chunks_y,
+            lookup_outputs,
+            packed_flags,
+            circuit_flags,
+            generators,
+        }
+    }
+
+    #[tracing::instrument(skip_all, name = "R1CSUniqueCommitments::append_to_transcript")]
+    pub fn append_to_transcript(&self, transcript: &mut Transcript) {
+      self.internal_commitments.io.iter().for_each(|comm| comm.append_to_transcript(b"io", transcript));
+      self.internal_commitments.aux.iter().for_each(|comm| comm.append_to_transcript(b"aux", transcript));
+      self.chunks_x.iter().for_each(|comm| comm.append_to_transcript(b"chunk_x", transcript));
+      self.chunks_y.iter().for_each(|comm| comm.append_to_transcript(b"chunk_y", transcript));
+      self.lookup_outputs.iter().for_each(|comm| comm.append_to_transcript(b"lookup_outputs", transcript));
+      self.packed_flags.append_to_transcript(b"packed_flags", transcript);
+      self.circuit_flags.iter().for_each(|comm| comm.append_to_transcript(b"circuit_flags", transcript));
+    }
+}
+
+pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
+  pub key: UniformSpartanKey<F>,
+  proof: UniformSpartanProof<F, G>,
+}
+
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
-  #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-  pub fn prove<ArkF: ark_ff::PrimeField> (
+  /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
+  #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
+  pub fn compute_witness_commit(
       _W: usize, 
       _C: usize, 
       padded_trace_len: usize, 
       inputs: R1CSInputs<F>,
-      generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
-      prior_commitments: &Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-      transcript: &mut Transcript
-  ) -> Result<Self, SpartanError> {
-      let num_steps = padded_trace_len;
-
+      generators: &HyraxGenerators<NUM_R1CS_POLYS, G>,
+  ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSInternalCommitments<G>), SpartanError> {
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
@@ -279,29 +322,75 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       };
 
       let io_comms = commit_segments(io_segments);
-      let input_comms = prior_commitments; 
       let aux_comms = commit_segments(aux_segments);
 
-      let witness_segment_commitments = io_comms.into_iter()
-        .chain(input_comms.iter().map(|comm| HyraxCommitment::from(comm.clone())))
-        .chain(aux_comms.into_iter())
-        .collect::<Vec<_>>();
-
-      let r1cs_commitments = R1CSCommitments::<F,G> {
-        witness_segment_commitments,
-        generators
+      let r1cs_commitments = R1CSInternalCommitments::<G> {
+        io: io_comms,
+        aux: aux_comms,
       };
 
-      let proof = UniformSpartanProof::prove_precommitted(&key, w_segments, &r1cs_commitments.witness_segment_commitments, transcript).expect("UniformSpartanProof failed");
+      Ok((key, w_segments, r1cs_commitments))
+  }
+
+  #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
+  pub fn prove(
+      key: UniformSpartanKey<F>,
+      witness_segments: Vec<Vec<F>>,
+      transcript: &mut Transcript
+  ) -> Result<Self, SpartanError> {
+    // TODO(sragss): Fiat shamir (relevant) commitments
+      let proof = UniformSpartanProof::prove_precommitted(&key, witness_segments, transcript)?;
       Ok(R1CSProof::<F, G> {
         proof,
         key,
-        commitments: r1cs_commitments
       })
   }
 
-  pub fn verify(&self, transcript: &mut Transcript) -> Result<(), SpartanError> {
-    self.proof.verify_precommitted(&self.key, &[], &self.commitments.generators, transcript)
+  fn format_commitments(
+    jolt_commitments: &JoltCommitments<G>,
+    C: usize
+  ) -> Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>{
+      let r1cs_commitments = &jolt_commitments.r1cs;
+      let bytecode_read_write_commitments = &jolt_commitments.bytecode.read_write_commitments;
+      let ram_a_v_commitments = &jolt_commitments.read_write_memory.a_v_read_write_commitments;
+      let instruction_lookup_indices_commitments = &jolt_commitments.instruction_lookups.dim_read_commitment[0..C];
+
+      let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
+      combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
+
+      combined_commitments.push(&bytecode_read_write_commitments[0]); // a
+      combined_commitments.push(&bytecode_read_write_commitments[2]); // opcode
+      combined_commitments.push(&bytecode_read_write_commitments[3]); // rd
+      combined_commitments.push(&bytecode_read_write_commitments[4]); // rs1
+      combined_commitments.push(&bytecode_read_write_commitments[5]); // rs2
+      combined_commitments.push(&bytecode_read_write_commitments[6]); // imm
+
+      combined_commitments.push(&r1cs_commitments.packed_flags);
+
+      combined_commitments.extend(ram_a_v_commitments.iter());
+
+      combined_commitments.extend(r1cs_commitments.chunks_x.iter());
+      combined_commitments.extend(r1cs_commitments.chunks_y.iter());
+
+      combined_commitments.extend(instruction_lookup_indices_commitments.iter());
+
+      combined_commitments.extend(r1cs_commitments.lookup_outputs.iter());
+
+      combined_commitments.extend(r1cs_commitments.circuit_flags.iter());
+
+      combined_commitments.extend(r1cs_commitments.internal_commitments.aux.iter());
+
+      combined_commitments
+  }
+
+  pub fn verify(
+    &self, 
+    jolt_commitments: JoltCommitments<G>,
+    C: usize,
+    transcript: &mut Transcript) -> Result<(), SpartanError> {
+    // TODO(sragss): Fiat shamir (relevant) commitments
+    let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
+    self.proof.verify_precommitted(witness_segment_commitments, &self.key, &[], &jolt_commitments.r1cs.generators, transcript)
   }
 }
 

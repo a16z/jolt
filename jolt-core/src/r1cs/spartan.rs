@@ -1,5 +1,6 @@
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::AppendToTranscript;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
@@ -32,12 +33,31 @@ pub enum SpartanError {
     /// returned if the supplied row or col in (row,col,val) tuple is out of range
     #[error("InvalidIndex")]
     InvalidIndex,
+
     /// returned when an invalid sum-check proof is provided
     #[error("InvalidSumcheckProof")]
     InvalidSumcheckProof,
+
+    /// returned when the recusive sumcheck proof fails
+    #[error("InvalidOuterSumcheckProof")]
+    InvalidOuterSumcheckProof,
+
+    /// returned when the final sumcheck opening proof fails
+    #[error("InvalidOuterSumcheckClaim")]
+    InvalidOuterSumcheckClaim,
+
+    /// returned when the recusive sumcheck proof fails
+    #[error("InvalidInnerSumcheckProof")]
+    InvalidInnerSumcheckProof,
+
+    /// returned when the final sumcheck opening proof fails
+    #[error("InvalidInnerSumcheckClaim")]
+    InvalidInnerSumcheckClaim,
+
     /// returned if the supplied witness is not of the right length
     #[error("InvalidWitnessLength")]
     InvalidWitnessLength,
+
     /// returned when an invalid Hyrax proof is provided
     #[error("InvalidHyraxProof")]
     InvalidHyraxProof,
@@ -125,7 +145,6 @@ impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    witness_segment_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
@@ -166,18 +185,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     pub fn prove_precommitted(
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
-        witness_commitments: &Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-
-        let span_u = tracing::span!(tracing::Level::INFO, "absorb_u");
-        let _guard_u = span_u.enter();
-        witness_commitments.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"U", transcript);
-        });
-        drop(_guard_u);
 
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
@@ -353,7 +364,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 comb_func,
                 transcript,
             );
-        std::thread::spawn(|| drop(poly_ABC));
+        drop_in_background_thread(poly_ABC);
 
         // The number of prefix bits needed to identify a segment within the witness vector
         // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
@@ -390,7 +401,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             outer_sumcheck_claims[3],
         );
         Ok(UniformSpartanProof {
-            witness_segment_commitments: witness_commitments.clone(),
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
@@ -404,20 +414,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     pub fn verify_precommitted(
         &self,
+        witness_segment_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>,
         key: &UniformSpartanKey<F>,
         io: &[F],
         generators: &HyraxGenerators<NUM_R1CS_POLYS, G>,
         transcript: &mut Transcript,
     ) -> Result<(), SpartanError> {
-        let N_SEGMENTS = self.witness_segment_commitments.len();
+        assert_eq!(io.len(), 0); // Currently not using io
 
-        assert_eq!(io.len(), 0);
+        let N_SEGMENTS = witness_segment_commitments.len();
 
         // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-        self.witness_segment_commitments
-            .iter()
-            .for_each(|commitment| commitment.append_to_transcript(b"U", transcript));
 
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),
@@ -432,14 +440,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let (claim_outer_final, r_x) = self
             .outer_sumcheck_proof
             .verify::<G, Transcript>(F::zero(), num_rounds_x, 3, transcript)
-            .map_err(|_| SpartanError::InvalidSumcheckProof)?;
+            .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
 
         // verify claim_outer_final
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
         let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
         let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
         if claim_outer_final != claim_outer_final_expected {
-            return Err(SpartanError::InvalidSumcheckProof);
+            return Err(SpartanError::InvalidOuterSumcheckClaim);
         }
 
         <Transcript as ProofTranscript<G>>::append_scalars(
@@ -463,7 +471,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
             .verify::<G, Transcript>(claim_inner_joint, num_rounds_y, 2, transcript)
-            .map_err(|_| SpartanError::InvalidSumcheckProof)?;
+            .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // verify claim_inner_final
         // this should be log (num segments)
@@ -562,21 +570,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let claim_inner_final_expected = left_expected * right_expected;
         if claim_inner_final != claim_inner_final_expected {
             // DEDUPE(arasuarun): add
-            return Err(SpartanError::InvalidSumcheckProof);
+            return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        let hyrax_commitment_refs: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = self
-            .witness_segment_commitments
-            .iter()
-            .map(|commit_ref| commit_ref)
-            .collect();
         self.opening_proof
             .verify(
                 &generators,
                 &r_y_point,
                 &self.claimed_witnesss_evals,
-                &hyrax_commitment_refs,
+                &witness_segment_commitments,
                 transcript,
             )
             .map_err(|_| SpartanError::InvalidHyraxProof)?;
