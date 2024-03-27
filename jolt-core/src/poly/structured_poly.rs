@@ -13,7 +13,7 @@ use crate::{
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
-pub trait BatchablePolynomials<G: CurveGroup>: Sync {
+pub trait BatchablePolynomials<G: CurveGroup>: Send + Sync + Sized {
     /// The batched form of these polynomials.
     type BatchedPolynomials;
     /// The batched commitment to these polynomials.

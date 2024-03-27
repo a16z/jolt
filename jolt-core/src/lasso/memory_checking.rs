@@ -60,10 +60,11 @@ impl<F: PrimeField> MultisetHashes<F> {
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
     G: CurveGroup,
-    Polynomials: BatchablePolynomials<G> + ?Sized,
+    Polynomials: BatchablePolynomials<G>,
     ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
     InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
@@ -83,87 +84,6 @@ where
     pub init_final_openings: InitFinalOpenings,
     pub init_final_opening_proof: InitFinalOpenings::Proof,
 }
-
-impl<G, Polynomials, ReadWriteOpenings, InitFinalOpenings> CanonicalSerialize for MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
-where
-    G: CurveGroup,
-    Polynomials: BatchablePolynomials<G> + ?Sized,
-    ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-    InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-{
-    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, mode: ark_serialize::Compress) -> Result<(), ark_serialize::SerializationError> {
-        // self._polys.serialize_with_mode(&mut writer, mode)?;
-        self.multiset_hashes.serialize_with_mode(&mut writer, mode)?;
-        self.read_write_grand_product.serialize_with_mode(&mut writer, mode)?;
-        self.init_final_grand_product.serialize_with_mode(&mut writer, mode)?;
-        self.read_write_openings.serialize_with_mode(&mut writer, mode)?;
-        self.read_write_opening_proof.serialize_with_mode(&mut writer, mode)?;
-        self.init_final_openings.serialize_with_mode(&mut writer, mode)?;
-        self.init_final_opening_proof.serialize_with_mode(&mut writer, mode)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, mode: ark_serialize::Compress) -> usize {
-        // self._polys.serialized_size(mode) +
-        self.multiset_hashes.serialized_size(mode) +
-        self.read_write_grand_product.serialized_size(mode) +
-        self.init_final_grand_product.serialized_size(mode) +
-        self.read_write_openings.serialized_size(mode) +
-        self.read_write_opening_proof.serialized_size(mode) +
-        self.init_final_openings.serialized_size(mode) +
-        self.init_final_opening_proof.serialized_size(mode)
-    }
-}
-
-impl<G, Polynomials, ReadWriteOpenings, InitFinalOpenings> CanonicalDeserialize for MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
-where
-    G: CurveGroup,
-    Polynomials: BatchablePolynomials<G> + ?Sized,
-    ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-    InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-{
-    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: ark_serialize::Compress, validate: ark_serialize::Validate) -> Result<Self, ark_serialize::SerializationError> {
-        // let _polys = PhantomData::deserialize_with_mode(&mut reader, compress, validate)?;
-        let multiset_hashes = MultisetHashes::deserialize_with_mode(&mut reader, compress, validate)?;
-        let read_write_grand_product = BatchedGrandProductArgument::deserialize_with_mode(&mut reader, compress, validate)?;
-        let init_final_grand_product = BatchedGrandProductArgument::deserialize_with_mode(&mut reader, compress, validate)?;
-        let read_write_openings = ReadWriteOpenings::deserialize_with_mode(&mut reader, compress, validate)?;
-        let read_write_opening_proof = ReadWriteOpenings::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
-        let init_final_openings = InitFinalOpenings::deserialize_with_mode(&mut reader, compress, validate)?;
-        let init_final_opening_proof = InitFinalOpenings::Proof::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self {
-            _polys: PhantomData,
-            multiset_hashes,
-            read_write_grand_product,
-            init_final_grand_product,
-            read_write_openings,
-            read_write_opening_proof,
-            init_final_openings,
-            init_final_opening_proof,
-        })
-    }
-}
-
-impl<G, Polynomials, ReadWriteOpenings, InitFinalOpenings> ark_serialize::Valid for MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
-where
-    G: CurveGroup,
-    Polynomials: BatchablePolynomials<G> + ?Sized,
-    ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-    InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        // self._polys.check()?;
-        self.multiset_hashes.check()?;
-        self.read_write_grand_product.check()?;
-        self.init_final_grand_product.check()?;
-        self.read_write_openings.check()?;
-        self.read_write_opening_proof.check()?;
-        self.init_final_openings.check()?;
-        self.init_final_opening_proof.check()?;
-        Ok(())
-    }
-}
-
 
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
