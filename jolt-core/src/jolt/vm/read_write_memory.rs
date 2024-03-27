@@ -32,6 +32,7 @@ use common::constants::{
 };
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
 use common::to_ram_address;
+use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 use super::timestamp_range_check::TimestampValidityProof;
 
@@ -449,6 +450,7 @@ pub struct BatchedMemoryPolynomials<F: PrimeField> {
     batched_init_final: DensePolynomial<F>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCommitment<G: CurveGroup> {
     /// Generators for a_read_write, v_read, v_write
     pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,

@@ -6,6 +6,7 @@ use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
 use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
+use ark_serialize::CanonicalSerialize;
 use common::rv_trace::{ELFInstruction, JoltDevice};
 use criterion::black_box;
 use merlin::Transcript;
@@ -244,6 +245,15 @@ fn prove_example<T: Serialize>(
             circuit_flags,
             preprocessing.clone(),
         );
+        use std::fs::File;
+        use std::io::Write;
+        let mut file = File::create("temp_file").unwrap();
+        jolt_commitments.serialize_compressed(&mut file).unwrap();
+        let file_size_bytes = file.metadata().unwrap().len();
+        let file_size_kb = file_size_bytes / 1024;
+        let file_size_mb = file_size_kb / 1024;
+        let file_size_gb = file_size_mb / 1024;
+        println!("Serialized size: {} bytes ({} KB, {} MB, {} GB)", file_size_bytes, file_size_kb, file_size_mb, file_size_gb);
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),

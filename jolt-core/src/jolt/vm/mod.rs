@@ -1,11 +1,13 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::NUM_R1CS_POLYS;
 use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
+use serde::Serialize;
 
 use crate::jolt::{
     instruction::JoltInstruction, subtable::JoltSubtableSet,
@@ -72,6 +74,7 @@ where
     pub instruction_lookups: InstructionPolynomials<F, G>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltCommitments<G: CurveGroup> {
     pub bytecode: BytecodeCommitment<G>,
     pub read_write_memory: MemoryCommitment<G>,

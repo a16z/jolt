@@ -89,6 +89,7 @@ pub struct BatchedInstructionPolynomials<F: PrimeField> {
 }
 
 /// Commitments to BatchedInstructionPolynomials.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionCommitment<G: CurveGroup> {
     pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     /// Commitments to dim_i and read_cts_i polynomials.
