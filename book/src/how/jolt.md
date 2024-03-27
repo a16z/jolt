@@ -41,23 +41,23 @@ is handled via an invocation of the sum-check protocol. We call this the "primar
 The "primary sumcheck" collation looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
 
 $$
-\sum_{x \in \{0,1\}^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in \{0,1\}^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}
+\sum_{x \in `\{0,1\}`^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in `\{0,1\}`^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}
 $$
 
-$\widetilde{flags_f}(x) = 1$ if the $f$-th instruction is used during the $x$-th step of the trace when. $x \in \{0,1\}^{log(m)}$ 
+$\widetilde{flags_f}(x) = 1$ if the $f$-th instruction is used during the $x$-th step of the trace when. $x \in `\{0,1\}`^{log(m)}$ 
 
 $g_f(...)$ is the collation function used by the $f$-th instruction.
 
 $terms_f(x) = [E_1(x), ... E_\alpha(x)]$ where $\alpha$ is the number of independent memories used by an instruction. For simple instructions like the EQ instruction, $\alpha = C$, $terms_f(x) = [E_1(x), ... E_C(x)]$. More complicated instructions such LT might have $terms_f(x) = [E_{eq}(x), E_{lt1}(x), E_{lt2}(x)]$. The exact layout is dependent on the number of subtables required by the decomposition of the instruction. The mappings can be found in the `JoltInstruction::subtable` method implementations.
 
 ### Mental Model
-For a given $r = x \in \{0,1\}^{log(m)}$ (think integer index of the instruction within the trace), $\widetilde{eq} = 0$ for all but one term of the outer sum. Similarly all $\widetilde{flags_f}(x) = 0$ for all but one term of the inner sum. Leaving just the collation function of a single instruction, evaluting to the collated lookup output of the single instruction. In reality $r$ is a random point $r \in \mathbb{F}^{log(m)}$ selected by the verifier over the course of the protocol. The evaluation point provides a distance amplified encoding of the entire trace of instructions.
+For a given $r = x \in `\{0,1\}`^{log(m)}$ (think integer index of the instruction within the trace), $\widetilde{eq} = 0$ for all but one term of the outer sum. Similarly all $\widetilde{flags_f}(x) = 0$ for all but one term of the inner sum. Leaving just the collation function of a single instruction, evaluting to the collated lookup output of the single instruction. In reality $r$ is a random point $r \in \mathbb{F}^{log(m)}$ selected by the verifier over the course of the protocol. The evaluation point provides a distance amplified encoding of the entire trace of instructions.
 
 
 To illustrate more concretely imagine a two-instruction VM for LT and EQ instructions with $C=1$.
 
 $$
-\sum_{x \in \{0,1\}^{\log_2(m)}}{\widetilde{eq}(r,x) \cdot [ \widetilde{flags}_{LT}(x) \cdot g_{LT}(E_{LT}(x)) + \widetilde{flags}_{EQ}(x) \cdot g_{EQ}(E_{EQ}(x))]}
+\sum_{x \in \`\{0,1\\}`^{\log_2(m)}}{\widetilde{eq}(r,x) \cdot [ \widetilde{flags}_{LT}(x) \cdot g_{LT}(E_{LT}(x)) + \widetilde{flags}_{EQ}(x) \cdot g_{EQ}(E_{EQ}(x))]}
 $$
 
 
