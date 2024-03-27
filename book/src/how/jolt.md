@@ -40,9 +40,7 @@ is handled via an invocation of the sum-check protocol. We call this the "primar
 
 The "primary sumcheck" collation looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
 
-$$
-\sum_{x \in `\{0,1\}`^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in `\{0,1\}`^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}
-$$
+$\sum_{x \in `\{0,1\}`^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in `\{0,1\}`^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}$
 
 $\widetilde{flags_f}(x) = 1$ if the $f$-th instruction is used during the $x$-th step of the trace when. $x \in `\{0,1\}`^{log(m)}$ 
 
