@@ -242,58 +242,16 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeFinalOpenings<F, Instruction, const C: usize, const M: usize>
 where
     F: PrimeField,
-    Instruction: JoltInstruction + Default + Sync,
+    Instruction: JoltInstruction + Default,
 {
     _instruction: PhantomData<Instruction>,
     final_openings: Vec<F>,       // C-sized
     a_init_final: Option<F>,      // Computed by verifier
     v_init_final: Option<Vec<F>>, // Computed by verifier
-}
-
-impl<F, Instruction, const C: usize, const M: usize> CanonicalSerialize for SurgeFinalOpenings<F, Instruction, C, M>
-where
-    F: PrimeField + CanonicalSerialize,
-    Instruction: JoltInstruction + Default + Sync,
-{
-    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, mode: ark_serialize::Compress) -> Result<(), ark_serialize::SerializationError> {
-        self.final_openings.serialize_with_mode(&mut writer, mode)?;
-        self.a_init_final.serialize_with_mode(&mut writer, mode)?;
-        self.v_init_final.serialize_with_mode(&mut writer, mode)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, mode: ark_serialize::Compress) -> usize {
-        self.final_openings.serialized_size(mode) + self.a_init_final.serialized_size(mode) + self.v_init_final.serialized_size(mode)
-    }
-}
-
-impl<F, Instruction, const C: usize, const M: usize> CanonicalDeserialize for SurgeFinalOpenings<F, Instruction, C, M>
-where
-    F: PrimeField + CanonicalDeserialize,
-    Instruction: JoltInstruction + Default + Sync,
-{
-    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: ark_serialize::Compress, validate: ark_serialize::Validate) -> Result<Self, ark_serialize::SerializationError> {
-        let final_openings = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let a_init_final = Option::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let v_init_final = Option::<Vec<F>>::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self { _instruction: PhantomData, final_openings, a_init_final, v_init_final })
-    }
-}
-
-impl<F, Instruction, const C: usize, const M: usize> ark_serialize::Valid for SurgeFinalOpenings<F, Instruction, C, M>
-where
-    F: PrimeField + ark_serialize::Valid,
-    Instruction: JoltInstruction + Default + Sync,
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.final_openings.check()?;
-        self.a_init_final.check()?;
-        self.v_init_final.check()?;
-        Ok(())
-    }
 }
 
 impl<F, G, Instruction, const C: usize, const M: usize>
