@@ -7,6 +7,7 @@
 - R1CS checks
 - 
 ==================
+## Jolt's three components
 
 A VM does two things: 
 
@@ -23,8 +24,21 @@ Accordingly, Jolt has three components:
 To prove satisfaction of the R1CS in (3), Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80).
 
 
-## Instruction Collation
-The "primary sumcheck" collation when generalized from Lasso -> Jolt looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
+## Details on using Lasso to handle instruction execution
+
+Lasso requires that each primitive instruction satisfies a decomposability property. 
+The property needed is that the input(s) to the instruction can be broken into "chunks" (say, with each chunk
+consisting of 16 bits), such that one can obtain the answer to the original instruction by
+evaluating a simple function or functions on each chunk and then "collating" the results together.
+For example, the bitwise-OR of two 32-bit inputs x and y can be computed by breaking each input up into 8-bit chunks, XORing 
+each 8-bit chunk of x with the associated chunk of y, and concatenating the results together.
+
+In Lasso, we call the task of evaluating a simple function on each chunk "subtable lookups" (the relevant lookup table
+being the table storing all $2^{16}$ evaluations of the simple function). And the "collating" of 
+the results of the subtable lookups into the result of the original lookup (instruction execution on the un-chunked inputs)
+is handled via an invocation of the sum-check protocol. We call this the "primary sumcheck" instance in Lasso.
+
+The "primary sumcheck" collation looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
 
 $$
 \sum_{x \in \{0,1\}^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in \{0,1\}^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}
