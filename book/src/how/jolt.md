@@ -5,6 +5,21 @@
 - 3 phases of memory checking + primary sumcheck + r1cs
 - subtable flags -> instruction flags
 - R1CS checks
+==================
+A VM does two things: 
+
+a. Repeatedly execute the fetch-decode-execute logic of its instruction set architecture.
+
+b. Perform reads and writes to Random Access Memory (RAM).
+
+Accordingly, Jolt has three components: 
+
+1. To handle the "execute" part of each fetch-decode-execute loop, it invokes the Lasso lookup argument.
+2. To handle reads/writes to RAM (and to registers) it uses a memory-checking argument from Spice, which is closely related to Lasso itself. They are both based on "offline memory checking" techniques, the main difference being that Lasso supports read-only memory while Spice supports read-write memory, making it slightly more expensive. 
+3. To handle the "fetch-decode" part of each fetch-decode-execute loop, and to capture some extra constraints not directly handled by Lasso itself, there is a minimal R1CS instance ( about 60 constraints per cycle of the RISC-V VM). 
+
+To prove satisfaction of the R1CS in (3), Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80).
+
 
 ## Instruction Collation
 The "primary sumcheck" collation when generalized from Lasso -> Jolt looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
