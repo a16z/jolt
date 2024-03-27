@@ -64,6 +64,66 @@ where
     r1cs: R1CSProof<F, G>,
 }
 
+impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables> ark_serialize::CanonicalSerialize for JoltProof<C, M, F, G, InstructionSet, Subtables>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
+{
+    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, mode: ark_serialize::Compress) -> Result<(), ark_serialize::SerializationError> {
+        self.bytecode.serialize_with_mode(&mut writer, mode)?;
+        self.read_write_memory.serialize_with_mode(&mut writer, mode)?;
+        self.instruction_lookups.serialize_with_mode(&mut writer, mode)?;
+        self.r1cs.serialize_with_mode(&mut writer, mode)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, mode: ark_serialize::Compress) -> usize {
+        self.bytecode.serialized_size(mode)
+            + self.read_write_memory.serialized_size(mode)
+            + self.instruction_lookups.serialized_size(mode)
+            + self.r1cs.serialized_size(mode)
+    }
+}
+
+impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables> ark_serialize::CanonicalDeserialize for JoltProof<C, M, F, G, InstructionSet, Subtables>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
+{
+    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: ark_serialize::Compress, validate: ark_serialize::Validate) -> Result<Self, ark_serialize::SerializationError> {
+        let bytecode = BytecodeProof::deserialize_with_mode(&mut reader, compress, validate)?;
+        let read_write_memory = ReadWriteMemoryProof::deserialize_with_mode(&mut reader, compress, validate)?;
+        let instruction_lookups = InstructionLookupsProof::deserialize_with_mode(&mut reader, compress, validate)?;
+        let r1cs = R1CSProof::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self {
+            bytecode,
+            read_write_memory,
+            instruction_lookups,
+            r1cs,
+        })
+    }
+}
+
+impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables> ark_serialize::Valid for JoltProof<C, M, F, G, InstructionSet, Subtables>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+    InstructionSet: JoltInstructionSet,
+    Subtables: JoltSubtableSet<F>,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        self.bytecode.check()?;
+        self.read_write_memory.check()?;
+        self.instruction_lookups.check()?;
+        self.r1cs.check()?;
+        Ok(())
+    }
+}
+
 pub struct JoltPolynomials<F, G>
 where
     F: PrimeField,

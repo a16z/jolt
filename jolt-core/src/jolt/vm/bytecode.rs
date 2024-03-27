@@ -574,6 +574,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeReadWriteOpenings<F>
 where
     F: PrimeField,
@@ -662,6 +663,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeInitFinalOpenings<F>
 where
     F: PrimeField,

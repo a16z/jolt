@@ -120,6 +120,7 @@ pub fn random_memory_trace(
     memory_trace
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
@@ -516,6 +517,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryReadWriteOpenings<F, G>
 where
     F: PrimeField,
@@ -533,6 +535,7 @@ where
     pub t_write_opening: [F; MEMORY_OPS_PER_INSTRUCTION],
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryReadWriteOpeningProof<G: CurveGroup> {
     a_v_opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
     t_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
@@ -651,6 +654,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryInitFinalOpenings<F>
 where
     F: PrimeField,

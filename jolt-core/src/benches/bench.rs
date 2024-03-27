@@ -219,6 +219,17 @@ fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha3-guest", &vec![5u8; 2048])
 }
 
+fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSerialize) {
+    use std::fs::File;
+    let mut file = File::create("temp_file").unwrap();
+    item.serialize_compressed(&mut file).unwrap();
+    let file_size_bytes = file.metadata().unwrap().len();
+    let file_size_kb = file_size_bytes as f64 / 1024.0;
+    let file_size_mb = file_size_kb / 1024.0;
+    let file_size_gb = file_size_mb / 1024.0;
+    println!("{} serialized size: {:.3} bytes ({:.3} KB, {:.3} MB, {:.3} GB)", name, file_size_bytes as f64, file_size_kb, file_size_mb, file_size_gb);
+}
+
 fn prove_example<T: Serialize>(
     example_name: &str,
     input: &T,
@@ -245,15 +256,10 @@ fn prove_example<T: Serialize>(
             circuit_flags,
             preprocessing.clone(),
         );
-        use std::fs::File;
-        use std::io::Write;
-        let mut file = File::create("temp_file").unwrap();
-        jolt_commitments.serialize_compressed(&mut file).unwrap();
-        let file_size_bytes = file.metadata().unwrap().len();
-        let file_size_kb = file_size_bytes / 1024;
-        let file_size_mb = file_size_kb / 1024;
-        let file_size_gb = file_size_mb / 1024;
-        println!("Serialized size: {} bytes ({} KB, {} MB, {} GB)", file_size_bytes, file_size_kb, file_size_mb, file_size_gb);
+
+        serialize_and_print_size("jolt_commitments", &jolt_commitments);
+        serialize_and_print_size("jolt_proof", &jolt_proof);
+
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),

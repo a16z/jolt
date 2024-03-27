@@ -277,6 +277,7 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>>  {
   pub key: UniformSpartanKey<F>,
   proof: UniformSpartanProof<F, G>,
