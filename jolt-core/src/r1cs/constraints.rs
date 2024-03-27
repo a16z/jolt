@@ -7,7 +7,7 @@ use common::constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET};
 
 /* Compiler Variables */
 const C: usize = 4; 
-const N_FLAGS: usize = 17; 
+const N_FLAGS: usize = 17 + 19; 
 const W: usize = 32;
 const LOG_M: usize = 16; 
 const MEMORY_ADDRESS_OFFSET: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; 
@@ -309,7 +309,8 @@ impl R1CSBuilder {
         // TODO(arasuarun): this should be done after fixing the padding issue for prog_a_rw
 
         // Combine flag_bits and check that they equal op_flags_packed. 
-        R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
+        // R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
+        R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, opcode);
 
         // Constriant: signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
         let immediate: usize = R1CSBuilder::if_else(instance, smallvec![(is_lui_auipc, 1)], smallvec![(immediate_before_processing, 1)], smallvec![(immediate_before_processing, 1<<12)]); 
