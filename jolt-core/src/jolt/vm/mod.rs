@@ -58,10 +58,10 @@ where
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
-    bytecode: BytecodeProof<F, G>,
-    read_write_memory: ReadWriteMemoryProof<F, G>,
-    instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-    r1cs: R1CSProof<F, G>,
+    pub bytecode: BytecodeProof<F, G>,
+    pub read_write_memory: ReadWriteMemoryProof<F, G>,
+    pub instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
+    pub r1cs: R1CSProof<F, G>,
 }
 
 pub struct JoltPolynomials<F, G>
@@ -156,6 +156,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<G>,
     ) {
+        println!("Jolt::prove({})", memory_trace.len());
         let mut transcript = Transcript::new(b"Jolt transcript");
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .iter()

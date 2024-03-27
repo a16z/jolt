@@ -226,8 +226,9 @@ fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSeri
     let file_size_bytes = file.metadata().unwrap().len();
     let file_size_kb = file_size_bytes as f64 / 1024.0;
     let file_size_mb = file_size_kb / 1024.0;
-    let file_size_gb = file_size_mb / 1024.0;
-    println!("{} serialized size: {:.3} bytes ({:.3} KB, {:.3} MB, {:.3} GB)", name, file_size_bytes as f64, file_size_kb, file_size_mb, file_size_gb);
+    // let file_size_gb = file_size_mb / 1024.0;
+    // println!("{} serialized size: {:.3} bytes ({:.3} KB, {:.3} MB, {:.3} GB)", name, file_size_bytes as f64, file_size_kb, file_size_mb, file_size_gb);
+    println!("{:<30} : {:.3} MB", name, file_size_mb);
 }
 
 fn prove_example<T: Serialize>(
@@ -257,8 +258,13 @@ fn prove_example<T: Serialize>(
             preprocessing.clone(),
         );
 
+        println!("Proof sizing:");
         serialize_and_print_size("jolt_commitments", &jolt_commitments);
         serialize_and_print_size("jolt_proof", &jolt_proof);
+        serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
+        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
+        serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
+        serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
 
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
