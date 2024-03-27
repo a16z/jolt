@@ -134,7 +134,7 @@ impl MacroBuilder {
                         bytecode,
                         1 << 20,
                         1 << 20,
-                        1 << 22
+                        1 << 24
                     );
 
                 (program, preprocessing)
