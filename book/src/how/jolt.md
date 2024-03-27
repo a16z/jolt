@@ -6,6 +6,7 @@
 - subtable flags -> instruction flags
 - R1CS checks
 ==================
+
 A VM does two things: 
 
 a. Repeatedly execute the fetch-decode-execute logic of its instruction set architecture.
