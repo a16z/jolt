@@ -197,7 +197,7 @@ mod tests {
         assert!(RV32IJoltVM::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             proof,
-            commitment,
+            &commitment,
             &mut verifier_transcript
         )
         .is_ok());

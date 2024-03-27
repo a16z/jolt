@@ -835,7 +835,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let (eval_point_0, eval_point_2, eval_point_3) =
             Self::compute_eval_points_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
 
-            let evals = vec![
+            let evals = [
             eval_point_0,
             claim_per_round - eval_point_0,
             eval_point_2,
