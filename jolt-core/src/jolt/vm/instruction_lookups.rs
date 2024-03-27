@@ -751,6 +751,7 @@ where
 }
 
 /// Proof of instruction lookups for a single Jolt program execution.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupsProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
@@ -767,54 +768,6 @@ where
         InstructionFinalOpenings<F, Subtables>,
     >,
 }
-
-impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables> CanonicalSerialize for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Subtables: JoltSubtableSet<F>,
-    InstructionSet: JoltInstructionSet,
-{
-    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, mode: ark_serialize::Compress) -> Result<(), ark_serialize::SerializationError> {
-        self.primary_sumcheck.serialize_with_mode(&mut writer, mode)?;
-        self.memory_checking.serialize_with_mode(&mut writer, mode)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, mode: ark_serialize::Compress) -> usize {
-        self.primary_sumcheck.serialized_size(mode) + self.memory_checking.serialized_size(mode)
-    }
-}
-
-impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables> CanonicalDeserialize for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Subtables: JoltSubtableSet<F>,
-    InstructionSet: JoltInstructionSet,
-{
-    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: ark_serialize::Compress, validate: ark_serialize::Validate) -> Result<Self, ark_serialize::SerializationError> {
-        let primary_sumcheck = PrimarySumcheck::deserialize_with_mode(&mut reader, compress, validate)?;
-        let memory_checking = MemoryCheckingProof::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self { _instructions: PhantomData, primary_sumcheck, memory_checking })
-    }
-}
-
-impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables> ark_serialize::Valid for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Subtables: JoltSubtableSet<F>,
-    InstructionSet: JoltInstructionSet,
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.primary_sumcheck.check()?;
-        self.memory_checking.check()?;
-        Ok(())
-    }
-}
-
-
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
