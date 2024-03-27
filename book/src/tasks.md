@@ -2,3 +2,4 @@
 - [Incorporate support for pre-compiles](https://github.com/a16z/Lasso/issues/210)
 - [Implement continuations via folding](https://github.com/a16z/Lasso/issues/211)
 - [Switch to Binius commitment](https://github.com/a16z/Lasso/issues/212)
+- [Optimize Rust verifier](https://github.com/a16z/Lasso/issues/216)
