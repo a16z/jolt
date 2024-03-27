@@ -336,6 +336,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionFinalOpenings<F, Subtables>
 where
     F: PrimeField,
@@ -348,54 +349,6 @@ where
     a_init_final: Option<F>,
     /// Evaluation of the v_init/final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     v_init_final: Option<Vec<F>>,
-}
-
-impl<F, Subtables> ark_serialize::CanonicalSerialize for InstructionFinalOpenings<F, Subtables>
-where
-    F: PrimeField,
-    Subtables: JoltSubtableSet<F>,
-{
-    fn serialize_with_mode<W: ark_serialize::Write>(&self, mut writer: W, mode: ark_serialize::Compress) -> Result<(), ark_serialize::SerializationError> {
-        self.final_openings.serialize_with_mode(&mut writer, mode)?;
-        self.a_init_final.serialize_with_mode(&mut writer, mode)?;
-        self.v_init_final.serialize_with_mode(&mut writer, mode)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, mode: ark_serialize::Compress) -> usize {
-        self.final_openings.serialized_size(mode) + self.a_init_final.serialized_size(mode) + self.v_init_final.serialized_size(mode)
-    }
-}
-
-impl<F, Subtables> ark_serialize::CanonicalDeserialize for InstructionFinalOpenings<F, Subtables>
-where
-    F: PrimeField,
-    Subtables: JoltSubtableSet<F>,
-{
-    fn deserialize_with_mode<R: ark_serialize::Read>(mut reader: R, compress: ark_serialize::Compress, validate: ark_serialize::Validate) -> Result<Self, ark_serialize::SerializationError> {
-        let final_openings = Vec::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let a_init_final = Option::<F>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let v_init_final = Option::<Vec<F>>::deserialize_with_mode(&mut reader, compress, validate)?;
-        Ok(Self {
-            _subtables: PhantomData,
-            final_openings,
-            a_init_final,
-            v_init_final,
-        })
-    }
-}
-
-impl<F, Subtables> ark_serialize::Valid for InstructionFinalOpenings<F, Subtables>
-where
-    F: PrimeField,
-    Subtables: JoltSubtableSet<F>,
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.final_openings.check()?;
-        self.a_init_final.check()?;
-        self.v_init_final.check()?;
-        Ok(())
-    }
 }
 
 impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
