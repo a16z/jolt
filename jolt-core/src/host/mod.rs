@@ -1,9 +1,6 @@
 use core::{str::FromStr, u8};
 use std::{
-    collections::HashMap,
-    io::{self, Write},
-    path::PathBuf,
-    process::Command,
+    collections::HashMap, fs::{self, File}, io::{self, Write}, path::PathBuf, process::Command
 };
 
 use ark_ff::PrimeField;
@@ -22,10 +19,13 @@ use crate::jolt::{
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
 };
 
+const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct Program {
     guest: String,
     input: Vec<u8>,
+    memory_size: usize,
     pub elf: Option<PathBuf>,
 }
 
@@ -34,20 +34,25 @@ impl Program {
         Self {
             guest: guest.to_string(),
             input: Vec::new(),
+            memory_size: DEFAULT_MEMORY_SIZE,
             elf: None,
         }
     }
 
-    pub fn input<T: Serialize>(mut self, input: &T) -> Self {
+    pub fn set_input<T: Serialize>(&mut self, input: &T) {
         let mut serialized = postcard::to_stdvec(input).unwrap();
         self.input.append(&mut serialized);
+    }
 
-        self
+    pub fn set_memory_size(&mut self, len: usize) {
+        self.memory_size = len;
     }
 
     pub fn build(&mut self) {
         if self.elf.is_none() {
+            self.save_linker(self.memory_size);
             let output = Command::new("cargo")
+                .envs([("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))])
                 .args(&[
                     "build",
                     "--release",
@@ -158,4 +163,49 @@ impl Program {
 
         device.outputs
     }
+
+    fn save_linker(&self, memory_size: usize) {
+        let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
+        if let Some(parent) = linker_path.parent() {
+            fs::create_dir_all(parent).expect("could not create linker file");
+        }
+
+        let linker_script = LINKER_SCRIPT_TEMPLATE
+            .replace("{MEMORY_SIZE}", &memory_size.to_string());
+
+        let mut file = File::create(linker_path).expect("could not create linker file");
+        file.write(linker_script.as_bytes()).expect("could not save linker");
+    }
+
+    fn linker_path(&self) -> String {
+        format!("/tmp/jolt-guest-linkers/{}.ld", self.guest)
+    }
 }
+
+const LINKER_SCRIPT_TEMPLATE: &str = r#"
+MEMORY {
+  program (rwx) : ORIGIN = 0x80000000, LENGTH = {MEMORY_SIZE}
+}
+
+SECTIONS {
+  .text.boot : {
+    *(.text.boot)
+  } > program
+
+  .text : {
+    *(.text)
+  } > program
+
+  .data : {
+    *(.data)
+  } > program
+
+  .bss : {
+    *(.bss)
+  } > program
+
+  . = ALIGN(8);
+  . = . + 4096;
+  _STACK_PTR = .;
+}
+"#;

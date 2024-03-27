@@ -223,7 +223,8 @@ fn prove_example<T: Serialize>(
     input: &T,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
-    let mut program = host::Program::new(example_name).input(input);
+    let mut program = host::Program::new(example_name);
+    program.set_input(input);
 
     let task = move || {
         let bytecode = program.decode();

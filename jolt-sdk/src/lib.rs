@@ -31,3 +31,4 @@ pub struct Proof {
     pub proof: RV32IJoltProof<F, G>,
     pub commitments: JoltCommitments<G>,
 }
+
