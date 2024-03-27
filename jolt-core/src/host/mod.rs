@@ -19,6 +19,8 @@ use crate::jolt::{
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
 };
 
+const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct Program {
     guest: String,
@@ -32,21 +34,18 @@ impl Program {
         Self {
             guest: guest.to_string(),
             input: Vec::new(),
-            memory_size: 10 * 1024 * 1024,
+            memory_size: DEFAULT_MEMORY_SIZE,
             elf: None,
         }
     }
 
-    pub fn input<T: Serialize>(mut self, input: &T) -> Self {
+    pub fn set_input<T: Serialize>(&mut self, input: &T) {
         let mut serialized = postcard::to_stdvec(input).unwrap();
         self.input.append(&mut serialized);
-
-        self
     }
 
-    pub fn memory_size(mut self, len: usize) -> Self {
+    pub fn set_memory_size(&mut self, len: usize) {
         self.memory_size = len;
-        self
     }
 
     pub fn build(&mut self) {

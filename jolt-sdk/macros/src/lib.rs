@@ -3,7 +3,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, LitInt, Meta, MetaNameValue, NestedMeta, PatType, ReturnType, Type};
+use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, Meta, MetaNameValue, NestedMeta, PatType, ReturnType, Type};
 
 use common::constants::{
     INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
@@ -58,7 +58,7 @@ impl MacroBuilder {
         let input_types = self.func_args.iter().map(|(_, ty)| ty);
         let inputs = &self.func.sig.inputs;
         let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
-        let prove_fn_name = syn::Ident::new(&format!("prove_{}", fn_name), fn_name.span());
+        let prove_fn_name = Ident::new(&format!("prove_{}", fn_name), fn_name.span());
         let imports = self.make_imports();
         
 
@@ -156,7 +156,7 @@ impl MacroBuilder {
 
         let set_program_args = self.func_args.iter().map(|(name, _)| {
             quote! {
-                let mut program = program.input(&#name);
+                program.set_input(&#name);
             }
         });
 
@@ -217,7 +217,6 @@ impl MacroBuilder {
         let args = &self.func_args;
         let args_fetch = args.iter().map(|(name, ty)| {
             quote! {
-                let x = input_slice[0];
                 let (#name, input_slice) = 
                     jolt_sdk::postcard::take_from_bytes::<#ty>(input_slice).unwrap();
             }
@@ -313,7 +312,7 @@ impl MacroBuilder {
                     }
 
                     quote! {
-                        let mut program = program.memory_size(#lit);
+                        program.set_memory_size(#lit);
                     }
                 },
                 _ => panic!("expected integer literal"),

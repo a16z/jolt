@@ -226,7 +226,8 @@ mod tests {
     fn fib_e2e() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
-        let mut program = host::Program::new("fibonacci-guest").input(&9u32);
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&9u32);
         let bytecode = program.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
             program.trace();
@@ -253,7 +254,8 @@ mod tests {
     fn sha3_e2e() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
 
-        let mut program = host::Program::new("sha3-guest").input(&[5u8; 32]);
+        let mut program = host::Program::new("sha3-guest");
+        program.set_input(&[5u8; 32]);
         let bytecode = program.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
             program.trace();
