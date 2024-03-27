@@ -7,7 +7,6 @@ use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
-use serde::Serialize;
 
 use crate::jolt::{
     instruction::JoltInstruction, subtable::JoltSubtableSet,

@@ -6,7 +6,6 @@ use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
-use ark_serialize::*;
 use ark_std::{One, Zero};
 use merlin::Transcript;
 use num_integer::Roots;
@@ -32,7 +31,7 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     (col_size, row_size)
 }
 
-#[derive(Clone, ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
