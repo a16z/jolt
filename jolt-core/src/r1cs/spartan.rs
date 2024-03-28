@@ -102,7 +102,7 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::new(point).evals();
         self.segments
-            .iter()
+            .par_iter()
             .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
             .collect()
     }
@@ -272,7 +272,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 || EqPolynomial::new(rx_con.to_vec()).evals(),
                 || EqPolynomial::new(rx_ts.to_vec()).evals(),
             );
-
             let n_steps = key.num_steps;
 
             // With uniformity, each entry of the RLC of A, B, C can be expressed using
@@ -316,13 +315,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             RLC_evals.resize(next_pow_2, F::zero());
 
             // 3. Handles the constant 1 variable
+            let eq_sum = eq_rx_ts.par_iter().sum::<F>();
             let compute_eval_constant_column = |small_M: &Vec<(usize, usize, F)>| -> F {
                 let constant_sum: F = small_M.iter()
-              .filter(|(_, col, _)| *col == key.shape_single_step.num_vars)   // expecting ~1
-              .map(|(row, _, val)| {
-                  let eq_sum = (0..n_steps).into_par_iter().map(|t| eq_rx_ts[t]).sum::<F>();
-                  *val * eq_rx_con[*row] * eq_sum
-              }).sum();
+                    .filter(|(_, col, _)| *col == key.shape_single_step.num_vars)   // expecting ~1
+                    .map(|(row, _, val)| {
+                        *val * eq_rx_con[*row] * eq_sum
+                    }).sum();
 
                 constant_sum
             };
@@ -393,6 +392,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             &witness_evals,
             transcript,
         );
+
+        drop_in_background_thread(witness_segment_polys);
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (

@@ -3,7 +3,6 @@ use ark_ff::{prelude::*, PrimeField};
 use ark_std::cmp::Ordering;
 use ark_std::vec::Vec;
 use rayon::prelude::*;
-use tracing::trace_span;
 
 #[cfg(not(feature = "ark-msm"))]
 impl<G: CurveGroup> VariableBaseMSM for G {}
@@ -67,6 +66,7 @@ fn map_field_elements_to_u64<V: VariableBaseMSM>(field_elements: &[V::ScalarFiel
 }
 
 // Compute msm using windowed non-adjacent form
+#[tracing::instrument(skip_all, name = "msm_bigint_wnaf")]
 fn msm_bigint_wnaf<V: VariableBaseMSM>(
     bases: &[V::MulBase],
     scalars: &[<V::ScalarField as PrimeField>::BigInt],
