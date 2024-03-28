@@ -203,7 +203,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let (Az, Bz, Cz) = key.shape_single_step.multiply_vec_uniform(
             &segmented_padded_witness,
-            &vec![],
             key.num_steps,
         )?;
         let mut poly_Az = DensePolynomial::new(Az);
