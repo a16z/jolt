@@ -100,12 +100,15 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
         self.total_len
     }
 
+    #[tracing::instrument(skip_all, name = "SegmentedPaddedWitness::evaluate_all")]
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::new(point).evals();
-        self.segments
+        let results = self.segments
             .par_iter()
             .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
-            .collect()
+            .collect();
+        drop_in_background_thread(chi);
+        results
     }
 
     pub fn into_dense_polys(self) -> Vec<DensePolynomial<F>> {
@@ -403,10 +406,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
-        let span = tracing::span!(tracing::Level::TRACE, "evaluate_segments");
-        let _enter = span.enter();
         let witness_evals = segmented_padded_witness.evaluate_all(r_y_point.to_owned());
-        drop(_enter);
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
             segmented_padded_witness.into_dense_polys();
