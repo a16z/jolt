@@ -260,10 +260,26 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 comb_func_outer,
                 transcript,
             );
-        std::thread::spawn(|| drop(poly_Az));
-        std::thread::spawn(|| drop(poly_Bz));
-        std::thread::spawn(|| drop(poly_Cz));
-        std::thread::spawn(|| drop(poly_tau));
+        rayon::spawn(|| {
+            let span = tracing::span!(tracing::Level::TRACE, "poly_Az_drop");
+            let _enter = span.enter();
+            drop(poly_Az)
+        });
+        rayon::spawn(|| {
+            let span = tracing::span!(tracing::Level::TRACE, "poly_Bz_drop");
+            let _enter = span.enter();
+            drop(poly_Bz)
+        });
+        rayon::spawn(|| {
+            let span = tracing::span!(tracing::Level::TRACE, "poly_Cz_drop");
+            let _enter = span.enter();
+            drop(poly_Cz)
+        });
+        rayon::spawn(|| {
+            let span = tracing::span!(tracing::Level::TRACE, "poly_tau_drop");
+            let _enter = span.enter();
+            drop(poly_tau)
+        });
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
