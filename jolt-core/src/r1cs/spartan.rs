@@ -1,6 +1,7 @@
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::allocate_vec_in_background;
+use crate::utils::thread::allocate_zero_vec_background;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::AppendToTranscript;
 use crate::utils::transcript::ProofTranscript;
@@ -196,7 +197,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
         let poly_ABC_len = 2 * key.num_vars_total;
-        let RLC_evals_alloc = allocate_vec_in_background(F::zero(), poly_ABC_len);
+        let RLC_evals_alloc = allocate_zero_vec_background::<F>( poly_ABC_len);
 
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
@@ -260,26 +261,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 comb_func_outer,
                 transcript,
             );
-        rayon::spawn(|| {
-            let span = tracing::span!(tracing::Level::TRACE, "poly_Az_drop");
-            let _enter = span.enter();
-            drop(poly_Az)
-        });
-        rayon::spawn(|| {
-            let span = tracing::span!(tracing::Level::TRACE, "poly_Bz_drop");
-            let _enter = span.enter();
-            drop(poly_Bz)
-        });
-        rayon::spawn(|| {
-            let span = tracing::span!(tracing::Level::TRACE, "poly_Cz_drop");
-            let _enter = span.enter();
-            drop(poly_Cz)
-        });
-        rayon::spawn(|| {
-            let span = tracing::span!(tracing::Level::TRACE, "poly_tau_drop");
-            let _enter = span.enter();
-            drop(poly_tau)
-        });
+        drop_in_background_thread(poly_Az);
+        drop_in_background_thread(poly_Bz);
+        drop_in_background_thread(poly_Cz);
+        drop_in_background_thread(poly_tau);
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
