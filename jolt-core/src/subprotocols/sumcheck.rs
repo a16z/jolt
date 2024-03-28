@@ -893,7 +893,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     num_rounds: usize,
     poly_A: &mut DensePolynomial<F>,
     W: &P,
-    X: &Vec<F>,
     comb_func: Func,
     transcript: &mut Transcript,
   ) -> (Self, Vec<F>, Vec<F>)
@@ -908,22 +907,21 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     /*          Round 0 START         */
 
     // Simulates `poly_B` polynomial with evaluations
-    //     [W, 1, X, 0, 0, ...]
-    // without actually concatenating W and X, which would be expensive.
+    //     [W, 1, 0, 0, ...]
+    // without actually extending W, which would be expensive.
     let virtual_poly_B = |index: usize| {
       if index < W.len() {
         W[index]
       } else if index == W.len() {
         F::one()
-      } else if index <= W.len() + X.len() {
-        let x_index = index - W.len() - 1;
-        X[x_index]
       } else {
         F::zero()
       }
     };
 
     let len = poly_A.len() / 2;
+    assert_eq!(len, W.len());
+
     let poly = {
       // A fork of:
       //     Self::compute_eval_points_quadratic(poly_A, poly_B, &comb_func);
@@ -975,7 +973,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
         let Z_iter = W_iter
           .chain(one.par_iter())
-          .chain(X.par_iter())
           .chain(rayon::iter::repeatn(&zero, len));
         let left_iter = Z_iter.clone().take(len);
         let right_iter = Z_iter.skip(len).take(len);
