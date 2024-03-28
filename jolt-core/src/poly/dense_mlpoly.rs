@@ -252,7 +252,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         let polys_iter_cloned = polys.clone().into_iter();
         let total_len: usize = polys
             .into_iter()
-            .map(|poly| poly.as_ref().vec().len())
+            .map(|poly| poly.as_ref().len())
             .sum();
         let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
         for poly in polys_iter_cloned {

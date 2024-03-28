@@ -6,7 +6,6 @@ use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet};
-use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
@@ -25,9 +24,6 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
-    },
-    subprotocols::concatenated_commitment::{
-        ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
     },
     utils::{errors::ProofVerifyError, is_power_of_two, math::Math},
 };
@@ -352,12 +348,12 @@ where
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(
         &self,
-        batched_polys: &Self::BatchedPolynomials,
+        _: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_generators =
-            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
-        let read_write_commitments = [
+        let read_write_num_vars = self.a_read_write.get_num_vars();
+        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let read_write_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
             &self.v_read_write[0],
@@ -365,10 +361,12 @@ where
             &self.v_read_write[2],
             &self.v_read_write[3],
             &self.v_read_write[4],
-        ]
-        .par_iter()
-        .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
-        .collect::<Vec<_>>();
+        ];
+        let read_write_commitments = HyraxCommitment::batch_commit_polys(
+            read_write_polys,
+            read_write_num_vars,
+            &read_write_generators,
+        );
 
         let t_final_generators =
             HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);
