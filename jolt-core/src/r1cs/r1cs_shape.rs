@@ -193,7 +193,10 @@ impl<F: PrimeField> R1CSShape<F> {
         full_witness_vector: &P,
         io: &[F],
         num_steps: usize,
-    ) -> Result<(Vec<F>, Vec<F>, Vec<F>), SpartanError> {
+        A: &mut Vec<F>,
+        B: &mut Vec<F>,
+        C: &mut Vec<F>
+    ) -> Result<(), SpartanError> {
         if full_witness_vector.len() + io.len() != (self.num_io + self.num_vars) * num_steps {
             return Err(SpartanError::InvalidWitnessLength);
         }
@@ -240,10 +243,8 @@ impl<F: PrimeField> R1CSShape<F> {
 
         // computes a product between a sparse uniform matrix represented by `M` and a vector `z`
         let sparse_matrix_vec_product_uniform =
-            |M: &Vec<(usize, usize, F)>, num_rows: usize| -> Vec<F> {
+            |M: &Vec<(usize, usize, F)>, result: &mut Vec<F>, num_rows: usize| {
                 let row_pointers = get_row_pointers(M);
-
-                let mut result: Vec<F> = vec![F::zero(); num_steps * num_rows];
 
                 let span = tracing::span!(
                     tracing::Level::TRACE,
@@ -252,33 +253,25 @@ impl<F: PrimeField> R1CSShape<F> {
                 let _enter = span.enter();
                 result
                     .par_chunks_mut(num_steps)
+                    .take(num_rows) // Inputs have been padded to a power of 2 -- only have num_steps * num_rows total non-zero fields
                     .enumerate()
                     .for_each(|(row_index, row_output)| {
                         let row = &M[row_pointers[row_index]..row_pointers[row_index + 1]];
                         multiply_row_vec_uniform(row, row_output, num_steps);
                     });
 
-                result
             };
 
-        let (mut Az, (mut Bz, mut Cz)) = rayon::join(
-            || sparse_matrix_vec_product_uniform(&self.A, self.num_cons),
+        rayon::join(
+            || sparse_matrix_vec_product_uniform(&self.A, A, self.num_cons),
             || {
                 rayon::join(
-                    || sparse_matrix_vec_product_uniform(&self.B, self.num_cons),
-                    || sparse_matrix_vec_product_uniform(&self.C, self.num_cons),
+                    || sparse_matrix_vec_product_uniform(&self.B, B, self.num_cons),
+                    || sparse_matrix_vec_product_uniform(&self.C, C, self.num_cons),
                 )
             },
         );
-
-        // pad each Az, Bz, Cz to the next power of 2
-        let m = max(Az.len(), max(Bz.len(), Cz.len())).next_power_of_two();
-        rayon::join(
-            || Az.resize(m, F::zero()),
-            || rayon::join(|| Bz.resize(m, F::zero()), || Cz.resize(m, F::zero())),
-        );
-
-        Ok((Az, Bz, Cz))
+        Ok(())
     }
 
     /// Pads the R1CSShape so that the number of variables is a power of two
