@@ -191,28 +191,14 @@ impl<F: PrimeField> R1CSShape<F> {
     pub fn multiply_vec_uniform<P: IndexablePoly<F>>(
         &self,
         full_witness_vector: &P,
-        io: &[F],
         num_steps: usize,
         A: &mut Vec<F>,
         B: &mut Vec<F>,
         C: &mut Vec<F>
     ) -> Result<(), SpartanError> {
-        if full_witness_vector.len() + io.len() != (self.num_io + self.num_vars) * num_steps {
+        if full_witness_vector.len() != (self.num_io + self.num_vars) * num_steps {
             return Err(SpartanError::InvalidWitnessLength);
         }
-
-        // Simulates the `z` vector containing the full satisfying assignment
-        //     [W, 1, X]
-        // without actually concatenating W and X, which would be expensive.
-        let virtual_z_vector = |index: usize| {
-            if index < full_witness_vector.len() {
-                full_witness_vector[index]
-            } else if index == full_witness_vector.len() {
-                F::one()
-            } else {
-                io[index - full_witness_vector.len() - 1]
-            }
-        };
 
         // Pre-processes matrix to return the indices of the start of each row
         let get_row_pointers = |M: &Vec<(usize, usize, F)>| -> Vec<usize> {
@@ -233,9 +219,9 @@ impl<F: PrimeField> R1CSShape<F> {
                     if col == self.num_vars {
                         result.par_iter_mut().for_each(|x| *x += val);
                     } else {
+                        let witness_offset = col * num_steps;
                         result.par_iter_mut().enumerate().for_each(|(i, x)| {
-                            let z_index = col * num_steps + i;
-                            *x += mul_0_1_optimized(&val, &virtual_z_vector(z_index));
+                            *x += mul_0_1_optimized(&val, &full_witness_vector[witness_offset + i]);
                         });
                     }
                 }

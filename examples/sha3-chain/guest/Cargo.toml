@@ -1,0 +1,14 @@
+[package]
+name = "sha3-chain-guest"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "./src/main.rs"
+
+[features]
+guest = []
+
+[dependencies]
+sha3 = { version = "0.10.8", default-features = false }
+jolt-sdk = { path = "../../../jolt-sdk" }

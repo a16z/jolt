@@ -6,7 +6,6 @@ use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet};
-use crate::lasso::memory_checking::NoPreprocessing;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
@@ -25,9 +24,6 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{BatchablePolynomials, StructuredOpeningProof},
-    },
-    subprotocols::concatenated_commitment::{
-        ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
     },
     utils::{errors::ProofVerifyError, is_power_of_two, math::Math},
 };
@@ -92,7 +88,7 @@ impl BytecodeRow {
     /// Packs the instruction's circuit flags and instruction flags into a single u64 bitvector.
     /// The layout is:
     ///     circuit flags || instruction flags
-    /// where instruction flags is a one-hot bitvector corresponding to the instruction's 
+    /// where instruction flags is a one-hot bitvector corresponding to the instruction's
     /// index in the `InstructionSet` enum.
     pub fn bitflags<InstructionSet>(instruction: &ELFInstruction) -> u64
     where
@@ -352,12 +348,12 @@ where
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(
         &self,
-        batched_polys: &Self::BatchedPolynomials,
+        _: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_generators =
-            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
-        let read_write_commitments = [
+        let read_write_num_vars = self.a_read_write.get_num_vars();
+        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let read_write_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
             &self.v_read_write[0],
@@ -365,10 +361,12 @@ where
             &self.v_read_write[2],
             &self.v_read_write[3],
             &self.v_read_write[4],
-        ]
-        .par_iter()
-        .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
-        .collect::<Vec<_>>();
+        ];
+        let read_write_commitments = HyraxCommitment::batch_commit_polys(
+            read_write_polys,
+            read_write_num_vars,
+            &read_write_generators,
+        );
 
         let t_final_generators =
             HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);
@@ -742,7 +740,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use std::collections::HashSet;
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
@@ -765,7 +763,7 @@ mod tests {
         ];
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, EdwardsProjective> =
+        let polys: BytecodePolynomials<Fr, G1Projective> =
             BytecodePolynomials::new(&preprocessing, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
@@ -794,13 +792,11 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let num_generators = BytecodePolynomials::<Fr, EdwardsProjective>::num_generators(
-            program.len(),
-            trace.len(),
-        );
+        let num_generators =
+            BytecodePolynomials::<Fr, G1Projective>::num_generators(program.len(), trace.len());
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, EdwardsProjective> =
+        let polys: BytecodePolynomials<Fr, G1Projective> =
             BytecodePolynomials::new(&preprocessing, trace);
 
         let mut transcript = Transcript::new(b"test_transcript");
@@ -830,12 +826,10 @@ mod tests {
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let num_generators = BytecodePolynomials::<Fr, EdwardsProjective>::num_generators(
-            program.len(),
-            trace.len(),
-        );
+        let num_generators =
+            BytecodePolynomials::<Fr, G1Projective>::num_generators(program.len(), trace.len());
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, EdwardsProjective> =
+        let polys: BytecodePolynomials<Fr, G1Projective> =
             BytecodePolynomials::new(&preprocessing, trace);
         let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&(), &generators);
@@ -865,7 +859,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        BytecodePolynomials::<Fr, EdwardsProjective>::validate_bytecode(&program, &trace);
+        BytecodePolynomials::<Fr, G1Projective>::validate_bytecode(&program, &trace);
     }
 
     #[test]
@@ -881,6 +875,6 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        BytecodePolynomials::<Fr, EdwardsProjective>::validate_bytecode(&program, &trace);
+        BytecodePolynomials::<Fr, G1Projective>::validate_bytecode(&program, &trace);
     }
 }

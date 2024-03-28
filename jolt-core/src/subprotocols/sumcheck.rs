@@ -5,6 +5,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::mul_0_optimized;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -92,15 +93,6 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
             poly_eq,
             num_rounds,
             sumcheck_type: CubicSumcheckType::Flags,
-        }
-    }
-
-    #[inline]
-    pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
-        match self.sumcheck_type {
-            CubicSumcheckType::Prod => Self::combine_prod(a, b, c),
-            CubicSumcheckType::ProdOnes => Self::combine_prod(a, b, c),
-            CubicSumcheckType::Flags => Self::combine_flags(a, b, c),
         }
     }
 
@@ -761,8 +753,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[inline]
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_cubic")]
-    pub fn compute_eval_points_cubic<Func>(
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic")]
+    pub fn compute_eval_points_spartan_cubic<Func>(
         poly_A: &DensePolynomial<F>,
         poly_B: &DensePolynomial<F>,
         poly_C: &DensePolynomial<F>,
@@ -774,44 +766,49 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     {
         let len = poly_A.len() / 2;
         (0..len)
-        .into_par_iter()
-        .map(|i| {
-            // eval 0: bound_func is A(low)
-            let eval_point_0 = comb_func(&poly_A[i], &poly_B[i], &poly_C[i], &poly_D[i]);
+            .into_par_iter()
+            .map(|i| {
+                // eval 0: bound_func is A(low)
+                let eval_point_0 = comb_func(&poly_A[i], &poly_B[i], &poly_C[i], &poly_D[i]);
 
-            // eval 2: bound_func is -A(low) + 2*A(high)
-            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-            let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-            let poly_C_bound_point = poly_C[len + i] + poly_C[len + i] - poly_C[i];
-            let poly_D_bound_point = poly_D[len + i] + poly_D[len + i] - poly_D[i];
-            let eval_point_2 = comb_func(
-            &poly_A_bound_point,
-            &poly_B_bound_point,
-            &poly_C_bound_point,
-            &poly_D_bound_point,
-            );
+                let m_A = poly_A[len + i] - poly_A[i];
+                let m_B = poly_B[len + i] - poly_B[i];
+                let m_C = poly_C[len + i] - poly_C[i];
+                let m_D = poly_D[len + i] - poly_D[i];
 
-            // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-            let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
-            let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
-            let poly_C_bound_point = poly_C_bound_point + poly_C[len + i] - poly_C[i];
-            let poly_D_bound_point = poly_D_bound_point + poly_D[len + i] - poly_D[i];
-            let eval_point_3 = comb_func(
-            &poly_A_bound_point,
-            &poly_B_bound_point,
-            &poly_C_bound_point,
-            &poly_D_bound_point,
-            );
-            (eval_point_0, eval_point_2, eval_point_3)
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero()),
-            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
-        )
+                // eval 2: bound_func is -A(low) + 2*A(high)
+                let poly_A_bound_point = poly_A[len + i] + m_A;
+                let poly_B_bound_point = poly_B[len + i] + m_B;
+                let poly_C_bound_point = poly_C[len + i] + m_C;
+                let poly_D_bound_point = poly_D[len + i] + m_D;
+                let eval_point_2 = comb_func(
+                    &poly_A_bound_point,
+                    &poly_B_bound_point,
+                    &poly_C_bound_point,
+                    &poly_D_bound_point,
+                );
+
+                // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
+                let poly_A_bound_point = poly_A_bound_point + m_A;
+                let poly_B_bound_point = poly_B_bound_point + m_B;
+                let poly_C_bound_point = poly_C_bound_point + m_C;
+                let poly_D_bound_point = poly_D_bound_point + m_D;
+                let eval_point_3 = comb_func(
+                    &poly_A_bound_point,
+                    &poly_B_bound_point,
+                    &poly_C_bound_point,
+                    &poly_D_bound_point,
+                );
+                (eval_point_0, eval_point_2, eval_point_3)
+            })
+            .reduce(
+                || (F::zero(), F::zero(), F::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+            )
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_cubic_with_additive_term")]
-    pub fn prove_cubic_with_additive_term<G, Func>(
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
+    pub fn prove_spartan_cubic<G, Func>(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
@@ -833,13 +830,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let poly = {
             // Make an iterator returning the contributions to the evaluations
             let (eval_point_0, eval_point_2, eval_point_3) =
-            Self::compute_eval_points_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
+            Self::compute_eval_points_spartan_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
 
             let evals = [
-            eval_point_0,
-            claim_per_round - eval_point_0,
-            eval_point_2,
-            eval_point_3,
+                eval_point_0,
+                claim_per_round - eval_point_0,
+                eval_point_2,
+                eval_point_3,
             ];
             UniPoly::from_evals(&evals)
         };
@@ -882,179 +879,173 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         )
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_quad_unrolled")]
-  // A fork of `prove_quad` with the 0th round unrolled from the rest of the
-  // for loop. This allows us to pass in `W` and `X` as references instead of
-  // passing them in as a single `MultilinearPolynomial`, which would require
-  // an expensive concatenation. We defer the actual instantation of a
-  // `MultilinearPolynomial` to the end of the 0th round.
-  pub fn prove_quad_unrolled<G, Func, P: IndexablePoly<F>>(
-    claim: &F,
-    num_rounds: usize,
-    poly_A: &mut DensePolynomial<F>,
-    W: &P,
-    X: &Vec<F>,
-    comb_func: Func,
-    transcript: &mut Transcript,
-  ) -> (Self, Vec<F>, Vec<F>)
-  where
-    G: CurveGroup<ScalarField = F>,
-    Func: Fn(&F, &F) -> F + Sync,
-  {
-    let mut r: Vec<F> = Vec::with_capacity(num_rounds);
-    let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
-    let mut claim_per_round = *claim;
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_quadratic")]
+    // A fork of `prove_quad` with the 0th round unrolled from the rest of the
+    // for loop. This allows us to pass in `W` and `X` as references instead of
+    // passing them in as a single `MultilinearPolynomial`, which would require
+    // an expensive concatenation. We defer the actual instantation of a
+    // `MultilinearPolynomial` to the end of the 0th round.
+    pub fn prove_spartan_quadratic<G, P: IndexablePoly<F>>(
+        claim: &F,
+        num_rounds: usize,
+        poly_A: &mut DensePolynomial<F>,
+        W: &P,
+        transcript: &mut Transcript,
+    ) -> (Self, Vec<F>, Vec<F>)
+    where
+        G: CurveGroup<ScalarField = F>,
+    {
+        let mut r: Vec<F> = Vec::with_capacity(num_rounds);
+        let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
+        let mut claim_per_round = *claim;
 
-    /*          Round 0 START         */
+        /*          Round 0 START         */
 
-    // Simulates `poly_B` polynomial with evaluations
-    //     [W, 1, X, 0, 0, ...]
-    // without actually concatenating W and X, which would be expensive.
-    let virtual_poly_B = |index: usize| {
-      if index < W.len() {
-        W[index]
-      } else if index == W.len() {
-        F::one()
-      } else if index <= W.len() + X.len() {
-        let x_index = index - W.len() - 1;
-        X[x_index]
-      } else {
-        F::zero()
-      }
-    };
+        let len = poly_A.len() / 2;
+        assert_eq!(len, W.len());
 
-    let len = poly_A.len() / 2;
-    let poly = {
-      // A fork of:
-      //     Self::compute_eval_points_quadratic(poly_A, poly_B, &comb_func);
-      // that uses `virtual_poly_B`
-      let (eval_point_0, eval_point_2) = (0..len)
-        .into_par_iter()
-        .map(|i| {
-          // eval 0: bound_func is A(low)
-          let eval_point_0 = comb_func(&poly_A[i], &virtual_poly_B(i));
+        let poly = {
+            // eval_point_0 = \sum_i A[i] * B[i]
+            // where B[i] = W[i] for i in 0..len
+            let eval_point_0: F = (0..len)
+                .into_par_iter()
+                .map(|i| {
+                    if poly_A[i].is_zero() || W[i].is_zero() {
+                        F::zero()
+                    } else {
+                        poly_A[i] * W[i]
+                    }
+                })
+                .sum();
+            // eval_point_2 = \sum_i (2 * A[len + i] - A[i]) * (2 * B[len + i] - B[i])
+            // where B[i] = W[i] for i in 0..len, B[len] = 1, and B[i] = 0 for i > len
+            let mut eval_point_2: F = (1..len)
+                .into_par_iter()
+                .map(|i| {
+                    if W[i].is_zero() {
+                        F::zero()
+                    } else {
+                        let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+                        let poly_B_bound_point = -W[i];
+                        mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
+                    }
+                })
+                .sum();
+            eval_point_2 += mul_0_optimized(&(poly_A[len] + poly_A[len] - poly_A[0]), &(F::from_u64(2).unwrap() - W[0]));
 
-          // eval 2: bound_func is -A(low) + 2*A(high)
-          let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-          let poly_B_bound_point =
-            virtual_poly_B(len + i) + virtual_poly_B(len + i) - virtual_poly_B(i);
-          let eval_point_2 = comb_func(&poly_A_bound_point, &poly_B_bound_point);
-          (eval_point_0, eval_point_2)
-        })
-        .reduce(
-          || (F::zero(), F::zero()),
-          |a, b| (a.0 + b.0, a.1 + b.1),
+            let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
+            UniPoly::from_evals(&evals)
+        };
+
+        // append the prover's message to the transcript
+        <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+
+        //derive the verifier's challenge for the next round
+        let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        r.push(r_i);
+        polys.push(poly.compress());
+
+        // Set up next round
+        claim_per_round = poly.evaluate(&r_i);
+
+        // bound all tables to the verifier's challenge
+        let (_, mut poly_B) = rayon::join(
+        || poly_A.bound_poly_var_top_zero_optimized(&r_i),
+        || {
+                // Simulates `poly_B.bound_poly_var_top(&r_i)`
+                // We need to do this because we don't actually have
+                // a `MultilinearPolynomial` instance for `poly_B` yet,
+                // only the constituents of its (Lagrange basis) coefficients
+                // `W` and `X`.
+                let zero = F::zero();
+                let one = [F::one()];
+                let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
+                let Z_iter = W_iter
+                .chain(one.par_iter())
+                .chain(rayon::iter::repeatn(&zero, len));
+                let left_iter = Z_iter.clone().take(len);
+                let right_iter = Z_iter.skip(len).take(len);
+                let B = left_iter
+                .zip(right_iter)
+                .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
+                .collect();
+                DensePolynomial::new(B)
+            },
         );
 
-      let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
-      UniPoly::from_evals(&evals)
-    };
+        /*          Round 0 END          */
 
-    // append the prover's message to the transcript
-    <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+        for _ in 1..num_rounds {
+            let poly = {
+                let (eval_point_0, eval_point_2) =
+                Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
 
-    //derive the verifier's challenge for the next round
-    let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
-    r.push(r_i);
-    polys.push(poly.compress());
+                let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
+                UniPoly::from_evals(&evals)
+            };
 
-    // Set up next round
-    claim_per_round = poly.evaluate(&r_i);
+            // append the prover's message to the transcript
+            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
-    // bound all tables to the verifier's challenge
-    let (_, mut poly_B) = rayon::join(
-      || poly_A.bound_poly_var_top_zero_optimized(&r_i),
-      || {
-        // Simulates `poly_B.bound_poly_var_top(&r_i)`
-        // We need to do this because we don't actually have
-        // a `MultilinearPolynomial` instance for `poly_B` yet,
-        // only the constituents of its (Lagrange basis) coefficients
-        // `W` and `X`.
-        let zero = F::zero();
-        let one = [F::one()];
-        let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
-        let Z_iter = W_iter
-          .chain(one.par_iter())
-          .chain(X.par_iter())
-          .chain(rayon::iter::repeatn(&zero, len));
-        let left_iter = Z_iter.clone().take(len);
-        let right_iter = Z_iter.skip(len).take(len);
-        let B = left_iter
-          .zip(right_iter)
-          .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
-          .collect();
-        DensePolynomial::new(B)
-      },
-    );
+            //derive the verifier's challenge for the next round
+            let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
 
-    /*          Round 0 END          */
+            r.push(r_i);
+            polys.push(poly.compress());
 
-    for _ in 1..num_rounds {
-      let poly = {
-        let (eval_point_0, eval_point_2) =
-          Self::compute_eval_points_quadratic(poly_A, &poly_B, &comb_func);
+            // Set up next round
+            claim_per_round = poly.evaluate(&r_i);
 
-        let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
-        UniPoly::from_evals(&evals)
-      };
+            // bound all tables to the verifier's challenege
+            rayon::join(
+                || poly_A.bound_poly_var_top_zero_optimized(&r_i),
+                || poly_B.bound_poly_var_top_zero_optimized(&r_i),
+            );
+        }
 
-      // append the prover's message to the transcript
-      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+        let evals = vec![poly_A[0], poly_B[0]];
+        std::thread::spawn(|| drop(poly_B));
 
-      //derive the verifier's challenge for the next round
-      let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
-
-      r.push(r_i);
-      polys.push(poly.compress());
-
-      // Set up next round
-      claim_per_round = poly.evaluate(&r_i);
-
-      // bound all tables to the verifier's challenege
-      rayon::join(
-        || poly_A.bound_poly_var_top_zero_optimized(&r_i),
-        || poly_B.bound_poly_var_top_zero_optimized(&r_i),
-      );
+        (
+            SumcheckInstanceProof::new(polys),
+            r,
+            evals
+        )
     }
 
-    let evals = vec![poly_A[0], poly_B[0]];
-    std::thread::spawn(|| drop(poly_B));
+    #[inline]
+    #[tracing::instrument(skip_all, name = "Sumcheck::compute_eval_points_spartan_quadratic")]
+    pub fn compute_eval_points_spartan_quadratic(
+        poly_A: &DensePolynomial<F>,
+        poly_B: &DensePolynomial<F>,
+    ) -> (F, F) {
+        let len = poly_A.len() / 2;
+        (0..len)
+            .into_par_iter()
+            .map(|i| {
+                // eval 0: bound_func is A(low)
+                let eval_point_0 = if poly_B[i].is_zero() || poly_A[i].is_zero() {
+                    F::zero()
+                } else {
+                    poly_A[i] * poly_B[i]
+                };
 
-    (
-      SumcheckInstanceProof::new(polys),
-      r,
-      evals
-    )
-  }
+                // eval 2: bound_func is -A(low) + 2*A(high)
+                let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
+                let eval_point_2 = if poly_B_bound_point.is_zero() {
+                    F::zero()
+                } else {
+                    let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+                    mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
+                };
 
-  #[inline]
-  #[tracing::instrument(skip_all, name = "Sumcheck::compute_eval_points_quadratic")]
-  pub fn compute_eval_points_quadratic<Func>(
-    poly_A: &DensePolynomial<F>,
-    poly_B: &DensePolynomial<F>,
-    comb_func: &Func,
-  ) -> (F, F)
-  where
-    Func: Fn(&F, &F) -> F + Sync,
-  {
-    let len = poly_A.len() / 2;
-    (0..len)
-      .into_par_iter()
-      .map(|i| {
-        // eval 0: bound_func is A(low)
-        let eval_point_0 = comb_func(&poly_A[i], &poly_B[i]);
-
-        // eval 2: bound_func is -A(low) + 2*A(high)
-        let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-        let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-        let eval_point_2 = comb_func(&poly_A_bound_point, &poly_B_bound_point);
-        (eval_point_0, eval_point_2)
-      })
-      .reduce(
-        || (F::zero(), F::zero()),
-        |a, b| (a.0 + b.0, a.1 + b.1),
-      )
-  }
+                (eval_point_0, eval_point_2)
+            })
+            .reduce(
+                || (F::zero(), F::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1),
+            )
+    }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
@@ -1131,7 +1122,7 @@ pub mod bench {
     use crate::poly::eq_poly::EqPolynomial;
     use crate::subprotocols::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
     use crate::utils::index_to_field_bitvector;
-    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_bn254::{G1Projective, Fr};
     use ark_std::{rand::Rng, test_rng, One, UniformRand, Zero};
     use criterion::black_box;
 
@@ -1171,7 +1162,7 @@ pub mod bench {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
                 let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<
-                    EdwardsProjective,
+                    G1Projective,
                 >(&claim, params, &coeffs, &mut transcript);
             })
         });
@@ -1213,7 +1204,7 @@ pub mod bench {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
                 let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<
-                    EdwardsProjective,
+                    G1Projective,
                 >(&claim, params, &coeffs, &mut transcript);
             })
         });
@@ -1257,7 +1248,7 @@ pub mod bench {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
                 let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<
-                    EdwardsProjective,
+                    G1Projective,
                 >(
                     &joint_claim, params, &coeffs, &mut transcript
                 );
@@ -1271,7 +1262,7 @@ mod test {
     use super::*;
     use crate::utils::test::TestTranscript;
     use crate::{poly::eq_poly::EqPolynomial, utils::math::Math};
-    use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
+    use ark_bn254::{G1Projective, Fr};
     use ark_ff::Zero;
     use ark_std::One;
 

@@ -488,16 +488,20 @@ where
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_generators =
-            HyraxGenerators::new(self.a_read_write[0].get_num_vars(), pedersen_generators);
-
-        let a_v_read_write_commitments = self
+        let read_write_num_vars = self.a_read_write[0].get_num_vars();
+        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let a_v_read_write_polys: Vec<&DensePolynomial<F>> = self
             .a_read_write
-            .par_iter()
-            .chain(self.v_read.par_iter())
-            .chain(self.v_write.par_iter())
-            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
-            .collect::<Vec<_>>();
+            .iter()
+            .chain(self.v_read.iter())
+            .chain(self.v_write.iter())
+            .collect();
+        let a_v_read_write_commitments = HyraxCommitment::batch_commit_polys(
+            a_v_read_write_polys,
+            read_write_num_vars,
+            &read_write_generators,
+        );
+
         let t_read_write_commitments = batched_polys
             .batched_t_read_write
             .combined_commit(pedersen_generators);
@@ -938,7 +942,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_curve25519::{EdwardsProjective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use rand_core::SeedableRng;
 
     #[test]
@@ -956,7 +960,7 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
 
         let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
-        let (rw_memory, _): (ReadWriteMemory<Fr, EdwardsProjective>, _) = ReadWriteMemory::new(
+        let (rw_memory, _): (ReadWriteMemory<Fr, G1Projective>, _) = ReadWriteMemory::new(
             &JoltDevice::new(),
             &preprocessing,
             memory_trace,
@@ -972,7 +976,7 @@ mod tests {
             &batched_polys,
             &mut transcript,
         );
-        
+
         let mut transcript = Transcript::new(b"test_transcript");
         preprocessing.program_io = Some(JoltDevice::new());
         ReadWriteMemoryProof::verify_memory_checking(

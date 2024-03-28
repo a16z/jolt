@@ -64,10 +64,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
     }
 
     #[tracing::instrument(skip_all, name = "HyraxCommitment::commit_slice")]
-    pub fn commit_slice(
-        eval_slice: &[G::ScalarField],
-        gens: &HyraxGenerators<RATIO, G>,
-    ) -> Self {
+    pub fn commit_slice(eval_slice: &[G::ScalarField], gens: &HyraxGenerators<RATIO, G>) -> Self {
         let n = eval_slice.len();
         let ell = n.log_2();
 
@@ -80,6 +77,64 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
         Self { row_commitments }
+    }
+
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit")]
+    pub fn batch_commit(
+        batch: &Vec<Vec<G::ScalarField>>,
+        gens: &HyraxGenerators<RATIO, G>,
+    ) -> Vec<Self> {
+        let n = batch[0].len();
+        batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
+        let ell = n.log_2();
+
+        let (L_size, R_size) = matrix_dimensions(ell, RATIO);
+        assert_eq!(L_size * R_size, n);
+
+        let gens = CurveGroup::normalize_batch(&gens.gens.generators);
+
+        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
+        let row_commitments: Vec<G> = rows
+            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+            .collect();
+
+        row_commitments
+            .par_chunks(L_size)
+            .map(|chunk| Self {
+                row_commitments: chunk.to_vec(),
+            })
+            .collect()
+    }
+
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit_polys")]
+    pub fn batch_commit_polys(
+        polys: Vec<&DensePolynomial<G::ScalarField>>,
+        num_vars: usize,
+        gens: &HyraxGenerators<RATIO, G>,
+    ) -> Vec<Self> {
+        let n = num_vars.pow2();
+        polys
+            .iter()
+            .for_each(|poly| assert_eq!(poly.as_ref().len(), n));
+
+        let (L_size, R_size) = matrix_dimensions(num_vars, RATIO);
+        assert_eq!(L_size * R_size, n);
+
+        let gens = CurveGroup::normalize_batch(&gens.gens.generators);
+
+        let rows = polys
+            .par_iter()
+            .flat_map(|poly| poly.evals_ref().par_chunks(R_size));
+        let row_commitments: Vec<G> = rows
+            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+            .collect();
+
+        row_commitments
+            .par_chunks(L_size)
+            .map(|chunk| Self {
+                row_commitments: chunk.to_vec(),
+            })
+            .collect()
     }
 }
 
@@ -331,7 +386,7 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_curve25519::EdwardsProjective as G1Projective;
+    use ark_bn254::G1Projective;
     use ark_std::One;
 
     #[test]
