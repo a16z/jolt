@@ -8,6 +8,11 @@
 #![feature(iter_next_chunk)]
 #![allow(long_running_const_eval)]
 
+use jemallocator::Jemalloc;
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 pub mod benches;
 pub mod host;
 pub mod jolt;
