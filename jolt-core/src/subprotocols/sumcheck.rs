@@ -97,15 +97,6 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
 
     #[inline]
-    pub fn combine(&self, a: &F, b: &F, c: &F) -> F {
-        match self.sumcheck_type {
-            CubicSumcheckType::Prod => Self::combine_prod(a, b, c),
-            CubicSumcheckType::ProdOnes => Self::combine_prod(a, b, c),
-            CubicSumcheckType::Flags => Self::combine_flags(a, b, c),
-        }
-    }
-
-    #[inline]
     pub fn combine_prod(l: &F, r: &F, eq: &F) -> F {
         if *l == F::one() && *r == F::one() {
             *eq
@@ -1037,9 +1028,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let eval_point_0 = comb_func(&poly_A[i], &poly_B[i]);
 
         // eval 2: bound_func is -A(low) + 2*A(high)
-        let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
         let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-        let eval_point_2 = comb_func(&poly_A_bound_point, &poly_B_bound_point);
+        let eval_point_2 = if poly_B_bound_point.is_zero() {
+            F::zero()
+        } else {
+            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+            mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
+        };
+
         (eval_point_0, eval_point_2)
       })
       .reduce(
