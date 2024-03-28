@@ -15,7 +15,7 @@ use common::constants::{
 };
 
 #[proc_macro_attribute]
-pub fn func(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttributeArgs);
     let func = parse_macro_input!(item as ItemFn);
     MacroBuilder::new(attr, func).build()
