@@ -381,7 +381,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         trace: Vec<BytecodeRow>,
         bytecode: Vec<ELFInstruction>,
         memory_trace: Vec<MemoryOp>,
-        circuit_flags: Vec<F>,
+        circuit_flags_stepwise: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
     ) -> (R1CSProof<F, G>, R1CSUniqueCommitments<G>) {
@@ -435,14 +435,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // Derive circuit flags
         let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
         let _enter = span.enter();
-        let mut circuit_flags_bits = vec![F::zero(); padded_trace_len * (N_FLAGS + Self::InstructionSet::COUNT)];
-        circuit_flags
+        let mut circuit_flags= vec![F::zero(); padded_trace_len * (N_FLAGS + Self::InstructionSet::COUNT)];
+        circuit_flags_stepwise
             .chunks(N_FLAGS + Self::InstructionSet::COUNT) 
             .enumerate()
             .for_each(|(step_index, step_flags)| {
                 step_flags.iter().enumerate().for_each(|(flag_index, &flag)| {
                     let index = step_index + flag_index * padded_trace_len;
-                    circuit_flags_bits[index] = flag;
+                    circuit_flags[index] = flag;
                 })
             });
         drop(_enter);
@@ -477,7 +477,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let chunks_x_comms = commit_to_chunks(&chunks_x);
         let chunks_y_comms = commit_to_chunks(&chunks_y);
         let lookup_outputs_comms = commit_to_chunks(&lookup_outputs);
-        let circuit_flags_comm = commit_to_chunks(&circuit_flags_bits);
+        let circuit_flags_comm = commit_to_chunks(&circuit_flags);
         drop(_guard);
 
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
@@ -494,7 +494,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags_bits,
+            circuit_flags,
         );
 
         let (key, witness_segments, io_aux_commitments) = R1CSProof::<F,G>::compute_witness_commit(
