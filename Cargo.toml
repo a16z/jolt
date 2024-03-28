@@ -32,6 +32,10 @@ members = [
     "examples/sha2-ex/guest",
     "examples/sha3-ex",
     "examples/sha3-ex/guest",
+    "examples/sha2-chain",
+    "examples/sha2-chain/guest",
+    "examples/sha3-chain",
+    "examples/sha3-chain/guest",
 ]
 
 [profile.test]
