@@ -192,7 +192,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
         let poly_ABC_len = 2 * key.num_vars_total;
-        let RLC_evals_alloc = allocate_vec_in_background(F::ZERO, poly_ABC_len);
+        let RLC_evals_alloc = allocate_vec_in_background(F::zero(), poly_ABC_len);
 
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
