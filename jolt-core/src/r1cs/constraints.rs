@@ -59,7 +59,7 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::ChunksY,         C),
     (InputType::ChunksQuery,     C),
     (InputType::LookupOutput,    1),
-    (InputType::OpFlags,         NUM_CIRCUIT_FLAGS),
+    (InputType::OpFlags,         N_FLAGS),
     (InputType::InstrFlags,      RV32I::COUNT),
 ];
 
