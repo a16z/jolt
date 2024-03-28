@@ -122,19 +122,11 @@ impl Program {
         let circuit_flag_trace = trace
             .par_iter()
             .flat_map(|row| {
-                let mut bitvector = row.instruction
+                let bitvector = row.instruction
                     .to_circuit_flags()
                     .iter()
                     .map(|&flag| flag.into())
                     .collect::<Vec<F>>();
-
-                bitvector.resize(NUM_CIRCUIT_FLAGS + InstructionSet::COUNT, F::zero());
-
-                // instruction flag
-                if let Ok(jolt_instruction) = InstructionSet::try_from(&row.instruction) {
-                    let instruction_index = InstructionSet::enum_index(&jolt_instruction);
-                    bitvector[NUM_CIRCUIT_FLAGS + instruction_index] = F::from(1 as u64);
-                } 
                 bitvector
             })
             .collect();
