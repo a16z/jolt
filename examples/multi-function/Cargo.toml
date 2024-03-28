@@ -1,0 +1,11 @@
+[package]
+name = "multi-function"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["std"] }
+guest = { package = "multi-function-guest", path = "./guest" }
+
+hex = "0.4.3"
+sha3 = { version = "0.10.8", default-features = false }

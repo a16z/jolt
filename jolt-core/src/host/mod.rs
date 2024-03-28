@@ -24,6 +24,7 @@ const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
 #[derive(Clone)]
 pub struct Program {
     guest: String,
+    func: Option<String>,
     input: Vec<u8>,
     memory_size: usize,
     pub elf: Option<PathBuf>,
@@ -33,10 +34,15 @@ impl Program {
     pub fn new(guest: &str) -> Self {
         Self {
             guest: guest.to_string(),
+            func: None,
             input: Vec::new(),
             memory_size: DEFAULT_MEMORY_SIZE,
             elf: None,
         }
+    }
+
+    pub fn set_func(&mut self, func: &str) {
+        self.func = Some(func.to_string())
     }
 
     pub fn set_input<T: Serialize>(&mut self, input: &T) {
@@ -51,8 +57,20 @@ impl Program {
     pub fn build(&mut self) {
         if self.elf.is_none() {
             self.save_linker(self.memory_size);
+
+            let mut envs = vec![("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))];
+            if let Some(func) = &self.func {
+                envs.push(("JOLT_FUNC_NAME", func.to_string()));
+            }
+
+            let target = format!(
+                "/tmp/jolt-guest-target-{}-{}",
+                self.guest,
+                self.func.as_ref().unwrap_or(&"".to_string())
+            );
+
             let output = Command::new("cargo")
-                .envs([("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))])
+                .envs(envs)
                 .args(&[
                     "build",
                     "--release",
@@ -61,7 +79,7 @@ impl Program {
                     "-p",
                     &self.guest,
                     "--target-dir",
-                    "/tmp/jolt-guest-target",
+                    &target,
                     "--target",
                     "riscv32i-unknown-none-elf",
                 ])
@@ -72,7 +90,8 @@ impl Program {
             io::stderr().write(&output.stderr).unwrap();
 
             let elf = format!(
-                "/tmp/jolt-guest-target/riscv32i-unknown-none-elf/release/{}",
+                "{}/riscv32i-unknown-none-elf/release/{}",
+                target,
                 self.guest
             );
             self.elf = Some(PathBuf::from_str(&elf).unwrap());

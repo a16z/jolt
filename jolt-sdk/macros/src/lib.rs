@@ -1,3 +1,5 @@
+#![feature(proc_macro_tracked_env)]
+
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
@@ -41,7 +43,16 @@ impl MacroBuilder {
         let analyze_fn = self.make_analyze_function();
         let preprocess_fn = self.make_preprocess_func();
         let prove_fn = self.make_prove_func();
-        let main_fn = self.make_main_func();
+
+        let main_fn = if let Some(func) = self.get_func_selector() {
+            if self.get_func_name().to_string() == func {
+                self.make_main_func()
+            } else {
+                quote!{}
+            }
+        } else {
+            self.make_main_func()
+        };
 
         quote! {
             #build_fn
@@ -147,6 +158,7 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
         let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(not(feature = "guest"))]
@@ -157,6 +169,7 @@ impl MacroBuilder {
                 #imports
 
                 let mut program = Program::new(#guest_name);
+                program.set_func(#fn_name_str);
                 #set_mem_size
                 let bytecode = program.decode();
 
@@ -389,6 +402,10 @@ impl MacroBuilder {
     }
 
     fn get_guest_name(&self) -> String {
-        std::env::var("CARGO_PKG_NAME").unwrap()
+        proc_macro::tracked_env::var("CARGO_PKG_NAME").unwrap()
+    }
+
+    fn get_func_selector(&self) -> Option<String> {
+        proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
     }
 }
