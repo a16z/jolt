@@ -435,9 +435,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // Derive circuit flags
         let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
         let _enter = span.enter();
-        let mut circuit_flags= vec![F::zero(); padded_trace_len * (N_FLAGS + Self::InstructionSet::COUNT)];
+        let mut circuit_flags= vec![F::zero(); padded_trace_len * N_FLAGS];
         circuit_flags_stepwise
-            .chunks(N_FLAGS + Self::InstructionSet::COUNT) 
+            .chunks(N_FLAGS) 
             .enumerate()
             .for_each(|(step_index, step_flags)| {
                 step_flags.iter().enumerate().for_each(|(flag_index, &flag)| {
