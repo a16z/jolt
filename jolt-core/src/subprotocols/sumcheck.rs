@@ -5,6 +5,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::mul_0_optimized;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -906,46 +907,40 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
     /*          Round 0 START         */
 
-    // Simulates `poly_B` polynomial with evaluations
-    //     [W, 1, 0, 0, ...]
-    // without actually extending W, which would be expensive.
-    let virtual_poly_B = |index: usize| {
-      if index < W.len() {
-        W[index]
-      } else if index == W.len() {
-        F::one()
-      } else {
-        F::zero()
-      }
-    };
-
     let len = poly_A.len() / 2;
     assert_eq!(len, W.len());
 
     let poly = {
-      // A fork of:
-      //     Self::compute_eval_points_quadratic(poly_A, poly_B, &comb_func);
-      // that uses `virtual_poly_B`
-      let (eval_point_0, eval_point_2) = (0..len)
-        .into_par_iter()
-        .map(|i| {
-          // eval 0: bound_func is A(low)
-          let eval_point_0 = comb_func(&poly_A[i], &virtual_poly_B(i));
+        // eval_point_0 = \sum_i A[i] * B[i]
+        // where B[i] = W[i] for i in 0..len
+        let eval_point_0: F = (0..len)
+            .into_par_iter()
+            .map(|i| {
+                if poly_A[i].is_zero() || W[i].is_zero() {
+                    F::zero()
+                } else {
+                    poly_A[i] * W[i]
+                }
+            })
+            .sum();
+        // eval_point_2 = \sum_i (2 * A[len + i] - A[i]) * (2 * B[len + i] - B[i])
+        // where B[i] = W[i] for i in 0..len, B[len] = 1, and B[i] = 0 for i > len
+        let mut eval_point_2: F = (1..len)
+            .into_par_iter()
+            .map(|i| {
+                if W[i].is_zero() {
+                    F::zero()
+                } else {
+                    let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
+                    let poly_B_bound_point = -W[i];
+                    mul_0_optimized(&poly_A_bound_point, &poly_B_bound_point)
+                }
+            })
+            .sum();
+        eval_point_2 += comb_func(&(F::from_u64(2).unwrap() - W[0]), &(poly_A[len] + poly_A[len] - poly_A[0]));
 
-          // eval 2: bound_func is -A(low) + 2*A(high)
-          let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-          let poly_B_bound_point =
-            virtual_poly_B(len + i) + virtual_poly_B(len + i) - virtual_poly_B(i);
-          let eval_point_2 = comb_func(&poly_A_bound_point, &poly_B_bound_point);
-          (eval_point_0, eval_point_2)
-        })
-        .reduce(
-          || (F::zero(), F::zero()),
-          |a, b| (a.0 + b.0, a.1 + b.1),
-        );
-
-      let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
-      UniPoly::from_evals(&evals)
+        let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
+        UniPoly::from_evals(&evals)
     };
 
     // append the prover's message to the transcript
