@@ -1,5 +1,5 @@
 #![cfg_attr(feature = "guest", no_std)]
-#![cfg_attr(feature = "guest", no_main)]
+#![no_main]
 
 use sha2::{Sha256, Digest};
 
