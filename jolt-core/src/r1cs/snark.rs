@@ -64,6 +64,30 @@ fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_stat
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
   let mut step_z = inputs.clone_to_stepwise();
 
+  // This loop tests when the packed bitflags value isn't correct. 
+  for test_step in 0..inputs.padded_trace_len {
+  // for test_step in [284] {
+    let mut sum = F::zero(); 
+    let mut bits = vec![]; 
+
+    for i in 0..17 {
+      bits.push(inputs.circuit_flags_bits[i * inputs.padded_trace_len + test_step]); 
+    }
+    for i in 0..19 {
+      bits.push(inputs.instruction_flags_bits[i * inputs.padded_trace_len + test_step]); 
+    }
+
+    for i in 0..bits.len() {
+      sum += bits[i] * F::from((1_u64 << (bits.len() - 1 - i)) as u64); 
+    }
+
+    if inputs.bytecode_v[test_step] != sum {
+      println!("delta: {:?}", sum-inputs.bytecode_v[test_step]);
+      println!("MAYDAY at step {}", test_step);
+    }
+  }
+
+
   // Compute the aux
   let span = tracing::span!(tracing::Level::INFO, "calc_aux");
   let _guard = span.enter();
