@@ -107,7 +107,8 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
             .par_iter()
             .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
             .collect();
-        drop_in_background_thread(chi);
+        // drop_in_background_thread(chi);
+        std::mem::forget(chi);
         results
     }
 
