@@ -271,14 +271,6 @@ impl<F: PrimeField> R1CSShape<F> {
                 )
             },
         );
-
-        // pad each Az, Bz, Cz to the next power of 2
-        // let m = max(Az.len(), max(Bz.len(), Cz.len())).next_power_of_two();
-        // rayon::join(
-        //     || Az.resize(m, F::zero()),
-        //     || rayon::join(|| Bz.resize(m, F::zero()), || Cz.resize(m, F::zero())),
-        // );
-
         Ok(())
     }
 
