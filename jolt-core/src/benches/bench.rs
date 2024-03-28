@@ -266,7 +266,7 @@ fn prove_example<T: Serialize>(
 fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
-    program.set_input(&vec![5u8; 32]);
+    program.set_input(&[5u8; 32]);
     program.set_input(&800u32);
 
     let task = move || {
