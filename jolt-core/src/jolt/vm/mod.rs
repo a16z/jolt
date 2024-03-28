@@ -486,7 +486,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let inputs: R1CSInputs<F> = R1CSInputs::new(
             padded_trace_len,
             bytecode_a,
-            bytecode_v.clone(),
+            bytecode_v,
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
