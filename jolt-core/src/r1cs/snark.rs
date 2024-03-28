@@ -299,35 +299,35 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
 
+      // Commit to segments
+      let commit_segments = |segments: &Vec<Vec<F>>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+        let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
+        let _g = span.enter();
+        segments.iter().map(|segment| {
+          HyraxCommitment::commit_slice(segment, &generators)
+        }).collect()
+      };
+
+      let io_comms = commit_segments(&io_segments);
+      let aux_comms = commit_segments(&aux_segments);
+
+      let r1cs_commitments = R1CSInternalCommitments::<G> {
+        io: io_comms,
+        aux: aux_comms,
+      };
+
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_to_witness_segments");
       let _enter = cloning_stuff_span.enter();
       let inputs_segments = inputs.clone_to_trace_len_chunks(padded_trace_len);
 
       let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
       // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
-      w_segments.par_extend(io_segments.par_iter().cloned());
+      w_segments.par_extend(io_segments.into_par_iter());
       w_segments.par_extend(inputs_segments.into_par_iter());
-      w_segments.par_extend(aux_segments.par_iter().cloned());
+      w_segments.par_extend(aux_segments.into_par_iter());
 
       drop(_enter);
       drop(cloning_stuff_span);
-
-      // Commit to segments
-      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
-        let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
-        let _g = span.enter();
-        segments.into_iter().map(|segment| {
-          HyraxCommitment::commit(&DensePolynomial::new(segment), &generators)
-        }).collect()
-      };
-
-      let io_comms = commit_segments(io_segments);
-      let aux_comms = commit_segments(aux_segments);
-
-      let r1cs_commitments = R1CSInternalCommitments::<G> {
-        io: io_comms,
-        aux: aux_comms,
-      };
 
       Ok((key, w_segments, r1cs_commitments))
   }
