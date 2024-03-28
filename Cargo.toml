@@ -58,6 +58,9 @@ lto = "off"
 inherits = "release"
 debug = false
 
+[dependencies]
+jolt-sdk = { path = "./jolt-sdk" }
+
 [patch.crates-io]
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }

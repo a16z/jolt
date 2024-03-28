@@ -82,6 +82,8 @@ impl Program {
                     &target,
                     "--target",
                     "riscv32i-unknown-none-elf",
+                    "--bin",
+                    "guest",
                 ])
                 .output()
                 .expect("failed to build guest");
@@ -90,9 +92,8 @@ impl Program {
             io::stderr().write(&output.stderr).unwrap();
 
             let elf = format!(
-                "{}/riscv32i-unknown-none-elf/release/{}",
+                "{}/riscv32i-unknown-none-elf/release/guest",
                 target,
-                self.guest
             );
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }

@@ -1,12 +1,12 @@
 #![cfg_attr(feature = "guest", no_std)]
-#![cfg_attr(feature = "guest", no_main)]
+#![no_main]
 
-#[jolt_sdk::main]
+#[jolt::func]
 fn add(x: u32, y: u32) -> u32 {
     x + y
 }
 
-#[jolt_sdk::main]
+#[jolt::func]
 fn mul(x: u32, y: u32) -> u32 {
     x * y
 }

@@ -3,12 +3,14 @@ name = "sha3-guest"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "guest"
+path = "./src/lib.rs"
+
 [features]
 guest = []
 
-[lib]
-path = "src/main.rs"
-
 [dependencies]
 sha3 = { version = "0.10.8", default-features = false }
-jolt-sdk = { path = "../../../jolt-sdk" }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+

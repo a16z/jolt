@@ -3,7 +3,7 @@
 
 use sha3::{Keccak256, Digest};
 
-#[jolt_sdk::main]
+#[jolt::func]
 fn sha3(input: &[u8]) -> [u8; 32] {
     let mut hasher = Keccak256::new();
     hasher.update(input);
