@@ -6,7 +6,6 @@ use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
-use strum::EnumCount;
 
 use crate::jolt::{
     instruction::JoltInstruction, subtable::JoltSubtableSet,
