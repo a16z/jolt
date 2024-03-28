@@ -276,6 +276,7 @@ impl ELFInstruction {
             | RV32IM::SLTIU
             | RV32IM::AUIPC
             | RV32IM::JAL
+            | RV32IM::LUI
             | RV32IM::JALR => true,
             _ => false,
         };
