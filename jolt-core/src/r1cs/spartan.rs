@@ -203,7 +203,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let (Az, Bz, Cz) = key.shape_single_step.multiply_vec_uniform(
             &segmented_padded_witness,
-            &vec![],
             key.num_steps,
         )?;
         let mut poly_Az = DensePolynomial::new(Az);
@@ -225,7 +224,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         };
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_cubic_with_additive_term::<G, _>(
+            SumcheckInstanceProof::prove_spartan_cubic::<G, _>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
@@ -345,22 +344,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         drop(_enter);
         drop(span);
 
-        let comb_func = |poly_A_comp: &F, poly_B_comp: &F| -> F {
-            if *poly_A_comp == F::zero() || *poly_B_comp == F::zero() {
-                F::zero()
-            } else {
-                *poly_A_comp * *poly_B_comp
-            }
-        };
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_quad_unrolled::<G, _, _>(
+            SumcheckInstanceProof::prove_spartan_quadratic::<G, _>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
                 &segmented_padded_witness,
-                &vec![],
-                comb_func,
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
