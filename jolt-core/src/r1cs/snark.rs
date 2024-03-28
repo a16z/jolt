@@ -1,4 +1,4 @@
-use crate::{jolt::vm::{Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
+use crate::{jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
 use crate::utils::transcript::AppendToTranscript;
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
@@ -8,6 +8,7 @@ use common::constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS};
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::prelude::*;
+use strum::EnumCount;
 
 /// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
 #[tracing::instrument(skip_all)]
@@ -88,6 +89,7 @@ pub struct R1CSInputs<F: PrimeField> {
     chunks_query: Vec<F>,
     lookup_outputs: Vec<F>,
     circuit_flags_bits: Vec<F>,
+    instruction_flags_bits: Vec<F>,
 }
 
 impl<F: PrimeField> R1CSInputs<F> {
@@ -103,7 +105,8 @@ impl<F: PrimeField> R1CSInputs<F> {
     chunks_y: Vec<F>,
     chunks_query: Vec<F>,
     lookup_outputs: Vec<F>,
-    circuit_flags_bits: Vec<F>
+    circuit_flags_bits: Vec<F>,
+    instruction_flags_bits: Vec<F>,
   ) -> Self {
 
     assert!(bytecode_a.len() % padded_trace_len == 0);
@@ -116,6 +119,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     assert!(chunks_query.len() % padded_trace_len == 0);
     assert!(lookup_outputs.len() % padded_trace_len == 0);
     assert!(circuit_flags_bits.len() % padded_trace_len == 0);
+    assert!(instruction_flags_bits.len() % padded_trace_len == 0);
 
     Self {
       padded_trace_len,
@@ -129,6 +133,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       chunks_query,
       lookup_outputs,
       circuit_flags_bits,
+      instruction_flags_bits, 
     }
   }
 
@@ -168,6 +173,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       push_to_step(&self.chunks_query, &mut step);
       push_to_step(&self.lookup_outputs, &mut step);
       push_to_step(&self.circuit_flags_bits, &mut step);
+      push_to_step(&self.instruction_flags_bits, &mut step);
 
       assert_eq!(num_inputs_per_step, step.len());
 
@@ -194,6 +200,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       + self.chunks_query.len() / trace_len
       + self.lookup_outputs.len() / trace_len
       + self.circuit_flags_bits.len() / trace_len
+      + self.instruction_flags_bits.len() / trace_len
   }
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
@@ -210,6 +217,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     chunks.par_extend(self.chunks_query.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.lookup_outputs.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.circuit_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.instruction_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks
   }
 }
@@ -343,6 +351,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let bytecode_read_write_commitments = &jolt_commitments.bytecode.read_write_commitments;
       let ram_a_v_commitments = &jolt_commitments.read_write_memory.a_v_read_write_commitments;
       let instruction_lookup_indices_commitments = &jolt_commitments.instruction_lookups.dim_read_commitment[0..C];
+      let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
 
       let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
       combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
@@ -364,6 +373,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       combined_commitments.extend(r1cs_commitments.lookup_outputs.iter());
 
       combined_commitments.extend(r1cs_commitments.circuit_flags.iter());
+
+      combined_commitments.extend(instruction_flag_commitments.iter());
 
       combined_commitments.extend(r1cs_commitments.internal_commitments.aux.iter());
 

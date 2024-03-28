@@ -445,6 +445,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                     circuit_flags[index] = flag;
                 })
             });
+
+        let instruction_flags = jolt_polynomials.instruction_lookups.instruction_flag_polys.iter()
+            .map(|poly| poly.evals())
+            .flatten()
+            .collect();
         drop(_enter);
         drop(span);
 
@@ -495,6 +500,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_query,
             lookup_outputs,
             circuit_flags,
+            instruction_flags,
         );
 
         let (key, witness_segments, io_aux_commitments) = R1CSProof::<F,G>::compute_witness_commit(

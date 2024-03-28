@@ -43,6 +43,7 @@ enum InputType {
     ChunksQuery    = 10,
     LookupOutput   = 11,
     OpFlags        = 12,
+    InstrFlags     = 13,
 }
 
 const INPUT_SIZES: &[(InputType, usize)] = &[
@@ -58,7 +59,8 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::ChunksY,         C),
     (InputType::ChunksQuery,     C),
     (InputType::LookupOutput,    1),
-    (InputType::OpFlags,         N_FLAGS),
+    (InputType::OpFlags,         NUM_CIRCUIT_FLAGS),
+    (InputType::InstrFlags,      RV32I::COUNT),
 ];
 
 const INPUT_OFFSETS: [usize; INPUT_SIZES.len()] = {
@@ -311,7 +313,7 @@ impl R1CSBuilder {
         // TODO(arasuarun): this should be done after fixing the padding issue for prog_a_rw
 
         // Combine flag_bits and check that they equal op_flags_packed. 
-        R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
+        // R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
 
         // Constriant: signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
         let immediate: usize = R1CSBuilder::if_else(instance, smallvec![(is_lui_auipc, 1)], smallvec![(immediate_before_processing, 1)], smallvec![(immediate_before_processing, 1<<12)]); 
