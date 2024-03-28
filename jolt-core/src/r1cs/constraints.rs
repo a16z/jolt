@@ -3,11 +3,14 @@
 use ark_ff::PrimeField; 
 use smallvec::{smallvec, SmallVec};
 use rayon::prelude::*;
-use common::constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET};
+use common::{constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET}, rv_trace::NUM_CIRCUIT_FLAGS};
+use strum::EnumCount;
+
+use crate::jolt::vm::rv32i_vm::RV32I;
 
 /* Compiler Variables */
 const C: usize = 4; 
-const N_FLAGS: usize = 17; 
+const N_FLAGS: usize = NUM_CIRCUIT_FLAGS + RV32I::COUNT; 
 const W: usize = 32;
 const LOG_M: usize = 16; 
 const MEMORY_ADDRESS_OFFSET: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; 
@@ -40,6 +43,7 @@ enum InputType {
     ChunksQuery    = 10,
     LookupOutput   = 11,
     OpFlags        = 12,
+    InstrFlags     = 13,
 }
 
 const INPUT_SIZES: &[(InputType, usize)] = &[
@@ -47,7 +51,7 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::OutputState,     STATE_LENGTH),
     (InputType::InputState,      STATE_LENGTH),
     (InputType::ProgARW,         1),
-    (InputType::ProgVRW,         6),
+    (InputType::ProgVRW,         5),
     (InputType::MemregARW,       7),
     (InputType::MemregVReads,    7),
     (InputType::MemregVWrites,   7),
@@ -55,7 +59,8 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::ChunksY,         C),
     (InputType::ChunksQuery,     C),
     (InputType::LookupOutput,    1),
-    (InputType::OpFlags,         N_FLAGS),
+    (InputType::OpFlags,         NUM_CIRCUIT_FLAGS),
+    (InputType::InstrFlags,      RV32I::COUNT),
 ];
 
 const INPUT_OFFSETS: [usize; INPUT_SIZES.len()] = {
@@ -280,12 +285,11 @@ impl R1CSBuilder {
 
     pub fn get_matrices(instance: &mut R1CSBuilder) {
         // Parse the input indices 
-        let opcode = GET_INDEX(InputType::ProgVRW, 0);
+        let op_flags_packed= GET_INDEX(InputType::ProgVRW, 0);
         let rd = GET_INDEX(InputType::ProgVRW, 1);
         let rs1 = GET_INDEX(InputType::ProgVRW, 2);
         let rs2 = GET_INDEX(InputType::ProgVRW, 3);
         let immediate_before_processing = GET_INDEX(InputType::ProgVRW, 4);
-        let op_flags_packed = GET_INDEX(InputType::ProgVRW, 5);
 
         let is_load_instr: usize = GET_INDEX(InputType::OpFlags, 2);
         let is_store_instr: usize = GET_INDEX(InputType::OpFlags, 3);
@@ -309,7 +313,7 @@ impl R1CSBuilder {
         // TODO(arasuarun): this should be done after fixing the padding issue for prog_a_rw
 
         // Combine flag_bits and check that they equal op_flags_packed. 
-        R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
+        // R1CSBuilder::combine_constraint(instance, GET_INDEX(InputType::OpFlags, 0), 1, N_FLAGS, op_flags_packed);
 
         // Constriant: signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
         let immediate: usize = R1CSBuilder::if_else(instance, smallvec![(is_lui_auipc, 1)], smallvec![(immediate_before_processing, 1)], smallvec![(immediate_before_processing, 1<<12)]); 
@@ -538,12 +542,11 @@ impl R1CSBuilder {
 
     pub fn calculate_aux<F: PrimeField>(inputs: &mut Vec<F>) {
         // Parse the input indices 
-        let opcode = GET_INDEX(InputType::ProgVRW, 0);
+        let op_flags_packed = GET_INDEX(InputType::ProgVRW, 0);
         let rd = GET_INDEX(InputType::ProgVRW, 1);
         let rs1 = GET_INDEX(InputType::ProgVRW, 2);
         let rs2 = GET_INDEX(InputType::ProgVRW, 3);
         let immediate_before_processing = GET_INDEX(InputType::ProgVRW, 4);
-        let op_flags_packed = GET_INDEX(InputType::ProgVRW, 5);
 
         let is_load_instr: usize = GET_INDEX(InputType::OpFlags, 2);
         let is_store_instr: usize = GET_INDEX(InputType::OpFlags, 3);
