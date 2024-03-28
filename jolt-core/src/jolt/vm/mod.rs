@@ -398,32 +398,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         /* Assemble the polynomials and commitments from the rest of Jolt.
         The ones that are extra, just for R1CS are:
-            - circuit_flags_packed
             - chunks_x
             - chunks_y
             - lookup_output
             - circuit_flags_bits
         */
-
-        // Obtain circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
-        let span = tracing::span!(tracing::Level::INFO, "pack_flags");
-        let _enter = span.enter();
-        let precomputed_powers: Vec<F> = (0..N_FLAGS + Self::InstructionSet::COUNT)
-            .map(|i| F::from_u64(2u64.pow(i as u32)).unwrap())
-            .collect();
-
-        let mut packed_flags: Vec<F> = circuit_flags
-            .par_chunks(N_FLAGS + Self::InstructionSet::COUNT)
-            .map(|x| {
-                x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
-                    packed + *flag * precomputed_powers[N_FLAGS + Self::InstructionSet::COUNT - 1 - i]
-                })
-            })
-            .collect();
-        packed_flags.resize(padded_trace_len, F::zero());
-
-        drop(_enter);
-        drop(span);
 
         // Derive chunks_x and chunks_y
         let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
@@ -498,7 +477,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let chunks_x_comms = commit_to_chunks(&chunks_x);
         let chunks_y_comms = commit_to_chunks(&chunks_y);
         let lookup_outputs_comms = commit_to_chunks(&lookup_outputs);
-        let packed_flags_comm = HyraxCommitment::commit_slice(&packed_flags, &hyrax_generators);
         let circuit_flags_comm = commit_to_chunks(&circuit_flags_bits);
         drop(_guard);
 
@@ -509,7 +487,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             padded_trace_len,
             bytecode_a,
             bytecode_v.clone(),
-            packed_flags.clone(),
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
@@ -519,10 +496,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             lookup_outputs,
             circuit_flags_bits,
         );
-
-        println!("packed_flags[0]: {:?}", packed_flags[1]); 
-        println!("opcode[0]: {:?}", &bytecode_v[1]);
-        println!("circuit_flags[0]: {:?}", &circuit_flags[0..N_FLAGS as usize]);
 
         let (key, witness_segments, io_aux_commitments) = R1CSProof::<F,G>::compute_witness_commit(
             32, 
@@ -537,14 +510,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_x_comms,
             chunks_y_comms,
             lookup_outputs_comms,
-            packed_flags_comm,
             circuit_flags_comm,
             hyrax_generators
         );
 
         r1cs_commitments.append_to_transcript(transcript);
-
-
 
         let proof  = R1CSProof::prove(
             key,
