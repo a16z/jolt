@@ -10,12 +10,12 @@ use serde::Serialize;
 
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
+    rv_trace::{JoltDevice, MemoryOp, RV32IM},
 };
 use tracer::ELFInstruction;
 
 use crate::jolt::{
-    instruction::{add::ADDInstruction, JoltInstructionSet},
+    instruction::add::ADDInstruction,
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
 };
 
@@ -86,7 +86,7 @@ impl Program {
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
-    pub fn trace<F: PrimeField, InstructionSet>(
+    pub fn trace<F: PrimeField>(
         mut self,
     ) -> (
         JoltDevice,
@@ -94,8 +94,7 @@ impl Program {
         Vec<RV32I>,
         Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         Vec<F>,
-    )where
-    InstructionSet: JoltInstructionSet {
+    ) {
         self.build();
         let elf = self.elf.unwrap();
         let (trace, io_device) = tracer::trace(&elf, self.input);
@@ -122,12 +121,11 @@ impl Program {
         let circuit_flag_trace = trace
             .par_iter()
             .flat_map(|row| {
-                let bitvector = row.instruction
+                row.instruction
                     .to_circuit_flags()
                     .iter()
                     .map(|&flag| flag.into())
-                    .collect::<Vec<F>>();
-                bitvector
+                    .collect::<Vec<F>>()
             })
             .collect();
 
