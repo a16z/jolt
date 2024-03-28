@@ -110,7 +110,6 @@ impl TryFrom<&RVTraceRow> for RV32I {
 
             RV32IM::JAL  => Ok(ADDInstruction(row.instruction.address, row.imm_u64()).into()),
             RV32IM::JALR => Ok(ADDInstruction(row.register_state.rs1_val.unwrap(), row.imm_u64()).into()),
-            RV32IM::LUI => Ok(ADDInstruction(row.instruction.address, row.imm_u64()).into()),
             RV32IM::AUIPC => Ok(ADDInstruction(row.instruction.address, row.imm_u64()).into()),
 
             RV32IM::SB => Ok(SBInstruction(row.register_state.rs2_val.unwrap()).into()),
