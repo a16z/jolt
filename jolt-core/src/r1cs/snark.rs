@@ -295,18 +295,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(span);
 
       let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
-
-      // Commit to segments
-      let commit_segments = |segments: &Vec<Vec<F>>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
-        let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
-        let _g = span.enter();
-        segments.iter().map(|segment| {
-          HyraxCommitment::commit_slice(segment, &generators)
-        }).collect()
-      };
-
-      let io_comms = commit_segments(&io_segments);
-      let aux_comms = commit_segments(&aux_segments);
+      let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
+      let aux_comms = HyraxCommitment::batch_commit(&aux_segments, &generators);
 
       let r1cs_commitments = R1CSInternalCommitments::<G> {
         io: io_comms,

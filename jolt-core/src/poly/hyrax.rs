@@ -63,11 +63,35 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
         Self::commit_slice(poly.evals_ref(), gens)
     }
 
-    #[tracing::instrument(skip_all, name = "HyraxCommitment::commit_slice")]
-    pub fn commit_slice(
-        eval_slice: &[G::ScalarField],
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit")]
+    pub fn batch_commit(
+        batch: &Vec<Vec<G::ScalarField>>,
         gens: &HyraxGenerators<RATIO, G>,
-    ) -> Self {
+    ) -> Vec<Self> {
+        let n = batch[0].len();
+        batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
+        let ell = n.log_2();
+
+        let (L_size, R_size) = matrix_dimensions(ell, RATIO);
+        assert_eq!(L_size * R_size, n);
+
+        let gens = CurveGroup::normalize_batch(&gens.gens.generators);
+
+        let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
+        let row_commitments: Vec<G> = rows
+            .map(|row| PedersenCommitment::commit_vector(row, &gens))
+            .collect();
+
+        row_commitments
+            .par_chunks(L_size)
+            .map(|chunk| Self {
+                row_commitments: chunk.to_vec(),
+            })
+            .collect()
+    }
+
+    #[tracing::instrument(skip_all, name = "HyraxCommitment::commit_slice")]
+    pub fn commit_slice(eval_slice: &[G::ScalarField], gens: &HyraxGenerators<RATIO, G>) -> Self {
         let n = eval_slice.len();
         let ell = n.log_2();
 
