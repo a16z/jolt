@@ -205,14 +205,32 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
             .collect::<Vec<F>>();
 
-        let (Az, Bz, Cz) = key.shape_single_step.multiply_vec_uniform(
+        let combined_witness_size = (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
+        let A_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+        let B_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+        let C_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+
+        let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
+
+        let span = tracing::span!(tracing::Level::TRACE, "wait_join");
+        let _enter = span.enter();
+        let mut A_z = A_z.join().unwrap();
+        let mut B_z = B_z.join().unwrap();
+        let mut C_z = C_z.join().unwrap();
+        drop(_enter);
+
+        key.shape_single_step.multiply_vec_uniform(
             &segmented_padded_witness,
             key.num_steps,
+            &mut A_z,
+            &mut B_z,
+            &mut C_z
         )?;
-        let mut poly_Az = DensePolynomial::new(Az);
-        let mut poly_Bz = DensePolynomial::new(Bz);
-        let mut poly_Cz = DensePolynomial::new(Cz);
-        let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
+        let mut poly_Az = DensePolynomial::new(A_z);
+        let mut poly_Bz = DensePolynomial::new(B_z);
+        let mut poly_Cz = DensePolynomial::new(C_z);
+
+
 
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
