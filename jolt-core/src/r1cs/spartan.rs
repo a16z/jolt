@@ -224,7 +224,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         };
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_cubic_with_additive_term::<G, _>(
+            SumcheckInstanceProof::prove_spartan_cubic::<G, _>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,

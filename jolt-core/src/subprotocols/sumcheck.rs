@@ -753,8 +753,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[inline]
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_cubic")]
-    pub fn compute_eval_points_cubic<Func>(
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic")]
+    pub fn compute_eval_points_spartan_cubic<Func>(
         poly_A: &DensePolynomial<F>,
         poly_B: &DensePolynomial<F>,
         poly_C: &DensePolynomial<F>,
@@ -766,44 +766,49 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     {
         let len = poly_A.len() / 2;
         (0..len)
-        .into_par_iter()
-        .map(|i| {
-            // eval 0: bound_func is A(low)
-            let eval_point_0 = comb_func(&poly_A[i], &poly_B[i], &poly_C[i], &poly_D[i]);
+            .into_par_iter()
+            .map(|i| {
+                // eval 0: bound_func is A(low)
+                let eval_point_0 = comb_func(&poly_A[i], &poly_B[i], &poly_C[i], &poly_D[i]);
 
-            // eval 2: bound_func is -A(low) + 2*A(high)
-            let poly_A_bound_point = poly_A[len + i] + poly_A[len + i] - poly_A[i];
-            let poly_B_bound_point = poly_B[len + i] + poly_B[len + i] - poly_B[i];
-            let poly_C_bound_point = poly_C[len + i] + poly_C[len + i] - poly_C[i];
-            let poly_D_bound_point = poly_D[len + i] + poly_D[len + i] - poly_D[i];
-            let eval_point_2 = comb_func(
-            &poly_A_bound_point,
-            &poly_B_bound_point,
-            &poly_C_bound_point,
-            &poly_D_bound_point,
-            );
+                let m_A = poly_A[len + i] - poly_A[i];
+                let m_B = poly_B[len + i] - poly_B[i];
+                let m_C = poly_C[len + i] - poly_C[i];
+                let m_D = poly_D[len + i] - poly_D[i];
 
-            // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
-            let poly_A_bound_point = poly_A_bound_point + poly_A[len + i] - poly_A[i];
-            let poly_B_bound_point = poly_B_bound_point + poly_B[len + i] - poly_B[i];
-            let poly_C_bound_point = poly_C_bound_point + poly_C[len + i] - poly_C[i];
-            let poly_D_bound_point = poly_D_bound_point + poly_D[len + i] - poly_D[i];
-            let eval_point_3 = comb_func(
-            &poly_A_bound_point,
-            &poly_B_bound_point,
-            &poly_C_bound_point,
-            &poly_D_bound_point,
-            );
-            (eval_point_0, eval_point_2, eval_point_3)
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero()),
-            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
-        )
+                // eval 2: bound_func is -A(low) + 2*A(high)
+                let poly_A_bound_point = poly_A[len + i] + m_A;
+                let poly_B_bound_point = poly_B[len + i] + m_B;
+                let poly_C_bound_point = poly_C[len + i] + m_C;
+                let poly_D_bound_point = poly_D[len + i] + m_D;
+                let eval_point_2 = comb_func(
+                    &poly_A_bound_point,
+                    &poly_B_bound_point,
+                    &poly_C_bound_point,
+                    &poly_D_bound_point,
+                );
+
+                // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
+                let poly_A_bound_point = poly_A_bound_point + m_A;
+                let poly_B_bound_point = poly_B_bound_point + m_B;
+                let poly_C_bound_point = poly_C_bound_point + m_C;
+                let poly_D_bound_point = poly_D_bound_point + m_D;
+                let eval_point_3 = comb_func(
+                    &poly_A_bound_point,
+                    &poly_B_bound_point,
+                    &poly_C_bound_point,
+                    &poly_D_bound_point,
+                );
+                (eval_point_0, eval_point_2, eval_point_3)
+            })
+            .reduce(
+                || (F::zero(), F::zero(), F::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+            )
     }
 
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_cubic_with_additive_term")]
-    pub fn prove_cubic_with_additive_term<G, Func>(
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
+    pub fn prove_spartan_cubic<G, Func>(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
@@ -825,13 +830,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let poly = {
             // Make an iterator returning the contributions to the evaluations
             let (eval_point_0, eval_point_2, eval_point_3) =
-            Self::compute_eval_points_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
+            Self::compute_eval_points_spartan_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
 
             let evals = [
-            eval_point_0,
-            claim_per_round - eval_point_0,
-            eval_point_2,
-            eval_point_3,
+                eval_point_0,
+                claim_per_round - eval_point_0,
+                eval_point_2,
+                eval_point_3,
             ];
             UniPoly::from_evals(&evals)
         };
