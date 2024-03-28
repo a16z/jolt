@@ -348,7 +348,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
 
       combined_commitments.push(&bytecode_read_write_commitments[0]); // a
-      combined_commitments.push(&bytecode_read_write_commitments[2]); // opcode
+      combined_commitments.push(&bytecode_read_write_commitments[2]); // op_flags_packed
       combined_commitments.push(&bytecode_read_write_commitments[3]); // rd
       combined_commitments.push(&bytecode_read_write_commitments[4]); // rs1
       combined_commitments.push(&bytecode_read_write_commitments[5]); // rs2
