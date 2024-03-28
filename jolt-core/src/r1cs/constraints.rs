@@ -3,11 +3,14 @@
 use ark_ff::PrimeField; 
 use smallvec::{smallvec, SmallVec};
 use rayon::prelude::*;
-use common::constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET};
+use common::{constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET}, rv_trace::NUM_CIRCUIT_FLAGS};
+use strum::EnumCount;
+
+use crate::jolt::vm::rv32i_vm::RV32I;
 
 /* Compiler Variables */
 const C: usize = 4; 
-const N_FLAGS: usize = 17 + 19; 
+const N_FLAGS: usize = NUM_CIRCUIT_FLAGS + RV32I::COUNT; 
 const W: usize = 32;
 const LOG_M: usize = 16; 
 const MEMORY_ADDRESS_OFFSET: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; 

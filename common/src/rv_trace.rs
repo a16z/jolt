@@ -235,18 +235,6 @@ pub struct ELFInstruction {
 pub const NUM_CIRCUIT_FLAGS: usize = 17;
 
 impl ELFInstruction {
-    pub fn default_from_opcode(opcode: RV32IM) -> Self {
-        Self {
-            address: 0,
-            opcode,
-            raw: 0,
-            rs1: None,
-            rs2: None,
-            rd: None,
-            imm: None,
-        }
-    }
-
     #[rustfmt::skip]
     pub fn to_circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         // Jolt Appendix A.1

@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{JoltDevice, MemoryOp, RV32IM},
+    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
 };
 use tracer::ELFInstruction;
 
@@ -128,16 +128,12 @@ impl Program {
                     .map(|&flag| flag.into())
                     .collect::<Vec<F>>();
 
-                let N_FLAGS = bitvector.len();
-                bitvector.resize(N_FLAGS + InstructionSet::COUNT, F::zero());
+                bitvector.resize(NUM_CIRCUIT_FLAGS + InstructionSet::COUNT, F::zero());
 
                 // instruction flag
                 if let Ok(jolt_instruction) = InstructionSet::try_from(&row.instruction) {
                     let instruction_index = InstructionSet::enum_index(&jolt_instruction);
-                    // bitvector <<= instruction_index;
-                    // bitvector |= 1;
-                    // bitvector <<= InstructionSet::COUNT - instruction_index - 1;
-                    bitvector[N_FLAGS + instruction_index] = F::from(1 as u64);
+                    bitvector[NUM_CIRCUIT_FLAGS + instruction_index] = F::from(1 as u64);
                 } 
                 bitvector
             })
