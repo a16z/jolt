@@ -1,5 +1,6 @@
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
+use crate::utils::thread::allocate_vec_in_background;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::AppendToTranscript;
 use crate::utils::transcript::ProofTranscript;
@@ -190,6 +191,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
+        let poly_ABC_len = 2 * key.num_vars_total;
+        let RLC_evals_alloc = allocate_vec_in_background(F::ZERO, poly_ABC_len);
+
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
 
@@ -295,6 +299,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 },
             );
 
+            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_small_RLC_evals");
+            let _enter = span.enter();
             let r_sq = r_inner_sumcheck_RLC * r_inner_sumcheck_RLC;
             let small_RLC_evals = (0..small_A_evals.len())
                 .into_par_iter()
@@ -304,16 +310,29 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                         + small_C_evals[i] * r_sq
                 })
                 .collect::<Vec<F>>();
+            drop(_enter);
 
             // 2. Handles all entries but the last one with the constant 1 variable
-            let mut RLC_evals: Vec<F> = (0..key.num_vars_total)
-                .into_par_iter()
-                .map(|col| eq_rx_ts[col % n_steps] * small_RLC_evals[col / n_steps])
-                .collect();
-            let next_pow_2 = 2 * key.num_vars_total;
-            RLC_evals.resize(next_pow_2, F::zero());
+            let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
+            let _other_enter = other_span.enter();
+            let mut RLC_evals = RLC_evals_alloc.join().unwrap();
+            drop(_other_enter);
+
+            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
+            let _enter = span.enter();
+            // small_RLC_evals is 30% ones.
+            RLC_evals.par_chunks_mut(n_steps).take(key.num_vars_total / n_steps).enumerate().for_each(|(chunk_index, rlc_chunk)| {
+                if !small_RLC_evals[chunk_index].is_zero() {
+                    for (eq_index, item) in rlc_chunk.iter_mut().enumerate() {
+                        *item = eq_rx_ts[eq_index] * small_RLC_evals[chunk_index];
+                    }
+                }
+            });
+            drop(_enter);
 
             // 3. Handles the constant 1 variable
+            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_constant");
+            let _enter = span.enter();
             let eq_sum = eq_rx_ts.par_iter().sum::<F>();
             let compute_eval_constant_column = |small_M: &Vec<(usize, usize, F)>| -> F {
                 let constant_sum: F = small_M.iter()
@@ -334,6 +353,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                     )
                 },
             );
+            drop(_enter);
 
             RLC_evals[key.num_vars_total] = constant_term_A
                 + r_inner_sumcheck_RLC * constant_term_B
