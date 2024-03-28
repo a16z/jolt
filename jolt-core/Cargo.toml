@@ -67,6 +67,7 @@ thiserror = "1.0.58"
 smallvec = "1.13.1"
 serde = { version = "1.0.*", default-features = false }
 jemallocator = "0.5.4"
+mimalloc = "0.1.39"
 
 [build-dependencies]
 common = { path = "../common" }

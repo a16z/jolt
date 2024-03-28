@@ -192,6 +192,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
         let poly_ABC_len = 2 * key.num_vars_total;
+        println!("poly_ABC_len: {poly_ABC_len}");
         // let unpadded_poly_ABC_len = key.num_vars_total + 1; // +1 for constant 1
         let RLC_evals_alloc = allocate_vec_in_background(F::zero(), poly_ABC_len);
 
@@ -210,6 +211,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let A_z = allocate_vec_in_background(F::zero(), combined_witness_size);
         let B_z = allocate_vec_in_background(F::zero(), combined_witness_size);
         let C_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+        println!("combined_witness_size: {combined_witness_size}");
 
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
 
