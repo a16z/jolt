@@ -94,6 +94,11 @@ lto = "fat"
 [dependencies]
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
 guest = { path = "./guest" }
+
+[patch.crates-io]
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
 "#;
 
 const HOST_MAIN: &str = r#"pub fn main() {
