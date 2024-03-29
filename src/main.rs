@@ -78,6 +78,9 @@ name = "{NAME}"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["guest"]
+
 [dependencies]
 jolt = { git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
 guest = { path = "./guest" }
