@@ -22,6 +22,7 @@ pub enum BenchType {
     Fibonacci,
     Sha2,
     Sha3,
+    Sha2Chain,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -41,6 +42,7 @@ pub fn benchmarks(
         BenchType::InstructionLookups => prove_instruction_lookups(num_cycles),
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
+        BenchType::Sha2Chain => sha2chain(),
         BenchType::Fibonacci => fibonacci(),
         _ => panic!("BenchType does not have a mapping"),
     }
@@ -225,6 +227,47 @@ fn prove_example<T: Serialize>(
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     program.set_input(input);
+
+    let task = move || {
+        let bytecode = program.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            program.trace();
+
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<
+            ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
+            ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>,
+        > = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 22);
+
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            io_device,
+            bytecode,
+            bytecode_trace,
+            memory_trace,
+            instruction_trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Example_E2E"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut tasks = Vec::new();
+    let mut program = host::Program::new("sha2-chain-guest");
+    program.set_input(&[5u8; 32]);
+    program.set_input(&1024u32);
 
     let task = move || {
         let bytecode = program.decode();
