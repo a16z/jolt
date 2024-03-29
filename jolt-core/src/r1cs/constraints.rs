@@ -20,14 +20,13 @@ const MOPS: usize = 7;
 /* End of Compiler Variables */
 
 const L_CHUNK: usize = LOG_M/2;  
-const STEP_NUM_IDX: usize = 0; 
-const PC_IDX: usize = 1; 
+const PC_IDX: usize = 0; 
 
 const ALL_ONES: i64 = 0xffffffff;
 
 const ONE: (usize, i64) = (0, 1);
 
-const STATE_LENGTH: usize = 2;
+const STATE_LENGTH: usize = 1;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 enum InputType {
@@ -82,10 +81,6 @@ fn GET_TOTAL_LEN() -> usize {
 
 fn GET_INDEX(input_type: InputType, offset: usize) -> usize {
     INPUT_OFFSETS[input_type as usize] + offset
-}
-
-fn UNMAP_PC(pc_idx: usize) -> SmallVec<[(usize, i64); SMALLVEC_SIZE]> {
-    smallvec![(pc_idx, 4), (0, PC_START_ADDRESS as i64)]
 }
 
 const SMALLVEC_SIZE: usize = 4;
@@ -552,19 +547,6 @@ impl R1CSBuilder {
             smallvec![(rd_val, 1), (PC, -1), (0, -4)], 
         ); 
         
-        /* output_state[STEP_NUM_IDX()] <== input_state[STEP_NUM_IDX()]+1; */
-        R1CSBuilder::constr_abc(instance, 
-            smallvec![(GET_INDEX(InputType::OutputState, STEP_NUM_IDX), 1)], 
-            smallvec![ONE], 
-            smallvec![(GET_INDEX(InputType::InputState, STEP_NUM_IDX), 1), (0, 1)], 
-        );
-        R1CSBuilder::eq(instance, 
-            smallvec![(GET_INDEX(InputType::InputState, STEP_NUM_IDX), 1), (0, 1)], 
-            GET_INDEX(InputType::OutputState, STEP_NUM_IDX),
-            true, 
-        );
-
-
         /*  Set next PC 
             signal next_pc_j <== if_else()([
                 is_jump_instr,  
@@ -789,9 +771,8 @@ impl R1CSBuilder {
         );
 
 
-        // Assign outputs: (step counter, PC)
-        inputs[1] = inputs[3]+F::ONE;  
-        inputs[2] = inputs[next_pc_j_b];
+        // Assign output state: PC
+        inputs[1] = inputs[next_pc_j_b];
     }
 
     fn move_constant_to_end(&mut self) {
