@@ -1,6 +1,10 @@
 use core::{str::FromStr, u8};
 use std::{
-    collections::HashMap, fs::{self, File}, io::{self, Write}, path::PathBuf, process::Command
+    collections::HashMap,
+    fs::{self, File},
+    io::{self, Write},
+    path::PathBuf,
+    process::Command,
 };
 
 use ark_ff::PrimeField;
@@ -10,7 +14,7 @@ use serde::Serialize;
 
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{JoltDevice, MemoryOp, RV32IM},
+    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
 };
 use tracer::ELFInstruction;
 
@@ -54,6 +58,7 @@ impl Program {
         self.memory_size = len;
     }
 
+    #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
             self.save_linker(self.memory_size);
@@ -91,10 +96,7 @@ impl Program {
             io::stdout().write(&output.stdout).unwrap();
             io::stderr().write(&output.stderr).unwrap();
 
-            let elf = format!(
-                "{}/riscv32i-unknown-none-elf/release/guest",
-                target,
-            );
+            let elf = format!("{}/riscv32i-unknown-none-elf/release/guest", target,);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }
@@ -106,6 +108,7 @@ impl Program {
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
+    #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace<F: PrimeField>(
         mut self,
     ) -> (
@@ -138,16 +141,19 @@ impl Program {
 
         let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
             trace.par_iter().map(|row| row.into()).collect();
-        let circuit_flag_trace = trace
-            .par_iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<F>>()
-            })
-            .collect();
+
+        let padded_trace_len = trace.len().next_power_of_two();
+        let mut circuit_flag_trace = vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
+        circuit_flag_trace
+            .par_chunks_mut(padded_trace_len)
+            .enumerate()
+            .for_each(|(flag_index, chunk)| {
+                chunk.iter_mut().zip(trace.iter()).for_each(|(flag, row)| {
+                    if row.instruction.to_circuit_flags()[flag_index] {
+                        *flag = F::one();
+                    }
+                });
+            });
 
         (
             io_device,
@@ -190,11 +196,12 @@ impl Program {
             fs::create_dir_all(parent).expect("could not create linker file");
         }
 
-        let linker_script = LINKER_SCRIPT_TEMPLATE
-            .replace("{MEMORY_SIZE}", &memory_size.to_string());
+        let linker_script =
+            LINKER_SCRIPT_TEMPLATE.replace("{MEMORY_SIZE}", &memory_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
-        file.write(linker_script.as_bytes()).expect("could not save linker");
+        file.write(linker_script.as_bytes())
+            .expect("could not save linker");
     }
 
     fn linker_path(&self) -> String {
