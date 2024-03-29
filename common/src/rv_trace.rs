@@ -232,7 +232,7 @@ pub struct ELFInstruction {
     pub imm: Option<u32>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 14;
+pub const NUM_CIRCUIT_FLAGS: usize = 13;
 
 impl ELFInstruction {
     #[rustfmt::skip]
