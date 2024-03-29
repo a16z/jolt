@@ -679,11 +679,10 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_init_final: None,
             v_init_final: None,
-            t_final: polynomials.t_final.evaluate_at_chi(&chis),
+            t_final: polynomials.t_final.evaluate(opening_point),
         }
     }
 
@@ -725,8 +724,6 @@ where
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let mut combined_openings: Vec<F> = vec![self.t_final.clone()];
-
         opening_proof.verify(
             &commitment.t_final_generators,
             transcript,
