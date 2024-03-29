@@ -316,6 +316,11 @@ impl R1CSBuilder {
 
         // Constraint 1: relation between PC and prog_a_rw
         // TODO(arasuarun): this should be done after fixing the padding issue for prog_a_rw
+        R1CSBuilder::constr_abc(instance, 
+            smallvec![(GET_INDEX(InputType::ProgARW, 0), 4), (0, PC_START_ADDRESS as i64), (PC, -1)], 
+            smallvec![(PC, 1)], 
+            smallvec![], 
+        ); 
 
         // Combine flag_bits and check that they equal op_flags_packed. 
         R1CSBuilder::combine_constraint(instance,
