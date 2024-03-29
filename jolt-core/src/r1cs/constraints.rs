@@ -310,7 +310,6 @@ impl R1CSBuilder {
         let PC = GET_INDEX(InputType::InputState, PC_IDX); 
 
         // Constraint 1: relation between PC and prog_a_rw
-        // TODO(arasuarun): this should be done after fixing the padding issue for prog_a_rw
         R1CSBuilder::constr_abc(instance, 
             smallvec![(GET_INDEX(InputType::ProgARW, 0), 4), (0, PC_START_ADDRESS as i64), (PC, -1)], 
             smallvec![(PC, 1)], 
