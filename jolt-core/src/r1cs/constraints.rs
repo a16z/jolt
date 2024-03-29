@@ -412,6 +412,11 @@ impl R1CSBuilder {
             smallvec![(combined_z_chunks, 1), (x, -1), (y, 1), (0, -1 * (ALL_ONES + 1))],
             smallvec![]
         ); 
+        R1CSBuilder::constr_abc(instance,
+            smallvec![(is_load_instr, 1)], 
+            smallvec![(combined_z_chunks, 1), (load_or_store_value, -1)],
+            smallvec![]
+        ); 
 
         let is_mul_x = R1CSBuilder::multiply(instance, smallvec![(is_mul_instr, 1)], smallvec![(x, 1)]);
         let is_mul_xy = R1CSBuilder::multiply(instance, smallvec![(is_mul_x, 1)], smallvec![(y, 1)]);
@@ -512,7 +517,6 @@ impl R1CSBuilder {
             GET_INDEX(InputType::OutputState, STEP_NUM_IDX),
             true, 
         );
-
 
         /*  Set next PC 
             signal next_pc_j <== if_else()([
