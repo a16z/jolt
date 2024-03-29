@@ -99,11 +99,15 @@ impl Program {
         let elf = self.elf.unwrap();
         let (trace, io_device) = tracer::trace(&elf, self.input);
 
+        let start = std::time::Instant::now();
         let bytecode_trace: Vec<BytecodeRow> = trace
             .par_iter()
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
             .collect();
+        let end = std::time::Instant::now();
+        println!("bytecode trace: {}", end.duration_since(start).as_millis());
 
+        let start = std::time::Instant::now();
         let instruction_trace: Vec<RV32I> = trace
             .par_iter()
             .map(|row| {
@@ -115,9 +119,16 @@ impl Program {
                 }
             })
             .collect();
+        let end = std::time::Instant::now();
+        println!("instruction trace: {}", end.duration_since(start).as_millis());
 
+        let start = std::time::Instant::now();
         let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
             trace.par_iter().map(|row| row.into()).collect();
+        let end = std::time::Instant::now();
+        println!("mem trace: {}", end.duration_since(start).as_millis());
+
+        let start = std::time::Instant::now();
         let circuit_flag_trace = trace
             .par_iter()
             .flat_map(|row| {
@@ -128,6 +139,8 @@ impl Program {
                     .collect::<Vec<F>>()
             })
             .collect();
+        let end = std::time::Instant::now();
+        println!("flag trace: {}", end.duration_since(start).as_millis());
 
         (
             io_device,
