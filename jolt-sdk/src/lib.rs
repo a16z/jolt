@@ -25,6 +25,8 @@ pub use liblasso::jolt::vm::{
 };
 #[cfg(feature = "std")]
 pub use tracer;
+#[cfg(feature = "std")]
+pub use tracing;
 
 #[cfg(feature = "std")]
 pub struct Proof {

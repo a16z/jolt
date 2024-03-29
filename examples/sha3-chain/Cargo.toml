@@ -9,3 +9,6 @@ guest = { package = "sha3-chain-guest", path = "./guest" }
 
 hex = "0.4.3"
 sha3 = { version = "0.10.8", default-features = false }
+tracing = "0.1.37"
+tracing-chrome = "0.7.1"
+tracing-subscriber = "0.3.18"

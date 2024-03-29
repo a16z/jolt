@@ -204,6 +204,9 @@ impl MacroBuilder {
                 preprocessing: jolt_sdk::JoltPreprocessing<jolt_sdk::F, jolt_sdk::G>,
                 #inputs
             ) -> #prove_output_ty {
+                let outer_span = trace_span!("SDK prove_fn");
+                let _outer_span_enter = outer_span.enter();
+
                 #imports
 
                 #(#set_program_args;)*
@@ -330,6 +333,7 @@ impl MacroBuilder {
                 MEMORY_OPS_PER_INSTRUCTION,
                 instruction::add::ADDInstruction,
                 tracer,
+                tracing::trace_span,
             };
         }
     }

@@ -1,6 +1,10 @@
 use core::{str::FromStr, u8};
 use std::{
-    collections::HashMap, fs::{self, File}, io::{self, Write}, path::PathBuf, process::Command
+    collections::HashMap,
+    fs::{self, File},
+    io::{self, Write},
+    path::PathBuf,
+    process::Command,
 };
 
 use ark_ff::PrimeField;
@@ -80,7 +84,6 @@ impl Program {
         }
     }
 
-
     #[tracing::instrument(skip_all, name = "Program::decode")]
     pub fn decode(&mut self) -> Vec<ELFInstruction> {
         self.build();
@@ -135,14 +138,17 @@ impl Program {
         let span_circuit_flag_trace = tracing::span!(tracing::Level::TRACE, "circuit_flag_trace");
         let _enter = span_circuit_flag_trace.enter();
         let mut circuit_flag_trace = vec![F::zero(); trace.len() * NUM_CIRCUIT_FLAGS];
-        circuit_flag_trace.par_chunks_mut(NUM_CIRCUIT_FLAGS).enumerate().for_each(|(chunk_index, chunk)| {
-            let flags = trace[chunk_index].instruction.to_circuit_flags();
-            for (flag_index, flag) in flags.iter().enumerate() {
-                if *flag {
-                    chunk[flag_index] = F::one();
+        circuit_flag_trace
+            .par_chunks_mut(NUM_CIRCUIT_FLAGS)
+            .enumerate()
+            .for_each(|(chunk_index, chunk)| {
+                let flags = trace[chunk_index].instruction.to_circuit_flags();
+                for (flag_index, flag) in flags.iter().enumerate() {
+                    if *flag {
+                        chunk[flag_index] = F::one();
+                    }
                 }
-            }
-        });
+            });
         drop(_enter);
 
         (
@@ -186,11 +192,12 @@ impl Program {
             fs::create_dir_all(parent).expect("could not create linker file");
         }
 
-        let linker_script = LINKER_SCRIPT_TEMPLATE
-            .replace("{MEMORY_SIZE}", &memory_size.to_string());
+        let linker_script =
+            LINKER_SCRIPT_TEMPLATE.replace("{MEMORY_SIZE}", &memory_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
-        file.write(linker_script.as_bytes()).expect("could not save linker");
+        file.write(linker_script.as_bytes())
+            .expect("could not save linker");
     }
 
     fn linker_path(&self) -> String {
