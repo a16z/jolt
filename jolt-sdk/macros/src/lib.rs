@@ -208,7 +208,10 @@ impl MacroBuilder {
 
                 #(#set_program_args;)*
 
+                let start = std::time::Instant::now();
                 let bytecode = program.decode();
+                let end = std::time::Instant::now();
+                println!("program decode time: {}", end.duration_since(start).as_millis());
 
                 let start = std::time::Instant::now();
                 let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
