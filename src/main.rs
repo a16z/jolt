@@ -84,12 +84,14 @@ edition = "2021"
 [workspace]
 members = ["guest"]
 
+[profile.release]
+debug = 1
+codegen-units = 1
+lto = "fat"
+
 [dependencies]
 jolt = { git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
 guest = { path = "./guest" }
-
-hex = "0.4.3"
-sha3 = { version = "0.10.8", default-features = false }
 "#;
 
 const HOST_MAIN: &str = r#"
