@@ -873,7 +873,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: Vec<InstructionSet>,
+        ops: &Vec<InstructionSet>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -883,7 +883,7 @@ where
     ) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        let polynomials = Self::polynomialize(preprocessing, &ops);
+        let polynomials = Self::polynomialize(preprocessing, ops);
         let batched_polys = polynomials.batch();
         let commitment = polynomials.commit(&batched_polys, generators);
 
@@ -899,7 +899,7 @@ where
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
         let sumcheck_claim =
-            Self::compute_sumcheck_claim(preprocessing, &ops, &polynomials.E_polys, &eq_evals);
+            Self::compute_sumcheck_claim(preprocessing, ops, &polynomials.E_polys, &eq_evals);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,

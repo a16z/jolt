@@ -6,7 +6,6 @@ use common::rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS};
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
-use strum::EnumCount;
 
 use crate::jolt::{
     instruction::JoltInstruction, subtable::JoltSubtableSet,
@@ -144,7 +143,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         program_io: JoltDevice,
-        bytecode: Vec<ELFInstruction>,
         bytecode_trace: Vec<BytecodeRow>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
@@ -154,12 +152,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<G>,
     ) {
-        println!("Jolt::prove({})", memory_trace.len());
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
-            .iter()
-            .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
-            .collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             &preprocessing.bytecode,
             bytecode_trace.clone(),
@@ -167,11 +160,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut transcript,
         );
 
-        // - prove_r1cs() memory_trace R1CS is not 2-padded
-        // - prove_memory() memory_trace    is 2-padded
-        let mut padded_memory_trace = memory_trace.clone();
+        let trace_length = memory_trace.len();
+        let mut padded_memory_trace = memory_trace;
         padded_memory_trace.resize(
-            memory_trace.len().next_power_of_two(),
+            trace_length.next_power_of_two(),
             std::array::from_fn(|_| MemoryOp::no_op()),
         );
 
@@ -189,7 +181,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             instruction_lookups_commitment,
         ) = Self::prove_instruction_lookups(
             &preprocessing.instruction_lookups,
-            instructions.clone(),
+            &instructions,
             &preprocessing.generators,
             &mut transcript,
         );
@@ -203,10 +195,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let (r1cs_proof, r1cs_commitment) = Self::prove_r1cs(
             preprocessing,
             instructions,
-            bytecode_rows,
-            bytecode_trace,
-            bytecode,
-            memory_trace.into_iter().flatten().collect(),
             circuit_flags,
             &jolt_polynomials,
             &mut transcript,
@@ -264,7 +252,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
     fn prove_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: Vec<Self::InstructionSet>,
+        ops: &Vec<Self::InstructionSet>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -360,15 +348,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     fn prove_r1cs(
         preprocessing: JoltPreprocessing<F, G>,
         instructions: Vec<Self::InstructionSet>,
-        bytecode_rows: Vec<BytecodeRow>,
-        trace: Vec<BytecodeRow>,
-        bytecode: Vec<ELFInstruction>,
-        memory_trace: Vec<MemoryOp>,
         circuit_flags_stepwise: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
     ) -> (R1CSProof<F, G>, R1CSUniqueCommitments<G>) {
-        let trace_len = trace.len();
+        let trace_len = instructions.len();
         let padded_trace_len = trace_len.next_power_of_two();
 
         let log_M = log2(M) as usize;

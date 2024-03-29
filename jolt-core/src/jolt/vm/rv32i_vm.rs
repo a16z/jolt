@@ -189,7 +189,7 @@ mod tests {
         let (proof, _, commitment) =
             <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove_instruction_lookups(
                 &preprocessing.instruction_lookups,
-                ops,
+                &ops,
                 &preprocessing.generators,
                 &mut prover_transcript,
             );
@@ -235,7 +235,6 @@ mod tests {
         let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,
@@ -263,7 +262,6 @@ mod tests {
         let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,

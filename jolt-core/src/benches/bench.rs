@@ -92,7 +92,7 @@ fn prove_e2e_except_r1cs(
         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_instruction_lookups(
                 &preprocessing.instruction_lookups,
-                ops,
+                &ops,
                 &preprocessing.generators,
                 &mut transcript,
             );
@@ -182,7 +182,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_instruction_lookups(
                 &preprocessing.instruction_lookups,
-                ops,
+                &ops,
                 &preprocessing.generators,
                 &mut transcript,
             );
@@ -240,7 +240,6 @@ fn prove_example<T: Serialize>(
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,
@@ -281,7 +280,6 @@ fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,
