@@ -16,13 +16,15 @@ enum Command {
     New {
         /// Project name
         name: String,
-    }
+    },
+    InstallToolchain,
 }
 
 fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::New { name } => create_project(name),
+        Command::InstallToolchain => install_toolchain(),
     }
 }
 
@@ -30,6 +32,14 @@ fn create_project(name: String) {
     create_folder_structure(&name).expect("could not create directory");
     create_host_files(&name).expect("file creation failed");
     create_guest_files(&name).expect("file creation failed");
+}
+
+fn install_toolchain() {
+   std::process::Command::new("rustup")
+       .args(["target", "add", "riscv32i-unknown-none-elf"])
+       .output()
+       .expect("could not install toolchain");
+
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
