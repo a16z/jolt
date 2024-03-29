@@ -298,14 +298,10 @@ impl R1CSBuilder {
         let if_update_rd_with_lookup_output: usize = GET_INDEX(InputType::OpFlags, 6);
         let is_add_instr: usize = GET_INDEX(InputType::OpFlags, 7);
         let is_sub_instr: usize = GET_INDEX(InputType::OpFlags, 8);
-        let is_mul_instr: usize = GET_INDEX(InputType::OpFlags, 9);
-        let is_advice_instr: usize = GET_INDEX(InputType::OpFlags, 10);
-        let is_assert_false_instr: usize = GET_INDEX(InputType::OpFlags, 11);
-        let is_assert_true_instr: usize = GET_INDEX(InputType::OpFlags, 12);
-        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 13);
-        let is_concat: usize = GET_INDEX(InputType::OpFlags, 14);
-        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 15);
-        let is_shift: usize = GET_INDEX(InputType::OpFlags, 16);
+        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 9);
+        let is_concat: usize = GET_INDEX(InputType::OpFlags, 10);
+        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 11);
+        let is_shift: usize = GET_INDEX(InputType::OpFlags, 12);
 
         let PC = GET_INDEX(InputType::InputState, PC_IDX); 
 
@@ -357,8 +353,8 @@ impl R1CSBuilder {
             signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
          */
         let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
-        let _y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
-        let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
+        let y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
+        // let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
 
         /* 
             signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
@@ -419,11 +415,6 @@ impl R1CSBuilder {
             signal combined_z_chunks <== combine_chunks(C(), LOG_M())(chunks_query);
             is_add_instr * (combined_z_chunks - (x + y)) === 0; 
             is_sub_instr * (combined_z_chunks - (x + (ALL_ONES() - y + 1))) === 0; 
-
-            // This creates a big aux witness value only for mul instructions. 
-            signal is_mul_x <== is_mul_instr * x; 
-            signal is_mul_xy <== is_mul_instr * y;
-            is_mul_instr * (combined_z_chunks - is_mul_xy) === 0;
         */
 
         let combined_z_chunks = R1CSBuilder::combine_be(instance, 
@@ -451,14 +442,6 @@ impl R1CSBuilder {
             smallvec![(combined_z_chunks, 1), (rs2_val, -1)],
             smallvec![]
         ); 
-
-        let is_mul_x = R1CSBuilder::multiply(instance, smallvec![(is_mul_instr, 1)], smallvec![(x, 1)]);
-        let is_mul_xy = R1CSBuilder::multiply(instance, smallvec![(is_mul_x, 1)], smallvec![(y, 1)]);
-        R1CSBuilder::constr_abc(instance,
-            smallvec![(is_mul_instr, 1)], 
-            smallvec![(combined_z_chunks, 1), (is_mul_xy, -1)],
-            smallvec![]
-        );
 
         /* Verify the chunks of x and y for concat instructions. 
             signal combined_x_chunks <== combine_chunks(C(), L_CHUNK())(chunks_x);
@@ -505,21 +488,6 @@ impl R1CSBuilder {
 
         // TODO: handle case when C() doesn't divide W() 
         // Maybe like this: var idx_ms_chunk = C()-1; (chunks_query[idx_ms_chunk] - (chunks_x[idx_ms_chunk] + chunks_y[idx_ms_chunk] * 2**(L_MS_CHUNK()))) * is_concat === 0;
-
-        /* For assert instructions 
-        is_assert_false_instr * (1-lookup_output) === 0;
-        is_assert_true_instr * lookup_output === 0;
-        */
-        R1CSBuilder::constr_abc(instance, 
-            smallvec![(is_assert_false_instr, 1)], 
-            smallvec![(GET_INDEX(InputType::LookupOutput, 0), -1), (0, 1)], 
-            smallvec![]
-        ); 
-        R1CSBuilder::constr_abc(instance, 
-            smallvec![(is_assert_true_instr, 1)], 
-            smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)], 
-            smallvec![]
-        ); 
 
         /* Constraints for storing value in register rd.
             // lui doesn't need a lookup and simply requires the lookup_output to be set to immediate 
@@ -604,14 +572,10 @@ impl R1CSBuilder {
         let if_update_rd_with_lookup_output: usize = GET_INDEX(InputType::OpFlags, 6);
         let is_add_instr: usize = GET_INDEX(InputType::OpFlags, 7);
         let is_sub_instr: usize = GET_INDEX(InputType::OpFlags, 8);
-        let is_mul_instr: usize = GET_INDEX(InputType::OpFlags, 9);
-        let is_advice_instr: usize = GET_INDEX(InputType::OpFlags, 10);
-        let is_assert_false_instr: usize = GET_INDEX(InputType::OpFlags, 11);
-        let is_assert_true_instr: usize = GET_INDEX(InputType::OpFlags, 12);
-        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 13);
-        let is_concat: usize = GET_INDEX(InputType::OpFlags, 14);
-        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 15);
-        let is_shift: usize = GET_INDEX(InputType::OpFlags, 16);
+        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 9);
+        let is_concat: usize = GET_INDEX(InputType::OpFlags, 10);
+        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 11);
+        let is_shift: usize = GET_INDEX(InputType::OpFlags, 12);
 
         let PC = GET_INDEX(InputType::InputState, PC_IDX); 
 
@@ -660,18 +624,7 @@ impl R1CSBuilder {
             }
         );
 
-
-        // 5. let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0));
-        let y = inputs.len();
-        inputs.push(
-            if inputs[is_advice_instr].is_zero() {
-                inputs[_y]
-            } else {
-                inputs[GET_INDEX(InputType::LookupOutput, 0)]
-            }
-        );
-
-        // 6. let immediate_signed = R1CSBuilder::if_else(instance, smallvec![(sign_imm_flag, 1)], smallvec![(immediate, 1)], smallvec![(immediate, 1), (0, -ALL_ONES - 1)]);
+        // 5. let immediate_signed = R1CSBuilder::if_else(instance, smallvec![(sign_imm_flag, 1)], smallvec![(immediate, 1)], smallvec![(immediate, 1), (0, -ALL_ONES - 1)]);
         let immediate_signed = inputs.len();
         inputs.push(
             if inputs[sign_imm_flag].is_zero() {
@@ -681,7 +634,7 @@ impl R1CSBuilder {
             }
         );
 
-        // 7. let combined_z_chunks = R1CSBuilder::combine_be(instance, GET_INDEX(InputType::ChunksQuery, 0), LOG_M, C);
+        // 6. let combined_z_chunks = R1CSBuilder::combine_be(instance, GET_INDEX(InputType::ChunksQuery, 0), LOG_M, C);
         let combined_z_chunks = inputs.len();
         inputs.push({
             let mut val = F::zero();
@@ -692,21 +645,7 @@ impl R1CSBuilder {
             val 
         });
 
-        // 8. let is_mul_x = R1CSBuilder::multiply(instance, smallvec![(is_mul_instr, 1)], smallvec![(x, 1)]);
-        let is_mul_x = inputs.len();
-        inputs.push(
-            inputs[is_mul_instr] * inputs[x]
-        );
-
-
-        // 9. let is_mul_xy = R1CSBuilder::multiply(instance, smallvec![(is_mul_x, 1)], smallvec![(y, 1)]);
-        let is_mul_xy = inputs.len();
-        inputs.push(
-            inputs[is_mul_x] * inputs[y]
-        );
-
-
-        // 10-13. let chunk_y_used_i = R1CSBuilder::if_else_simple(&mut instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
+        // 7-10. let chunk_y_used_i = R1CSBuilder::if_else_simple(&mut instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
         let mut chunk_y_used = [0; C];
         for i in 0..C {
             chunk_y_used[i] = inputs.len(); 
@@ -721,19 +660,19 @@ impl R1CSBuilder {
 
         let rd_val = GET_INDEX(InputType::MemregVWrites, 2);
 
-        // 14. R1CSBuilder::constr_prod_0(smallvec![(rd, 1)], smallvec![(if_update_rd_with_lookup_output, 1)], smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], );
+        // 11. R1CSBuilder::constr_prod_0(smallvec![(rd, 1)], smallvec![(if_update_rd_with_lookup_output, 1)], smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], );
         let _ = inputs.len();
         inputs.push(inputs[rd] * inputs[if_update_rd_with_lookup_output]); 
 
-        // 15. constr_prod_0[is_jump_instr, rd, rd_val, prog_a_rw, 4]
+        // 12. constr_prod_0[is_jump_instr, rd, rd_val, prog_a_rw, 4]
         let _ = inputs.len();
         inputs.push(inputs[rd] * inputs[is_jump_instr]); 
 
-        // 16. let is_branch_times_lookup_output = R1CSBuilder::multiply(instance, smallvec![(is_branch_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]); 
+        // 13. let is_branch_times_lookup_output = R1CSBuilder::multiply(instance, smallvec![(is_branch_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]); 
         let is_branch_times_lookup_output = inputs.len();
         inputs.push(inputs[is_branch_instr] * inputs[GET_INDEX(InputType::LookupOutput, 0)]);
 
-        // 17. let next_pc_j = R1CSBuilder::if_else(instance, smallvec![(is_jump_instr, 1)], smallvec![(PC, 1), (0, 4)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]);
+        // 14. let next_pc_j = R1CSBuilder::if_else(instance, smallvec![(is_jump_instr, 1)], smallvec![(PC, 1), (0, 4)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]);
         let next_pc_j = inputs.len();
         inputs.push(
             if inputs[is_jump_instr].is_zero() {
@@ -743,7 +682,7 @@ impl R1CSBuilder {
             }
         );
 
-        // 18. let next_pc_j_b = R1CSBuilder::if_else(instance, smallvec![(is_branch_times_lookup_output, 1)], smallvec![(next_pc_j, 1)], smallvec![(PC, 1), (immediate_signed, 1)]);
+        // 15. let next_pc_j_b = R1CSBuilder::if_else(instance, smallvec![(is_branch_times_lookup_output, 1)], smallvec![(next_pc_j, 1)], smallvec![(PC, 1), (immediate_signed, 1)]);
         let next_pc_j_b = inputs.len();
         inputs.push(
             if inputs[is_branch_times_lookup_output].is_zero() {
@@ -783,24 +722,3 @@ impl R1CSBuilder {
         )
     }
 }
-
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        // #[test]
-        // fn test_get_matrices() {
-        //     let instance = R1CSBuilder::<F>::get_matrices(None);
-        //     println!("{:?}", instance.unwrap());
-
-        // }
-
-        // #[test]
-        // fn test_get_matrices_all_zeros() {
-        //     let instance = R1CSBuilder::<F>::get_matrices(Some(vec![F::from(0); GET_TOTAL_LEN()])).unwrap();
-        //     // println!("{:?}", instance);
-        //     println!("z vector is {:?}", instance.z.unwrap());
-        //     // println!("z[2] vector is {:?}", instance.z.unwrap()[2] * F::from(-1));
-        // }
-    }
