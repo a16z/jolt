@@ -139,7 +139,7 @@ impl<F: PrimeField> R1CSInputs<F> {
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_stepwise")]
   pub fn clone_to_stepwise(&self) -> Vec<Vec<F>> {
-    const PREFIX_VARS_PER_STEP: usize = 5;
+    const PREFIX_VARS_PER_STEP: usize = 3;
 
     // AUX_VARS_PER_STEP has to be greater than the number of additional vars pushed by the constraint system
     const AUX_VARS_PER_STEP: usize = 20; 
@@ -154,7 +154,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       };
 
       // 1 is constant, 0s in slots 1, 2 are filled by aux computation
-      step.extend([F::from(1u64), F::from(0u64), F::from(0u64), F::from(step_index as u64), program_counter]);
+      step.extend([F::from(1u64), F::from(0u64), program_counter]);
 
       let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
         let num_vals = data.len() / self.padded_trace_len;
@@ -294,7 +294,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(_enter);
       drop(span);
 
-      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
+      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
       let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
       let aux_comms = HyraxCommitment::batch_commit(&aux_segments, &generators);
 

@@ -327,16 +327,6 @@ impl ELFInstruction {
         flags[7] = match self.opcode {
             RV32IM::ADD 
             | RV32IM::ADDI 
-            // Store and load instructions only have one lookup operand (rs2 and the RAM word, respectively)
-            // so we add the operand to a dummy operand of 0 in the circuit to obtain the lookup query.
-            | RV32IM::SB
-            | RV32IM::SH
-            | RV32IM::SW
-            | RV32IM::LB
-            | RV32IM::LH
-            | RV32IM::LW
-            | RV32IM::LBU
-            | RV32IM::LHU
             | RV32IM::JAL 
             | RV32IM::JALR 
             | RV32IM::AUIPC => true,
