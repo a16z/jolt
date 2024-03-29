@@ -17,6 +17,7 @@ enum Command {
         /// Project name
         name: String,
     },
+    /// Installs the required RISC-V toolchain for Rust
     InstallToolchain,
 }
 
