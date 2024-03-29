@@ -49,6 +49,8 @@ path = "./src/main.rs"
 
 [dependencies]
 jolt-sdk = { path = "./jolt-sdk" }
+clap = { version = "4.5.4", features = ["derive"] }
+eyre = "0.6.12"
 
 [profile.test]
 opt-level = 3
