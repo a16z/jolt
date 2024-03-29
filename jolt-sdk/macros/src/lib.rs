@@ -1,3 +1,5 @@
+#![feature(proc_macro_tracked_env)]
+
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
@@ -13,7 +15,7 @@ use common::constants::{
 };
 
 #[proc_macro_attribute]
-pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttributeArgs);
     let func = parse_macro_input!(item as ItemFn);
     MacroBuilder::new(attr, func).build()
@@ -41,7 +43,16 @@ impl MacroBuilder {
         let analyze_fn = self.make_analyze_function();
         let preprocess_fn = self.make_preprocess_func();
         let prove_fn = self.make_prove_func();
-        let main_fn = self.make_main_func();
+
+        let main_fn = if let Some(func) = self.get_func_selector() {
+            if self.get_func_name().to_string() == func {
+                self.make_main_func()
+            } else {
+                quote!{}
+            }
+        } else {
+            self.make_main_func()
+        };
 
         quote! {
             #build_fn
@@ -70,7 +81,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #build_fn_name() -> (
                 impl Fn(#(#input_types),*) -> #prove_output_ty,
-                impl Fn(jolt_sdk::Proof) -> bool
+                impl Fn(jolt::Proof) -> bool
             ) {
                 #imports
                 let (program, preprocessing) = #preprocess_fn_name();
@@ -87,7 +98,7 @@ impl MacroBuilder {
                 };
 
 
-                let verify_closure = move |proof: jolt_sdk::Proof| {
+                let verify_closure = move |proof: jolt::Proof| {
                     let program = (*program_cp).clone();
                     let preprocessing = (*preprocessing_cp).clone();
                     RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments).is_ok()
@@ -147,21 +158,23 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
         let preprocess_fn_name = Ident::new(&format!("preprocess_{}", fn_name), fn_name.span());
         quote! {
             #[cfg(not(feature = "guest"))]
             pub fn #preprocess_fn_name() -> (
-                jolt_sdk::host::Program,
-                jolt_sdk::JoltPreprocessing<jolt_sdk::F, jolt_sdk::G>
+                jolt::host::Program,
+                jolt::JoltPreprocessing<jolt::F, jolt::G>
             ) {
                 #imports
 
                 let mut program = Program::new(#guest_name);
+                program.set_func(#fn_name_str);
                 #set_mem_size
                 let bytecode = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<jolt_sdk::F, jolt_sdk::G> =
+                let preprocessing: JoltPreprocessing<jolt::F, jolt::G> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         1 << 20,
@@ -182,7 +195,7 @@ impl MacroBuilder {
                 let ret_val = ();
             },
             ReturnType::Type(_, ty) => quote! {
-                let ret_val = jolt_sdk::postcard::from_bytes::<#ty>(&output_bytes).unwrap();
+                let ret_val = jolt::postcard::from_bytes::<#ty>(&output_bytes).unwrap();
             },
         };
 
@@ -200,8 +213,8 @@ impl MacroBuilder {
         quote! {
             #[cfg(not(feature = "guest"))]
             pub fn #prove_fn_name(
-                mut program: jolt_sdk::host::Program,
-                preprocessing: jolt_sdk::JoltPreprocessing<jolt_sdk::F, jolt_sdk::G>,
+                mut program: jolt::host::Program,
+                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::G>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
@@ -226,7 +239,7 @@ impl MacroBuilder {
 
                 #handle_return
 
-                let proof = jolt_sdk::Proof {
+                let proof = jolt::Proof {
                     proof: jolt_proof,
                     commitments: jolt_commitments,
                 };
@@ -250,7 +263,7 @@ impl MacroBuilder {
         let args_fetch = args.iter().map(|(name, ty)| {
             quote! {
                 let (#name, input_slice) =
-                    jolt_sdk::postcard::take_from_bytes::<#ty>(input_slice).unwrap();
+                    jolt::postcard::take_from_bytes::<#ty>(input_slice).unwrap();
             }
         });
 
@@ -269,7 +282,7 @@ impl MacroBuilder {
                     core::slice::from_raw_parts_mut(output_ptr, #max_output_len)
                 };
 
-                jolt_sdk::postcard::to_slice(&to_return, output_slice).unwrap();
+                jolt::postcard::to_slice(&to_return, output_slice).unwrap();
             },
         };
 
@@ -315,7 +328,7 @@ impl MacroBuilder {
     fn make_imports(&self) -> TokenStream2 {
         quote! {
             #[cfg(not(feature = "guest"))]
-            use jolt_sdk::{
+            use jolt::{
                 CurveGroup,
                 PrimeField,
                 host::Program,
@@ -359,10 +372,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt_sdk::Proof)
+                ((), jolt::Proof)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt_sdk::Proof)
+                (#ty, jolt::Proof)
             },
         }
     }
@@ -389,6 +402,10 @@ impl MacroBuilder {
     }
 
     fn get_guest_name(&self) -> String {
-        std::env::var("CARGO_PKG_NAME").unwrap()
+        proc_macro::tracked_env::var("CARGO_PKG_NAME").unwrap()
+    }
+
+    fn get_func_selector(&self) -> Option<String> {
+        proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
     }
 }

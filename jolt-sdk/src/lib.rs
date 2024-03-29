@@ -2,7 +2,7 @@
 
 extern crate jolt_sdk_macros;
 
-pub use jolt_sdk_macros::main;
+pub use jolt_sdk_macros::provable;
 pub use postcard;
 
 #[cfg(feature = "std")]

@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "guest", no_std)]
-#![cfg_attr(feature = "guest", no_main)]
+#![no_main]
 
-#[jolt_sdk::main]
+#[jolt::provable]
 fn fib(n: u32) -> u128 {
     let mut a: u128 = 0;
     let mut b: u128 = 1;
