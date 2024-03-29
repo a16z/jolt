@@ -41,7 +41,7 @@ members = [
 ]
 
 [features]
-std = [dep:jolt-sdk:std]
+std = ["jolt-sdk/std"]
 
 [lib]
 path = "./src/lib.rs"
