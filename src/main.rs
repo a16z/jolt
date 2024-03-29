@@ -55,6 +55,9 @@ fn create_host_files(name: &str) -> Result<()> {
     let mut toolchain_file = File::create(format!("{}/rust-toolchain", name))?;
     toolchain_file.write("nightly-2023-09-22".as_bytes())?;
 
+    let mut gitignore_file = File::create(format!("{}/.gitignore", name))?;
+    gitignore_file.write(GITIGORE.as_bytes())?;
+
     let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
     let mut cargo_file = File::create(format!("{}/Cargo.toml", name))?;
     cargo_file.write(cargo_file_contents.as_bytes())?;
@@ -75,8 +78,7 @@ fn create_guest_files(name: &str) -> Result<()> {
     Ok(())
 }
 
-const HOST_CARGO_TEMPLATE: &str = r#"
-[package]
+const HOST_CARGO_TEMPLATE: &str = r#"[package]
 name = "{NAME}"
 version = "0.1.0"
 edition = "2021"
@@ -90,12 +92,11 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
-jolt = { git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
 guest = { path = "./guest" }
 "#;
 
-const HOST_MAIN: &str = r#"
-pub fn main() {
+const HOST_MAIN: &str = r#"pub fn main() {
     let (prove_fib, verify_fib) = guest::build_fib();
 
     let (output, proof) = prove_fib(50);
@@ -106,8 +107,9 @@ pub fn main() {
 }
 "#;
 
-const GUEST_CARGO: &str = r#"
-[package]
+const GITIGORE: &str = "target";
+
+const GUEST_CARGO: &str = r#"[package]
 name = "guest"
 version = "0.1.0"
 edition = "2021"
@@ -120,11 +122,10 @@ path = "./src/lib.rs"
 guest = []
 
 [dependencies]
-jolt = { git = "https://github.com/a16z/Lasso", branch = "jolt" }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt" }
 "#;
 
-const GUEST_LIB: &str = r#"
-#![cfg_attr(feature = "guest", no_std)]
+const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]
 #![no_main]
 
 #[jolt::provable]
