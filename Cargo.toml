@@ -40,6 +40,21 @@ members = [
     "examples/multi-function/guest",
 ]
 
+[features]
+std = ["jolt-sdk/std"]
+
+[lib]
+path = "./src/lib.rs"
+
+[[bin]]
+name = "jolt"
+path = "./src/main.rs"
+
+[dependencies]
+jolt-sdk = { path = "./jolt-sdk" }
+clap = { version = "4.5.4", features = ["derive"] }
+eyre = "0.6.12"
+
 [profile.test]
 opt-level = 3
 lto = "off"
@@ -57,9 +72,6 @@ lto = "off"
 [profile.guest]
 inherits = "release"
 debug = false
-
-[dependencies]
-jolt-sdk = { path = "./jolt-sdk" }
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "optimize/field-from-u64" }
