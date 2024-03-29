@@ -2,7 +2,7 @@
 
 - [Intro](./intro.md)
 - [Usage](./using_jolt.md)
-    - [Quick Start](./usage/quickstart.md)
+    - [Quickstart](./usage/quickstart.md)
     - [Installing](./usage/install.md)
     - [Guests and Hosts](./usage/guests_hosts.md)
         - [Guests](./usage/guests.md)
