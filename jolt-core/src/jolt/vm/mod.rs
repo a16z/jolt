@@ -317,14 +317,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     ) {
         let (polynomials, read_timestamps) =
             ReadWriteMemory::new(program_io, preprocessing, memory_trace, transcript);
-        let batched_polys = polynomials.batch();
         let commitment: MemoryCommitment<G> =
-            ReadWriteMemory::commit(&polynomials, &batched_polys, &generators);
+            ReadWriteMemory::commit(&polynomials, &(), &generators);
 
         let proof = ReadWriteMemoryProof::prove(
             preprocessing,
             &polynomials,
-            &batched_polys,
             read_timestamps,
             program_io,
             generators,

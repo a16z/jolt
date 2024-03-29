@@ -43,7 +43,7 @@ where
     type Preprocessing = NoPreprocessing;
     type Proof: Sync + CanonicalSerialize + CanonicalDeserialize = ConcatenatedPolynomialOpeningProof<G>;
 
-    /// Evaluates each fo the given `polynomials` at the given `opening_point`.
+    /// Evaluates each of the given `polynomials` at the given `opening_point`.
     fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;
 
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
