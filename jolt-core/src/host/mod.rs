@@ -48,6 +48,7 @@ impl Program {
         self.memory_size = len;
     }
 
+    #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
             self.save_linker(self.memory_size);
@@ -79,6 +80,8 @@ impl Program {
         }
     }
 
+
+    #[tracing::instrument(skip_all, name = "Program::decode")]
     pub fn decode(&mut self) -> Vec<ELFInstruction> {
         self.build();
         let elf = self.elf.as_ref().unwrap();
@@ -86,6 +89,7 @@ impl Program {
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
+    #[tracing::instrument(skip_all, name = "Program::trace")]
     pub fn trace<F: PrimeField>(
         mut self,
     ) -> (
