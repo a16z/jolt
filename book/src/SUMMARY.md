@@ -1,7 +1,12 @@
 # Summary
 
 - [Intro](./intro.md)
-- [Using Jolt](./using_jolt.md)
+- [Usage](./using_jolt.md)
+    - [Quick Start](./usage/quickstart.md)
+    - [Installing](./usage/install.md)
+    - [Guests and Hosts](./usage/guests_hosts.md)
+        - [Guests](./usage/guests.md)
+        - [Hosts](./usage/hosts.md)
 - [How it works](./how_it_works.md)
     - [Lookups](./how/lookups.md)
     - [Memory Checking](./how/memory-checking.md)
