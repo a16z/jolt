@@ -69,28 +69,28 @@ impl MacroBuilder {
         quote! {
             #[cfg(not(feature = "guest"))]
             pub fn #build_fn_name() -> (
-                impl Fn(#(#input_types),*) -> #prove_output_ty,
-                impl Fn(jolt_sdk::Proof) -> bool
+                impl FnOnce(#(#input_types),*) -> #prove_output_ty,
+                impl FnOnce(jolt_sdk::Proof) -> bool
             ) {
                 #imports
                 let (program, preprocessing) = #preprocess_fn_name();
-                let program = std::rc::Rc::new(program);
-                let preprocessing = std::rc::Rc::new(preprocessing);
+                // let program = std::rc::Rc::new(program);
+                // let preprocessing = std::rc::Rc::new(preprocessing);
 
-                let program_cp = program.clone();
+                // let program_cp = program.clone();
                 let preprocessing_cp = preprocessing.clone();
 
                 let prove_closure = move |#inputs| {
-                    let program = (*program).clone();
-                    let preprocessing = (*preprocessing).clone();
+                    // let program = (*program).clone();
+                    // let preprocessing = (*preprocessing).clone();
                     #prove_fn_name(program, preprocessing, #(#input_names),*)
                 };
 
 
                 let verify_closure = move |proof: jolt_sdk::Proof| {
-                    let program = (*program_cp).clone();
-                    let preprocessing = (*preprocessing_cp).clone();
-                    RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments).is_ok()
+                    // let program = (*program_cp).clone();
+                    // let preprocessing = (*preprocessing_cp).clone();
+                    RV32IJoltVM::verify(preprocessing_cp, proof.proof, proof.commitments).is_ok()
                 };
 
                 (prove_closure, verify_closure)
