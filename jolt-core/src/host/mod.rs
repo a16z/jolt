@@ -97,7 +97,11 @@ impl Program {
     ) {
         self.build();
         let elf = self.elf.unwrap();
+
+        let start = std::time::Instant::now();
         let (trace, io_device) = tracer::trace(&elf, self.input);
+        let end = std::time::Instant::now();
+        println!("program trace: {}", end.duration_since(start).as_millis());
 
         let start = std::time::Instant::now();
         let bytecode_trace: Vec<BytecodeRow> = trace
