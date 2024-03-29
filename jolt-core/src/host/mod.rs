@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::{JoltDevice, MemoryOp, RV32IM},
+    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
 };
 use tracer::ELFInstruction;
 
@@ -103,11 +103,16 @@ impl Program {
         let elf = self.elf.unwrap();
         let (trace, io_device) = tracer::trace(&elf, self.input);
 
+        let span_bytecode_trace = tracing::span!(tracing::Level::TRACE, "bytecode_trace");
+        let _enter = span_bytecode_trace.enter();
         let bytecode_trace: Vec<BytecodeRow> = trace
             .par_iter()
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
             .collect();
+        drop(_enter);
 
+        let span_instruction_trace = tracing::span!(tracing::Level::TRACE, "instruction_trace");
+        let _enter = span_instruction_trace.enter();
         let instruction_trace: Vec<RV32I> = trace
             .par_iter()
             .map(|row| {
@@ -119,19 +124,26 @@ impl Program {
                 }
             })
             .collect();
+        drop(_enter);
 
+        let span_memory_trace = tracing::span!(tracing::Level::TRACE, "memory_trace");
+        let _enter = span_memory_trace.enter();
         let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
             trace.par_iter().map(|row| row.into()).collect();
-        let circuit_flag_trace = trace
-            .par_iter()
-            .flat_map(|row| {
-                row.instruction
-                    .to_circuit_flags()
-                    .iter()
-                    .map(|&flag| flag.into())
-                    .collect::<Vec<F>>()
-            })
-            .collect();
+        drop(_enter);
+
+        let span_circuit_flag_trace = tracing::span!(tracing::Level::TRACE, "circuit_flag_trace");
+        let _enter = span_circuit_flag_trace.enter();
+        let mut circuit_flag_trace = vec![F::zero(); trace.len() * NUM_CIRCUIT_FLAGS];
+        circuit_flag_trace.par_chunks_mut(NUM_CIRCUIT_FLAGS).enumerate().for_each(|(chunk_index, chunk)| {
+            let flags = trace[chunk_index].instruction.to_circuit_flags();
+            for (flag_index, flag) in flags.iter().enumerate() {
+                if *flag {
+                    chunk[flag_index] = F::one();
+                }
+            }
+        });
+        drop(_enter);
 
         (
             io_device,
