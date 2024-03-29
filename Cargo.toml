@@ -40,6 +40,9 @@ members = [
     "examples/multi-function/guest",
 ]
 
+[features]
+std = []
+
 [lib]
 path = "./src/lib.rs"
 
