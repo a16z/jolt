@@ -5,7 +5,7 @@ Start by installing the jolt command line tool.
 cargo install --git https://github.com/a16z/jolt --force
 ```
 
-Next install the required toolchains.
+Next install the required toolchain with the jolt tool.
 ```
 jolt install-toolchain
 ```
