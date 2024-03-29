@@ -221,7 +221,6 @@ impl MacroBuilder {
 
                 #(#set_program_args;)*
 
-                let bytecode = program.decode();
                 let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
                     program.trace();
 
@@ -229,7 +228,6 @@ impl MacroBuilder {
 
                 let (jolt_proof, jolt_commitments) = RV32IJoltVM::prove(
                     io_device,
-                    bytecode,
                     bytecode_trace,
                     memory_trace,
                     instruction_trace,
