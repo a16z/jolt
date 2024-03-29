@@ -52,6 +52,9 @@ fn create_folder_structure(name: &str) -> Result<()> {
 }
 
 fn create_host_files(name: &str) -> Result<()> {
+    let mut toolchain_file = File::create(format!("{}/rust-toolchain", name))?;
+    toolchain_file.write("nightly-2023-09-22".as_bytes())?;
+
     let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
     let mut cargo_file = File::create(format!("{}/Cargo.toml", name))?;
     cargo_file.write(cargo_file_contents.as_bytes())?;
