@@ -2,7 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_std::log2;
 use common::constants::NUM_R1CS_POLYS;
-use common::rv_trace::JoltDevice;
+use common::rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS};
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -368,7 +368,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
     ) -> (R1CSProof<F, G>, R1CSUniqueCommitments<G>) {
-        let N_FLAGS = 17;
         let trace_len = trace.len();
         let padded_trace_len = trace_len.next_power_of_two();
 
@@ -418,9 +417,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // Derive circuit flags
         let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
         let _enter = span.enter();
-        let mut circuit_flags= vec![F::zero(); padded_trace_len * N_FLAGS];
+        let mut circuit_flags= vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
         circuit_flags_stepwise
-            .chunks(N_FLAGS) 
+            .chunks(NUM_CIRCUIT_FLAGS) 
             .enumerate()
             .for_each(|(step_index, step_flags)| {
                 step_flags.iter().enumerate().for_each(|(flag_index, &flag)| {
