@@ -521,6 +521,8 @@ mod tests {
         struct FakeType();
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, G1Projective, NormalMems> for FakeOpeningProof {
+            type Proof = ();
+
             fn open(_: &NormalMems, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
@@ -725,6 +727,8 @@ mod tests {
         struct FakeType();
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, G1Projective, Polys> for FakeOpeningProof {
+            type Proof = ();
+
             fn open(_: &Polys, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
@@ -975,6 +979,8 @@ mod tests {
         struct FakeType();
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, G1Projective, FlagPolys> for FakeOpeningProof {
+            type Proof = ();
+            
             fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }

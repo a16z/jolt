@@ -6,7 +6,6 @@ use merlin::Transcript;
 use super::pedersen::PedersenGenerators;
 use crate::{
     lasso::memory_checking::NoPreprocessing,
-    subprotocols::concatenated_commitment::ConcatenatedPolynomialOpeningProof,
     utils::errors::ProofVerifyError,
 };
 
@@ -41,7 +40,7 @@ where
     Polynomials: BatchablePolynomials<G> + ?Sized,
 {
     type Preprocessing = NoPreprocessing;
-    type Proof: Sync + CanonicalSerialize + CanonicalDeserialize = ConcatenatedPolynomialOpeningProof<G>;
+    type Proof: Sync + CanonicalSerialize + CanonicalDeserialize;
 
     /// Evaluates each of the given `polynomials` at the given `opening_point`.
     fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;

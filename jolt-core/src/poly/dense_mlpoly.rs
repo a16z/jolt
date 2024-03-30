@@ -4,7 +4,6 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, m
 
 use super::hyrax::{HyraxCommitment, HyraxGenerators};
 use super::pedersen::PedersenGenerators;
-use crate::subprotocols::concatenated_commitment::ConcatenatedPolynomialCommitment;
 use crate::utils::math::Math;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -263,21 +262,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         Z.resize(Z.capacity(), F::zero());
 
         DensePolynomial::new(Z)
-    }
-
-    pub fn combined_commit<G>(
-        &self,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> ConcatenatedPolynomialCommitment<G>
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
-        let generators = HyraxGenerators::new(self.get_num_vars(), pedersen_generators);
-        let joint_commitment = HyraxCommitment::commit(&self, &generators);
-        ConcatenatedPolynomialCommitment {
-            generators,
-            joint_commitment,
-        }
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
