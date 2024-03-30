@@ -348,7 +348,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     fn prove_r1cs(
         preprocessing: JoltPreprocessing<F, G>,
         instructions: Vec<Self::InstructionSet>,
-        circuit_flags_stepwise: Vec<F>,
+        circuit_flags: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
     ) -> (R1CSProof<F, G>, R1CSUniqueCommitments<G>) {
@@ -367,7 +367,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             - chunks_x
             - chunks_y
             - lookup_output
-            - circuit_flags_bits
+            - circuit_flags
         */
 
         // Derive chunks_x and chunks_y
@@ -398,20 +398,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
         lookup_outputs.resize(padded_trace_len, F::zero());
 
-        // Derive circuit flags
-        let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
+        let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
         let _enter = span.enter();
-        let mut circuit_flags= vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
-        circuit_flags_stepwise
-            .chunks(NUM_CIRCUIT_FLAGS) 
-            .enumerate()
-            .for_each(|(step_index, step_flags)| {
-                step_flags.iter().enumerate().for_each(|(flag_index, &flag)| {
-                    let index = step_index + flag_index * padded_trace_len;
-                    circuit_flags[index] = flag;
-                })
-            });
-
         let instruction_flags = jolt_polynomials.instruction_lookups.instruction_flag_polys.iter()
             .map(|poly| poly.evals())
             .flatten()
