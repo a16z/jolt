@@ -1,7 +1,7 @@
 # Hosts
-Hosts are where we can invoke the prover to prove functions defined within the guest. Hosts do not have the `no_std` requirement, and are free to use the Rust standard library.
+Hosts are where we can invoke the Jolt prover to prove functions defined within the guest. Hosts do not have the `no_std` requirement, and are free to use the Rust standard library.
 
-The host imports the guest package, and will have automatically generated functions to build each of the jolt functions. For the sha2 and sha3 example guest we looked at in the [guest](./guests.md) sections, these functions would be called `build_sha2` and `build_sha3`. Each function returns two results, a prover function and a verifier fucntion. The prover function takes in the same input types as the original function and modifies the output to additionally include a proof. The verifier can then take this proof and verify it.
+The host imports the guest package, and will have automatically generated functions to build each of the Jolt functions. For the sha2 and sha3 example guest we looked at in the [guest](./guests.md) section, these functions would be called `build_sha2` and `build_sha3` respectively. Each returns two results, a prover function and a verifier function. The prover function takes in the same input types as the original function and modifies the output to additionally include a proof. The verifier can then take this proof and verify it.
 
 
 ```rust

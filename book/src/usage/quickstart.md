@@ -1,11 +1,11 @@
 # Quickstart
 ## Installing
-Start by installing the jolt command line tool.
+Start by installing the `jolt` command line tool.
 ```
 cargo install --git https://github.com/a16z/jolt --force
 ```
 
-Next install the required toolchain with the jolt tool.
+Next install the required toolchain using the `jolt` tool.
 ```
 jolt install-toolchain
 ```
@@ -22,7 +22,7 @@ cd <PROJECT_NAME>
 ```
 
 ## Project Tour
-The main folder contains the host, which is the code that can generate and verify proofs. Within this main folder, there is antoher package called `guest` which contains the Rust functions that we can prove from the host. For more information about these concepts refer to the [guests and hosts](./usafe/guests_hosts.md) section.
+The main folder contains the host, which is the code that can generate and verify proofs. Within this main folder, there is another package called `guest` which contains the Rust functions that we can prove from the host. For more information about these concepts refer to the [guests and hosts](./usafe/guests_hosts.md) section.
 
 We'll start by taking a look at our guest. We can view the guest code in `guest/src/lib.rs`.
 
@@ -44,7 +44,7 @@ fn fib(n: u32) -> u128 {
 }
 ```
 
-As we can see, this implements a simple fibonacci function called `fib`. All we need to do to make our function provable is add the `jolt::provable` macro above it.
+As we can see, this implements a simple Fibonacci function called `fib`. All we need to do to make our function provable is add the `jolt::provable` macro above it.
 
 Next let's take a look at the host code in `src/main.rs`.
 
@@ -68,4 +68,4 @@ Let's now run the host with `cargo`.
 cargo run --release
 ```
 
-This will compile the guest, perform some required preprocessing, and execute the host code which proves and verifies the 50th fibonacci number. This preprocesing is run within the `build_fib` function and adds significant time to running the host, but only needs to be performed once. This means that we could use the prove method many times without rerunning `build_fib`. In the future we will support caching this across runs of the host.
+This will compile the guest, perform some required preprocessing, and execute the host code which proves and verifies the 50th Fibonacci number. This preprocesing is run within the `build_fib` function and adds significant time to running the host, but only needs to be performed once. This means that we could use the prove method many times without rerunning `build_fib`. In the future we will support caching this across runs of the host.
