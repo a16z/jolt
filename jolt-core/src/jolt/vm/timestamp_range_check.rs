@@ -849,9 +849,8 @@ mod tests {
                 memory_trace,
                 &mut transcript,
             );
-        let batched_polys = rw_memory.batch();
         let generators = PedersenGenerators::new(1 << 10, b"Test generators");
-        let commitments = rw_memory.commit(&batched_polys, &generators);
+        let commitments = rw_memory.commit(&(), &generators);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,
