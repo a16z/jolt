@@ -1,7 +1,3 @@
 # Using Jolt
-## Examples
-All of the example programs in the `/examples` directory can be run with:
-`cargo run -p jolt-core --release -- trace --name <example name>`
+Using Jolt is simple thanks to our tooling and macros. To get started, head over to our [quickstart](./usage/quickstart.md) guide. For more in depth information check out the [guests and hosts](./usage/guests_hosts.md) section.
 
-## Custom
-`TODO`
