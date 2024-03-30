@@ -18,10 +18,10 @@ use common::{
 };
 use tracer::ELFInstruction;
 
-use crate::jolt::{
+use crate::{jolt::{
     instruction::add::ADDInstruction,
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
-};
+}, utils::thread::unsafe_allocate_zero_vec};
 
 const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
 
@@ -143,7 +143,7 @@ impl Program {
             trace.par_iter().map(|row| row.into()).collect();
 
         let padded_trace_len = trace.len().next_power_of_two();
-        let mut circuit_flag_trace = vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
+        let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
         circuit_flag_trace
             .par_chunks_mut(padded_trace_len)
             .enumerate()
