@@ -3,7 +3,7 @@
 
 use crate::poly::{
     dense_mlpoly::DensePolynomial,
-    structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+    structured_poly::{StructuredCommitment, StructuredOpeningProof},
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
@@ -64,7 +64,7 @@ impl<F: PrimeField> MultisetHashes<F> {
 pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
     G: CurveGroup,
-    Polynomials: BatchablePolynomials<G>,
+    Polynomials: StructuredCommitment<G>,
     ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
     InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
 {
@@ -92,7 +92,7 @@ pub trait MemoryCheckingProver<F, G, Polynomials>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials<G> + std::marker::Sync,
+    Polynomials: StructuredCommitment<G> + std::marker::Sync,
     Self: std::marker::Sync,
 {
     type Preprocessing = NoPreprocessing;
@@ -346,7 +346,7 @@ pub trait MemoryCheckingVerifier<F, G, Polynomials>:
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials<G> + std::marker::Sync,
+    Polynomials: StructuredCommitment<G> + std::marker::Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
@@ -542,7 +542,7 @@ mod tests {
             }
         }
 
-        impl BatchablePolynomials<G1Projective> for NormalMems {
+        impl StructuredCommitment<G1Projective> for NormalMems {
             type Commitment = FakeType;
 
             fn commit(&self, _generators: &PedersenGenerators<G1Projective>) -> Self::Commitment {
@@ -734,7 +734,7 @@ mod tests {
             }
         }
 
-        impl BatchablePolynomials<G1Projective> for Polys {
+        impl StructuredCommitment<G1Projective> for Polys {
             type Commitment = FakeType;
 
             fn commit(&self, _generators: &PedersenGenerators<G1Projective>) -> Self::Commitment {
@@ -977,7 +977,7 @@ mod tests {
             }
         }
 
-        impl BatchablePolynomials<G1Projective> for FlagPolys {
+        impl StructuredCommitment<G1Projective> for FlagPolys {
             type Commitment = FakeType;
 
             fn commit(&self, _generators: &PedersenGenerators<G1Projective>) -> Self::Commitment {

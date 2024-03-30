@@ -23,7 +23,7 @@ use crate::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
@@ -88,7 +88,7 @@ pub struct InstructionCommitment<G: CurveGroup> {
 }
 
 // TODO: macro?
-impl<F, G> BatchablePolynomials<G> for InstructionPolynomials<F, G>
+impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

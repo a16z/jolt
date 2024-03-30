@@ -21,7 +21,7 @@ use crate::{
         },
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
@@ -440,7 +440,7 @@ pub struct MemoryCommitment<G: CurveGroup> {
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
-impl<F, G> BatchablePolynomials<G> for ReadWriteMemory<F, G>
+impl<F, G> StructuredCommitment<G> for ReadWriteMemory<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

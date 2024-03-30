@@ -14,7 +14,7 @@ use crate::{
         hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
@@ -48,7 +48,7 @@ pub struct SurgeCommitment<G: CurveGroup> {
     pub E_commitment: Vec<HyraxCommitment<SURGE_HYRAX_RATIO_READ_WRITE, G>>,
 }
 
-impl<F, G> BatchablePolynomials<G> for SurgePolys<F, G>
+impl<F, G> StructuredCommitment<G> for SurgePolys<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -535,8 +535,6 @@ where
     G: CurveGroup<ScalarField = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
-    #[tracing::instrument(skip_all, name = "Surge::preprocess")]
-
     fn num_memories() -> usize {
         C * Instruction::default().subtables::<F>(C, M).len()
     }

@@ -12,7 +12,7 @@ use crate::{
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
-pub trait BatchablePolynomials<G: CurveGroup>: Send + Sync + Sized {
+pub trait StructuredCommitment<G: CurveGroup>: Send + Sync + Sized {
     /// The batched commitment to these polynomials.
     type Commitment;
 
@@ -24,14 +24,14 @@ pub trait BatchablePolynomials<G: CurveGroup>: Send + Sync + Sized {
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
-/// Note that there may be a one-to-many mapping from `BatchablePolynomials` to `StructuredOpeningProof`:
+/// Note that there may be a one-to-many mapping from `StructuredCommitment` to `StructuredOpeningProof`:
 /// different subset of the same polynomials may be opened at different points, resulting in
 /// different opening proofs.
 pub trait StructuredOpeningProof<F, G, Polynomials>: Sync + CanonicalSerialize + CanonicalDeserialize
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials<G> + ?Sized,
+    Polynomials: StructuredCommitment<G> + ?Sized,
 {
     type Preprocessing = NoPreprocessing;
     type Proof: Sync + CanonicalSerialize + CanonicalDeserialize;

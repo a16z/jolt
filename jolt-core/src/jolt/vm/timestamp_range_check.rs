@@ -21,7 +21,7 @@ use crate::{
         hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::grand_product::{
         BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
@@ -170,7 +170,7 @@ pub struct RangeCheckCommitment<G: CurveGroup> {
     commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
-impl<F, G> BatchablePolynomials<G> for RangeCheckPolynomials<F, G>
+impl<F, G> StructuredCommitment<G> for RangeCheckPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

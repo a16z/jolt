@@ -15,7 +15,7 @@ use crate::jolt::{
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
-use crate::poly::structured_poly::BatchablePolynomials;
+use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSUniqueCommitments};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;

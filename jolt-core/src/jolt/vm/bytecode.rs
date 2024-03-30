@@ -24,7 +24,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     utils::{errors::ProofVerifyError, math::Math},
 };
@@ -335,7 +335,7 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
-impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
+impl<F, G> StructuredCommitment<G> for BytecodePolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
