@@ -93,20 +93,10 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = ();
     type Commitment = InstructionCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        unimplemented!("Deprecated")
-    }
-
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(
-        &self,
-        _batched_polys: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_num_vars = self.dim[0].get_num_vars();
         let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
         let dim_read_polys: Vec<&DensePolynomial<F>> =
@@ -162,7 +152,6 @@ where
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        _: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -264,7 +253,6 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        _batched_polynomials: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -366,7 +354,6 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        _batched_polynomials: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -871,7 +858,7 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = Self::polynomialize(preprocessing, ops);
-        let commitment = polynomials.commit(&(), generators);
+        let commitment = polynomials.commit(generators);
 
         commitment.E_flag_commitment.iter().for_each(|commitment| {
             commitment.append_to_transcript(b"E_flag_commitment", transcript)
@@ -917,7 +904,6 @@ where
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &polynomials,
-            &(),
             &r_primary_sumcheck,
             &sumcheck_openings,
             transcript,
@@ -931,8 +917,7 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking =
-            Self::prove_memory_checking(preprocessing, &polynomials, &(), transcript);
+        let memory_checking = Self::prove_memory_checking(preprocessing, &polynomials, transcript);
 
         (
             InstructionLookupsProof {

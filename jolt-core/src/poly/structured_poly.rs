@@ -13,18 +13,12 @@ use crate::{
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
 pub trait BatchablePolynomials<G: CurveGroup>: Send + Sync + Sized {
-    /// The batched form of these polynomials.
-    type BatchedPolynomials;
     /// The batched commitment to these polynomials.
     type Commitment;
 
-    /// Organizes polynomials into a batch, to be subsequently committed. Typically
-    /// uses `DensePolynomial::merge` to combine polynomials of the same size.
-    fn batch(&self) -> Self::BatchedPolynomials;
-    /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
+    /// Commits to batched polynomials, typically using `HyraxCommitment::batch_commit_polys`.
     fn commit(
         &self,
-        batched_polys: &Self::BatchedPolynomials,
         generators: &PedersenGenerators<G>,
     ) -> Self::Commitment;
 }
@@ -49,7 +43,6 @@ where
     /// by `openings`. The polynomials should already be committed by the prover.
     fn prove_openings(
         polynomials: &Polynomials,
-        batched_polynomials: &Polynomials::BatchedPolynomials,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,

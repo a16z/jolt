@@ -175,20 +175,10 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = ();
     type Commitment = RangeCheckCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        unimplemented!("Unused")
-    }
-
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(
-        &self,
-        _: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
         let num_vars = self.read_cts_read_timestamp[0].get_num_vars();
         let generators = HyraxGenerators::new(num_vars, pedersen_generators);
 
@@ -235,7 +225,6 @@ where
 
     fn prove_openings(
         _polynomials: &RangeCheckPolynomials<F, G>,
-        _batched_polynomials: &(),
         _opening_point: &Vec<F>,
         _openings: &RangeCheckOpenings<F, G>,
         _transcript: &mut Transcript,
@@ -270,7 +259,6 @@ where
     fn prove_memory_checking(
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, G>,
-        _batched_polys: &(),
         _transcript: &mut Transcript,
     ) -> MemoryCheckingProof<
         G,
@@ -585,8 +573,7 @@ where
     ) -> Self {
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
-        let range_check_commitment =
-            RangeCheckPolynomials::commit(&range_check_polys, &(), &generators);
+        let range_check_commitment = RangeCheckPolynomials::commit(&range_check_polys, &generators);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
@@ -849,7 +836,7 @@ mod tests {
                 &mut transcript,
             );
         let generators = PedersenGenerators::new(1 << 10, b"Test generators");
-        let commitments = rw_memory.commit(&(), &generators);
+        let commitments = rw_memory.commit(&generators);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,

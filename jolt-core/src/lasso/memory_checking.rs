@@ -116,7 +116,6 @@ where
     fn prove_memory_checking(
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
-        batched_polys: &Polynomials::BatchedPolynomials,
         transcript: &mut Transcript,
     ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
         // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
@@ -133,7 +132,6 @@ where
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
             polynomials,
-            batched_polys,
             &r_read_write,
             &read_write_openings,
             transcript,
@@ -141,7 +139,6 @@ where
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
             polynomials,
-            batched_polys,
             &r_init_final,
             &init_final_openings,
             transcript,
@@ -503,7 +500,7 @@ mod tests {
     use crate::poly::pedersen::PedersenGenerators;
 
     use super::*;
-    use ark_bn254::{G1Projective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use ark_ff::Field;
     use ark_std::{One, Zero};
 
@@ -528,7 +525,6 @@ mod tests {
             }
             fn prove_openings(
                 _: &NormalMems,
-                _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
                 _: &mut Transcript,
@@ -548,16 +544,8 @@ mod tests {
 
         impl BatchablePolynomials<G1Projective> for NormalMems {
             type Commitment = FakeType;
-            type BatchedPolynomials = FakeType;
 
-            fn batch(&self) -> Self::BatchedPolynomials {
-                unimplemented!()
-            }
-            fn commit(
-                &self,
-                _batched_polys: &Self::BatchedPolynomials,
-                _generators: &PedersenGenerators<G1Projective>,
-            ) -> Self::Commitment {
+            fn commit(&self, _generators: &PedersenGenerators<G1Projective>) -> Self::Commitment {
                 unimplemented!()
             }
         }
@@ -691,12 +679,12 @@ mod tests {
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
             TestProver::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
-        let (_claims_rw, r_rw_verify) = proof_rw
-            .verify::<G1Projective, _>(&interleaved_read_write_hashes, &mut transcript);
+        let (_claims_rw, r_rw_verify) =
+            proof_rw.verify::<G1Projective, _>(&interleaved_read_write_hashes, &mut transcript);
         assert_eq!(r_rw_verify, r_rw);
 
-        let (_claims_if, r_if_verify) = proof_if
-            .verify::<G1Projective, _>(&interleaved_init_final_hashes, &mut transcript);
+        let (_claims_if, r_if_verify) =
+            proof_if.verify::<G1Projective, _>(&interleaved_init_final_hashes, &mut transcript);
         assert_eq!(r_if_verify, r_if);
     }
 
@@ -732,13 +720,7 @@ mod tests {
             fn open(_: &Polys, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
-            fn prove_openings(
-                _: &Polys,
-                _: &FakeType,
-                _: &Vec<Fr>,
-                _: &Self,
-                _: &mut Transcript,
-            ) -> Self::Proof {
+            fn prove_openings(_: &Polys, _: &Vec<Fr>, _: &Self, _: &mut Transcript) -> Self::Proof {
                 unimplemented!()
             }
             fn verify_openings(
@@ -754,16 +736,8 @@ mod tests {
 
         impl BatchablePolynomials<G1Projective> for Polys {
             type Commitment = FakeType;
-            type BatchedPolynomials = FakeType;
 
-            fn batch(&self) -> Self::BatchedPolynomials {
-                unimplemented!()
-            }
-            fn commit(
-                &self,
-                _batched_polys: &Self::BatchedPolynomials,
-                _generators: &PedersenGenerators<G1Projective>,
-            ) -> Self::Commitment {
+            fn commit(&self, _generators: &PedersenGenerators<G1Projective>) -> Self::Commitment {
                 unimplemented!()
             }
         }
@@ -946,12 +920,12 @@ mod tests {
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
             TestProver::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
-        let (_claims_rw, r_rw_verify) = proof_rw
-            .verify::<G1Projective, _>(&interleaved_read_write_hashes, &mut transcript);
+        let (_claims_rw, r_rw_verify) =
+            proof_rw.verify::<G1Projective, _>(&interleaved_read_write_hashes, &mut transcript);
         assert_eq!(r_rw_verify, r_rw);
 
-        let (_claims_if, r_if_verify) = proof_if
-            .verify::<G1Projective, _>(&interleaved_init_final_hashes, &mut transcript);
+        let (_claims_if, r_if_verify) =
+            proof_if.verify::<G1Projective, _>(&interleaved_init_final_hashes, &mut transcript);
         assert_eq!(r_if_verify, r_if);
     }
 
@@ -980,13 +954,12 @@ mod tests {
         struct FakeOpeningProof();
         impl StructuredOpeningProof<Fr, G1Projective, FlagPolys> for FakeOpeningProof {
             type Proof = ();
-            
+
             fn open(_: &FlagPolys, _: &Vec<Fr>) -> Self {
                 unimplemented!()
             }
             fn prove_openings(
                 _: &FlagPolys,
-                _: &FakeType,
                 _: &Vec<Fr>,
                 _: &Self,
                 _: &mut Transcript,
@@ -1006,16 +979,8 @@ mod tests {
 
         impl BatchablePolynomials<G1Projective> for FlagPolys {
             type Commitment = FakeType;
-            type BatchedPolynomials = FakeType;
 
-            fn batch(&self) -> Self::BatchedPolynomials {
-                unimplemented!()
-            }
-            fn commit(
-                &self,
-                _batched_polys: &Self::BatchedPolynomials,
-                _generators: &PedersenGenerators<G1Projective>,
-            ) -> Self::Commitment {
+            fn commit(&self, _generators: &PedersenGenerators<G1Projective>) -> Self::Commitment {
                 unimplemented!()
             }
         }
@@ -1252,12 +1217,12 @@ mod tests {
         let (interleaved_read_write_hashes, interleaved_init_final_hashes) =
             TestProver::interleave_hashes(&NoPreprocessing, &multiset_hashes);
 
-        let (_claims_rw, r_rw_verify) = proof_rw
-            .verify::<G1Projective, _>(&interleaved_read_write_hashes, &mut transcript);
+        let (_claims_rw, r_rw_verify) =
+            proof_rw.verify::<G1Projective, _>(&interleaved_read_write_hashes, &mut transcript);
         assert_eq!(r_rw_verify, r_rw);
 
-        let (_claims_if, r_if_verify) = proof_if
-            .verify::<G1Projective, _>(&interleaved_init_final_hashes, &mut transcript);
+        let (_claims_if, r_if_verify) =
+            proof_if.verify::<G1Projective, _>(&interleaved_init_final_hashes, &mut transcript);
         assert_eq!(r_if_verify, r_if);
     }
 }

@@ -445,19 +445,10 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = ();
     type Commitment = MemoryCommitment<G>;
 
-    fn batch(&self) -> Self::BatchedPolynomials {
-        unimplemented!("Unused");
-    }
-
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
-    fn commit(
-        &self,
-        _batched_polys: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_generators =
             HyraxGenerators::new(self.a_read_write[0].get_num_vars(), pedersen_generators);
         let read_write_polys: Vec<&DensePolynomial<F>> = self
@@ -545,7 +536,6 @@ where
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &ReadWriteMemory<F, G>,
-        _batched_polynomials: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -650,7 +640,6 @@ where
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &ReadWriteMemory<F, G>,
-        _: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -1095,12 +1084,8 @@ where
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
-        let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
-            preprocessing,
-            polynomials,
-            &(),
-            transcript,
-        );
+        let memory_checking_proof =
+            ReadWriteMemoryProof::prove_memory_checking(preprocessing, polynomials, transcript);
 
         let output_proof = OutputSumcheckProof::prove_outputs(polynomials, program_io, transcript);
 
@@ -1163,12 +1148,11 @@ mod tests {
             &mut transcript,
         );
         let generators = PedersenGenerators::new(1 << 10, b"test");
-        let commitments = rw_memory.commit(&(), &generators);
+        let commitments = rw_memory.commit(&generators);
 
         let proof = ReadWriteMemoryProof::prove_memory_checking(
             &preprocessing,
             &rw_memory,
-            &(),
             &mut transcript,
         );
 

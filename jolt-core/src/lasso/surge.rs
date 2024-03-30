@@ -53,20 +53,10 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = ();
     type Commitment = SurgeCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        unimplemented!("Deprecated")
-    }
-
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(
-        &self,
-        _batched_polys: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_num_vars = self.dim[0].get_num_vars();
         let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
         let dim_read_polys: Vec<&DensePolynomial<F>> =
@@ -115,7 +105,6 @@ where
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &SurgePolys<F, G>,
-        _batched_polynomials: &(),
         opening_point: &Vec<F>,
         E_poly_openings: &Vec<F>,
         transcript: &mut Transcript,
@@ -176,7 +165,6 @@ where
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &SurgePolys<F, G>,
-        _batched_polynomials: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -270,7 +258,6 @@ where
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &SurgePolys<F, G>,
-        _batched_polynomials: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -572,13 +559,9 @@ where
     /// using Hyrax, given `M` and the maximum number of lookups.
     pub fn num_generators(max_num_lookups: usize) -> usize {
         let max_num_lookups = max_num_lookups.next_power_of_two();
-        let num_read_write_generators =
-            matrix_dimensions(max_num_lookups.log_2(), 16).1;
-        let num_init_final_generators = matrix_dimensions(
-            (M * Self::num_memories()).next_power_of_two().log_2(),
-            4,
-        )
-        .1;
+        let num_read_write_generators = matrix_dimensions(max_num_lookups.log_2(), 16).1;
+        let num_init_final_generators =
+            matrix_dimensions((M * Self::num_memories()).next_power_of_two().log_2(), 4).1;
         std::cmp::max(num_read_write_generators, num_init_final_generators)
     }
 
@@ -595,7 +578,7 @@ where
         // TODO(sragss): Move upstream
         let pedersen_generators =
             PedersenGenerators::new(Self::num_generators(num_lookups), b"LassoV1");
-        let commitment = polynomials.commit(&(), &pedersen_generators);
+        let commitment = polynomials.commit(&pedersen_generators);
 
         let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
@@ -640,7 +623,6 @@ where
                                                                                    // Create a single opening proof for the E polynomials
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &polynomials,
-            &(),
             &r_z,
             &sumcheck_openings,
             transcript,
@@ -655,7 +637,7 @@ where
         };
 
         let memory_checking =
-            SurgeProof::prove_memory_checking(&preprocessing, &polynomials, &(), transcript);
+            SurgeProof::prove_memory_checking(&preprocessing, &polynomials, transcript);
 
         SurgeProof {
             commitment,
