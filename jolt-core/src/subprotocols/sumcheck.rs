@@ -6,6 +6,7 @@ use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -383,8 +384,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
-        // h/t https://abrams.cc/rust-dropping-things-in-another-thread
-        std::thread::spawn(move || drop(params));
+        drop_in_background_thread(params);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -561,8 +561,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = params.get_final_evals();
 
-        // h/t https://abrams.cc/rust-dropping-things-in-another-thread
-        std::thread::spawn(move || drop(params));
+        drop_in_background_thread(params);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -746,8 +745,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         let claims_prod = (leaves_claims, flags_claims, poly_eq_final);
 
-        // h/t https://abrams.cc/rust-dropping-things-in-another-thread
-        std::thread::spawn(move || drop(params));
+        drop_in_background_thread(params);
 
         (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
     }
@@ -1004,7 +1002,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         }
 
         let evals = vec![poly_A[0], poly_B[0]];
-        std::thread::spawn(|| drop(poly_B));
+        drop_in_background_thread(poly_B);
 
         (
             SumcheckInstanceProof::new(polys),
