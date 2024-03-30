@@ -417,7 +417,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .next_power_of_two()
             .log_2();
         // v_final, t_final
-        let init_final_num_vars = (max_memory_address * 2).next_power_of_two().log_2();
+        let init_final_num_vars = max_memory_address.next_power_of_two().log_2();
         let num_read_write_generators = std::cmp::max(
             matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1,
             matrix_dimensions(t_read_write_num_vars, 1).1,
@@ -458,8 +458,8 @@ where
         _batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_num_vars = self.a_read_write[0].get_num_vars();
-        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let read_write_generators =
+            HyraxGenerators::new(self.a_read_write[0].get_num_vars(), pedersen_generators);
         let read_write_polys: Vec<&DensePolynomial<F>> = self
             .a_read_write
             .iter()
@@ -468,11 +468,8 @@ where
             .chain(self.t_read.iter())
             .chain(self.t_write.iter())
             .collect();
-        let read_write_commitments = HyraxCommitment::batch_commit_polys(
-            read_write_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
+        let read_write_commitments =
+            HyraxCommitment::batch_commit_polys(read_write_polys, &read_write_generators);
 
         let final_generators =
             HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);

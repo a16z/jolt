@@ -199,7 +199,7 @@ where
             .chain(self.final_cts_read_timestamp.iter())
             .chain(self.final_cts_global_minus_read.iter())
             .collect();
-        let commitments = HyraxCommitment::batch_commit_polys(polys, num_vars, &generators);
+        let commitments = HyraxCommitment::batch_commit_polys(polys, &generators);
 
         Self::Commitment {
             generators,
@@ -807,8 +807,7 @@ where
     /// range-check polynomials using Hyrax, given the maximum trace length.
     pub fn num_generators(max_trace_length: usize) -> usize {
         let max_trace_length = max_trace_length.next_power_of_two();
-        let batch_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
-        matrix_dimensions(batch_num_vars, 1).1
+        matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1
     }
 
     fn protocol_name() -> &'static [u8] {

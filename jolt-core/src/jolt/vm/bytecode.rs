@@ -354,8 +354,8 @@ where
         _: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
-        let read_write_num_vars = self.a_read_write.get_num_vars();
-        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let read_write_generators =
+            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
         let read_write_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
@@ -365,11 +365,8 @@ where
             &self.v_read_write[3],
             &self.v_read_write[4],
         ];
-        let read_write_commitments = HyraxCommitment::batch_commit_polys(
-            read_write_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
+        let read_write_commitments =
+            HyraxCommitment::batch_commit_polys(read_write_polys, &read_write_generators);
 
         let t_final_generators =
             HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);

@@ -111,29 +111,20 @@ where
         let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = HyraxCommitment::batch_commit_polys(
-            dim_read_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
+        let dim_read_commitment =
+            HyraxCommitment::batch_commit_polys(dim_read_polys, &read_write_generators);
         let E_flag_polys: Vec<&DensePolynomial<F>> = self
             .E_polys
             .iter()
             .chain(self.instruction_flag_polys.iter())
             .collect();
-        let E_flag_commitment = HyraxCommitment::batch_commit_polys(
-            E_flag_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
+        let E_flag_commitment =
+            HyraxCommitment::batch_commit_polys(E_flag_polys, &read_write_generators);
 
         let final_num_vars = self.final_cts[0].get_num_vars();
         let final_generators = HyraxGenerators::new(final_num_vars, pedersen_generators);
-        let final_commitment = HyraxCommitment::batch_commit_polys(
-            self.final_cts.iter().collect(),
-            final_num_vars,
-            &final_generators,
-        );
+        let final_commitment =
+            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &final_generators);
 
         Self::Commitment {
             read_write_generators,
@@ -304,7 +295,7 @@ where
 
     fn verify_openings(
         &self,
-        openings_proof: &Self::Proof,
+        opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
@@ -316,7 +307,7 @@ where
             self.flag_openings.as_slice(),
         ]
         .concat();
-        openings_proof.verify(
+        opening_proof.verify(
             &commitment.read_write_generators,
             opening_point,
             &read_write_openings,
