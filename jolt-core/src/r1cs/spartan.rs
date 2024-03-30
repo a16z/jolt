@@ -2,7 +2,7 @@ use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::allocate_vec_in_background;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::AppendToTranscript;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -192,7 +192,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
         let poly_ABC_len = 2 * key.num_vars_total;
-        let RLC_evals_alloc = allocate_vec_in_background(F::ZERO, poly_ABC_len);
+        // let RLC_evals_alloc = allocate_vec_in_background(F::ZERO, poly_ABC_len);
+
+        let RLC_evals_alloc = unsafe_allocate_zero_vec(poly_ABC_len);
 
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
@@ -333,7 +335,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             // 2. Handles all entries but the last one with the constant 1 variable
             let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
             let _other_enter = other_span.enter();
-            let mut RLC_evals = RLC_evals_alloc.join().unwrap();
+            // let mut RLC_evals = RLC_evals_alloc.join().unwrap();
+            let mut RLC_evals = RLC_evals_alloc;
             drop(_other_enter);
 
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
