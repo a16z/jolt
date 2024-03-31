@@ -21,7 +21,7 @@ use crate::{
         },
         sumcheck::SumcheckInstanceProof,
     },
-    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
+    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, thread, transcript::ProofTranscript},
 };
 
 use super::memory_checking::NoPreprocessing;
@@ -56,14 +56,18 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgePolys::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
-        let (batched_dim_read, (batched_final, batched_E)) = rayon::join(
-            || DensePolynomial::merge(self.dim.iter().chain(&self.read_cts)),
-            || {
-                rayon::join(
-                    || DensePolynomial::merge(&self.final_cts),
-                    || DensePolynomial::merge(&self.E_polys),
-                )
-            },
+        let dim_read_count = self.dim.len() + self.read_cts.len();
+        let dim_read_len = self.dim[0].len();
+
+        let final_cts_count = self.final_cts.len();
+        let final_cts_len = self.final_cts[0].len();
+
+        let E_count = self.E_polys.len();
+        let E_len = self.E_polys[0].len();
+        let (batched_dim_read, batched_final, batched_E) = thread::join_triple(
+            || DensePolynomial::merge(self.dim.par_iter().chain(&self.read_cts), dim_read_count, dim_read_len),
+            || DensePolynomial::merge(self.final_cts.par_iter(), final_cts_count, final_cts_len),
+            || DensePolynomial::merge(self.E_polys.par_iter(), E_count, E_len),
         );
 
         Self::BatchedPolynomials {

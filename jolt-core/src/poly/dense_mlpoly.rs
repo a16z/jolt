@@ -249,21 +249,22 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::merge")]
-    pub fn merge(polys: impl IntoIterator<Item = impl AsRef<Self>> + Clone) -> DensePolynomial<F> {
-        let polys_iter_cloned = polys.clone().into_iter();
-        let total_len: usize = polys
-            .into_iter()
-            .map(|poly| poly.as_ref().len())
-            .sum();
-        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
-        for poly in polys_iter_cloned {
-            Z.extend_from_slice(poly.as_ref().vec());
-        }
+    pub fn merge<I>(polys: I, count: usize, individual_len: usize) -> DensePolynomial<F> 
+    where
+        I: IntoParallelIterator,
+        I::Item: AsRef<Self>,
+        <I as rayon::iter::IntoParallelIterator>::Iter: rayon::iter::IndexedParallelIterator,
+    {
+        let flat_len = count * individual_len;
+        let mut flat: Vec<F> = unsafe_allocate_zero_vec(flat_len.next_power_of_two());
 
-        // pad the polynomial with zero polynomial at the end
-        Z.resize(Z.capacity(), F::zero());
+        flat[0..flat_len].par_chunks_mut(individual_len).zip(polys).for_each(|(flat_ref, poly)| {
+            assert_eq!(poly.as_ref().len(), individual_len);
+            let poly_ref = poly.as_ref().evals_ref();
+            flat_ref.copy_from_slice(poly_ref);
+        });
 
-        DensePolynomial::new(Z)
+        DensePolynomial::new(flat)
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::flatten")]

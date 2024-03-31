@@ -110,8 +110,10 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
+        let num = self.final_cts.len();
+        let len = self.final_cts[0].len();
         Self::BatchedPolynomials {
-            batched_final: DensePolynomial::merge(self.final_cts.iter()),
+            batched_final: DensePolynomial::merge(self.final_cts.par_iter(), num, len)
         }
     }
 

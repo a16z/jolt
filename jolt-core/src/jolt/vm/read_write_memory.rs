@@ -452,8 +452,10 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
+        let num = self.t_read.len() + self.t_write.len();
+        let len = self.t_write[0].len();
         let batched_t_read_write =
-            DensePolynomial::merge(self.t_read.iter().chain(self.t_write.iter()));
+            DensePolynomial::merge(self.t_read.par_iter().chain(self.t_write.par_iter()), num, len);
 
         Self::BatchedPolynomials {
             batched_t_read_write,

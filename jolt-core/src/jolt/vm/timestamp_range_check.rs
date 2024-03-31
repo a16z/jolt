@@ -182,12 +182,16 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::batch")]
     fn batch(&self) -> Self::BatchedPolynomials {
+        let num = MEMORY_OPS_PER_INSTRUCTION * 4;
+        let len = self.read_cts_read_timestamp[0].len();
         DensePolynomial::merge(
             self.read_cts_read_timestamp
-                .iter()
-                .chain(self.read_cts_global_minus_read.iter())
-                .chain(self.final_cts_read_timestamp.iter())
-                .chain(self.final_cts_global_minus_read.iter()),
+                .par_iter()
+                .chain(self.read_cts_global_minus_read.par_iter())
+                .chain(self.final_cts_read_timestamp.par_iter())
+                .chain(self.final_cts_global_minus_read.par_iter()),
+            num,
+            len
         )
     }
 
