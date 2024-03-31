@@ -246,24 +246,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         self.Z.as_ref()
     }
 
-    #[tracing::instrument(skip_all, name = "DensePoly.merge")]
-    pub fn merge(polys: impl IntoIterator<Item = impl AsRef<Self>> + Clone) -> DensePolynomial<F> {
-        let polys_iter_cloned = polys.clone().into_iter();
-        let total_len: usize = polys
-            .into_iter()
-            .map(|poly| poly.as_ref().len())
-            .sum();
-        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
-        for poly in polys_iter_cloned {
-            Z.extend_from_slice(poly.as_ref().vec());
-        }
-
-        // pad the polynomial with zero polynomial at the end
-        Z.resize(Z.capacity(), F::zero());
-
-        DensePolynomial::new(Z)
-    }
-
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
     pub fn from_usize(Z: &[usize]) -> Self {
         DensePolynomial::new(
