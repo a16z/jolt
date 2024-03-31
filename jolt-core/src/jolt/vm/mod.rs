@@ -1,5 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::NUM_R1CS_POLYS;
 use common::rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS};
@@ -49,6 +50,7 @@ where
     pub read_write_memory: ReadWriteMemoryPreprocessing,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
 where
     F: PrimeField,
@@ -56,11 +58,11 @@ where
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
-    program_io: JoltDevice,
-    bytecode: BytecodeProof<F, G>,
-    read_write_memory: ReadWriteMemoryProof<F, G>,
-    instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-    r1cs: R1CSProof<F, G>,
+    pub program_io: JoltDevice,
+    pub bytecode: BytecodeProof<F, G>,
+    pub read_write_memory: ReadWriteMemoryProof<F, G>,
+    pub instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
+    pub r1cs: R1CSProof<F, G>,
 }
 
 pub struct JoltPolynomials<F, G>
@@ -73,6 +75,7 @@ where
     pub instruction_lookups: InstructionPolynomials<F, G>,
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltCommitments<G: CurveGroup> {
     pub bytecode: BytecodeCommitment<G>,
     pub read_write_memory: MemoryCommitment<G>,
@@ -152,6 +155,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<G>,
     ) {
+        println!("Jolt::prove({})", memory_trace.len());
         let mut transcript = Transcript::new(b"Jolt transcript");
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             &preprocessing.bytecode,

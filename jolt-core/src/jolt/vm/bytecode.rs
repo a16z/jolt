@@ -15,6 +15,7 @@ use crate::poly::pedersen::PedersenGenerators;
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
 use common::to_ram_address;
+use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 use rayon::prelude::*;
 
@@ -325,6 +326,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 }
 
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeCommitment<G: CurveGroup> {
     pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
@@ -569,6 +572,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeReadWriteOpenings<F>
 where
     F: PrimeField,
@@ -657,6 +661,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeInitFinalOpenings<F>
 where
     F: PrimeField,
