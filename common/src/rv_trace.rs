@@ -233,7 +233,7 @@ pub struct ELFInstruction {
     pub imm: Option<u32>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 17;
+pub const NUM_CIRCUIT_FLAGS: usize = 13;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -248,15 +248,10 @@ impl ELFInstruction {
         // 6: Instruction writes lookup output to rd
         // 7: Instruction adds operands (ie, and uses the ADD lookup table)
         // 8: Instruction subtracts operands
-        // 9: Instruction multiplies operands
-        // 10: Instruction involves non-deterministic advice?
-        // 11: Instruction asserts lookup output as false
-        // 12: Instruction asserts lookup output as true
-        // 13: Sign-bit of imm
-        // 14: Is concat (Note: used to be is_lui)
-        // Arasu: Extra to get things working
-        // 15: is lui or auipc
-        // 16: is jal
+        // 9: Sign-bit of imm
+        // 10: Is concat (Note: used to be is_lui)
+        // 11: is lui or auipc
+        // 12: is jal
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -328,16 +323,6 @@ impl ELFInstruction {
         flags[7] = match self.opcode {
             RV32IM::ADD 
             | RV32IM::ADDI 
-            // Store and load instructions only have one lookup operand (rs2 and the RAM word, respectively)
-            // so we add the operand to a dummy operand of 0 in the circuit to obtain the lookup query.
-            | RV32IM::SB
-            | RV32IM::SH
-            | RV32IM::SW
-            | RV32IM::LB
-            | RV32IM::LH
-            | RV32IM::LW
-            | RV32IM::LBU
-            | RV32IM::LHU
             | RV32IM::JAL 
             | RV32IM::JALR 
             | RV32IM::AUIPC => true,
@@ -349,33 +334,13 @@ impl ELFInstruction {
             _ => false,
         };
 
-        flags[9] = match self.opcode {
-            RV32IM::MUL | RV32IM::MULU | RV32IM::MULH | RV32IM::MULSU => true,
-            _ => false,
-        };
-
-        // TODO(JOLT-29): Used in the 'M' extension
-        flags[10] = match self.opcode {
-            _ => false,
-        };
-
-        // TODO(JOLT-29): Used in the 'M' extension
-        flags[11] = match self.opcode {
-            _ => false,
-        };
-
-        // TODO(JOLT-29): Used in the 'M' extension
-        flags[12] = match self.opcode {
-            _ => false,
-        };
-
         let mask = 1u32 << 31;
-        flags[13] = match self.imm {
+        flags[9] = match self.imm {
             Some(imm) if imm & mask == mask => true,
             _ => false,
         };
 
-        flags[14] = match self.opcode {
+        flags[10] = match self.opcode {
             RV32IM::XOR
             | RV32IM::XORI
             | RV32IM::OR
@@ -401,12 +366,12 @@ impl ELFInstruction {
             _ => false,
         };
 
-        flags[15] = match self.opcode {
+        flags[11] = match self.opcode {
             RV32IM::LUI | RV32IM::AUIPC => true,
             _ => false,
         };
 
-        flags[16] = match self.opcode {
+        flags[12] = match self.opcode {
             RV32IM::SLL
             | RV32IM::SRL
             | RV32IM::SRA

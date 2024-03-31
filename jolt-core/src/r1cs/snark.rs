@@ -1,4 +1,4 @@
-use crate::{jolt::vm::{Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
+use crate::{jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
 use crate::utils::transcript::AppendToTranscript;
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
@@ -9,6 +9,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::prelude::*;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
+use strum::EnumCount;
 
 /// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
 #[tracing::instrument(skip_all)]
@@ -81,7 +82,6 @@ pub struct R1CSInputs<F: PrimeField> {
     padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
-    packed_flags: Vec<F>,
     memreg_a_rw: Vec<F>,
     memreg_v_reads: Vec<F>,
     memreg_v_writes: Vec<F>,
@@ -90,6 +90,7 @@ pub struct R1CSInputs<F: PrimeField> {
     chunks_query: Vec<F>,
     lookup_outputs: Vec<F>,
     circuit_flags_bits: Vec<F>,
+    instruction_flags_bits: Vec<F>,
 }
 
 impl<F: PrimeField> R1CSInputs<F> {
@@ -98,7 +99,6 @@ impl<F: PrimeField> R1CSInputs<F> {
     padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
-    packed_flags: Vec<F>,
     memreg_a_rw: Vec<F>,
     memreg_v_reads: Vec<F>,
     memreg_v_writes: Vec<F>,
@@ -106,12 +106,12 @@ impl<F: PrimeField> R1CSInputs<F> {
     chunks_y: Vec<F>,
     chunks_query: Vec<F>,
     lookup_outputs: Vec<F>,
-    circuit_flags_bits: Vec<F>
+    circuit_flags_bits: Vec<F>,
+    instruction_flags_bits: Vec<F>,
   ) -> Self {
 
     assert!(bytecode_a.len() % padded_trace_len == 0);
     assert!(bytecode_v.len() % padded_trace_len == 0);
-    assert!(packed_flags.len() % padded_trace_len == 0);
     assert!(memreg_a_rw.len() % padded_trace_len == 0);
     assert!(memreg_v_reads.len() % padded_trace_len == 0);
     assert!(memreg_v_writes.len() % padded_trace_len == 0);
@@ -120,12 +120,12 @@ impl<F: PrimeField> R1CSInputs<F> {
     assert!(chunks_query.len() % padded_trace_len == 0);
     assert!(lookup_outputs.len() % padded_trace_len == 0);
     assert!(circuit_flags_bits.len() % padded_trace_len == 0);
+    assert!(instruction_flags_bits.len() % padded_trace_len == 0);
 
     Self {
       padded_trace_len,
       bytecode_a,
       bytecode_v,
-      packed_flags,
       memreg_a_rw,
       memreg_v_reads,
       memreg_v_writes,
@@ -134,12 +134,13 @@ impl<F: PrimeField> R1CSInputs<F> {
       chunks_query,
       lookup_outputs,
       circuit_flags_bits,
+      instruction_flags_bits, 
     }
   }
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_stepwise")]
   pub fn clone_to_stepwise(&self) -> Vec<Vec<F>> {
-    const PREFIX_VARS_PER_STEP: usize = 5;
+    const PREFIX_VARS_PER_STEP: usize = 3;
 
     // AUX_VARS_PER_STEP has to be greater than the number of additional vars pushed by the constraint system
     const AUX_VARS_PER_STEP: usize = 20; 
@@ -154,7 +155,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       };
 
       // 1 is constant, 0s in slots 1, 2 are filled by aux computation
-      step.extend([F::from(1u64), F::from(0u64), F::from(0u64), F::from(step_index as u64), program_counter]);
+      step.extend([F::from(1u64), F::from(0u64), program_counter]);
 
       let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
         let num_vals = data.len() / self.padded_trace_len;
@@ -165,7 +166,6 @@ impl<F: PrimeField> R1CSInputs<F> {
 
       push_to_step(&self.bytecode_a, &mut step);
       push_to_step(&self.bytecode_v, &mut step);
-      push_to_step(&self.packed_flags, &mut step);
       push_to_step(&self.memreg_a_rw, &mut step);
       push_to_step(&self.memreg_v_reads, &mut step);
       push_to_step(&self.memreg_v_writes, &mut step);
@@ -174,6 +174,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       push_to_step(&self.chunks_query, &mut step);
       push_to_step(&self.lookup_outputs, &mut step);
       push_to_step(&self.circuit_flags_bits, &mut step);
+      push_to_step(&self.instruction_flags_bits, &mut step);
 
       assert_eq!(num_inputs_per_step, step.len());
 
@@ -192,7 +193,6 @@ impl<F: PrimeField> R1CSInputs<F> {
     let trace_len = self.trace_len();
     self.bytecode_a.len() / trace_len
       + self.bytecode_v.len() / trace_len
-      + self.packed_flags.len() / trace_len
       + self.memreg_a_rw.len() / trace_len
       + self.memreg_v_reads.len() / trace_len
       + self.memreg_v_writes.len() / trace_len
@@ -201,6 +201,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       + self.chunks_query.len() / trace_len
       + self.lookup_outputs.len() / trace_len
       + self.circuit_flags_bits.len() / trace_len
+      + self.instruction_flags_bits.len() / trace_len
   }
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
@@ -209,7 +210,6 @@ impl<F: PrimeField> R1CSInputs<F> {
     let mut chunks: Vec<Vec<F>> = Vec::new();
     chunks.par_extend(self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
-    chunks.par_extend(self.packed_flags.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_a_rw.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_v_reads.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.memreg_v_writes.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
@@ -218,6 +218,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     chunks.par_extend(self.chunks_query.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.lookup_outputs.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks.par_extend(self.circuit_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
+    chunks.par_extend(self.instruction_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec()));
     chunks
   }
 }
@@ -237,7 +238,6 @@ pub struct R1CSUniqueCommitments<G: CurveGroup> {
   chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   lookup_outputs: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-  packed_flags: HyraxCommitment<NUM_R1CS_POLYS, G>,
   circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 
   generators: HyraxGenerators<NUM_R1CS_POLYS, G>
@@ -249,7 +249,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
         chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         lookup_outputs: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-        packed_flags: HyraxCommitment<NUM_R1CS_POLYS, G>,
         circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     ) -> Self {
@@ -259,7 +258,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
             chunks_x,
             chunks_y,
             lookup_outputs,
-            packed_flags,
             circuit_flags,
             generators,
         }
@@ -272,7 +270,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
       self.chunks_x.iter().for_each(|comm| comm.append_to_transcript(b"chunk_x", transcript));
       self.chunks_y.iter().for_each(|comm| comm.append_to_transcript(b"chunk_y", transcript));
       self.lookup_outputs.iter().for_each(|comm| comm.append_to_transcript(b"lookup_outputs", transcript));
-      self.packed_flags.append_to_transcript(b"packed_flags", transcript);
       self.circuit_flags.iter().for_each(|comm| comm.append_to_transcript(b"circuit_flags", transcript));
     }
 }
@@ -301,7 +298,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(_enter);
       drop(span);
 
-      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 4, jolt_shape.num_internal);
+      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
+      let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
+      let aux_comms = HyraxCommitment::batch_commit(&aux_segments, &generators);
+
+      let r1cs_commitments = R1CSInternalCommitments::<G> {
+        io: io_comms,
+        aux: aux_comms,
+      };
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_to_witness_segments");
       let _enter = cloning_stuff_span.enter();
@@ -309,29 +313,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
       // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
-      w_segments.par_extend(io_segments.par_iter().cloned());
+      w_segments.par_extend(io_segments.into_par_iter());
       w_segments.par_extend(inputs_segments.into_par_iter());
-      w_segments.par_extend(aux_segments.par_iter().cloned());
+      w_segments.par_extend(aux_segments.into_par_iter());
 
       drop(_enter);
       drop(cloning_stuff_span);
-
-      // Commit to segments
-      let commit_segments = |segments: Vec<Vec<F>>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
-        let span = tracing::span!(tracing::Level::TRACE, "commit_segments");
-        let _g = span.enter();
-        segments.into_iter().map(|segment| {
-          HyraxCommitment::commit(&DensePolynomial::new(segment), &generators)
-        }).collect()
-      };
-
-      let io_comms = commit_segments(io_segments);
-      let aux_comms = commit_segments(aux_segments);
-
-      let r1cs_commitments = R1CSInternalCommitments::<G> {
-        io: io_comms,
-        aux: aux_comms,
-      };
 
       Ok((key, w_segments, r1cs_commitments))
   }
@@ -358,18 +345,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let bytecode_read_write_commitments = &jolt_commitments.bytecode.read_write_commitments;
       let ram_a_v_commitments = &jolt_commitments.read_write_memory.a_v_read_write_commitments;
       let instruction_lookup_indices_commitments = &jolt_commitments.instruction_lookups.dim_read_commitment[0..C];
+      let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
 
       let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
       combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
 
       combined_commitments.push(&bytecode_read_write_commitments[0]); // a
-      combined_commitments.push(&bytecode_read_write_commitments[2]); // opcode
+      combined_commitments.push(&bytecode_read_write_commitments[2]); // op_flags_packed
       combined_commitments.push(&bytecode_read_write_commitments[3]); // rd
       combined_commitments.push(&bytecode_read_write_commitments[4]); // rs1
       combined_commitments.push(&bytecode_read_write_commitments[5]); // rs2
       combined_commitments.push(&bytecode_read_write_commitments[6]); // imm
-
-      combined_commitments.push(&r1cs_commitments.packed_flags);
 
       combined_commitments.extend(ram_a_v_commitments.iter());
 
@@ -381,6 +367,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       combined_commitments.extend(r1cs_commitments.lookup_outputs.iter());
 
       combined_commitments.extend(r1cs_commitments.circuit_flags.iter());
+
+      combined_commitments.extend(instruction_flag_commitments.iter());
 
       combined_commitments.extend(r1cs_commitments.internal_commitments.aux.iter());
 

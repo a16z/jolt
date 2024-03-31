@@ -189,7 +189,7 @@ mod tests {
         let (proof, _, commitment) =
             <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove_instruction_lookups(
                 &preprocessing.instruction_lookups,
-                ops,
+                &ops,
                 &preprocessing.generators,
                 &mut prover_transcript,
             );
@@ -197,7 +197,7 @@ mod tests {
         assert!(RV32IJoltVM::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
             proof,
-            commitment,
+            &commitment,
             &mut verifier_transcript
         )
         .is_ok());
@@ -226,7 +226,8 @@ mod tests {
     fn fib_e2e() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
-        let mut program = host::Program::new("fibonacci-guest").input(&9u32);
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&9u32);
         let bytecode = program.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
             program.trace();
@@ -234,7 +235,6 @@ mod tests {
         let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,
@@ -253,7 +253,8 @@ mod tests {
     fn sha3_e2e() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
 
-        let mut program = host::Program::new("sha3-guest").input(&[5u8; 32]);
+        let mut program = host::Program::new("sha3-guest");
+        program.set_input(&[5u8; 32]);
         let bytecode = program.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
             program.trace();
@@ -261,7 +262,6 @@ mod tests {
         let preprocessing = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,

@@ -3,7 +3,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::NUM_R1CS_POLYS;
-use common::rv_trace::JoltDevice;
+use common::rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS};
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -58,6 +58,7 @@ where
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
+    pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, G>,
     pub read_write_memory: ReadWriteMemoryProof<F, G>,
     pub instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
@@ -82,8 +83,7 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub r1cs: R1CSUniqueCommitments<G>
 }
 
-pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize>
-{
+pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
 
@@ -146,7 +146,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         program_io: JoltDevice,
-        bytecode: Vec<ELFInstruction>,
         bytecode_trace: Vec<BytecodeRow>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Self::InstructionSet>,
@@ -158,10 +157,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     ) {
         println!("Jolt::prove({})", memory_trace.len());
         let mut transcript = Transcript::new(b"Jolt transcript");
-        let bytecode_rows: Vec<BytecodeRow> = bytecode
-            .iter()
-            .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
-            .collect();
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             &preprocessing.bytecode,
             bytecode_trace.clone(),
@@ -169,16 +164,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut transcript,
         );
 
-        // - prove_r1cs() memory_trace R1CS is not 2-padded
-        // - prove_memory() memory_trace    is 2-padded
-        let mut padded_memory_trace = memory_trace.clone();
+        let trace_length = memory_trace.len();
+        let mut padded_memory_trace = memory_trace;
         padded_memory_trace.resize(
-            memory_trace.len().next_power_of_two(),
+            trace_length.next_power_of_two(),
             std::array::from_fn(|_| MemoryOp::no_op()),
         );
 
         let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
-            program_io,
+            &program_io,
             &preprocessing.read_write_memory,
             padded_memory_trace,
             &preprocessing.generators,
@@ -191,7 +185,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             instruction_lookups_commitment,
         ) = Self::prove_instruction_lookups(
             &preprocessing.instruction_lookups,
-            instructions.clone(),
+            &instructions,
             &preprocessing.generators,
             &mut transcript,
         );
@@ -205,10 +199,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let (r1cs_proof, r1cs_commitment) = Self::prove_r1cs(
             preprocessing,
             instructions,
-            bytecode_rows,
-            bytecode_trace,
-            bytecode,
-            memory_trace.into_iter().flatten().collect(),
             circuit_flags,
             &jolt_polynomials,
             &mut transcript,
@@ -224,6 +214,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         };
 
         let jolt_proof = JoltProof {
+            program_io,
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
             instruction_lookups: instruction_lookups_proof,
@@ -249,6 +240,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut preprocessing.read_write_memory,
             proof.read_write_memory,
             &commitments.read_write_memory,
+            proof.program_io,
             &mut transcript,
         )?;
         Self::verify_instruction_lookups(
@@ -264,7 +256,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
     fn prove_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: Vec<Self::InstructionSet>,
+        ops: &Vec<Self::InstructionSet>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -313,7 +305,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
-        program_io: JoltDevice,
+        program_io: &JoltDevice,
         preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         generators: &PedersenGenerators<G>,
@@ -323,72 +315,48 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         ReadWriteMemory<F, G>,
         MemoryCommitment<G>,
     ) {
-        let (memory, read_timestamps) =
-            ReadWriteMemory::new(&program_io, preprocessing, memory_trace, transcript);
-        let batched_polys = memory.batch();
+        let (polynomials, read_timestamps) =
+            ReadWriteMemory::new(program_io, preprocessing, memory_trace, transcript);
+        let batched_polys = polynomials.batch();
         let commitment: MemoryCommitment<G> =
-            ReadWriteMemory::commit(&memory, &batched_polys, &generators);
+            ReadWriteMemory::commit(&polynomials, &batched_polys, &generators);
 
-        let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
+        let proof = ReadWriteMemoryProof::prove(
             preprocessing,
-            &memory,
+            &polynomials,
             &batched_polys,
-            transcript,
-        );
-
-        let timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,
-            &memory,
-            &batched_polys,
-            &generators,
+            program_io,
+            generators,
             transcript,
         );
 
-        (
-            ReadWriteMemoryProof {
-                program_io,
-                memory_checking_proof,
-                timestamp_validity_proof,
-            },
-            memory,
-            commitment,
-        )
+        (proof, polynomials, commitment)
     }
 
     fn verify_memory(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
-        mut proof: ReadWriteMemoryProof<F, G>,
+        proof: ReadWriteMemoryProof<F, G>,
         commitment: &MemoryCommitment<G>,
+        program_io: JoltDevice,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        assert!(proof.program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
-        assert!(proof.program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+        assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
+        assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+        preprocessing.program_io = Some(program_io);
 
-        preprocessing.program_io = Some(proof.program_io);
-
-        ReadWriteMemoryProof::verify_memory_checking(
-            preprocessing,
-            proof.memory_checking_proof,
-            &commitment,
-            transcript,
-        )?;
-        TimestampValidityProof::verify(&mut proof.timestamp_validity_proof, &commitment, transcript)
+        ReadWriteMemoryProof::verify(proof, preprocessing, commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
     fn prove_r1cs(
         preprocessing: JoltPreprocessing<F, G>,
         instructions: Vec<Self::InstructionSet>,
-        bytecode_rows: Vec<BytecodeRow>,
-        trace: Vec<BytecodeRow>,
-        bytecode: Vec<ELFInstruction>,
-        memory_trace: Vec<MemoryOp>,
-        circuit_flags: Vec<F>,
+        circuit_flags_stepwise: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
     ) -> (R1CSProof<F, G>, R1CSUniqueCommitments<G>) {
-        let N_FLAGS = 17;
-        let trace_len = trace.len();
+        let trace_len = instructions.len();
         let padded_trace_len = trace_len.next_power_of_two();
 
         let log_M = log2(M) as usize;
@@ -400,31 +368,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         /* Assemble the polynomials and commitments from the rest of Jolt.
         The ones that are extra, just for R1CS are:
-            - circuit_flags_packed
             - chunks_x
             - chunks_y
             - lookup_output
             - circuit_flags_bits
         */
-
-        // Obtain circuit_flags_packed to prog_v_rw. Pack them in little-endian order.
-        let span = tracing::span!(tracing::Level::INFO, "pack_flags");
-        let _enter = span.enter();
-        let precomputed_powers: Vec<F> = (0..N_FLAGS)
-            .map(|i| F::from_u64(2u64.pow(i as u32)).unwrap())
-            .collect();
-
-        let mut packed_flags: Vec<F> = circuit_flags
-            .par_chunks(N_FLAGS)
-            .map(|x| {
-                x.iter().enumerate().fold(F::zero(), |packed, (i, flag)| {
-                    packed + *flag * precomputed_powers[N_FLAGS - 1 - i]
-                })
-            })
-            .collect();
-        packed_flags.resize(padded_trace_len, F::zero());
-        drop(_enter);
-        drop(span);
 
         // Derive chunks_x and chunks_y
         let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
@@ -457,16 +405,21 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // Derive circuit flags
         let span = tracing::span!(tracing::Level::INFO, "circuit_flags");
         let _enter = span.enter();
-        let mut circuit_flags_bits = vec![F::zero(); padded_trace_len * N_FLAGS];
-        circuit_flags
-            .chunks(N_FLAGS)
+        let mut circuit_flags= vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
+        circuit_flags_stepwise
+            .chunks(NUM_CIRCUIT_FLAGS) 
             .enumerate()
-            .for_each(|(chunk_index, chunk)| {
-                chunk.iter().enumerate().for_each(|(trace_index, &flag)| {
-                    let index = chunk_index + trace_index * padded_trace_len;
-                    circuit_flags_bits[index] = flag;
+            .for_each(|(step_index, step_flags)| {
+                step_flags.iter().enumerate().for_each(|(flag_index, &flag)| {
+                    let index = step_index + flag_index * padded_trace_len;
+                    circuit_flags[index] = flag;
                 })
             });
+
+        let instruction_flags = jolt_polynomials.instruction_lookups.instruction_flag_polys.iter()
+            .map(|poly| poly.evals())
+            .flatten()
+            .collect();
         drop(_enter);
         drop(span);
 
@@ -499,8 +452,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let chunks_x_comms = commit_to_chunks(&chunks_x);
         let chunks_y_comms = commit_to_chunks(&chunks_y);
         let lookup_outputs_comms = commit_to_chunks(&lookup_outputs);
-        let packed_flags_comm = HyraxCommitment::commit_slice(&packed_flags, &hyrax_generators);
-        let circuit_flags_comm = commit_to_chunks(&circuit_flags_bits);
+        let circuit_flags_comm = commit_to_chunks(&circuit_flags);
         drop(_guard);
 
         // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
@@ -510,7 +462,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             padded_trace_len,
             bytecode_a,
             bytecode_v,
-            packed_flags,
             memreg_a_rw,
             memreg_v_reads,
             memreg_v_writes,
@@ -518,7 +469,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_y,
             chunks_query,
             lookup_outputs,
-            circuit_flags_bits,
+            circuit_flags,
+            instruction_flags,
         );
 
         let (key, witness_segments, io_aux_commitments) = R1CSProof::<F,G>::compute_witness_commit(
@@ -534,7 +486,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_x_comms,
             chunks_y_comms,
             lookup_outputs_comms,
-            packed_flags_comm,
             circuit_flags_comm,
             hyrax_generators
         );

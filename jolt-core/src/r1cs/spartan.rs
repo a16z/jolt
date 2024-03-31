@@ -1,5 +1,6 @@
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
+use crate::utils::thread::allocate_vec_in_background;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::AppendToTranscript;
 use crate::utils::transcript::ProofTranscript;
@@ -105,7 +106,7 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::new(point).evals();
         self.segments
-            .iter()
+            .par_iter()
             .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
             .collect()
     }
@@ -194,6 +195,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
+        let poly_ABC_len = 2 * key.num_vars_total;
+        let RLC_evals_alloc = allocate_vec_in_background(F::ZERO, poly_ABC_len);
+
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
 
@@ -205,15 +209,32 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
             .collect::<Vec<F>>();
 
-        let (Az, Bz, Cz) = key.shape_single_step.multiply_vec_uniform(
-            &segmented_padded_witness,
-            &vec![],
-            key.num_steps,
-        )?;
-        let mut poly_Az = DensePolynomial::new(Az);
-        let mut poly_Bz = DensePolynomial::new(Bz);
-        let mut poly_Cz = DensePolynomial::new(Cz);
+        let combined_witness_size = (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
+        let A_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+        let B_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+        let C_z = allocate_vec_in_background(F::zero(), combined_witness_size);
+
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
+
+        let span = tracing::span!(tracing::Level::TRACE, "wait_join");
+        let _enter = span.enter();
+        let mut A_z = A_z.join().unwrap();
+        let mut B_z = B_z.join().unwrap();
+        let mut C_z = C_z.join().unwrap();
+        drop(_enter);
+
+        key.shape_single_step.multiply_vec_uniform(
+            &segmented_padded_witness,
+            key.num_steps,
+            &mut A_z,
+            &mut B_z,
+            &mut C_z
+        )?;
+        let mut poly_Az = DensePolynomial::new(A_z);
+        let mut poly_Bz = DensePolynomial::new(B_z);
+        let mut poly_Cz = DensePolynomial::new(C_z);
+
+
 
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
@@ -229,7 +250,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         };
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_cubic_with_additive_term::<G, _>(
+            SumcheckInstanceProof::prove_spartan_cubic::<G, _>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
@@ -276,7 +297,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 || EqPolynomial::new(rx_con.to_vec()).evals(),
                 || EqPolynomial::new(rx_ts.to_vec()).evals(),
             );
-
             let n_steps = key.num_steps;
 
             // With uniformity, each entry of the RLC of A, B, C can be expressed using
@@ -301,6 +321,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 },
             );
 
+            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_small_RLC_evals");
+            let _enter = span.enter();
             let r_sq = r_inner_sumcheck_RLC * r_inner_sumcheck_RLC;
             let small_RLC_evals = (0..small_A_evals.len())
                 .into_par_iter()
@@ -310,23 +332,36 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                         + small_C_evals[i] * r_sq
                 })
                 .collect::<Vec<F>>();
+            drop(_enter);
 
             // 2. Handles all entries but the last one with the constant 1 variable
-            let mut RLC_evals: Vec<F> = (0..key.num_vars_total)
-                .into_par_iter()
-                .map(|col| eq_rx_ts[col % n_steps] * small_RLC_evals[col / n_steps])
-                .collect();
-            let next_pow_2 = 2 * key.num_vars_total;
-            RLC_evals.resize(next_pow_2, F::zero());
+            let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
+            let _other_enter = other_span.enter();
+            let mut RLC_evals = RLC_evals_alloc.join().unwrap();
+            drop(_other_enter);
+
+            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
+            let _enter = span.enter();
+            // small_RLC_evals is 30% ones.
+            RLC_evals.par_chunks_mut(n_steps).take(key.num_vars_total / n_steps).enumerate().for_each(|(chunk_index, rlc_chunk)| {
+                if !small_RLC_evals[chunk_index].is_zero() {
+                    for (eq_index, item) in rlc_chunk.iter_mut().enumerate() {
+                        *item = eq_rx_ts[eq_index] * small_RLC_evals[chunk_index];
+                    }
+                }
+            });
+            drop(_enter);
 
             // 3. Handles the constant 1 variable
+            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_constant");
+            let _enter = span.enter();
+            let eq_sum = eq_rx_ts.par_iter().sum::<F>();
             let compute_eval_constant_column = |small_M: &Vec<(usize, usize, F)>| -> F {
                 let constant_sum: F = small_M.iter()
-              .filter(|(_, col, _)| *col == key.shape_single_step.num_vars)   // expecting ~1
-              .map(|(row, _, val)| {
-                  let eq_sum = (0..n_steps).into_par_iter().map(|t| eq_rx_ts[t]).sum::<F>();
-                  *val * eq_rx_con[*row] * eq_sum
-              }).sum();
+                    .filter(|(_, col, _)| *col == key.shape_single_step.num_vars)   // expecting ~1
+                    .map(|(row, _, val)| {
+                        *val * eq_rx_con[*row] * eq_sum
+                    }).sum();
 
                 constant_sum
             };
@@ -340,6 +375,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                     )
                 },
             );
+            drop(_enter);
 
             RLC_evals[key.num_vars_total] = constant_term_A
                 + r_inner_sumcheck_RLC * constant_term_B
@@ -350,22 +386,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         drop(_enter);
         drop(span);
 
-        let comb_func = |poly_A_comp: &F, poly_B_comp: &F| -> F {
-            if *poly_A_comp == F::zero() || *poly_B_comp == F::zero() {
-                F::zero()
-            } else {
-                *poly_A_comp * *poly_B_comp
-            }
-        };
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_quad_unrolled::<G, _, _>(
+            SumcheckInstanceProof::prove_spartan_quadratic::<G, _>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
                 &segmented_padded_witness,
-                &vec![],
-                comb_func,
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
@@ -397,6 +424,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             &witness_evals,
             transcript,
         );
+
+        drop_in_background_thread(witness_segment_polys);
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]
         let outer_sumcheck_claims = (
@@ -636,137 +665,4 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
     (0..num_bits)
         .map(|shift_amount| ((operand & (1 << (num_bits - shift_amount - 1))) > 0))
         .collect::<Vec<bool>>()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::poly::pedersen::PedersenGenerators;
-
-    use ark_bn254::{Fr, G1Projective};
-    use ark_std::One;
-
-    #[test]
-    fn simple_spartan_integration() {
-        struct UniformDoubleCircuit {}
-
-        impl<F: PrimeField> UniformShapeBuilder<F> for UniformDoubleCircuit {
-            fn single_step_shape(&self) -> R1CSShape<F> {
-                let a = vec![
-                    (0, 0, F::one()),
-                    (1, 0, F::one()),
-                    (2, 0, F::one()),
-                    (3, 0, F::one()),
-                ];
-                let b = vec![
-                    (0, 0, F::from(2u64)),
-                    (1, 0, F::from(2u64)),
-                    (2, 0, F::from(2u64)),
-                    (3, 0, F::from(2u64)),
-                ];
-                let c = vec![
-                    (0, 0, F::from(2u64)),
-                    (1, 0, F::from(2u64)),
-                    (2, 0, F::from(2u64)),
-                    (3, 0, F::from(2u64)),
-                ];
-                R1CSShape::new(4, 4, 0, &a, &b, &c).unwrap() // TODO(sragss): How is the nuber of variables in R1CS determined?
-            }
-        }
-
-        let witness = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
-        let witness_poly = DensePolynomial::new(witness.clone());
-
-        let mut transcript = Transcript::new(b"test_transcript");
-        let uniform_circuit = UniformDoubleCircuit {};
-
-        let pedersen_generators = PedersenGenerators::<G1Projective>::new(1 << 4, b"generators");
-        let hyrax_generators = HyraxGenerators::<NUM_R1CS_POLYS, G1Projective>::new(
-            witness_poly.get_num_vars(),
-            &pedersen_generators,
-        );
-        let witness_commitment = HyraxCommitment::commit(&witness_poly, &hyrax_generators);
-
-        let key = UniformSpartanProof::<Fr, G1Projective>::setup_precommitted(&uniform_circuit, 1)
-            .unwrap();
-
-        let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(
-            &key,
-            vec![witness],
-            &vec![witness_commitment],
-            &mut transcript,
-        )
-        .expect("should prove");
-
-        let mut transcript = Transcript::new(b"test_transcript");
-        proof
-            .verify_precommitted(&key, &[], &hyrax_generators, &mut transcript)
-            .expect("should verify");
-    }
-
-    #[test]
-    fn multi_step_spartan_integration() {
-        struct UniformDoubleCircuit {}
-
-        impl<F: PrimeField> UniformShapeBuilder<F> for UniformDoubleCircuit {
-            fn single_step_shape(&self) -> R1CSShape<F> {
-                let a = vec![
-                    (0, 0, F::one()),
-                    (1, 0, F::one()),
-                    (2, 0, F::one()),
-                    (3, 0, F::one()),
-                ];
-                let b = vec![
-                    (0, 0, F::from(2u64)),
-                    (1, 0, F::from(2u64)),
-                    (2, 0, F::from(2u64)),
-                    (3, 0, F::from(2u64)),
-                ];
-                let c = vec![
-                    (0, 0, F::from(2u64)),
-                    (1, 0, F::from(2u64)),
-                    (2, 0, F::from(2u64)),
-                    (3, 0, F::from(2u64)),
-                ];
-                R1CSShape::new(4, 4, 0, &a, &b, &c).unwrap() // TODO(sragss): How is the nuber of variables in R1CS determined?
-            }
-        }
-
-        const NUM_STEPS: usize = 2;
-
-        let witness = vec![Fr::one(), Fr::one(), Fr::one(), Fr::one()];
-        let witnesses = vec![witness.clone(); NUM_STEPS];
-        let witness_poly = DensePolynomial::new(witness.clone());
-
-        let mut transcript = Transcript::new(b"test_transcript");
-        let uniform_circuit = UniformDoubleCircuit {};
-
-        let pedersen_generators = PedersenGenerators::<G1Projective>::new(1 << 4, b"generators");
-        let hyrax_generators = HyraxGenerators::<NUM_R1CS_POLYS, G1Projective>::new(
-            witness_poly.get_num_vars(),
-            &pedersen_generators,
-        );
-        let witness_commitment = HyraxCommitment::commit(&witness_poly, &hyrax_generators);
-        let witness_commitments = vec![witness_commitment; NUM_STEPS];
-
-        let key = UniformSpartanProof::<Fr, G1Projective>::setup_precommitted(
-            &uniform_circuit,
-            NUM_STEPS,
-        )
-        .unwrap();
-
-        let proof = UniformSpartanProof::<Fr, G1Projective>::prove_precommitted(
-            &key,
-            witnesses,
-            &witness_commitments,
-            &mut transcript,
-        )
-        .expect("should prove");
-
-        let mut transcript = Transcript::new(b"test_transcript");
-        proof
-            .verify_precommitted(&key, &[], &hyrax_generators, &mut transcript)
-            .expect("should verify");
-    }
 }

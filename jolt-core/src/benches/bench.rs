@@ -23,6 +23,7 @@ pub enum BenchType {
     Fibonacci,
     Sha2,
     Sha3,
+    Sha2Chain,
 }
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
@@ -42,6 +43,7 @@ pub fn benchmarks(
         BenchType::InstructionLookups => prove_instruction_lookups(num_cycles),
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
+        BenchType::Sha2Chain => sha2chain(),
         BenchType::Fibonacci => fibonacci(),
         _ => panic!("BenchType does not have a mapping"),
     }
@@ -82,7 +84,7 @@ fn prove_e2e_except_r1cs(
             &mut transcript,
         );
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
-            JoltDevice::new(),
+            &JoltDevice::new(),
             &preprocessing.read_write_memory,
             memory_trace,
             &preprocessing.generators,
@@ -91,7 +93,7 @@ fn prove_e2e_except_r1cs(
         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_instruction_lookups(
                 &preprocessing.instruction_lookups,
-                ops,
+                &ops,
                 &preprocessing.generators,
                 &mut transcript,
             );
@@ -156,7 +158,7 @@ fn prove_memory(
     let work = Box::new(move || {
         let mut transcript = Transcript::new(b"example");
         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
-            JoltDevice::new(),
+            &JoltDevice::new(),
             &preprocessing.read_write_memory,
             memory_trace,
             &preprocessing.generators,
@@ -181,7 +183,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
             RV32IJoltVM::prove_instruction_lookups(
                 &preprocessing.instruction_lookups,
-                ops,
+                &ops,
                 &preprocessing.generators,
                 &mut transcript,
             );
@@ -234,7 +236,8 @@ fn prove_example<T: Serialize>(
     input: &T,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut tasks = Vec::new();
-    let mut program = host::Program::new(example_name).input(input);
+    let mut program = host::Program::new(example_name);
+    program.set_input(input);
 
     let task = move || {
         let bytecode = program.decode();
@@ -248,7 +251,6 @@ fn prove_example<T: Serialize>(
 
         let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
             io_device,
-            bytecode,
             bytecode_trace,
             memory_trace,
             instruction_trace,
@@ -264,6 +266,46 @@ fn prove_example<T: Serialize>(
         serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
         serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
 
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    };
+
+    tasks.push((
+        tracing::info_span!("Example_E2E"),
+        Box::new(task) as Box<dyn FnOnce()>,
+    ));
+
+    tasks
+}
+
+fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+    let mut tasks = Vec::new();
+    let mut program = host::Program::new("sha2-chain-guest");
+    program.set_input(&[5u8; 32]);
+    program.set_input(&1024u32);
+
+    let task = move || {
+        let bytecode = program.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            program.trace();
+
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<
+            ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
+            ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>,
+        > = RV32IJoltVM::preprocess(bytecode.clone(), 1 << 20, 1 << 20, 1 << 22);
+
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+            io_device,
+            bytecode_trace,
+            memory_trace,
+            instruction_trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),

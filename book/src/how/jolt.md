@@ -5,28 +5,57 @@
 - 3 phases of memory checking + primary sumcheck + r1cs
 - subtable flags -> instruction flags
 - R1CS checks
+- 
+==================
+## Jolt's three components
 
-## Instruction Collation
-The "primary sumcheck" collation when generalized from Lasso -> Jolt looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
+A VM does two things: 
 
-$$
-\sum_{x \in \{0,1\}^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in \{0,1\}^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}
-$$
+a. Repeatedly execute the fetch-decode-execute logic of its instruction set architecture.
 
-$\widetilde{flags_f}(x) = 1$ if the $f$-th instruction is used during the $x$-th step of the trace when. $x \in \{0,1\}^{log(m)}$ 
+b. Perform reads and writes to Random Access Memory (RAM).
+
+Accordingly, Jolt has three components: 
+
+1. To handle the "execute" part of each fetch-decode-execute loop, it invokes the Lasso lookup argument.
+2. To handle reads/writes to RAM (and to registers) it uses a memory-checking argument from Spice, which is closely related to Lasso itself. They are both based on "offline memory checking" techniques, the main difference being that Lasso supports read-only memory while [Spice](https://eprint.iacr.org/2018/907.pdf) supports read-write memory, making it slightly more expensive. 
+3. To handle the "fetch-decode" part of each fetch-decode-execute loop, and to capture some extra constraints not directly handled by Lasso itself, there is a minimal R1CS instance ( about 60 constraints per cycle of the RISC-V VM). 
+
+To prove satisfaction of the R1CS in (3), Jolt uses [Spartan](https://eprint.iacr.org/2019/550), optimized for the highly-structured nature of the constraint system (e.g., the R1CS constraint matrices are block-diagonal with blocks of size only about 60 x 80).
+
+
+## Details on using Lasso to handle instruction execution
+
+Lasso requires that each primitive instruction satisfies a decomposability property. 
+The property needed is that the input(s) to the instruction can be broken into "chunks" (say, with each chunk
+consisting of 16 bits), such that one can obtain the answer to the original instruction by
+evaluating a simple function or functions on each chunk and then "collating" the results together.
+For example, the bitwise-OR of two 32-bit inputs x and y can be computed by breaking each input up into 8-bit chunks, XORing 
+each 8-bit chunk of x with the associated chunk of y, and concatenating the results together.
+
+In Lasso, we call the task of evaluating a simple function on each chunk "subtable lookups" (the relevant lookup table
+being the table storing all $2^{16}$ evaluations of the simple function). And the "collating" of 
+the results of the subtable lookups into the result of the original lookup (instruction execution on the un-chunked inputs)
+is handled via an invocation of the sum-check protocol. We call this the "primary sumcheck" instance in Lasso.
+
+The "primary sumcheck" collation looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
+
+$\sum_{x \in `\{0,1\}`^{log(m)}} [\widetilde{eq}(r,x) \cdot \sum_{f \in `\{0,1\}`^{log(F)}} {\widetilde{flags_f}(x) \cdot g_f(\text{terms}_f(x))]}$
+
+$\widetilde{flags_f}(x) = 1$ if the $f$-th instruction is used during the $x$-th step of the trace when. $x \in `\{0,1\}`^{log(m)}$ 
 
 $g_f(...)$ is the collation function used by the $f$-th instruction.
 
 $terms_f(x) = [E_1(x), ... E_\alpha(x)]$ where $\alpha$ is the number of independent memories used by an instruction. For simple instructions like the EQ instruction, $\alpha = C$, $terms_f(x) = [E_1(x), ... E_C(x)]$. More complicated instructions such LT might have $terms_f(x) = [E_{eq}(x), E_{lt1}(x), E_{lt2}(x)]$. The exact layout is dependent on the number of subtables required by the decomposition of the instruction. The mappings can be found in the `JoltInstruction::subtable` method implementations.
 
 ### Mental Model
-For a given $r = x \in \{0,1\}^{log(m)}$ (think integer index of the instruction within the trace), $\widetilde{eq} = 0$ for all but one term of the outer sum. Similarly all $\widetilde{flags_f}(x) = 0$ for all but one term of the inner sum. Leaving just the collation function of a single instruction, evaluting to the collated lookup output of the single instruction. In reality $r$ is a random point $r \in \mathbb{F}^{log(m)}$ selected by the verifier over the course of the protocol. The evaluation point provides a distance amplified encoding of the entire trace of instructions.
+For a given $r = x \in `\{0,1\}`^{log(m)}$ (think integer index of the instruction within the trace), $\widetilde{eq} = 0$ for all but one term of the outer sum. Similarly all $\widetilde{flags_f}(x) = 0$ for all but one term of the inner sum. Leaving just the collation function of a single instruction, evaluting to the collated lookup output of the single instruction. In reality $r$ is a random point $r \in \mathbb{F}^{log(m)}$ selected by the verifier over the course of the protocol. The evaluation point provides a distance amplified encoding of the entire trace of instructions.
 
 
 To illustrate more concretely imagine a two-instruction VM for LT and EQ instructions with $C=1$.
 
 $$
-\sum_{x \in \{0,1\}^{\log_2(m)}}{\widetilde{eq}(r,x) \cdot [ \widetilde{flags}_{LT}(x) \cdot g_{LT}(E_{LT}(x)) + \widetilde{flags}_{EQ}(x) \cdot g_{EQ}(E_{EQ}(x))]}
+\sum_{x \in \`\{0,1\\}`^{\log_2(m)}}{\widetilde{eq}(r,x) \cdot [ \widetilde{flags}_{LT}(x) \cdot g_{LT}(E_{LT}(x)) + \widetilde{flags}_{EQ}(x) \cdot g_{EQ}(E_{EQ}(x))]}
 $$
 
 

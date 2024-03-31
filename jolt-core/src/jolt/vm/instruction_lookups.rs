@@ -122,21 +122,23 @@ where
         batched_polys: &Self::BatchedPolynomials,
         pedersen_generators: &PedersenGenerators<G>,
     ) -> Self::Commitment {
+        let read_write_num_vars = self.dim[0].get_num_vars();
         let read_write_generators =
-            HyraxGenerators::new(self.dim[0].get_num_vars(), pedersen_generators);
-        let dim_read_commitment = self
-            .dim
-            .par_iter()
-            .chain(self.read_cts.par_iter())
-            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
-            .collect::<Vec<_>>();
-
-        let E_flag_commitment = self
-            .E_polys
-            .par_iter()
-            .chain(self.instruction_flag_polys.par_iter())
-            .map(|poly| HyraxCommitment::commit(poly, &read_write_generators))
-            .collect::<Vec<_>>();
+            HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let dim_read_polys: Vec<&DensePolynomial<F>> =
+            self.dim.iter().chain(self.read_cts.iter()).collect();
+        let dim_read_commitment = HyraxCommitment::batch_commit_polys(
+            dim_read_polys,
+            read_write_num_vars,
+            &read_write_generators,
+        );
+        let E_flag_polys: Vec<&DensePolynomial<F>> =
+            self.E_polys.iter().chain(self.instruction_flag_polys.iter()).collect();
+        let E_flag_commitment = HyraxCommitment::batch_commit_polys(
+            E_flag_polys,
+            read_write_num_vars,
+            &read_write_generators,
+        );
 
         let final_commitment = batched_polys
             .batched_final
@@ -873,7 +875,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: Vec<InstructionSet>,
+        ops: &Vec<InstructionSet>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -883,7 +885,7 @@ where
     ) {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        let polynomials = Self::polynomialize(preprocessing, &ops);
+        let polynomials = Self::polynomialize(preprocessing, ops);
         let batched_polys = polynomials.batch();
         let commitment = polynomials.commit(&batched_polys, generators);
 
@@ -899,7 +901,7 @@ where
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
         let sumcheck_claim =
-            Self::compute_sumcheck_claim(preprocessing, &ops, &polynomials.E_polys, &eq_evals);
+            Self::compute_sumcheck_claim(preprocessing, ops, &polynomials.E_polys, &eq_evals);
 
         <Transcript as ProofTranscript<G>>::append_scalar(
             transcript,

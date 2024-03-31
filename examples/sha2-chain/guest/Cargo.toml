@@ -1,0 +1,15 @@
+[package]
+name = "sha2-chain-guest"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "guest"
+path = "./src/lib.rs"
+
+[features]
+guest = []
+
+[dependencies]
+sha2 = { version = "0.10.8", default-features = false }
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
