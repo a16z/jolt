@@ -29,7 +29,7 @@ use crate::{
         },
         sumcheck::SumcheckInstanceProof,
     },
-    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
+    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, thread, transcript::ProofTranscript},
 };
 use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MAX_INPUT_SIZE,
@@ -395,18 +395,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>, Vec<F>) {
-        let par_flatten = |polys: &[DensePolynomial<F>]| -> Vec<F> {
-            polys
-                .par_iter()
-                .flat_map(|poly| poly.evals_ref())
-                .cloned()
-                .collect::<Vec<F>>()
-        };
-        let (a_polys, (v_read_polys, v_write_polys)): (Vec<F>, (Vec<F>, Vec<F>)) = rayon::join(
-            || par_flatten(&self.a_read_write),
-            || rayon::join(|| par_flatten(&self.v_read), || par_flatten(&self.v_write)),
-        );
+        let (a_polys, v_read_polys, v_write_polys) = thread::join_triple(|| DensePolynomial::flatten(&self.a_read_write), || DensePolynomial::flatten(&self.v_read), || DensePolynomial::flatten(&self.v_write));
         (a_polys, v_read_polys, v_write_polys)
     }
 

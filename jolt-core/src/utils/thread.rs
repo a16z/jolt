@@ -37,3 +37,16 @@ pub fn unsafe_allocate_zero_vec<F: PrimeField + ark_std::Zero + Sized>(size: usi
     }
     result
 }
+
+pub fn join_triple<A, B, C, RA, RB, RC>(oper_a: A, oper_b: B, oper_c: C) -> (RA, RB, RC)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    C: FnOnce() -> RC + Send,
+    RA: Send,
+    RB: Send,
+    RC: Send,
+{
+    let (res_a, (res_b, res_c)) = rayon::join(oper_a, || rayon::join(oper_b, oper_c));
+    (res_a, res_b, res_c)
+}

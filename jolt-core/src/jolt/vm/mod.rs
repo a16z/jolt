@@ -17,7 +17,7 @@ use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::BatchablePolynomials;
 use crate::r1cs::snark::{R1CSUniqueCommitments, R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::thread::drop_in_background_thread;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use common::{
     constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
     rv_trace::{ELFInstruction, MemoryOp},
@@ -400,10 +400,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
         let _enter = span.enter();
-        let instruction_flags = jolt_polynomials.instruction_lookups.instruction_flag_polys.iter()
-            .map(|poly| poly.evals())
-            .flatten()
-            .collect();
+        let flag_poly_len = jolt_polynomials.instruction_lookups.instruction_flag_polys[0].len();
+        let num_flag_polys = jolt_polynomials.instruction_lookups.instruction_flag_polys.len();
+        let flat_len = num_flag_polys * flag_poly_len;
+        let mut instruction_flags: Vec<F> = unsafe_allocate_zero_vec(flat_len);
+        instruction_flags.par_chunks_mut(flag_poly_len).enumerate().for_each(|(flag_index, result)| {
+            let evals = jolt_polynomials.instruction_lookups.instruction_flag_polys[flag_index].evals_ref();
+            for (eval_index, eval) in evals.iter().enumerate() {
+                result[eval_index] = *eval;
+            }
+        });
         drop(_enter);
         drop(span);
 
