@@ -165,6 +165,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RangeCheckCommitment<G: CurveGroup> {
     generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
