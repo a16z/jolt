@@ -11,22 +11,6 @@ use rayon::prelude::*;
 use strum::EnumCount;
 
 /// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
-#[tracing::instrument(skip_all)]
-fn reassemble_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
-  let trace_len = jolt_witnesses.len();
-  let num_variables = jolt_witnesses[0].len();
-  let mut result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_variables - 1]; // ignore 1 
-
-  result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
-    for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][variable_idx]; // NOTE: 1 is at the end!
-    }
-  });
-
-  result 
-}
-
-/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
 #[tracing::instrument(skip_all, name = "reassemble_segments_partial")]
 fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_front: usize, num_back: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
   let trace_len = jolt_witnesses.len();

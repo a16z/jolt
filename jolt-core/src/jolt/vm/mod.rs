@@ -376,8 +376,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let _guard = span.enter();
 
         let num_chunks = padded_trace_len * C;
-        let mut chunks_x: Vec<F> = vec![F::zero(); num_chunks];
-        let mut chunks_y: Vec<F> = vec![F::zero(); num_chunks];
+        let mut chunks_x: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
+        let mut chunks_y: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
 
         for (instruction_index, op) in instructions.iter().enumerate() {
             let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
