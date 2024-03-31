@@ -7,34 +7,26 @@ use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
 use std::marker::PhantomData;
-use strum::{EnumCount, IntoEnumIterator};
 use tracing::trace_span;
 
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
-use crate::lasso::memory_checking::{MultisetHashes, NoPreprocessing};
+use crate::lasso::memory_checking::MultisetHashes;
 use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
 };
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
-    jolt::{
-        instruction::JoltInstruction,
-        subtable::{LassoSubtable, SubtableId},
-    },
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
         unipoly::{CompressedUniPoly, UniPoly},
     },
     subprotocols::{
-        concatenated_commitment::{
-            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
-        },
         grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
         sumcheck::SumcheckInstanceProof,
     },
@@ -82,71 +74,52 @@ where
     instruction_flag_bitvectors: Vec<Vec<u64>>,
 }
 
-/// Batched version of InstructionPolynomials.
-pub struct BatchedInstructionPolynomials<F: PrimeField> {
-    /// final_cts_i polynomials, batched together.
-    batched_final: DensePolynomial<F>,
-}
-
 /// Commitments to BatchedInstructionPolynomials.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionCommitment<G: CurveGroup> {
     pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     /// Commitments to dim_i and read_cts_i polynomials.
     pub dim_read_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+    pub final_generators: HyraxGenerators<64, G>,
     /// Commitment to final_cts_i polynomials.
-    pub final_commitment: ConcatenatedPolynomialCommitment<G>,
+    pub final_commitment: Vec<HyraxCommitment<64, G>>,
     /// Commitments to E_i and flag polynomials.
     pub E_flag_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
 // TODO: macro?
-impl<F, G> BatchablePolynomials<G> for InstructionPolynomials<F, G>
+impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = BatchedInstructionPolynomials<F>;
     type Commitment = InstructionCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "InstructionPolynomials::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        Self::BatchedPolynomials {
-            batched_final: DensePolynomial::merge(self.final_cts.iter()),
-        }
-    }
-
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(
-        &self,
-        batched_polys: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_num_vars = self.dim[0].get_num_vars();
-        let read_write_generators =
-            HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = HyraxCommitment::batch_commit_polys(
-            dim_read_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
-        let E_flag_polys: Vec<&DensePolynomial<F>> =
-            self.E_polys.iter().chain(self.instruction_flag_polys.iter()).collect();
-        let E_flag_commitment = HyraxCommitment::batch_commit_polys(
-            E_flag_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
+        let dim_read_commitment =
+            HyraxCommitment::batch_commit_polys(dim_read_polys, &read_write_generators);
+        let E_flag_polys: Vec<&DensePolynomial<F>> = self
+            .E_polys
+            .iter()
+            .chain(self.instruction_flag_polys.iter())
+            .collect();
+        let E_flag_commitment =
+            HyraxCommitment::batch_commit_polys(E_flag_polys, &read_write_generators);
 
-        let final_commitment = batched_polys
-            .batched_final
-            .combined_commit(pedersen_generators);
+        let final_num_vars = self.final_cts[0].get_num_vars();
+        let final_generators = HyraxGenerators::new(final_num_vars, pedersen_generators);
+        let final_commitment =
+            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &final_generators);
 
         Self::Commitment {
             read_write_generators,
             dim_read_commitment,
+            final_generators,
             final_commitment,
             E_flag_commitment,
         }
@@ -179,7 +152,6 @@ where
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        _: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -281,7 +253,6 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -312,7 +283,7 @@ where
 
     fn verify_openings(
         &self,
-        openings_proof: &Self::Proof,
+        opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
@@ -324,7 +295,7 @@ where
             self.flag_openings.as_slice(),
         ]
         .concat();
-        openings_proof.verify(
+        opening_proof.verify(
             &commitment.read_write_generators,
             opening_point,
             &read_write_openings,
@@ -361,6 +332,7 @@ where
     Subtables: JoltSubtableSet<F>,
 {
     type Preprocessing = InstructionLookupsPreprocessing<F>;
+    type Proof = BatchedHyraxOpeningProof<64, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
@@ -382,14 +354,13 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        batched_polynomials: &BatchedInstructionPolynomials<F>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
-        ConcatenatedPolynomialOpeningProof::prove(
-            &batched_polynomials.batched_final,
-            &opening_point,
+        BatchedHyraxOpeningProof::prove(
+            &polynomials.final_cts.iter().collect::<Vec<_>>(),
+            opening_point,
             &openings.final_openings,
             transcript,
         )
@@ -417,9 +388,10 @@ where
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
+            &commitment.final_generators,
             opening_point,
             &self.final_openings,
-            &commitment.final_commitment,
+            &commitment.final_commitment.iter().collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -886,8 +858,7 @@ where
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
         let polynomials = Self::polynomialize(preprocessing, ops);
-        let batched_polys = polynomials.batch();
-        let commitment = polynomials.commit(&batched_polys, generators);
+        let commitment = polynomials.commit(generators);
 
         commitment.E_flag_commitment.iter().for_each(|commitment| {
             commitment.append_to_transcript(b"E_flag_commitment", transcript)
@@ -933,7 +904,6 @@ where
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
             &polynomials,
-            &batched_polys,
             &r_primary_sumcheck,
             &sumcheck_openings,
             transcript,
@@ -947,8 +917,7 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking =
-            Self::prove_memory_checking(preprocessing, &polynomials, &batched_polys, transcript);
+        let memory_checking = Self::prove_memory_checking(preprocessing, &polynomials, transcript);
 
         (
             InstructionLookupsProof {

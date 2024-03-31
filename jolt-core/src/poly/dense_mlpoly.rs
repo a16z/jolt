@@ -4,7 +4,6 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, m
 
 use super::hyrax::{HyraxCommitment, HyraxGenerators};
 use super::pedersen::PedersenGenerators;
-use crate::subprotocols::concatenated_commitment::ConcatenatedPolynomialCommitment;
 use crate::utils::math::Math;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -245,39 +244,6 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn evals_ref(&self) -> &[F] {
         self.Z.as_ref()
-    }
-
-    #[tracing::instrument(skip_all, name = "DensePoly.merge")]
-    pub fn merge(polys: impl IntoIterator<Item = impl AsRef<Self>> + Clone) -> DensePolynomial<F> {
-        let polys_iter_cloned = polys.clone().into_iter();
-        let total_len: usize = polys
-            .into_iter()
-            .map(|poly| poly.as_ref().len())
-            .sum();
-        let mut Z: Vec<F> = Vec::with_capacity(total_len.next_power_of_two());
-        for poly in polys_iter_cloned {
-            Z.extend_from_slice(poly.as_ref().vec());
-        }
-
-        // pad the polynomial with zero polynomial at the end
-        Z.resize(Z.capacity(), F::zero());
-
-        DensePolynomial::new(Z)
-    }
-
-    pub fn combined_commit<G>(
-        &self,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> ConcatenatedPolynomialCommitment<G>
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
-        let generators = HyraxGenerators::new(self.get_num_vars(), pedersen_generators);
-        let joint_commitment = HyraxCommitment::commit(&self, &generators);
-        ConcatenatedPolynomialCommitment {
-            generators,
-            joint_commitment,
-        }
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]

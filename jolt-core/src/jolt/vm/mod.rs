@@ -15,8 +15,8 @@ use crate::jolt::{
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
-use crate::poly::structured_poly::BatchablePolynomials;
-use crate::r1cs::snark::{R1CSUniqueCommitments, R1CSInputs, R1CSProof};
+use crate::poly::structured_poly::StructuredCommitment;
+use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSUniqueCommitments};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use common::{
@@ -80,7 +80,7 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub bytecode: BytecodeCommitment<G>,
     pub read_write_memory: MemoryCommitment<G>,
     pub instruction_lookups: InstructionCommitment<G>,
-    pub r1cs: R1CSUniqueCommitments<G>
+    pub r1cs: R1CSUniqueCommitments<G>,
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
@@ -159,7 +159,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut transcript = Transcript::new(b"Jolt transcript");
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             &preprocessing.bytecode,
-            bytecode_trace.clone(),
+            bytecode_trace,
             &preprocessing.generators,
             &mut transcript,
         );
@@ -210,7 +210,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             bytecode: bytecode_commitment,
             read_write_memory: memory_commitment,
             instruction_lookups: instruction_lookups_commitment,
-            r1cs: r1cs_commitment
+            r1cs: r1cs_commitment,
         };
 
         let jolt_proof = JoltProof {
@@ -288,8 +288,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         BytecodeCommitment<G>,
     ) {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(preprocessing, trace);
-        let commitment = BytecodePolynomials::commit(&polys, &(), &generators);
-        let proof = BytecodeProof::prove_memory_checking(preprocessing, &polys, &(), transcript);
+        let commitment = BytecodePolynomials::commit(&polys, &generators);
+        let proof = BytecodeProof::prove_memory_checking(preprocessing, &polys, transcript);
 
         (proof, polys, commitment)
     }
@@ -317,14 +317,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     ) {
         let (polynomials, read_timestamps) =
             ReadWriteMemory::new(program_io, preprocessing, memory_trace, transcript);
-        let batched_polys = polynomials.batch();
-        let commitment: MemoryCommitment<G> =
-            ReadWriteMemory::commit(&polynomials, &batched_polys, &generators);
+        let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&polynomials, &generators);
 
         let proof = ReadWriteMemoryProof::prove(
             preprocessing,
             &polynomials,
-            &batched_polys,
             read_timestamps,
             program_io,
             generators,
@@ -404,7 +401,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
         let _enter = span.enter();
-        let instruction_flags = jolt_polynomials.instruction_lookups.instruction_flag_polys.iter()
+        let instruction_flags = jolt_polynomials
+            .instruction_lookups
+            .instruction_flag_polys
+            .iter()
             .map(|poly| poly.evals())
             .flatten()
             .collect();
@@ -443,7 +443,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let circuit_flags_comm = commit_to_chunks(&circuit_flags);
         drop(_guard);
 
-        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks 
+        // Flattening this out into a Vec<F> and chunking into PADDED_TRACE_LEN-sized chunks
         // will be the exact witness vector to feed into the R1CS
         // after pre-pending IO and appending the AUX
         let inputs: R1CSInputs<F> = R1CSInputs::new(
@@ -461,13 +461,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             instruction_flags,
         );
 
-        let (key, witness_segments, io_aux_commitments) = R1CSProof::<F,G>::compute_witness_commit(
-            32, 
-            C, 
-            padded_trace_len, 
-            inputs, 
-            &hyrax_generators)
-        .expect("R1CSProof setup failed");
+        let (key, witness_segments, io_aux_commitments) =
+            R1CSProof::<F, G>::compute_witness_commit(
+                32,
+                C,
+                padded_trace_len,
+                inputs,
+                &hyrax_generators,
+            )
+            .expect("R1CSProof setup failed");
 
         let r1cs_commitments = R1CSUniqueCommitments::new(
             io_aux_commitments,
@@ -475,17 +477,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_y_comms,
             lookup_outputs_comms,
             circuit_flags_comm,
-            hyrax_generators
+            hyrax_generators,
         );
 
         r1cs_commitments.append_to_transcript(transcript);
 
-        let proof  = R1CSProof::prove(
-            key,
-            witness_segments,
-            transcript
-        )
-        .expect("proof failed");
+        let proof = R1CSProof::prove(key, witness_segments, transcript).expect("proof failed");
 
         (proof, r1cs_commitments)
     }

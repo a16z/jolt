@@ -109,9 +109,9 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
     #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit_polys")]
     pub fn batch_commit_polys(
         polys: Vec<&DensePolynomial<G::ScalarField>>,
-        num_vars: usize,
         gens: &HyraxGenerators<RATIO, G>,
     ) -> Vec<Self> {
+        let num_vars = polys[0].get_num_vars();
         let n = num_vars.pow2();
         polys
             .iter()

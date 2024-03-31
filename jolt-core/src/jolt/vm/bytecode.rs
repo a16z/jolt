@@ -5,7 +5,7 @@ use rand::rngs::StdRng;
 use rand_core::RngCore;
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate::jolt::instruction::{JoltInstruction, JoltInstructionSet};
+use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
@@ -24,9 +24,9 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         identity_poly::IdentityPolynomial,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    utils::{errors::ProofVerifyError, is_power_of_two, math::Math},
+    utils::{errors::ProofVerifyError, math::Math},
 };
 
 pub type BytecodeProof<F, G> = MemoryCheckingProof<
@@ -335,27 +335,17 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
-impl<F, G> BatchablePolynomials<G> for BytecodePolynomials<F, G>
+impl<F, G> StructuredCommitment<G> for BytecodePolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = ();
     type Commitment = BytecodeCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "BytecodePolynomials::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        unimplemented!("No batching necessary")
-    }
-
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(
-        &self,
-        _: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
-        let read_write_num_vars = self.a_read_write.get_num_vars();
-        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
+        let read_write_generators =
+            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
         let read_write_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
@@ -365,11 +355,8 @@ where
             &self.v_read_write[3],
             &self.v_read_write[4],
         ];
-        let read_write_commitments = HyraxCommitment::batch_commit_polys(
-            read_write_polys,
-            read_write_num_vars,
-            &read_write_generators,
-        );
+        let read_write_commitments =
+            HyraxCommitment::batch_commit_polys(read_write_polys, &read_write_generators);
 
         let t_final_generators =
             HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);
@@ -611,7 +598,6 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BytecodePolynomials<F, G>,
-        _: &(),
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
@@ -694,7 +680,6 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BytecodePolynomials<F, G>,
-        _: &(),
         opening_point: &Vec<F>,
         _openings: &Self,
         transcript: &mut Transcript,
@@ -804,9 +789,8 @@ mod tests {
         let mut transcript = Transcript::new(b"test_transcript");
 
         let generators = PedersenGenerators::new(num_generators, b"test");
-        let commitments = polys.commit(&(), &generators);
-        let proof =
-            BytecodeProof::prove_memory_checking(&preprocessing, &polys, &(), &mut transcript);
+        let commitments = polys.commit(&generators);
+        let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(&preprocessing, proof, &commitments, &mut transcript)
@@ -834,12 +818,11 @@ mod tests {
         let polys: BytecodePolynomials<Fr, G1Projective> =
             BytecodePolynomials::new(&preprocessing, trace);
         let generators = PedersenGenerators::new(num_generators, b"test");
-        let commitments = polys.commit(&(), &generators);
+        let commitments = polys.commit(&generators);
 
         let mut transcript = Transcript::new(b"test_transcript");
 
-        let proof =
-            BytecodeProof::prove_memory_checking(&preprocessing, &polys, &(), &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(&preprocessing, proof, &commitments, &mut transcript)
