@@ -16,7 +16,7 @@ use strum::EnumCount;
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
   let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
   let _enter = span.enter();
-  let stuff: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
+  let triples: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
     let step: Vec<F> = inputs.clone_step(step_index);
     let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step, num_aux);
     (aux, pc_out, pc)
@@ -27,13 +27,13 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -
   // [[aux_var_0, aux_var_1], [aux_var_0, aux_var_1]] => [[aux_var_0, aux_var_0], [aux_var_1, aux_var_1]]
   // result: aux[num_vars][num_steps]
 
-  let num_vars = stuff[0].0.len();
-  let mut aux = vec![vec![F::zero(); inputs.padded_trace_len]; num_vars];
-  let mut pc_out = Vec::with_capacity(stuff.len());
-  let mut pc = Vec::with_capacity(stuff.len());
+  let num_vars = triples[0].0.len();
+  let mut aux = vec![unsafe_allocate_zero_vec(inputs.padded_trace_len); num_vars];
+  let mut pc_out = Vec::with_capacity(triples.len());
+  let mut pc = Vec::with_capacity(triples.len());
 
   for step_index in 0..inputs.padded_trace_len {
-    let (aux_step, pc_out_step, pc_step) = &stuff[step_index];
+    let (aux_step, pc_out_step, pc_step) = &triples[step_index];
 
     for aux_index in 0..aux_step.len() {
       aux[aux_index][step_index] = aux_step[aux_index];
