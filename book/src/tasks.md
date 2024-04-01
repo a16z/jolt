@@ -1,7 +1,7 @@
 - [Implement on-chain verifier](https://github.com/a16z/Lasso/issues/209)
 - [Incorporate support for pre-compiles](https://github.com/a16z/Lasso/issues/210)
 - [Implement continuations via folding](https://github.com/a16z/Lasso/issues/211)
-- [Switch to Binius commitment (and the field to GF[$2^{128}$])(https://github.com/a16z/Lasso/issues/212)
+- [Switch to Binius commitment (and the field to have size $2^{128}$)(https://github.com/a16z/Lasso/issues/212)
 - [Optimize Rust verifier](https://github.com/a16z/Lasso/issues/216)
 - Include support for Zeromorph and/or HyerpKZG commitment schemes
 - Include support for grand product argument from Sections 5 and/or 6 of Quarks. 
