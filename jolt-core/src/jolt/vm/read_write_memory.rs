@@ -181,6 +181,14 @@ fn remap_address(a: u64) -> u64 {
     }
 }
 
+const RS1: usize = 0;
+const RS2: usize = 1;
+const RD: usize = 2;
+const RAM_1: usize = 3;
+const RAM_2: usize = 4;
+const RAM_3: usize = 5;
+const RAM_4: usize = 6;
+
 pub struct ReadWriteMemory<F, G>
 where
     F: PrimeField,
@@ -193,7 +201,7 @@ where
     pub v_init: DensePolynomial<F>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
     /// and vice versa, so the read addresses and write addresses are the same.
-    pub a_read_write: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+    pub a_read_write: [DensePolynomial<F>; 4],
     /// MLE of the read values.
     pub v_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
     /// MLE of the write values.
@@ -264,8 +272,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             }
         }
 
-        let mut a_read_write: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
-            std::array::from_fn(|_| Vec::with_capacity(m));
+        let mut a_read_write: [Vec<u64>; 4] = std::array::from_fn(|_| Vec::with_capacity(m));
         let mut v_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
             std::array::from_fn(|_| Vec::with_capacity(m));
         let mut v_write: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
@@ -286,103 +293,314 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
         let _enter = span.enter();
         for step in memory_trace {
-            // Read operations
-            for (i, memory_access) in step.iter().enumerate() {
-                match memory_access {
-                    MemoryOp::Read(a, v) => {
-                        // RAM operation
-                        if i >= 5 {
-                            let step_index = timestamp as usize;
-                            // Only the SW/LW instructions access 4 bytes of RAM
-                            if sw_flag[step_index].is_zero() {
-                                assert_eq!(*a, 0);
-                                assert_eq!(*v, 0);
-                                a_read_write[i].push(0);
-                                v_read[i].push(0);
-                                t_read[i].push(0);
-                                v_write[i].push(0);
-                                t_write[i].push(0);
-                                continue;
-                            }
-                        } else if i >= 4 {
-                            // Only the LH/SH/LW/SW instructions access ≥2 bytes of RAM
-                            let step_index = timestamp as usize;
-                            if lh_flag[step_index].is_zero()
-                                && sh_flag[step_index].is_zero()
-                                && sw_flag[step_index].is_zero()
-                            {
-                                assert_eq!(*a, 0);
-                                assert_eq!(*v, 0);
-                                a_read_write[i].push(0);
-                                v_read[i].push(0);
-                                t_read[i].push(0);
-                                v_write[i].push(0);
-                                t_write[i].push(0);
-                                continue;
-                            }
-                        } else if i >= 3 {
-                            let step_index = timestamp as usize;
-                            // Only the LB/SB/LH/SH/LW/SW instructions access ≥1 byte of RAM
-                            if lb_flag[step_index].is_zero()
-                                && lh_flag[step_index].is_zero()
-                                && sb_flag[step_index].is_zero()
-                                && sh_flag[step_index].is_zero()
-                                && sw_flag[step_index].is_zero()
-                            {
-                                assert_eq!(*a, 0);
-                                assert_eq!(*v, 0);
-                                a_read_write[i].push(0);
-                                v_read[i].push(0);
-                                t_read[i].push(0);
-                                v_write[i].push(0);
-                                t_write[i].push(0);
-                                continue;
-                            }
-                        }
+            match step[RS1] {
+                MemoryOp::Read(a, v) => {
+                    assert!(a < REGISTER_COUNT);
+                    debug_assert_eq!(v, v_final[a as usize]);
 
-                        let remapped_a = remap_address(*a);
-                        debug_assert_eq!(*v, v_final[remapped_a as usize]);
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((a, v, t_final[a as usize]));
+                        write_tuples.insert((a, v, timestamp));
+                    }
+
+                    a_read_write[RS1].push(a);
+                    v_read[RS1].push(v);
+                    t_read[RS1].push(t_final[a as usize]);
+                    v_write[RS1].push(v);
+                    t_write[RS1].push(timestamp);
+                    t_final[a as usize] = timestamp;
+                }
+                MemoryOp::Write(a, v) => {
+                    panic!("Unexpected rs1 MemoryOp::Write({}, {})", a, v);
+                }
+            };
+
+            match step[RS2] {
+                MemoryOp::Read(a, v) => {
+                    assert!(a < REGISTER_COUNT);
+                    debug_assert_eq!(v, v_final[a as usize]);
+
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((a, v, t_final[a as usize]));
+                        write_tuples.insert((a, v, timestamp));
+                    }
+
+                    a_read_write[RS2].push(a);
+                    v_read[RS2].push(v);
+                    t_read[RS2].push(t_final[a as usize]);
+                    v_write[RS2].push(v);
+                    t_write[RS2].push(timestamp);
+                    t_final[a as usize] = timestamp;
+                }
+                MemoryOp::Write(a, v) => panic!("Unexpected rs2 MemoryOp::Write({}, {})", a, v),
+            };
+
+            match step[RD] {
+                MemoryOp::Read(a, v) => panic!("Unexpected rd MemoryOp::Read({}, {})", a, v),
+                MemoryOp::Write(a, v_new) => {
+                    assert!(a < REGISTER_COUNT);
+                    let v_old = v_final[a as usize];
+
+                    #[cfg(test)]
+                    {
+                        read_tuples.insert((a, v_old, t_final[a as usize]));
+                        write_tuples.insert((a, v_new, timestamp + 1));
+                    }
+
+                    a_read_write[RD].push(a);
+                    v_read[RD].push(v_old);
+                    t_read[RD].push(t_final[a as usize]);
+                    v_write[RD].push(v_new);
+                    t_write[RD].push(timestamp + 1);
+                    v_final[a as usize] = v_new;
+                    t_final[a as usize] = timestamp + 1;
+                }
+            };
+
+            let step_index = timestamp as usize;
+            let mut is_ram_write = false;
+            let mut ram_word_address = 0;
+            // Only the LB/SB/LH/SH/LW/SW instructions access ≥1 byte of RAM
+            if lb_flag[step_index].is_one()
+                || lh_flag[step_index].is_one()
+                || sb_flag[step_index].is_one()
+                || sh_flag[step_index].is_one()
+                || sw_flag[step_index].is_one()
+            {
+                match step[RAM_1] {
+                    MemoryOp::Read(a, v) => {
+                        assert!(a >= INPUT_START_ADDRESS);
+                        let remapped_a = remap_address(a);
+                        debug_assert_eq!(v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
                         {
-                            read_tuples.insert((remapped_a, *v, t_final[remapped_a as usize]));
-                            write_tuples.insert((remapped_a, *v, timestamp));
+                            read_tuples.insert((remapped_a, v, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v, timestamp));
                         }
 
-                        a_read_write[i].push(remapped_a);
-                        v_read[i].push(*v);
-                        t_read[i].push(t_final[remapped_a as usize]);
-                        v_write[i].push(*v);
-                        t_write[i].push(timestamp);
+                        a_read_write[RAM_1].push(remapped_a);
+                        v_read[RAM_1].push(v);
+                        t_read[RAM_1].push(t_final[remapped_a as usize]);
+                        v_write[RAM_1].push(v);
+                        t_write[RAM_1].push(timestamp);
                         t_final[remapped_a as usize] = timestamp;
+                        ram_word_address = a;
                     }
-                    _ => {}
-                }
-            }
-
-            // Write operations
-            for (i, memory_access) in step.iter().enumerate() {
-                match memory_access {
                     MemoryOp::Write(a, v_new) => {
-                        let remapped_a = remap_address(*a);
+                        assert!(a >= INPUT_START_ADDRESS);
+                        let remapped_a = remap_address(a);
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
                         {
                             read_tuples.insert((remapped_a, v_old, t_final[remapped_a as usize]));
-                            write_tuples.insert((remapped_a, *v_new, timestamp + 1));
+                            write_tuples.insert((remapped_a, v_new, timestamp + 1));
                         }
 
-                        a_read_write[i].push(remapped_a);
-                        v_read[i].push(v_old);
-                        t_read[i].push(t_final[remapped_a as usize]);
-                        v_write[i].push(*v_new);
-                        t_write[i].push(timestamp + 1);
-                        v_final[remapped_a as usize] = *v_new;
+                        a_read_write[RAM_1].push(remapped_a);
+                        v_read[RAM_1].push(v_old);
+                        t_read[RAM_1].push(t_final[remapped_a as usize]);
+                        v_write[RAM_1].push(v_new);
+                        t_write[RAM_1].push(timestamp + 1);
+                        v_final[remapped_a as usize] = v_new;
+                        t_final[remapped_a as usize] = timestamp + 1;
+                        ram_word_address = a;
+                        is_ram_write = true;
+                    }
+                };
+            } else {
+                a_read_write[RAM_1].push(0);
+                for op_index in [RAM_1, RAM_2, RAM_3, RAM_4] {
+                    match step[op_index] {
+                        MemoryOp::Read(a, v) => {
+                            assert_eq!(a, 0);
+                            assert_eq!(v, 0);
+                        }
+                        MemoryOp::Write(a, v) => {
+                            assert_eq!(a, 0);
+                            assert_eq!(v, 0);
+                        }
+                    }
+                    v_read[op_index].push(0);
+                    t_read[op_index].push(0);
+                    v_write[op_index].push(0);
+                    t_write[op_index].push(0);
+                }
+                // Increment global timestamp
+                timestamp += 1;                
+                continue;
+            }
+
+            // Only the LH/SH/LW/SW instructions access ≥2 byte of RAM
+            if lh_flag[step_index].is_one()
+                || sh_flag[step_index].is_one()
+                || sw_flag[step_index].is_one()
+            {
+                match step[RAM_2] {
+                    MemoryOp::Read(a, v) => {
+                        assert!(!is_ram_write);
+                        assert_eq!(a, ram_word_address + 1);
+                        let remapped_a = remap_address(a);
+                        debug_assert_eq!(v, v_final[remapped_a as usize]);
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v, timestamp));
+                        }
+
+                        v_read[RAM_2].push(v);
+                        t_read[RAM_2].push(t_final[remapped_a as usize]);
+                        v_write[RAM_2].push(v);
+                        t_write[RAM_2].push(timestamp);
+                        t_final[remapped_a as usize] = timestamp;
+                    }
+                    MemoryOp::Write(a, v_new) => {
+                        assert!(is_ram_write);
+                        assert_eq!(a, ram_word_address + 1);
+                        let remapped_a = remap_address(a);
+                        let v_old = v_final[remapped_a as usize];
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v_old, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v_new, timestamp + 1));
+                        }
+
+                        v_read[RAM_2].push(v_old);
+                        t_read[RAM_2].push(t_final[remapped_a as usize]);
+                        v_write[RAM_2].push(v_new);
+                        t_write[RAM_2].push(timestamp + 1);
+                        v_final[remapped_a as usize] = v_new;
                         t_final[remapped_a as usize] = timestamp + 1;
                     }
-                    _ => {}
+                };
+            } else {
+                for op_index in [RAM_2, RAM_3, RAM_4] {
+                    match step[op_index] {
+                        MemoryOp::Read(a, v) => {
+                            assert_eq!(a, 0);
+                            assert_eq!(v, 0);
+                        }
+                        MemoryOp::Write(a, v) => {
+                            assert_eq!(a, 0);
+                            assert_eq!(v, 0);
+                        }
+                    }
+                    v_read[op_index].push(0);
+                    t_read[op_index].push(0);
+                    v_write[op_index].push(0);
+                    t_write[op_index].push(0);
                 }
+                // Increment global timestamp
+                timestamp += 1;
+                continue;
+            }
+
+            // Only the LW/SW instructions access ≥3 byte of RAM
+            // Both LW and SW are represented by `sw_flag` for the purpose of lookups
+            if sw_flag[step_index].is_one() {
+                match step[RAM_3] {
+                    MemoryOp::Read(a, v) => {
+                        assert!(!is_ram_write);
+                        assert_eq!(a, ram_word_address + 2);
+                        let remapped_a = remap_address(a);
+                        debug_assert_eq!(v, v_final[remapped_a as usize]);
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v, timestamp));
+                        }
+
+                        v_read[RAM_3].push(v);
+                        t_read[RAM_3].push(t_final[remapped_a as usize]);
+                        v_write[RAM_3].push(v);
+                        t_write[RAM_3].push(timestamp);
+                        t_final[remapped_a as usize] = timestamp;
+                    }
+                    MemoryOp::Write(a, v_new) => {
+                        assert!(is_ram_write);
+                        assert_eq!(a, ram_word_address + 2);
+                        let remapped_a = remap_address(a);
+                        let v_old = v_final[remapped_a as usize];
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v_old, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v_new, timestamp + 1));
+                        }
+
+                        v_read[RAM_3].push(v_old);
+                        t_read[RAM_3].push(t_final[remapped_a as usize]);
+                        v_write[RAM_3].push(v_new);
+                        t_write[RAM_3].push(timestamp + 1);
+                        v_final[remapped_a as usize] = v_new;
+                        t_final[remapped_a as usize] = timestamp + 1;
+                    }
+                };
+                match step[RAM_4] {
+                    MemoryOp::Read(a, v) => {
+                        assert!(!is_ram_write);
+                        assert_eq!(a, ram_word_address + 3);
+                        let remapped_a = remap_address(a);
+                        debug_assert_eq!(v, v_final[remapped_a as usize]);
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v, timestamp));
+                        }
+
+                        v_read[RAM_4].push(v);
+                        t_read[RAM_4].push(t_final[remapped_a as usize]);
+                        v_write[RAM_4].push(v);
+                        t_write[RAM_4].push(timestamp);
+                        t_final[remapped_a as usize] = timestamp;
+                    }
+                    MemoryOp::Write(a, v_new) => {
+                        assert!(is_ram_write);
+                        assert_eq!(a, ram_word_address + 3);
+                        let remapped_a = remap_address(a);
+                        let v_old = v_final[remapped_a as usize];
+
+                        #[cfg(test)]
+                        {
+                            read_tuples.insert((remapped_a, v_old, t_final[remapped_a as usize]));
+                            write_tuples.insert((remapped_a, v_new, timestamp + 1));
+                        }
+
+                        v_read[RAM_4].push(v_old);
+                        t_read[RAM_4].push(t_final[remapped_a as usize]);
+                        v_write[RAM_4].push(v_new);
+                        t_write[RAM_4].push(timestamp + 1);
+                        v_final[remapped_a as usize] = v_new;
+                        t_final[remapped_a as usize] = timestamp + 1;
+                    }
+                };
+            } else {
+                for op_index in [RAM_3, RAM_4] {
+                    match step[op_index] {
+                        MemoryOp::Read(a, v) => {
+                            assert_eq!(a, 0);
+                            assert_eq!(v, 0);
+                        }
+                        MemoryOp::Write(a, v) => {
+                            assert_eq!(a, 0);
+                            assert_eq!(v, 0);
+                        }
+                    }
+                    v_read[op_index].push(0);
+                    t_read[op_index].push(0);
+                    v_write[op_index].push(0);
+                    t_write[op_index].push(0);
+                }
+                // Increment global timestamp
+                timestamp += 1;
+                continue;
             }
 
             // Increment global timestamp
@@ -403,7 +621,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
             assert_eq!(set_difference.len(), 0);
         }
-        let map_to_polys = |vals: &[Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]| {
+        let map_to_polys = |vals: &[Vec<u64>]| {
             vals.par_iter()
                 .map(|vals| DensePolynomial::from_u64(vals))
                 .collect::<Vec<DensePolynomial<F>>>()
@@ -415,7 +633,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             DensePolynomial<F>,
             DensePolynomial<F>,
             DensePolynomial<F>,
-            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; 4],
             [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
             [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
             [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
@@ -424,7 +642,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             || DensePolynomial::from_u64(&v_init),
             || DensePolynomial::from_u64(&v_final),
             || DensePolynomial::from_u64(&t_final),
-            || map_to_polys(&a_read_write),
+            || a_read_write
+                .par_iter()
+                .map(|vals| DensePolynomial::from_u64(vals))
+                .collect::<Vec<DensePolynomial<F>>>()
+                .try_into()
+                .unwrap(),
             || map_to_polys(&v_read),
             || map_to_polys(&v_write),
             || map_to_polys(&t_read),
@@ -534,7 +757,7 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     /// Evaluation of the a_read_write polynomial at the opening point.
-    pub a_read_write_opening: [F; MEMORY_OPS_PER_INSTRUCTION],
+    pub a_read_write_opening: [F; 4],
     /// Evaluation of the v_read polynomial at the opening point.
     pub v_read_opening: [F; MEMORY_OPS_PER_INSTRUCTION],
     /// Evaluation of the v_write polynomial at the opening point.
@@ -566,7 +789,7 @@ where
             .collect::<Vec<F>>()
             .into_iter();
 
-        let a_read_write_opening: [F; MEMORY_OPS_PER_INSTRUCTION] = openings.next_chunk().unwrap();
+        let a_read_write_opening = openings.next_chunk().unwrap();
         let v_read_opening = openings.next_chunk().unwrap();
         let v_write_opening = openings.next_chunk().unwrap();
         let t_read_opening = openings.next_chunk().unwrap();
@@ -784,18 +1007,29 @@ where
                 let read_fingerprints = (0..num_ops)
                     .into_par_iter()
                     .map(|j| {
+                        let a = if i >= RAM_2 {
+                            polynomials.a_read_write[RAM_1][j] + F::from_u64((i - RAM_1) as u64).unwrap()
+                        } else {
+                            polynomials.a_read_write[i][j]
+                        };
+
                         polynomials.t_read[i][j] * gamma_squared
                             + mul_0_optimized(&polynomials.v_read[i][j], gamma)
-                            + polynomials.a_read_write[i][j]
+                            + a
                             - *tau
                     })
                     .collect();
                 let write_fingerprints = (0..num_ops)
                     .into_par_iter()
                     .map(|j| {
+                        let a = if i >= RAM_2 {
+                            polynomials.a_read_write[RAM_1][j] + F::from_u64((i - RAM_1) as u64).unwrap()
+                        } else {
+                            polynomials.a_read_write[i][j]
+                        };
                         polynomials.t_write[i][j] * gamma_squared
                             + mul_0_optimized(&polynomials.v_write[i][j], gamma)
-                            + polynomials.a_read_write[i][j]
+                            + a
                             - *tau
                     })
                     .collect();
@@ -897,8 +1131,13 @@ where
     ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
+                let a = if i >= RAM_2 {
+                    openings.a_read_write_opening[RAM_1] + F::from_u64((i - RAM_1) as u64).unwrap()
+                } else {
+                    openings.a_read_write_opening[i]
+                };
                 (
-                    openings.a_read_write_opening[i],
+                    a,
                     openings.v_read_opening[i],
                     openings.t_read_opening[i],
                 )
@@ -911,8 +1150,13 @@ where
     ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
             .map(|i| {
+                let a = if i >= RAM_2 {
+                    openings.a_read_write_opening[RAM_1] + F::from_u64((i - RAM_1) as u64).unwrap()
+                } else {
+                    openings.a_read_write_opening[i]
+                };
                 (
-                    openings.a_read_write_opening[i],
+                    a,
                     openings.v_write_opening[i],
                     openings.t_write_opening[i],
                 )

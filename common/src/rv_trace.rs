@@ -173,7 +173,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
                 RV32IM::SB => [
                     rs1_read(),
                     rs2_read(),
-                    MemoryOp::no_op(),
+                    MemoryOp::Write(0, 0),
                     MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
                     MemoryOp::no_op(),
                     MemoryOp::no_op(),
@@ -182,7 +182,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
                 RV32IM::SH => [
                     rs1_read(),
                     rs2_read(),
-                    MemoryOp::no_op(),
+                    MemoryOp::Write(0, 0),
                     MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
                     MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
                     MemoryOp::no_op(),
@@ -191,7 +191,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
                 RV32IM::SW => [
                     rs1_read(),
                     rs2_read(),
-                    MemoryOp::no_op(),
+                    MemoryOp::Write(0, 0),
                     MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
                     MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
                     MemoryOp::Write(rs1_offset() + 2, ram_byte_written(2) as u64),
@@ -211,7 +211,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
             RV32InstructionFormat::SB => [
                 rs1_read(),
                 rs2_read(),
-                MemoryOp::no_op(),
+                MemoryOp::Write(0, 0),
                 MemoryOp::no_op(),
                 MemoryOp::no_op(),
                 MemoryOp::no_op(),

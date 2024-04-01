@@ -725,7 +725,7 @@ where
             .collect();
 
         let t_read_commitments = &memory_commitment.read_write_commitments
-            [3 * MEMORY_OPS_PER_INSTRUCTION..4 * MEMORY_OPS_PER_INSTRUCTION];
+            [2 * MEMORY_OPS_PER_INSTRUCTION + 4..3 * MEMORY_OPS_PER_INSTRUCTION + 4];
         let commitments: Vec<_> = self
             .commitment
             .commitments

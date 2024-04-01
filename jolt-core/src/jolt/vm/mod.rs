@@ -3,7 +3,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::NUM_R1CS_POLYS;
-use common::rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS};
+use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -168,7 +168,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut padded_memory_trace = memory_trace;
         padded_memory_trace.resize(
             trace_length.next_power_of_two(),
-            std::array::from_fn(|_| MemoryOp::no_op()),
+            [
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::Write(0, 0),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+                MemoryOp::no_op(),
+            ],
         );
 
         let (

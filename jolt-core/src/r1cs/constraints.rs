@@ -52,7 +52,7 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::InputState,      STATE_LENGTH),
     (InputType::ProgARW,         1),
     (InputType::ProgVRW,         5),
-    (InputType::MemregARW,       7),
+    (InputType::MemregARW,       4),
     (InputType::MemregVReads,    7),
     (InputType::MemregVWrites,   7),
     (InputType::ChunksX,         C),
@@ -382,20 +382,6 @@ impl R1CSBuilder {
             smallvec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, -1 * MEMORY_ADDRESS_OFFSET as i64)], 
             smallvec![]
         ); 
-
-        /*
-            for (var i=1; i<MOPS()-3; i++) {
-                // the first three are rs1, rs2, rd so memory starts are index 3
-                (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
-            }
-        */
-        for i in 1..MOPS-3 {
-            R1CSBuilder::constr_abc(instance, 
-                smallvec![(GET_INDEX(InputType::MemregARW, 3+i), 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, i as i64 * -1)], 
-                smallvec![(GET_INDEX(InputType::MemregARW, 3+i), 1)], 
-                smallvec![]
-            );
-        }
 
         /*
             for (var i=0; i<MOPS()-3; i++) {
