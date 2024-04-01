@@ -1,6 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS};
 use itertools::interleave;
 use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -17,23 +18,18 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::matrix_dimensions,
+        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
-        structured_poly::{BatchablePolynomials, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    subprotocols::{
-        concatenated_commitment::{
-            ConcatenatedPolynomialCommitment, ConcatenatedPolynomialOpeningProof,
-        },
-        grand_product::{
-            BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
-        },
+    subprotocols::grand_product::{
+        BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-use super::read_write_memory::{BatchedMemoryPolynomials, MemoryCommitment, ReadWriteMemory};
+use super::read_write_memory::MemoryCommitment;
 
 pub struct RangeCheckPolynomials<F, G>
 where
@@ -169,38 +165,41 @@ where
     }
 }
 
-pub type RangeCheckCommitment<G> = ConcatenatedPolynomialCommitment<G>;
-pub type BatchedRangeCheckPolynomials<F> = DensePolynomial<F>;
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct RangeCheckCommitment<G: CurveGroup> {
+    generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
+    commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+}
 
-impl<F, G> BatchablePolynomials<G> for RangeCheckPolynomials<F, G>
+impl<F, G> StructuredCommitment<G> for RangeCheckPolynomials<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type BatchedPolynomials = BatchedRangeCheckPolynomials<F>;
     type Commitment = RangeCheckCommitment<G>;
 
-    #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::batch")]
-    fn batch(&self) -> Self::BatchedPolynomials {
-        DensePolynomial::merge(
-            self.read_cts_read_timestamp
-                .iter()
-                .chain(self.read_cts_global_minus_read.iter())
-                .chain(self.final_cts_read_timestamp.iter())
-                .chain(self.final_cts_global_minus_read.iter()),
-        )
-    }
-
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(
-        &self,
-        batched_polys: &Self::BatchedPolynomials,
-        pedersen_generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment {
-        batched_polys.combined_commit(pedersen_generators)
+    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
+        let num_vars = self.read_cts_read_timestamp[0].get_num_vars();
+        let generators = HyraxGenerators::new(num_vars, pedersen_generators);
+
+        let polys: Vec<&DensePolynomial<F>> = self
+            .read_cts_read_timestamp
+            .iter()
+            .chain(self.read_cts_global_minus_read.iter())
+            .chain(self.final_cts_read_timestamp.iter())
+            .chain(self.final_cts_global_minus_read.iter())
+            .collect();
+        let commitments = HyraxCommitment::batch_commit_polys(polys, &generators);
+
+        Self::Commitment {
+            generators,
+            commitments,
+        }
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RangeCheckOpenings<F, G>
 where
     F: PrimeField,
@@ -211,16 +210,7 @@ where
     final_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION],
     final_cts_global_minus_read: [F; MEMORY_OPS_PER_INSTRUCTION],
     memory_t_read: [F; MEMORY_OPS_PER_INSTRUCTION],
-    memory_t_write: [F; MEMORY_OPS_PER_INSTRUCTION],
     identity_poly_opening: Option<F>,
-}
-
-pub struct RangeCheckOpeningProof<G>
-where
-    G: CurveGroup,
-{
-    range_check_opening_proof: ConcatenatedPolynomialOpeningProof<G>,
-    memory_poly_opening_proof: Option<ConcatenatedPolynomialOpeningProof<G>>,
 }
 
 impl<F, G> StructuredOpeningProof<F, G, RangeCheckPolynomials<F, G>> for RangeCheckOpenings<F, G>
@@ -228,38 +218,19 @@ where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
 {
-    type Proof = RangeCheckOpeningProof<G>;
+    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
-    #[tracing::instrument(skip_all, name = "RangeCheckReadWriteOpenings::open")]
     fn open(_polynomials: &RangeCheckPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
         unimplemented!("Openings are computed in TimestampValidityProof::prove");
     }
 
-    #[tracing::instrument(skip_all, name = "RangeCheckReadWriteOpenings::prove_openings")]
     fn prove_openings(
         _polynomials: &RangeCheckPolynomials<F, G>,
-        batched_polynomials: &BatchedRangeCheckPolynomials<F>,
-        opening_point: &Vec<F>,
-        openings: &RangeCheckOpenings<F, G>,
-        transcript: &mut Transcript,
+        _opening_point: &Vec<F>,
+        _openings: &RangeCheckOpenings<F, G>,
+        _transcript: &mut Transcript,
     ) -> Self::Proof {
-        let range_check_openings: Vec<F> = openings
-            .read_cts_read_timestamp
-            .into_iter()
-            .chain(openings.read_cts_global_minus_read.into_iter())
-            .chain(openings.final_cts_read_timestamp.into_iter())
-            .chain(openings.final_cts_global_minus_read.into_iter())
-            .collect();
-        let range_check_opening_proof = ConcatenatedPolynomialOpeningProof::prove(
-            &batched_polynomials,
-            opening_point,
-            &range_check_openings,
-            transcript,
-        );
-        RangeCheckOpeningProof {
-            range_check_opening_proof,
-            memory_poly_opening_proof: None,
-        }
+        unimplemented!("Openings are proved in TimestampValidityProof::prove")
     }
 
     fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &Vec<F>) {
@@ -269,24 +240,12 @@ where
 
     fn verify_openings(
         &self,
-        opening_proof: &Self::Proof,
-        commitment: &RangeCheckCommitment<G>,
-        opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        _opening_proof: &Self::Proof,
+        _commitment: &RangeCheckCommitment<G>,
+        _opening_point: &Vec<F>,
+        _transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        let range_check_openings: Vec<F> = self
-            .read_cts_read_timestamp
-            .into_iter()
-            .chain(self.read_cts_global_minus_read.into_iter())
-            .chain(self.final_cts_read_timestamp.into_iter())
-            .chain(self.final_cts_global_minus_read.into_iter())
-            .collect();
-        opening_proof.range_check_opening_proof.verify(
-            opening_point,
-            &range_check_openings,
-            &commitment,
-            transcript,
-        )
+        unimplemented!("Openings are verified in TimestampValidityProof::verify");
     }
 }
 
@@ -301,7 +260,6 @@ where
     fn prove_memory_checking(
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, G>,
-        _batched_polys: &BatchedRangeCheckPolynomials<F>,
         _transcript: &mut Transcript,
     ) -> MemoryCheckingProof<
         G,
@@ -589,6 +547,7 @@ where
     }
 }
 
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampValidityProof<F, G>
 where
     F: PrimeField,
@@ -596,7 +555,7 @@ where
 {
     multiset_hashes: MultisetHashes<F>,
     openings: RangeCheckOpenings<F, G>,
-    opening_proof: RangeCheckOpeningProof<G>,
+    opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
     batched_grand_product: BatchedGrandProductArgument<F>,
     pub commitment: RangeCheckCommitment<G>,
 }
@@ -609,42 +568,42 @@ where
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove(
         read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
-        memory_polynomials: &ReadWriteMemory<F, G>,
-        batched_memory_polynomials: &BatchedMemoryPolynomials<F>,
+        t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
-        let batched_range_check_polys = range_check_polys.batch();
-        let range_check_commitment = RangeCheckPolynomials::commit(
-            &range_check_polys,
-            &batched_range_check_polys,
-            &generators,
-        );
+        let range_check_commitment = RangeCheckPolynomials::commit(&range_check_polys, &generators);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
-        let chis = EqPolynomial::new(r_grand_product.to_vec()).evals();
-        let mut openings = range_check_polys
+        let polys_iter = range_check_polys
             .read_cts_read_timestamp
             .par_iter()
             .chain(range_check_polys.read_cts_global_minus_read.par_iter())
             .chain(range_check_polys.final_cts_read_timestamp.par_iter())
             .chain(range_check_polys.final_cts_global_minus_read.par_iter())
-            .chain(memory_polynomials.t_read.par_iter())
-            .chain(memory_polynomials.t_write.par_iter())
-            .map(|poly| poly.evaluate_at_chi(&chis))
-            .collect::<Vec<F>>()
-            .into_iter();
+            .chain(t_read_polynomials.par_iter());
 
+        let polys: Vec<_> = polys_iter.clone().collect();
+
+        let chis = EqPolynomial::new(r_grand_product.to_vec()).evals();
+        let openings = polys_iter
+            .clone()
+            .map(|poly| poly.evaluate_at_chi(&chis))
+            .collect::<Vec<F>>();
+
+        let opening_proof =
+            BatchedHyraxOpeningProof::prove(&polys, &r_grand_product, &openings, transcript);
+
+        let mut openings = openings.into_iter();
         let read_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION] =
             openings.next_chunk().unwrap();
         let read_cts_global_minus_read = openings.next_chunk().unwrap();
         let final_cts_read_timestamp = openings.next_chunk().unwrap();
         let final_cts_global_minus_read = openings.next_chunk().unwrap();
         let memory_t_read = openings.next_chunk().unwrap();
-        let memory_t_write = openings.next_chunk().unwrap();
 
         let openings = RangeCheckOpenings {
             read_cts_read_timestamp,
@@ -652,27 +611,8 @@ where
             final_cts_read_timestamp,
             final_cts_global_minus_read,
             memory_t_read,
-            memory_t_write,
             identity_poly_opening: None,
         };
-
-        let mut opening_proof = RangeCheckOpenings::prove_openings(
-            &range_check_polys,
-            &batched_range_check_polys,
-            &r_grand_product,
-            &openings,
-            transcript,
-        );
-        opening_proof.memory_poly_opening_proof = Some(ConcatenatedPolynomialOpeningProof::prove(
-            &batched_memory_polynomials.batched_t_read_write,
-            &r_grand_product,
-            &openings
-                .memory_t_read
-                .into_iter()
-                .chain(openings.memory_t_write.into_iter())
-                .collect::<Vec<_>>(),
-            transcript,
-        ));
 
         Self {
             multiset_hashes,
@@ -699,7 +639,6 @@ where
 
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        // fka "ProductLayerProof"
         let (read_write_leaves, init_final_leaves) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
@@ -775,27 +714,32 @@ where
             .batched_grand_product
             .verify::<G, Transcript>(&concatenated_hashes, transcript);
 
-        self.openings.verify_openings(
-            &self.opening_proof,
-            &self.commitment,
+        let openings: Vec<_> = self
+            .openings
+            .read_cts_read_timestamp
+            .into_iter()
+            .chain(self.openings.read_cts_global_minus_read.into_iter())
+            .chain(self.openings.final_cts_read_timestamp.into_iter())
+            .chain(self.openings.final_cts_global_minus_read.into_iter())
+            .chain(self.openings.memory_t_read.into_iter())
+            .collect();
+
+        let t_read_commitments = &memory_commitment.read_write_commitments
+            [3 * MEMORY_OPS_PER_INSTRUCTION..4 * MEMORY_OPS_PER_INSTRUCTION];
+        let commitments: Vec<_> = self
+            .commitment
+            .commitments
+            .iter()
+            .chain(t_read_commitments.iter())
+            .collect();
+
+        self.opening_proof.verify(
+            &self.commitment.generators,
             &r_grand_product,
+            &openings,
+            &commitments,
             transcript,
         )?;
-        self.opening_proof
-            .memory_poly_opening_proof
-            .as_ref()
-            .unwrap()
-            .verify(
-                &r_grand_product,
-                &self
-                    .openings
-                    .memory_t_read
-                    .into_iter()
-                    .chain(self.openings.memory_t_write.into_iter())
-                    .collect::<Vec<_>>(),
-                &memory_commitment.t_read_write_commitments,
-                transcript,
-            )?;
 
         self.openings
             .compute_verifier_openings(&NoPreprocessing, &r_grand_product);
@@ -851,8 +795,7 @@ where
     /// range-check polynomials using Hyrax, given the maximum trace length.
     pub fn num_generators(max_trace_length: usize) -> usize {
         let max_trace_length = max_trace_length.next_power_of_two();
-        let batch_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION * 4).log_2();
-        matrix_dimensions(batch_num_vars, 1).1
+        matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -863,11 +806,11 @@ where
 #[cfg(test)]
 mod tests {
     use crate::jolt::vm::read_write_memory::{
-        random_memory_trace, RandomInstruction, ReadWriteMemoryPreprocessing,
+        random_memory_trace, RandomInstruction, ReadWriteMemory, ReadWriteMemoryPreprocessing,
     };
 
     use super::*;
-    use ark_bn254::{G1Projective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use common::rv_trace::{ELFInstruction, JoltDevice};
     use rand_core::SeedableRng;
 
@@ -893,14 +836,12 @@ mod tests {
                 memory_trace,
                 &mut transcript,
             );
-        let batched_polys = rw_memory.batch();
         let generators = PedersenGenerators::new(1 << 10, b"Test generators");
-        let commitments = rw_memory.commit(&batched_polys, &generators);
+        let commitments = rw_memory.commit(&generators);
 
         let mut timestamp_validity_proof = TimestampValidityProof::prove(
             read_timestamps,
-            &rw_memory,
-            &batched_polys,
+            &rw_memory.t_read,
             &generators,
             &mut transcript,
         );

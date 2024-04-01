@@ -1,55 +1,48 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
 
 use super::pedersen::PedersenGenerators;
 use crate::{
     lasso::memory_checking::NoPreprocessing,
-    subprotocols::concatenated_commitment::ConcatenatedPolynomialOpeningProof,
     utils::errors::ProofVerifyError,
 };
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
-pub trait BatchablePolynomials<G: CurveGroup> {
-    /// The batched form of these polynomials.
-    type BatchedPolynomials;
+pub trait StructuredCommitment<G: CurveGroup>: Send + Sync + Sized {
     /// The batched commitment to these polynomials.
     type Commitment;
 
-    /// Organizes polynomials into a batch, to be subsequently committed. Typically
-    /// uses `DensePolynomial::merge` to combine polynomials of the same size.
-    fn batch(&self) -> Self::BatchedPolynomials;
-    /// Commits to batched polynomials, typically using `DensePolynomial::combined_commit`.
+    /// Commits to batched polynomials, typically using `HyraxCommitment::batch_commit_polys`.
     fn commit(
         &self,
-        batched_polys: &Self::BatchedPolynomials,
         generators: &PedersenGenerators<G>,
     ) -> Self::Commitment;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
-/// Note that there may be a one-to-many mapping from `BatchablePolynomials` to `StructuredOpeningProof`:
+/// Note that there may be a one-to-many mapping from `StructuredCommitment` to `StructuredOpeningProof`:
 /// different subset of the same polynomials may be opened at different points, resulting in
 /// different opening proofs.
-pub trait StructuredOpeningProof<F, G, Polynomials>
+pub trait StructuredOpeningProof<F, G, Polynomials>: Sync + CanonicalSerialize + CanonicalDeserialize
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
-    Polynomials: BatchablePolynomials<G> + ?Sized,
+    Polynomials: StructuredCommitment<G> + ?Sized,
 {
     type Preprocessing = NoPreprocessing;
-    type Proof = ConcatenatedPolynomialOpeningProof<G>;
+    type Proof: Sync + CanonicalSerialize + CanonicalDeserialize;
 
-    /// Evaluates each fo the given `polynomials` at the given `opening_point`.
+    /// Evaluates each of the given `polynomials` at the given `opening_point`.
     fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;
 
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
     /// by `openings`. The polynomials should already be committed by the prover.
     fn prove_openings(
         polynomials: &Polynomials,
-        batched_polynomials: &Polynomials::BatchedPolynomials,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
