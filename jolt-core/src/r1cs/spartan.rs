@@ -1,3 +1,4 @@
+use crate::jolt::subtable::eq;
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::allocate_vec_in_background;
@@ -28,7 +29,8 @@ pub struct UniformSpartanKey<F: PrimeField> {
     shape_single_step: R1CSShape<F>, // Single step shape
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
-    num_steps: usize,                // Number of steps
+    true_num_steps: usize,           // Number of steps
+    num_steps: usize,                // Padded number of steps
     vk_digest: F,                    // digest of the verifier's key
 }
 
@@ -162,12 +164,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
     pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
         circuit: &C,
-        num_steps: usize,
+        true_num_steps: usize, 
+        padded_num_steps: usize,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
         let shape_single_step = circuit.single_step_shape();
 
-        let num_constraints_total = shape_single_step.num_cons * num_steps;
-        let num_aux_total = shape_single_step.num_vars * num_steps;
+        let num_constraints_total = shape_single_step.num_cons * padded_num_steps;
+        let num_aux_total = shape_single_step.num_vars * padded_num_steps;
 
         let pad_num_constraints = num_constraints_total.next_power_of_two();
         let pad_num_aux = num_aux_total.next_power_of_two();
@@ -179,7 +182,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             shape_single_step,
             num_cons_total: pad_num_constraints,
             num_vars_total: pad_num_aux,
-            num_steps,
+            true_num_steps: true_num_steps, 
+            num_steps: padded_num_steps,
             vk_digest,
         };
         Ok(key)
@@ -225,6 +229,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         key.shape_single_step.multiply_vec_uniform(
             &segmented_padded_witness,
+            key.true_num_steps, 
             key.num_steps,
             &mut A_z,
             &mut B_z,
@@ -302,7 +307,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             // With uniformity, each entry of the RLC of A, B, C can be expressed using
             // the RLC of the small_A, small_B, small_C matrices.
 
-            // 1. Evaluate \tilde smallM(r_x, y) for all y
+            // 1. Evaluate \tilde smallM(r_x, y) for all y. Here, \tilde smallM(r_x, y) = \sum_{x} eq(r_x, x) * smallM(x, y)
             let compute_eval_table_sparse_single = |small_M: &Vec<(usize, usize, F)>| -> Vec<F> {
                 let mut small_M_evals = vec![F::zero(); key.shape_single_step.num_vars + 1];
                 for (row, col, val) in small_M.iter() {
@@ -320,7 +325,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                     )
                 },
             );
-
+            
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_small_RLC_evals");
             let _enter = span.enter();
             let r_sq = r_inner_sumcheck_RLC * r_inner_sumcheck_RLC;
@@ -334,7 +339,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 .collect::<Vec<F>>();
             drop(_enter);
 
-            // 2. Handles all entries but the last one with the constant 1 variable
+            // 2. Obtains the MLE evaluation for each variable y in the full matrix. 
+            // We first handle all entries but the last one with the constant 1 variable. 
+            // Each entry is just the small_RLC_evals for the corresponding variable multiplied with eq_rx_tx[timestamp of variable]
             let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
             let _other_enter = other_span.enter();
             let mut RLC_evals = RLC_evals_alloc.join().unwrap();
@@ -352,7 +359,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             });
             drop(_enter);
 
-            // 3. Handles the constant 1 variable
+            // 3. Handles the constant 1 variable, which was left over from the previous step. 
+            // The difference is that there is only one constnat variable, so it takes in all of eq_rx_ts (hence, eq_sum below). 
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_constant");
             let _enter = span.enter();
             let eq_sum = eq_rx_ts.par_iter().sum::<F>();
@@ -380,6 +388,28 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             RLC_evals[key.num_vars_total] = constant_term_A
                 + r_inner_sumcheck_RLC * constant_term_B
                 + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * constant_term_C;
+
+
+            /* 4. Add IO consistency constraints, which ensure that (output_pc[step i] - input_pc[step i+1]) * input_pc[step i+1] = 0
+                For each step i in (0..NUM_STEPS-1):
+                A, B: 0 
+                C: output of i - input of i+1 ==> (index i, value 1), (index NUM_STEPS+i+1, value -1)
+            */            
+            let row_io_consistency = key.shape_single_step.num_cons-1; // this is considered the last constraint
+            let r_sq_eq_rx_con = r_sq * eq_rx_con[row_io_consistency];
+            RLC_evals[0..key.true_num_steps-1]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, rlc)| {
+                    *rlc += r_sq_eq_rx_con * eq_rx_ts[i];
+                });
+
+            RLC_evals[key.num_steps+1..key.num_steps+key.true_num_steps]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, rlc)| {
+                    *rlc -= r_sq_eq_rx_con * eq_rx_ts[i];
+                });
 
             RLC_evals
         };
@@ -548,6 +578,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             (F::one() - inner_sumcheck_r[0]) * eval_W + inner_sumcheck_r[0] * eval_X
         };
 
+        let (T_x, T_y) = rayon::join(
+                || EqPolynomial::new(r_x.to_vec()).evals(),
+                || EqPolynomial::new(inner_sumcheck_r.to_vec()).evals(),
+            );
+
         // compute evaluations of R1CS matrices
         let multi_evaluate_uniform =
             |M_vec: &[&[(usize, usize, F)]], r_x: &[F], r_y: &[F], num_steps: usize| -> Vec<F> {
@@ -574,18 +609,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                             .sum()
                     };
 
-                let (T_x, T_y) = rayon::join(
-                    || EqPolynomial::new(r_x.to_vec()).evals(),
-                    || EqPolynomial::new(r_y.to_vec()).evals(),
-                );
-
                 (0..M_vec.len())
                     .into_par_iter()
                     .map(|i| evaluate_with_table_uniform(M_vec[i], &T_x, &T_y, num_steps))
                     .collect()
             };
 
-        let evals = multi_evaluate_uniform(
+        let mut evals = multi_evaluate_uniform(
             &[
                 &key.shape_single_step.A,
                 &key.shape_single_step.B,
@@ -595,6 +625,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             &inner_sumcheck_r,
             key.num_steps,
         );
+
+        // Handle IO consistency  
+        let start_row_io_consistency = (key.shape_single_step.num_cons-1) * key.num_steps; 
+        evals[2] += (0..key.true_num_steps-1)
+            .into_par_iter()
+            .map(|i| T_x[start_row_io_consistency + i] * (T_y[i] - T_y[key.num_steps+i+1]))
+            .sum::<F>();
 
         let left_expected = evals[0]
             + r_inner_sumcheck_RLC * evals[1]

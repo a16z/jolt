@@ -465,6 +465,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             R1CSProof::<F, G>::compute_witness_commit(
                 32,
                 C,
+                trace_len, 
                 padded_trace_len,
                 inputs,
                 &hyrax_generators,
