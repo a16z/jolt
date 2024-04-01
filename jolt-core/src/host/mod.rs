@@ -93,8 +93,10 @@ impl Program {
                 .output()
                 .expect("failed to build guest");
 
-            io::stdout().write(&output.stdout).unwrap();
-            io::stderr().write(&output.stderr).unwrap();
+            if !output.status.success() {
+                io::stderr().write(&output.stderr).unwrap();
+                panic!("failed to compile guest");
+            }
 
             let elf = format!("{}/riscv32i-unknown-none-elf/release/guest", target,);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
