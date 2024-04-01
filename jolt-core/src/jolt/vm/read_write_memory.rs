@@ -26,6 +26,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, thread, transcript::ProofTranscript},
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MAX_INPUT_SIZE,
     MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, OUTPUT_START_ADDRESS,
@@ -33,7 +34,6 @@ use common::constants::{
 };
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
 use common::to_ram_address;
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 use super::timestamp_range_check::TimestampValidityProof;
 
@@ -212,10 +212,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
         program_io: &JoltDevice,
+        load_store_flags: &[DensePolynomial<F>],
         preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         transcript: &mut Transcript,
     ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
+        let lb_flag = &load_store_flags[0];
+        let lh_flag = &load_store_flags[1];
+        let sb_flag = &load_store_flags[2];
+        let sh_flag = &load_store_flags[3];
+        let sw_flag = &load_store_flags[4];
+
         assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
         assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
 
@@ -283,6 +290,56 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             for (i, memory_access) in step.iter().enumerate() {
                 match memory_access {
                     MemoryOp::Read(a, v) => {
+                        // RAM operation
+                        if i >= 5 {
+                            let step_index = timestamp as usize;
+                            // Only the SW/LW instructions access 4 bytes of RAM
+                            if sw_flag[step_index].is_zero() {
+                                assert_eq!(*a, 0);
+                                assert_eq!(*v, 0);
+                                a_read_write[i].push(0);
+                                v_read[i].push(0);
+                                t_read[i].push(0);
+                                v_write[i].push(0);
+                                t_write[i].push(0);
+                                continue;
+                            }
+                        } else if i >= 4 {
+                            // Only the LH/SH/LW/SW instructions access ≥2 bytes of RAM
+                            let step_index = timestamp as usize;
+                            if lh_flag[step_index].is_zero()
+                                && sh_flag[step_index].is_zero()
+                                && sw_flag[step_index].is_zero()
+                            {
+                                assert_eq!(*a, 0);
+                                assert_eq!(*v, 0);
+                                a_read_write[i].push(0);
+                                v_read[i].push(0);
+                                t_read[i].push(0);
+                                v_write[i].push(0);
+                                t_write[i].push(0);
+                                continue;
+                            }
+                        } else if i >= 3 {
+                            let step_index = timestamp as usize;
+                            // Only the LB/SB/LH/SH/LW/SW instructions access ≥1 byte of RAM
+                            if lb_flag[step_index].is_zero()
+                                && lh_flag[step_index].is_zero()
+                                && sb_flag[step_index].is_zero()
+                                && sh_flag[step_index].is_zero()
+                                && sw_flag[step_index].is_zero()
+                            {
+                                assert_eq!(*a, 0);
+                                assert_eq!(*v, 0);
+                                a_read_write[i].push(0);
+                                v_read[i].push(0);
+                                t_read[i].push(0);
+                                v_write[i].push(0);
+                                t_write[i].push(0);
+                                continue;
+                            }
+                        }
+
                         let remapped_a = remap_address(*a);
                         debug_assert_eq!(*v, v_final[remapped_a as usize]);
 

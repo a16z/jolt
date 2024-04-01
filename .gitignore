@@ -20,3 +20,5 @@ Cargo.lock
 
 # tracing-chrome output
 trace-**.json
+
+temp_file

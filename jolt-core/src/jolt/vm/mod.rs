@@ -171,14 +171,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             std::array::from_fn(|_| MemoryOp::no_op()),
         );
 
-        let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
-            &program_io,
-            &preprocessing.read_write_memory,
-            padded_memory_trace,
-            &preprocessing.generators,
-            &mut transcript,
-        );
-
         let (
             instruction_lookups_proof,
             instruction_lookups_polynomials,
@@ -186,6 +178,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         ) = Self::prove_instruction_lookups(
             &preprocessing.instruction_lookups,
             &instructions,
+            &preprocessing.generators,
+            &mut transcript,
+        );
+
+        let (memory_proof, memory_polynomials, memory_commitment) = Self::prove_memory(
+            &program_io,
+            &instruction_lookups_polynomials,
+            &preprocessing.read_write_memory,
+            padded_memory_trace,
             &preprocessing.generators,
             &mut transcript,
         );
@@ -236,17 +237,17 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &commitments.bytecode,
             &mut transcript,
         )?;
+        Self::verify_instruction_lookups(
+            &preprocessing.instruction_lookups,
+            proof.instruction_lookups,
+            &commitments.instruction_lookups,
+            &mut transcript,
+        )?;
         Self::verify_memory(
             &mut preprocessing.read_write_memory,
             proof.read_write_memory,
             &commitments.read_write_memory,
             proof.program_io,
-            &mut transcript,
-        )?;
-        Self::verify_instruction_lookups(
-            &preprocessing.instruction_lookups,
-            proof.instruction_lookups,
-            &commitments.instruction_lookups,
             &mut transcript,
         )?;
         Self::verify_r1cs(proof.r1cs, commitments, &mut transcript)?;
@@ -306,6 +307,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
     fn prove_memory(
         program_io: &JoltDevice,
+        instruction_polynomials: &InstructionPolynomials<F, G>,
         preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         generators: &PedersenGenerators<G>,
@@ -315,8 +317,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         ReadWriteMemory<F, G>,
         MemoryCommitment<G>,
     ) {
-        let (polynomials, read_timestamps) =
-            ReadWriteMemory::new(program_io, preprocessing, memory_trace, transcript);
+        // TODO(moodlezoup): Make generic
+        let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
+
+        let (polynomials, read_timestamps) = ReadWriteMemory::new(
+            program_io,
+            load_store_flags,
+            preprocessing,
+            memory_trace,
+            transcript,
+        );
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&polynomials, &generators);
 
         let proof = ReadWriteMemoryProof::prove(
