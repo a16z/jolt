@@ -13,12 +13,12 @@ use strum::EnumCount;
 
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
 /// Returns (io, aux) = (pc_out, pc, aux)
-fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
+fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
   let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
   let _enter = span.enter();
   let stuff: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
     let step: Vec<F> = inputs.clone_step(step_index);
-    let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step);
+    let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step, num_aux);
     (aux, pc_out, pc)
   }).collect();
   drop(_enter);
@@ -270,7 +270,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(span);
 
       // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
-      let (pc_out, pc, aux) = synthesize_witnesses(&inputs);
+      let (pc_out, pc, aux) = synthesize_witnesses(&inputs, jolt_shape.num_internal);
       let io_segments = vec![pc_out, pc];
       let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
       let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
