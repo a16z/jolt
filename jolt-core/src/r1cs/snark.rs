@@ -266,6 +266,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
   pub fn compute_witness_commit(
       _W: usize, 
       _C: usize, 
+      true_trace_len: usize,
       padded_trace_len: usize, 
       inputs: R1CSInputs<F>,
       generators: &PedersenGenerators<G>,
@@ -274,7 +275,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
       R1CSBuilder::get_matrices(&mut jolt_shape); 
-      let key = UniformSpartanProof::<F,G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
+      let key = UniformSpartanProof::<F,G>::setup_precommitted(&jolt_shape, true_trace_len, padded_trace_len)?;
       drop(_enter);
       drop(span);
 
@@ -378,7 +379,7 @@ impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
         A: constraints_F.0,
         B: constraints_F.1,
         C: constraints_F.2,
-        num_cons: jolt_shape.num_constraints,
+        num_cons: jolt_shape.num_constraints+1, // +1 for the IO consistency constraint 
         num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
         num_io: jolt_shape.num_inputs,
     };
