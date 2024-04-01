@@ -16,33 +16,39 @@ use strum::EnumCount;
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
   let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
   let _enter = span.enter();
-  let triples: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
+  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
     let step: Vec<F> = inputs.clone_step(step_index);
     let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step, num_aux);
     (aux, pc_out, pc)
   }).collect();
   drop(_enter);
 
+  // TODO(sragss / arasuarun): Remove pc_out, pc from calculate_aux and triples_stepwise
 
-  // [[aux_var_0, aux_var_1], [aux_var_0, aux_var_1]] => [[aux_var_0, aux_var_0], [aux_var_1, aux_var_1]]
-  // result: aux[num_vars][num_steps]
+  // Convert step-wise to variable-wise
+  // [[aux_var_0, aux_var_1, ...], [aux_var_0, aux_var_1, ...], ...] => [[aux_var_0, aux_var_0, ...], [aux_var_1, aux_var_1, ...], ...]
+  // Aux result shape: aux[num_vars][num_steps]
 
-  let num_vars = triples[0].0.len();
-  let mut aux = vec![unsafe_allocate_zero_vec(inputs.padded_trace_len); num_vars];
-  let mut pc_out = Vec::with_capacity(triples.len());
-  let mut pc = Vec::with_capacity(triples.len());
+  let num_vars = triples_stepwise[0].0.len();
+  let mut aux: Vec<Vec<F>> = (0..num_vars).into_par_iter().map(|_| unsafe_allocate_zero_vec::<F>(inputs.padded_trace_len)).collect();
+  let mut pc_out: Vec<F> = unsafe_allocate_zero_vec(inputs.padded_trace_len);
+  let mut pc: Vec<F> = unsafe_allocate_zero_vec(inputs.padded_trace_len);
 
-  for step_index in 0..inputs.padded_trace_len {
-    let (aux_step, pc_out_step, pc_step) = &triples[step_index];
-
-    for aux_index in 0..aux_step.len() {
-      aux[aux_index][step_index] = aux_step[aux_index];
+  let other_span = tracing::span!(tracing::Level::TRACE, "aux_recombine");
+  let _enter = other_span.enter();
+  aux.par_iter_mut().enumerate().for_each(|(var_index, aux_varwise)| {
+    for step_index in 0..inputs.padded_trace_len {
+      aux_varwise[step_index] = triples_stepwise[step_index].0[var_index];
     }
+  });
+  drop(_enter);
 
-    pc_out.push(*pc_out_step);
-    pc.push(*pc_step);
-  }
+  pc_out.par_iter_mut().zip(pc.par_iter_mut()).enumerate().for_each(|(step_index, (slot_out, slot))| {
+    *slot_out = triples_stepwise[step_index].1;
+    *slot = triples_stepwise[step_index].2;
+  });
 
+  drop_in_background_thread(triples_stepwise);
 
   (pc_out, pc, aux)
 }
