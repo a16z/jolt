@@ -565,10 +565,10 @@ impl R1CSBuilder {
 
     /// Returns (aux, pc_next, pc)
     pub fn calculate_aux<F: PrimeField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> (Vec<F>, F, F) {
-        // Parse the input indices 
+        // Index of values within the input vector variables
         const RD: usize = 1; 
+        // Within circuit_flags 
         const IMM_BEFORE_PRE: usize = 4; 
-
         const IS_JUMP: usize = 4; 
         const IS_BRANCH: usize = 5; 
         const IF_UPDATE_RD_WITH_LOOKUP_OUTPUT: usize = 6; 
@@ -588,11 +588,7 @@ impl R1CSBuilder {
             }
         );
 
-        let rs1_val = GET_INDEX(InputType::MemregVReads, 0);
-        let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
-
         // 2. let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 1), 8, MOPS-3);
-        // let load_or_store_value = inputs.len();
         aux.push({
             let mut val = F::zero(); 
             const L: usize = 8;
@@ -604,7 +600,6 @@ impl R1CSBuilder {
         });
 
         // 3. let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
-        // let xxx = inputs.len(); 
         aux.push(
             if inputs.circuit_flags_bits[0].is_zero() {
                 inputs.memreg_v_reads[0]
@@ -633,7 +628,6 @@ impl R1CSBuilder {
         );
 
         // 6. let combined_z_chunks = R1CSBuilder::combine_be(instance, GET_INDEX(InputType::ChunksQuery, 0), LOG_M, C);
-        // let combined_z_chunks_index = aux.len();
         aux.push({
             let mut val = F::zero();
             const L: usize = LOG_M;
@@ -645,9 +639,7 @@ impl R1CSBuilder {
         });
 
         // 7-10. let chunk_y_used_i = R1CSBuilder::if_else_simple(&mut instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
-        // let mut chunk_y_used = [0; C];
         for i in 0..C {
-            // chunk_y_used[i] = aux.len(); 
             aux.push(
                 if inputs.circuit_flags_bits[IS_SHIFT].is_zero() {
                     inputs.chunks_y[i]
@@ -657,14 +649,10 @@ impl R1CSBuilder {
             );
         }
 
-        // let rd_val = GET_INDEX(InputType::MemregVWrites, 0);
-
         // 11. R1CSBuilder::constr_prod_0(smallvec![(rd, 1)], smallvec![(if_update_rd_with_lookup_output, 1)], smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], );
-        // let _ = inputs.len();
         aux.push(inputs.bytecode_v[RD] * inputs.circuit_flags_bits[IF_UPDATE_RD_WITH_LOOKUP_OUTPUT]); 
 
         // 12. constr_prod_0[is_jump_instr, rd, rd_val, prog_a_rw, 4]
-        // let _ = inputs.len();
         aux.push(inputs.bytecode_v[RD] * inputs.circuit_flags_bits[IS_JUMP]); 
 
         // 13. let is_branch_times_lookup_output = R1CSBuilder::multiply(instance, smallvec![(is_branch_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]); 
