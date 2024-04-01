@@ -264,7 +264,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         flat
     }
 
-    #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
+    #[tracing::instrument(skip_all, name = "DensePolynomial::from_usize")]
     pub fn from_usize(Z: &[usize]) -> Self {
         DensePolynomial::new(
             (0..Z.len())
@@ -273,7 +273,7 @@ impl<F: PrimeField> DensePolynomial<F> {
         )
     }
 
-    #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
+    #[tracing::instrument(skip_all, name = "DensePolynomial::from_u64")]
     pub fn from_u64(Z: &[u64]) -> Self {
         DensePolynomial::new(
             (0..Z.len())

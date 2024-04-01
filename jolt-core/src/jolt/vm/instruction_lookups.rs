@@ -16,6 +16,7 @@ use crate::poly::hyrax::{
     matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
 };
 use crate::poly::pedersen::PedersenGenerators;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -1005,6 +1006,10 @@ where
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
 
+        // TODO(sragss): This algorithm is terrible, just compute memories_used upfront and modify the corresponding memories. Need some special logic for counter.
+        // TODO(sragss): Further, most of the time is actually spent on poly construction! Happens to be a ton of zeros. Could special case the 0 construction.
+        let span = tracing::span!(tracing::Level::INFO, "read_final_lookups");
+        let _enter = span.enter();
         let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
             ..preprocessing.num_memories)
             .into_par_iter()
@@ -1015,7 +1020,7 @@ where
 
                 let mut final_cts_i = vec![0usize; M];
                 let mut read_cts_i = vec![0usize; m];
-                let mut subtable_lookups = vec![F::zero(); m];
+                let mut subtable_lookups: Vec<F> = unsafe_allocate_zero_vec(m);
 
                 for (j, op) in ops.iter().enumerate() {
                     let memories_used = &preprocessing.instruction_to_memory_indices
@@ -1032,6 +1037,38 @@ where
                     }
                 }
 
+                use std::collections::HashMap;
+
+                let mut read_cts_i_counts = HashMap::new();
+                for &item in read_cts_i.iter() {
+                    *read_cts_i_counts.entry(item).or_insert(0) += 1;
+                }
+
+                let mut final_cts_i_counts = HashMap::new();
+                for &item in final_cts_i.iter() {
+                    *final_cts_i_counts.entry(item).or_insert(0) += 1;
+                }
+
+                let mut read_cts_i_counts: Vec<_> = read_cts_i_counts.iter().collect();
+                read_cts_i_counts.sort_by(|a, b| b.1.cmp(a.1));
+
+                let mut final_cts_i_counts: Vec<_> = final_cts_i_counts.iter().collect();
+                final_cts_i_counts.sort_by(|a, b| b.1.cmp(a.1));
+
+                println!("Read counts:");
+                for &(key, value) in read_cts_i_counts.iter() {
+                    if *value > 10 {
+                        println!("{}: {}", key, value);
+                    }
+                }
+
+                println!("Final counts:");
+                for &(key, value) in final_cts_i_counts.iter() {
+                    if *value > 10 {
+                        println!("{}: {}", key, value);
+                    }
+                }
+
                 (
                     DensePolynomial::from_usize(&read_cts_i),
                     DensePolynomial::from_usize(&final_cts_i),
@@ -1039,14 +1076,17 @@ where
                 )
             })
             .collect();
+        drop(_enter);
 
+        let span = tracing::span!(tracing::Level::INFO, "renest");
+        let _enter = span.enter();
         // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
         let (read_cts, final_cts, E_polys): (
             Vec<DensePolynomial<F>>,
             Vec<DensePolynomial<F>>,
             Vec<DensePolynomial<F>>,
         ) = polys.into_iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
+            (Vec::with_capacity(preprocessing.num_memories), Vec::with_capacity(preprocessing.num_memories), Vec::with_capacity(preprocessing.num_memories)),
             |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
                 read_acc.push(read);
                 final_acc.push(f);
@@ -1054,7 +1094,10 @@ where
                 (read_acc, final_acc, E_acc)
             },
         );
+        drop(_enter);
 
+        let span = tracing::span!(tracing::Level::INFO, "dim");
+        let _enter = span.enter();
         let dim: Vec<DensePolynomial<F>> = (0..C)
             .into_par_iter()
             .map(|i| {
@@ -1062,17 +1105,33 @@ where
                 DensePolynomial::from_usize(access_sequence)
             })
             .collect();
+        drop(_enter);
 
+        let span = tracing::span!(tracing::Level::INFO, "instruction_flags");
+        let _enter = span.enter();
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
             instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
         }
 
+        let other_span = tracing::span!(tracing::Level::INFO, "instruction_flags_construction");
+        let other_enter = other_span.enter();
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
             .par_iter()
-            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
+            .map(|flag_bitvector| {
+                let evals: Vec<F> = flag_bitvector.par_iter().map(|flag| {
+                    if *flag == 1u64 {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                }).collect();
+                DensePolynomial::new(evals)
+            })
             .collect();
+        drop(other_enter);
+        drop(_enter);
 
         InstructionPolynomials {
             _group: PhantomData,
