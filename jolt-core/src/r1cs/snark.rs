@@ -127,7 +127,6 @@ impl<F: PrimeField> R1CSInputs<F> {
     }
   }
 
-  #[tracing::instrument(skip_all, name = "R1CSInputs::clone_step")]
   pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
     let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
       F::ZERO
