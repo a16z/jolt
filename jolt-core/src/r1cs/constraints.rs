@@ -305,7 +305,23 @@ impl R1CSBuilder {
 
         let PC = GET_INDEX(InputType::InputState, PC_IDX); 
 
-        // Constraint 1: relation between PC and prog_a_rw
+        // Constraints: binary flags checks
+        for i in 0..NUM_CIRCUIT_FLAGS {
+            R1CSBuilder::constr_abc(instance, 
+                smallvec![(GET_INDEX(InputType::OpFlags, i), 1)], 
+                smallvec![(GET_INDEX(InputType::OpFlags, i), -1), (0, 1)], 
+                smallvec![], 
+            );   
+        }
+        for i in 0..RV32I::COUNT {
+            R1CSBuilder::constr_abc(instance, 
+                smallvec![(GET_INDEX(InputType::InstrFlags, i), 1)], 
+                smallvec![(GET_INDEX(InputType::InstrFlags, i), -1), (0, 1)], 
+                smallvec![], 
+            );   
+        }
+
+        // Constraint: relation between PC and prog_a_rw
         R1CSBuilder::constr_abc(instance, 
             smallvec![(GET_INDEX(InputType::ProgARW, 0), 4), (0, PC_START_ADDRESS as i64), (PC, -1)], 
             smallvec![(PC, 1)], 
