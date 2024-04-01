@@ -11,47 +11,40 @@ use rayon::prelude::*;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use strum::EnumCount;
 
-/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
-#[tracing::instrument(skip_all, name = "reassemble_segments_partial")]
-fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_front: usize, num_back: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-  let trace_len = jolt_witnesses.len();
-  let total_length = jolt_witnesses[0].len();
-  let mut front_result: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(trace_len); num_front]; 
-  let mut back_result: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(trace_len); num_back]; 
-
-  // [1 || output_state] starts at the beginning
-  front_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
-    for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][variable_idx+1]; // NOTE: 1 is at the beginning! // TODO(sragss): This prior comment is untrue now?
-    }
-  });
-
-  // [.. || aux] is the end
-  back_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
-    for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][(total_length-num_back) + variable_idx]; 
-    }
-  });
-
-  drop_in_background_thread(jolt_witnesses);
-
-  (front_result, back_result)
-}
-
-#[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
-fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-  let jolt_witnesses = synthesize_witnesses(inputs);
-  // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
-  reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
-}
-
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
-fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
-  (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
-    let mut step: Vec<F> = inputs.clone_step(step_index);
-    R1CSBuilder::calculate_aux(&mut step);
-    step
-  }).collect()
+/// Returns (io, aux) = (pc_out, pc, aux)
+fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
+  let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
+  let _enter = span.enter();
+  let stuff: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
+    let step: Vec<F> = inputs.clone_step(step_index);
+    let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step);
+    (aux, pc_out, pc)
+  }).collect();
+  drop(_enter);
+
+
+  // [[aux_var_0, aux_var_1], [aux_var_0, aux_var_1]] => [[aux_var_0, aux_var_0], [aux_var_1, aux_var_1]]
+  // result: aux[num_vars][num_steps]
+
+  let num_vars = stuff[0].0.len();
+  let mut aux = vec![vec![F::zero(); inputs.padded_trace_len]; num_vars];
+  let mut pc_out = Vec::with_capacity(stuff.len());
+  let mut pc = Vec::with_capacity(stuff.len());
+
+  for step_index in 0..inputs.padded_trace_len {
+    let (aux_step, pc_out_step, pc_step) = &stuff[step_index];
+
+    for aux_index in 0..aux_step.len() {
+      aux[aux_index][step_index] = aux_step[aux_index];
+    }
+
+    pc_out.push(*pc_out_step);
+    pc.push(*pc_step);
+  }
+
+
+  (pc_out, pc, aux)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -129,14 +122,14 @@ impl<F: PrimeField> R1CSInputs<F> {
     const AUX_VARS_PER_STEP: usize = 20; 
     let num_inputs_per_step = self.num_vars_per_step() + PREFIX_VARS_PER_STEP;
     let mut step: Vec<F> = Vec::with_capacity(num_inputs_per_step + AUX_VARS_PER_STEP);
-      let program_counter = if step_index > 0 && self.bytecode_a[step_index] == F::ZERO {
+      let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
         F::ZERO
       } else {
-        self.bytecode_a[step_index] * F::from(4u64) + F::from(RAM_START_ADDRESS)
+        self.bytecode_a[step_index] * F::from_u64(4u64).unwrap() + F::from_u64(RAM_START_ADDRESS).unwrap()
       };
 
       // 1 is constant, 0s in slots 1, 2 are filled by aux computation
-      step.extend([F::from(1u64), F::from(0u64), program_counter]);
+      step.extend([F::one(), F::zero(), program_counter]);
 
       let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
         let num_vals = data.len() / self.padded_trace_len;
@@ -276,9 +269,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(_enter);
       drop(span);
 
-      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
+      // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
+      let (pc_out, pc, aux) = synthesize_witnesses(&inputs);
+      let io_segments = vec![pc_out, pc];
       let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
-      let aux_comms = HyraxCommitment::batch_commit(&aux_segments, &generators);
+      let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
 
       let r1cs_commitments = R1CSInternalCommitments::<G> {
         io: io_comms,
@@ -289,11 +284,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let _enter = cloning_stuff_span.enter();
       let inputs_segments = inputs.clone_to_trace_len_chunks(padded_trace_len);
 
-      let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
+      let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux.len());
       // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
       w_segments.par_extend(io_segments.into_par_iter());
       w_segments.par_extend(inputs_segments.into_par_iter());
-      w_segments.par_extend(aux_segments.into_par_iter());
+      w_segments.par_extend(aux.into_par_iter());
 
       drop(_enter);
       drop(cloning_stuff_span);
