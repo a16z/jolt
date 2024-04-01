@@ -20,17 +20,21 @@ std = [
     "dep:ark-ec",
     "dep:ark-ff",
     "dep:ark-bn254",
+    "dep:ark-serialize",
+    "dep:eyre",
     "postcard/use-std",
 ]
 
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
 serde = { version = "1.0.*", default-features = false }
+eyre = { version = "0.6.12", optional = true }
+ark-ec = { version = "0.4.2", default-features = false, optional = true }
+ark-ff = { version = "0.4.2", default-features = false, optional = true }
+ark-bn254 = { version = "0.4.0", default-features = false, optional = true }
+ark-serialize = { version = "0.4.2", features = ["derive"], optional = true }
 
 jolt-sdk-macros = { path = "./macros" }
 jolt-core = { path = "../jolt-core", optional = true }
 tracer = { path = "../tracer", optional = true }
 common = { path = "../common", optional = true }
-ark-ec = { version = "0.4.2", default-features = false, optional = true }
-ark-ff = { version = "0.4.2", default-features = false, optional = true }
-ark-bn254 = { version = "0.4.0", default-features = false, optional = true }

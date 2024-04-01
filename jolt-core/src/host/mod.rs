@@ -166,12 +166,13 @@ impl Program {
         )
     }
 
-    pub fn trace_analyze(mut self) -> Vec<u8> {
+    pub fn trace_analyze(mut self) -> (usize, Vec<(RV32IM, usize)>) {
         self.build();
         let elf = self.elf.unwrap();
-        let (rows, device) = tracer::trace(&elf, self.input);
+        let (rows, _) = tracer::trace(&elf, self.input);
+        let trace_len = rows.len();
 
-        let mut counts = HashMap::<RV32IM, u64>::new();
+        let mut counts = HashMap::<RV32IM, usize>::new();
         for row in rows {
             let op = row.instruction.opcode;
             if let Some(count) = counts.get(&op) {
@@ -185,11 +186,7 @@ impl Program {
         counts.sort_by_key(|v| v.1);
         counts.reverse();
 
-        for (op, count) in counts {
-            println!("{:?}: {}", op, count)
-        }
-
-        device.outputs
+        (trace_len, counts)
     }
 
     fn save_linker(&self, memory_size: usize) {

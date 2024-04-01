@@ -155,7 +155,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<G>,
     ) {
-        println!("Jolt::prove({})", memory_trace.len());
         let mut transcript = Transcript::new(b"Jolt transcript");
         let (bytecode_proof, bytecode_polynomials, bytecode_commitment) = Self::prove_bytecode(
             &preprocessing.bytecode,
