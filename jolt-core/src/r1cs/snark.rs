@@ -4,7 +4,7 @@ use crate::utils::transcript::AppendToTranscript;
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
 use ark_ec::CurveGroup;
-use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS};
+use common::{constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS}, rv_trace::NUM_CIRCUIT_FLAGS};
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -17,7 +17,7 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -
   let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
   let _enter = span.enter();
   let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
-    let step: Vec<F> = inputs.clone_step(step_index);
+    let step = inputs.clone_step(step_index);
     let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step, num_aux);
     (aux, pc_out, pc)
   }).collect();
@@ -69,6 +69,19 @@ pub struct R1CSInputs<F: PrimeField> {
     instruction_flags_bits: Vec<F>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct R1CSStepInputs<F: PrimeField> {
+    pub padded_trace_len: usize,
+    pub input_pc: F, 
+    pub bytecode_v: Vec<F>,
+    pub memreg_v_reads: Vec<F>,
+    pub memreg_v_writes: Vec<F>,
+    pub chunks_y: Vec<F>,
+    pub chunks_query: Vec<F>,
+    pub lookup_outputs: Vec<F>,
+    pub circuit_flags_bits: Vec<F>,
+}
+
 impl<F: PrimeField> R1CSInputs<F> {
   #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
   pub fn new(
@@ -114,51 +127,41 @@ impl<F: PrimeField> R1CSInputs<F> {
     }
   }
 
-  #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_stepwise")]
-  pub fn clone_to_stepwise(&self) -> Vec<Vec<F>> {
-    let stepwise = (0..self.trace_len()).into_par_iter().map(|step_index| {self.clone_step(step_index)}).collect();
+  #[tracing::instrument(skip_all, name = "R1CSInputs::clone_step")]
+  pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
+    let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
+      F::ZERO
+    } else {
+      self.bytecode_a[step_index] * F::from_u64(4u64).unwrap() + F::from_u64(RAM_START_ADDRESS).unwrap()
+    };
 
-    stepwise
-  }
+    let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
+      let num_vals = data.len() / self.padded_trace_len;
+      for var_index in 0..num_vals {
+        step.push(data[var_index * self.padded_trace_len + step_index]);
+      }
+    };
 
-  pub fn clone_step(&self, step_index: usize) -> Vec<F> {
-    const PREFIX_VARS_PER_STEP: usize = 3;
+    let mut output = R1CSStepInputs {
+      padded_trace_len: self.padded_trace_len,
+      input_pc: program_counter,
+      bytecode_v: Vec::with_capacity(6),
+      memreg_v_reads: Vec::with_capacity(7),
+      memreg_v_writes: Vec::with_capacity(7),
+      chunks_y: Vec::with_capacity(4),
+      chunks_query: Vec::with_capacity(4),
+      lookup_outputs: Vec::with_capacity(2),
+      circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
+    };
+    push_to_step(&self.bytecode_v, &mut output.bytecode_v);
+    push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads);
+    push_to_step(&self.memreg_v_writes, &mut output.memreg_v_writes);
+    push_to_step(&self.chunks_y, &mut output.chunks_y);
+    push_to_step(&self.chunks_query, &mut output.chunks_query);
+    push_to_step(&self.lookup_outputs, &mut output.lookup_outputs);
+    push_to_step(&self.circuit_flags_bits, &mut output.circuit_flags_bits);
 
-    // AUX_VARS_PER_STEP has to be greater than the number of additional vars pushed by the constraint system
-    const AUX_VARS_PER_STEP: usize = 20; 
-    let num_inputs_per_step = self.num_vars_per_step() + PREFIX_VARS_PER_STEP;
-    let mut step: Vec<F> = Vec::with_capacity(num_inputs_per_step + AUX_VARS_PER_STEP);
-      let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
-        F::ZERO
-      } else {
-        self.bytecode_a[step_index] * F::from_u64(4u64).unwrap() + F::from_u64(RAM_START_ADDRESS).unwrap()
-      };
-
-      // 1 is constant, 0s in slots 1, 2 are filled by aux computation
-      step.extend([F::one(), F::zero(), program_counter]);
-
-      let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
-        let num_vals = data.len() / self.padded_trace_len;
-        for var_index in 0..num_vals {
-          step.push(data[var_index * self.padded_trace_len + step_index]);
-        }
-      };
-
-      push_to_step(&self.bytecode_a, &mut step);
-      push_to_step(&self.bytecode_v, &mut step);
-      push_to_step(&self.memreg_a_rw, &mut step);
-      push_to_step(&self.memreg_v_reads, &mut step);
-      push_to_step(&self.memreg_v_writes, &mut step);
-      push_to_step(&self.chunks_x, &mut step);
-      push_to_step(&self.chunks_y, &mut step);
-      push_to_step(&self.chunks_query, &mut step);
-      push_to_step(&self.lookup_outputs, &mut step);
-      push_to_step(&self.circuit_flags_bits, &mut step);
-      push_to_step(&self.instruction_flags_bits, &mut step);
-
-      assert_eq!(num_inputs_per_step, step.len());
-
-      step
+    output
   }
 
 
