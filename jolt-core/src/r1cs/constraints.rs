@@ -372,7 +372,12 @@ impl R1CSBuilder {
             signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
             signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
          */
-        let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
+        // let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
+        let x = R1CSBuilder::if_else(instance, 
+            smallvec![(GET_INDEX(InputType::OpFlags, 0), 1)], 
+            smallvec![(rs1_val, 1)], 
+            smallvec![(PC, 1), (0, -4)], 
+        );
         let y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
         // let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
 
@@ -523,7 +528,7 @@ impl R1CSBuilder {
             instance, 
             smallvec![(rd, 1)], 
             smallvec![(is_jump_instr, 1)], 
-            smallvec![(rd_val, 1), (PC, -1), (0, -4)], 
+            smallvec![(rd_val, -1), (PC, 1), (0, 4-4)], // TODO(arasuarun): the PC value is shifted by +4 already. Check if this is okay
         ); 
         
         /*  Set next PC 
@@ -604,7 +609,7 @@ impl R1CSBuilder {
             if inputs.circuit_flags_bits[0].is_zero() {
                 inputs.memreg_v_reads[0]
             } else {
-                inputs.input_pc
+                inputs.input_pc - F::from_u64(4).unwrap()
             }
         );
 
