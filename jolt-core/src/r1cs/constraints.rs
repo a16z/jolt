@@ -564,7 +564,7 @@ impl R1CSBuilder {
     }
 
     /// Returns (aux, pc_next, pc)
-    pub fn calculate_aux<F: PrimeField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> (Vec<F>, F, F) {
+    pub fn calculate_aux<F: PrimeField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> (Vec<F>, F) {
         // Index of values within the input vector variables
         const RD: usize = 1; 
         // Within circuit_flags 
@@ -679,9 +679,8 @@ impl R1CSBuilder {
             }
         );
 
-        let pc_out = aux[next_pc_j_b];
-        let pc = inputs.input_pc;
-        (aux, pc_out, pc)
+        let pc_next = aux[next_pc_j_b];
+        (aux, pc_next)
     }
 
     fn move_constant_to_end(&mut self) {

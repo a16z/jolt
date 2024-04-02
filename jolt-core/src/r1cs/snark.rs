@@ -18,8 +18,9 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -
   let _enter = span.enter();
   let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
     let step = inputs.clone_step(step_index);
-    let (aux, pc_out, pc) = R1CSBuilder::calculate_aux(step, num_aux);
-    (aux, pc_out, pc)
+    let pc_cur = step.input_pc;
+    let (aux, pc_next) = R1CSBuilder::calculate_aux(step, num_aux);
+    (aux, pc_next, pc_cur)
   }).collect();
   drop(_enter);
 
