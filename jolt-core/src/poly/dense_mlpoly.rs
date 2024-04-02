@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
 
 use super::hyrax::{HyraxCommitment, HyraxGenerators};
@@ -146,7 +147,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn new_poly_from_bound_poly_var_top(&self, r: &F) -> Self {
         let n = self.len() / 2;
-        let mut new_evals = vec![F::zero(); n];
+        let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
 
         for i in 0..n {
             // let low' = low + r * (high - low)
@@ -170,7 +171,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn new_poly_from_bound_poly_var_top_flags(&self, r: &F) -> Self {
         let n = self.len() / 2;
-        let mut new_evals = vec![F::zero(); n];
+        let mut new_evals: Vec<F> = unsafe_allocate_zero_vec(n);
 
         for i in 0..n {
             // let low' = low + r * (high - low)
@@ -244,6 +245,23 @@ impl<F: PrimeField> DensePolynomial<F> {
 
     pub fn evals_ref(&self) -> &[F] {
         self.Z.as_ref()
+    }
+
+    #[tracing::instrument(skip_all, name = "DensePoly::flatten")]
+    pub fn flatten(polys: &[DensePolynomial<F>]) -> Vec<F> {
+        let poly_len = polys[0].len();
+        polys.iter().for_each(|poly| assert_eq!(poly_len, poly.len()));
+
+        let num_polys = polys.len();
+        let flat_len = num_polys * poly_len;
+        let mut flat: Vec<F> = unsafe_allocate_zero_vec(flat_len);
+        flat.par_chunks_mut(poly_len).enumerate().for_each(|(poly_index, result)| {
+            let evals = polys[poly_index].evals_ref();
+            for (eval_index, eval) in evals.iter().enumerate() {
+                result[eval_index] = *eval;
+            }
+        });
+        flat
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]

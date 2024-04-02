@@ -13,12 +13,13 @@ use crate::jolt::{
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSUniqueCommitments};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::thread::drop_in_background_thread;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use common::{
     constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
     rv_trace::{ELFInstruction, MemoryOp},
@@ -375,8 +376,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let _guard = span.enter();
 
         let num_chunks = padded_trace_len * C;
-        let mut chunks_x: Vec<F> = vec![F::zero(); num_chunks];
-        let mut chunks_y: Vec<F> = vec![F::zero(); num_chunks];
+        let mut chunks_x: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
+        let mut chunks_y: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
 
         for (instruction_index, op) in instructions.iter().enumerate() {
             let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
@@ -400,13 +401,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
         let _enter = span.enter();
-        let instruction_flags = jolt_polynomials
-            .instruction_lookups
-            .instruction_flag_polys
-            .iter()
-            .map(|poly| poly.evals())
-            .flatten()
-            .collect();
+        let instruction_flags: Vec<F> = DensePolynomial::flatten(&jolt_polynomials.instruction_lookups.instruction_flag_polys);
         drop(_enter);
         drop(span);
 

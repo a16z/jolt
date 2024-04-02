@@ -1,7 +1,7 @@
 use ark_ff::PrimeField;
 use rayon::prelude::*;
 
-use crate::utils::math::Math;
+use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
 pub struct EqPolynomial<F> {
     r: Vec<F>,
@@ -52,26 +52,27 @@ impl<F: PrimeField> EqPolynomial<F> {
     /// evaluates biggest layers of the dynamic programming tree in parallel.
     #[tracing::instrument(skip_all, "EqPolynomial::evals_parallel")]
     pub fn evals_parallel(&self, ell: usize) -> Vec<F> {
-      let mut evals: Vec<F> = vec![F::zero(); (2_usize).pow(ell as u32)];
-      let mut size = 1;
-      evals[0] = F::one();
-  
-      for r in self.r.iter().rev() {
-        let (evals_left, evals_right) = evals.split_at_mut(size);
-        let (evals_right, _) = evals_right.split_at_mut(size);
-  
-        evals_left
-          .par_iter_mut()
-          .zip(evals_right.par_iter_mut())
-          .for_each(|(x, y)| {
-            *y = *x * r;
-            *x -= &*y;
-          });
-  
-        size *= 2;
-      }
-  
-      evals
+        let final_size = (2usize).pow(ell as u32);
+        let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
+        let mut size = 1;
+        evals[0] = F::one();
+    
+        for r in self.r.iter().rev() {
+            let (evals_left, evals_right) = evals.split_at_mut(size);
+            let (evals_right, _) = evals_right.split_at_mut(size);
+    
+            evals_left
+            .par_iter_mut()
+            .zip(evals_right.par_iter_mut())
+            .for_each(|(x, y)| {
+                *y = *x * r;
+                *x -= &*y;
+            });
+    
+            size *= 2;
+        }
+    
+        evals
     }
 
     #[tracing::instrument(skip_all, name = "EqPolynomial::compute_factored_evals")]

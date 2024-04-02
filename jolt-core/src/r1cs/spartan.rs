@@ -2,7 +2,7 @@ use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::allocate_vec_in_background;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::AppendToTranscript;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -196,7 +196,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
         let poly_ABC_len = 2 * key.num_vars_total;
-        let RLC_evals_alloc = allocate_vec_in_background(F::ZERO, poly_ABC_len);
 
         let segmented_padded_witness =
             SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
@@ -210,17 +209,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .collect::<Vec<F>>();
 
         let combined_witness_size = (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
-        let A_z = allocate_vec_in_background(F::zero(), combined_witness_size);
-        let B_z = allocate_vec_in_background(F::zero(), combined_witness_size);
-        let C_z = allocate_vec_in_background(F::zero(), combined_witness_size);
 
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
 
-        let span = tracing::span!(tracing::Level::TRACE, "wait_join");
+        let span = tracing::span!(tracing::Level::TRACE, "allocate_witness_vecs");
         let _enter = span.enter();
-        let mut A_z = A_z.join().unwrap();
-        let mut B_z = B_z.join().unwrap();
-        let mut C_z = C_z.join().unwrap();
+        let mut A_z = unsafe_allocate_zero_vec(combined_witness_size);
+        let mut B_z = unsafe_allocate_zero_vec(combined_witness_size);
+        let mut C_z = unsafe_allocate_zero_vec(combined_witness_size);
         drop(_enter);
 
         key.shape_single_step.multiply_vec_uniform(
@@ -260,10 +256,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 comb_func_outer,
                 transcript,
             );
-        std::thread::spawn(|| drop(poly_Az));
-        std::thread::spawn(|| drop(poly_Bz));
-        std::thread::spawn(|| drop(poly_Cz));
-        std::thread::spawn(|| drop(poly_tau));
+        drop_in_background_thread(poly_Az);
+        drop_in_background_thread(poly_Bz);
+        drop_in_background_thread(poly_Cz);
+        drop_in_background_thread(poly_tau);
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
@@ -337,7 +333,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             // 2. Handles all entries but the last one with the constant 1 variable
             let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
             let _other_enter = other_span.enter();
-            let mut RLC_evals = RLC_evals_alloc.join().unwrap();
+            let mut RLC_evals = unsafe_allocate_zero_vec(poly_ABC_len);
             drop(_other_enter);
 
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");

@@ -1,4 +1,4 @@
-use crate::{jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::drop_in_background_thread, transcript::ProofTranscript}};
+use crate::{jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::{drop_in_background_thread, unsafe_allocate_zero_vec}, transcript::ProofTranscript}};
 use crate::utils::transcript::AppendToTranscript;
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
@@ -12,33 +12,17 @@ use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use strum::EnumCount;
 
 /// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
-#[tracing::instrument(skip_all)]
-fn reassemble_segments<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>) -> Vec<Vec<F>> {
-  let trace_len = jolt_witnesses.len();
-  let num_variables = jolt_witnesses[0].len();
-  let mut result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_variables - 1]; // ignore 1 
-
-  result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
-    for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][variable_idx]; // NOTE: 1 is at the end!
-    }
-  });
-
-  result 
-}
-
-/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
 #[tracing::instrument(skip_all, name = "reassemble_segments_partial")]
 fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_front: usize, num_back: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
   let trace_len = jolt_witnesses.len();
   let total_length = jolt_witnesses[0].len();
-  let mut front_result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_front]; 
-  let mut back_result: Vec<Vec<F>> = vec![vec![F::ZERO; trace_len]; num_back]; 
+  let mut front_result: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(trace_len); num_front]; 
+  let mut back_result: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(trace_len); num_back]; 
 
   // [1 || output_state] starts at the beginning
   front_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
     for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][variable_idx+1]; // NOTE: 1 is at the beginning!
+      variable_segment[step] = jolt_witnesses[step][variable_idx+1]; // NOTE: 1 is at the beginning! // TODO(sragss): This prior comment is untrue now?
     }
   });
 
@@ -63,18 +47,11 @@ fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_stat
 
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
-  let mut step_z = inputs.clone_to_stepwise();
-
-  // Compute the aux
-  let span = tracing::span!(tracing::Level::INFO, "calc_aux");
-  let _guard = span.enter();
-  step_z.par_chunks_mut(1 << 12).for_each(|step| {
-    for i in 0..step.len() {
-      R1CSBuilder::calculate_aux(&mut step[i]);
-    }
-  });
-
-  step_z
+  (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
+    let mut step: Vec<F> = inputs.clone_step(step_index);
+    R1CSBuilder::calculate_aux(&mut step);
+    step
+  }).collect()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -140,14 +117,18 @@ impl<F: PrimeField> R1CSInputs<F> {
 
   #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_stepwise")]
   pub fn clone_to_stepwise(&self) -> Vec<Vec<F>> {
+    let stepwise = (0..self.trace_len()).into_par_iter().map(|step_index| {self.clone_step(step_index)}).collect();
+
+    stepwise
+  }
+
+  pub fn clone_step(&self, step_index: usize) -> Vec<F> {
     const PREFIX_VARS_PER_STEP: usize = 3;
 
     // AUX_VARS_PER_STEP has to be greater than the number of additional vars pushed by the constraint system
     const AUX_VARS_PER_STEP: usize = 20; 
     let num_inputs_per_step = self.num_vars_per_step() + PREFIX_VARS_PER_STEP;
-
-    let stepwise = (0..self.trace_len()).into_par_iter().map(|step_index| {
-      let mut step: Vec<F> = Vec::with_capacity(num_inputs_per_step + AUX_VARS_PER_STEP);
+    let mut step: Vec<F> = Vec::with_capacity(num_inputs_per_step + AUX_VARS_PER_STEP);
       let program_counter = if step_index > 0 && self.bytecode_a[step_index] == F::ZERO {
         F::ZERO
       } else {
@@ -179,9 +160,6 @@ impl<F: PrimeField> R1CSInputs<F> {
       assert_eq!(num_inputs_per_step, step.len());
 
       step
-    }).collect();
-
-    stepwise
   }
 
 
