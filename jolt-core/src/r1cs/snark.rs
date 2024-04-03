@@ -16,12 +16,17 @@ use strum::EnumCount;
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
   let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
   let _enter = span.enter();
-  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
-    let step = inputs.clone_step(step_index);
+  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().enumerate().map(|(i, _)| {
+    let step = inputs.clone_step(i);
     let pc_cur = step.input_pc;
-    let (aux, pc_next) = R1CSBuilder::calculate_aux(step, num_aux);
+    let (aux, _) = R1CSBuilder::calculate_aux(step, num_aux);
+    let pc_next = if i < inputs.padded_trace_len - 1 {
+        inputs.bytecode_a[i+1]
+    } else {
+        F::zero()
+    };
     (aux, pc_next, pc_cur)
-  }).collect();
+}).collect();
   drop(_enter);
 
   // TODO(sragss / arasuarun): Remove pc_out, pc from calculate_aux and triples_stepwise
@@ -132,7 +137,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
       F::ZERO
     } else {
-      self.bytecode_a[step_index] * F::from_u64(4u64).unwrap() + F::from_u64(RAM_START_ADDRESS).unwrap()
+      self.bytecode_a[step_index]
     };
 
     let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
