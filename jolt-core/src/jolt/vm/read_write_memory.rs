@@ -3,9 +3,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
-use rayon::iter::{
-    IntoParallelIterator, IntoParallelRefIterator, ParallelDrainRange, ParallelIterator,
-};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(test)]
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -61,12 +59,15 @@ impl RandomInstruction for ELFInstruction {
     }
 }
 
-pub fn random_memory_trace(
+pub fn random_memory_trace<F: PrimeField>(
     bytecode: &Vec<ELFInstruction>,
     max_memory_address: usize,
     m: usize,
     rng: &mut StdRng,
-) -> Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> {
+) -> (
+    Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
+    [DensePolynomial<F>; 5],
+) {
     let mut memory: Vec<u64> = vec![0; max_memory_address];
     for instr in bytecode {
         let address = instr.address - RAM_START_ADDRESS + REGISTER_COUNT;
@@ -79,6 +80,8 @@ pub fn random_memory_trace(
 
     let m = m.next_power_of_two();
     let mut memory_trace = Vec::with_capacity(m);
+    let mut load_store_flags: [Vec<u64>; 5] = std::array::from_fn(|_| Vec::with_capacity(m));
+
     for _ in 0..m {
         let mut ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] =
             std::array::from_fn(|_| MemoryOp::no_op());
@@ -96,34 +99,114 @@ pub fn random_memory_trace(
         ops[2] = MemoryOp::Write(rd, register_value);
         memory[rd as usize] = register_value;
 
-        if rng.next_u32() % 2 == 0 {
+        let ram_rng = rng.next_u32();
+        if ram_rng % 3 == 0 {
             // LOAD
             let remapped_address =
                 REGISTER_COUNT + rng.next_u64() % (max_memory_address as u64 - REGISTER_COUNT - 4);
             let ram_address = remapped_address - REGISTER_COUNT + RAM_START_ADDRESS;
-            for i in 0..4 {
-                ops[i + 3] = MemoryOp::Read(
-                    ram_address + i as u64,
-                    memory[i + remapped_address as usize],
-                );
+
+            let load_rng = rng.next_u32();
+            if load_rng % 3 == 0 {
+                // LB
+                ops[3] = MemoryOp::Read(ram_address, memory[remapped_address as usize]);
+                for i in 1..4 {
+                    ops[i + 3] = MemoryOp::Read(0, 0);
+                }
+                for (i, flag) in load_store_flags.iter_mut().enumerate() {
+                    flag.push(if i == 0 { 1 } else { 0 });
+                }
+            } else if load_rng % 3 == 1 {
+                // LH
+                for i in 0..2 {
+                    ops[i + 3] = MemoryOp::Read(
+                        ram_address + i as u64,
+                        memory[i + remapped_address as usize],
+                    );
+                }
+                for i in 2..4 {
+                    ops[i + 3] = MemoryOp::Read(0, 0);
+                }
+                for (i, flag) in load_store_flags.iter_mut().enumerate() {
+                    flag.push(if i == 1 { 1 } else { 0 });
+                }
+            } else {
+                // LW
+                for i in 0..4 {
+                    ops[i + 3] = MemoryOp::Read(
+                        ram_address + i as u64,
+                        memory[i + remapped_address as usize],
+                    );
+                }
+                for (i, flag) in load_store_flags.iter_mut().enumerate() {
+                    flag.push(if i == 4 { 1 } else { 0 });
+                }
             }
-        } else {
+        } else if ram_rng % 3 == 1 {
             // STORE
             let remapped_address =
                 REGISTER_COUNT + rng.next_u64() % (max_memory_address as u64 - REGISTER_COUNT - 4);
             let ram_address = remapped_address - REGISTER_COUNT + RAM_START_ADDRESS;
-            for i in 0..4 {
+            let store_rng = rng.next_u32();
+            if store_rng % 3 == 0 {
+                // SB
                 // RAM is byte-addressable, so values are a single byte
                 let ram_value = rng.next_u64() & 0xff;
-                ops[i + 3] = MemoryOp::Write(ram_address + i as u64, ram_value);
-                memory[i + remapped_address as usize] = ram_value;
+                ops[3] = MemoryOp::Write(ram_address, ram_value);
+                memory[remapped_address as usize] = ram_value;
+                for i in 1..4 {
+                    ops[i + 3] = MemoryOp::Read(0, 0);
+                }
+                for (i, flag) in load_store_flags.iter_mut().enumerate() {
+                    flag.push(if i == 2 { 1 } else { 0 });
+                }
+            } else if store_rng % 3 == 1 {
+                // SH
+                for i in 0..2 {
+                    // RAM is byte-addressable, so values are a single byte
+                    let ram_value = rng.next_u64() & 0xff;
+                    ops[i + 3] = MemoryOp::Write(ram_address + i as u64, ram_value);
+                    memory[i + remapped_address as usize] = ram_value;
+                }
+                for i in 2..4 {
+                    ops[i + 3] = MemoryOp::Read(0, 0);
+                }
+                for (i, flag) in load_store_flags.iter_mut().enumerate() {
+                    flag.push(if i == 3 { 1 } else { 0 });
+                }
+            } else {
+                // SW
+                for i in 0..4 {
+                    // RAM is byte-addressable, so values are a single byte
+                    let ram_value = rng.next_u64() & 0xff;
+                    ops[i + 3] = MemoryOp::Write(ram_address + i as u64, ram_value);
+                    memory[i + remapped_address as usize] = ram_value;
+                }
+                for (i, flag) in load_store_flags.iter_mut().enumerate() {
+                    flag.push(if i == 4 { 1 } else { 0 });
+                }
+            }
+        } else {
+            for i in 0..4 {
+                ops[i + 3] = MemoryOp::Read(0, 0);
+            }
+            for flag in load_store_flags.iter_mut() {
+                flag.push(0);
             }
         }
 
         memory_trace.push(ops);
     }
 
-    memory_trace
+    (
+        memory_trace,
+        load_store_flags
+            .iter()
+            .map(|bitvector| DensePolynomial::from_u64(bitvector))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap(),
+    )
 }
 
 #[derive(Clone)]
@@ -1520,13 +1603,15 @@ mod tests {
         let bytecode = (0..BYTECODE_SIZE)
             .map(|i| ELFInstruction::random(i, &mut rng))
             .collect();
-        let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
+        let (memory_trace, load_store_flags) =
+            random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
 
         let mut transcript = Transcript::new(b"test_transcript");
 
         let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
         let (rw_memory, _): (ReadWriteMemory<Fr, G1Projective>, _) = ReadWriteMemory::new(
             &JoltDevice::new(),
+            &load_store_flags,
             &preprocessing,
             memory_trace,
             &mut transcript,
