@@ -693,24 +693,33 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>, Vec<F>) {
-        let a_polys = [&self.a_rs1, &self.a_rs2, &self.a_rd, &self.a_ram]
-            .into_par_iter()
-            .flat_map(|poly| poly.evals_ref())
-            .cloned()
-            .collect::<Vec<_>>();
-        let v_read_polys = self
-            .v_read
-            .par_iter()
-            .flat_map(|poly| poly.evals_ref())
-            .cloned()
-            .collect::<Vec<_>>();
-        let v_write_polys = [&self.v_write_rd]
-            .into_par_iter()
-            .chain(self.v_write_ram.par_iter())
-            .flat_map(|poly| poly.evals_ref())
-            .cloned()
-            .collect::<Vec<_>>();
+        let (a_polys, (v_read_polys, v_write_polys)) = rayon::join(
+            || {
+                [&self.a_rs1, &self.a_rs2, &self.a_rd, &self.a_ram]
+                    .into_par_iter()
+                    .flat_map(|poly| poly.evals())
+                    .collect::<Vec<_>>()
+            },
+            || {
+                rayon::join(
+                    || {
+                        self.v_read
+                            .par_iter()
+                            .flat_map(|poly| poly.evals())
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        [&self.v_write_rd]
+                            .into_par_iter()
+                            .chain(self.v_write_ram.par_iter())
+                            .flat_map(|poly| poly.evals())
+                            .collect::<Vec<_>>()
+                    },
+                )
+            },
+        );
 
         (a_polys, v_read_polys, v_write_polys)
     }
@@ -1241,7 +1250,7 @@ where
                     openings.identity_poly_opening.unwrap() + F::one()
                 } else {
                     openings.t_write_ram_opening[i - RAM_1]
-                }; 
+                };
                 (a, v, t)
             })
             .collect()
