@@ -17,6 +17,7 @@ const W: usize = 32;
 const LOG_M: usize = 16; 
 const MEMORY_ADDRESS_OFFSET: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; 
 const PC_START_ADDRESS: u64 = RAM_START_ADDRESS;
+const PC_NOOP_SHIFT: usize = 4;
 // "memreg ops per step" 
 const MOPS: usize = 7;
 /* End of Compiler Variables */
@@ -376,7 +377,7 @@ impl R1CSBuilder {
         let x = R1CSBuilder::if_else(instance, 
             smallvec![(GET_INDEX(InputType::OpFlags, 0), 1)], 
             smallvec![(rs1_val, 1)], 
-            smallvec![(PC, 1), (0, -4)], 
+            smallvec![(PC, 1), (0, -1 * PC_NOOP_SHIFT as i64)], 
         );
         let y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
         // let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
@@ -528,7 +529,7 @@ impl R1CSBuilder {
             instance, 
             smallvec![(rd, 1)], 
             smallvec![(is_jump_instr, 1)], 
-            smallvec![(rd_val, -1), (PC, 1), (0, 4-4)], // TODO(arasuarun): the PC value is shifted by +4 already. Check if this is okay
+            smallvec![(rd_val, -1), (PC, 1), (0, 4 - PC_NOOP_SHIFT as i64)], // NOTE: the PC value is shifted by +4 already after pre-pending no-op
         ); 
         
         /*  Set next PC 
