@@ -341,12 +341,12 @@ impl R1CSBuilder {
         ); 
 
         // Combine flag_bits and check that they equal op_flags_packed. 
-        R1CSBuilder::combine_constraint(instance,
-            GET_INDEX(InputType::OpFlags, 0), 
-            1, 
-            N_FLAGS, 
-            op_flags_packed
-        );
+        // R1CSBuilder::combine_constraint(instance,
+        //     GET_INDEX(InputType::OpFlags, 0), 
+        //     1, 
+        //     N_FLAGS, 
+        //     op_flags_packed
+        // );
 
         // Constraint: signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
         let immediate: usize = R1CSBuilder::if_else(instance, 

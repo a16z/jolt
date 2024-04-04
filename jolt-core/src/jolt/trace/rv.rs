@@ -56,7 +56,6 @@ impl TryFrom<&ELFInstruction> for RV32I {
 
             RV32IM::JAL   => Ok(ADDInstruction::default().into()),
             RV32IM::JALR  => Ok(ADDInstruction::default().into()),
-            RV32IM::LUI  => Ok(ADDInstruction::default().into()),
             RV32IM::AUIPC => Ok(ADDInstruction::default().into()),
 
             RV32IM::SB => Ok(SBInstruction::default().into()),

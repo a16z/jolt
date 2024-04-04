@@ -149,7 +149,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         program_io: JoltDevice,
         bytecode_trace: Vec<BytecodeRow>,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
-        instructions: Vec<Self::InstructionSet>,
+        instructions: Vec<Option<Self::InstructionSet>>,
         circuit_flags: Vec<F>,
         preprocessing: JoltPreprocessing<F, G>,
     ) -> (
@@ -265,7 +265,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove_instruction_lookups")]
     fn prove_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<Self::InstructionSet>,
+        ops: &Vec<Option<Self::InstructionSet>>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -366,7 +366,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
     fn prove_r1cs(
         preprocessing: JoltPreprocessing<F, G>,
-        instructions: Vec<Self::InstructionSet>,
+        instructions: Vec<Option<Self::InstructionSet>>,
         circuit_flags: Vec<F>,
         jolt_polynomials: &JoltPolynomials<F, G>,
         transcript: &mut Transcript,
@@ -398,15 +398,23 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut chunks_y: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
 
         for (instruction_index, op) in instructions.iter().enumerate() {
-            let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
-            for (chunk_index, (x, y)) in chunks_x_op
-                .into_iter()
-                .zip(chunks_y_op.into_iter())
-                .enumerate()
-            {
-                let flat_chunk_index = instruction_index + chunk_index * padded_trace_len;
-                chunks_x[flat_chunk_index] = F::from_u64(x as u64).unwrap();
-                chunks_y[flat_chunk_index] = F::from_u64(y as u64).unwrap();
+            if let Some(op) = op {
+                let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
+                for (chunk_index, (x, y)) in chunks_x_op
+                    .into_iter()
+                    .zip(chunks_y_op.into_iter())
+                    .enumerate()
+                {
+                    let flat_chunk_index = instruction_index + chunk_index * padded_trace_len;
+                    chunks_x[flat_chunk_index] = F::from_u64(x as u64).unwrap();
+                    chunks_y[flat_chunk_index] = F::from_u64(y as u64).unwrap();
+                }
+            } else {
+                for chunk_index in 0..C {
+                    let flat_chunk_index = instruction_index + chunk_index * padded_trace_len;
+                    chunks_x[flat_chunk_index] = F::zero();
+                    chunks_y[flat_chunk_index] = F::zero();
+                }
             }
         }
 
@@ -512,10 +520,16 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<Self::InstructionSet>) -> Vec<F> {
+    fn compute_lookup_outputs(instructions: &Vec<Option<Self::InstructionSet>>) -> Vec<F> {
         instructions
             .par_iter()
-            .map(|op| F::from_u64(op.lookup_entry()).unwrap())
+            .map(|op| {
+                if let Some(op) = op {
+                    F::from_u64(op.lookup_entry()).unwrap()
+                } else {
+                    F::zero()
+                }
+            })
             .collect()
     }
 }
