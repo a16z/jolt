@@ -16,7 +16,7 @@ use strum::EnumCount;
 fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
   let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
   let _enter = span.enter();
-  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().enumerate().map(|(i, _)| {
+  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|i| {
     let step = inputs.clone_step(i);
     let pc_cur = step.input_pc;
     let (aux, _) = R1CSBuilder::calculate_aux(step, num_aux);
