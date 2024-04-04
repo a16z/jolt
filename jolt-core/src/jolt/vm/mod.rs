@@ -421,10 +421,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         drop(_guard);
         drop(span);
 
-        // Derive lookup_outputs
-        let mut lookup_outputs = Self::compute_lookup_outputs(&instructions);
-        lookup_outputs.resize(padded_trace_len, F::zero());
-
         let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
         let _enter = span.enter();
         let instruction_flags: Vec<F> =
@@ -460,7 +456,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let _guard = span.enter();
         let chunks_x_comms = commit_to_chunks(&chunks_x);
         let chunks_y_comms = commit_to_chunks(&chunks_y);
-        let lookup_outputs_comms = commit_to_chunks(&lookup_outputs);
         let circuit_flags_comm = commit_to_chunks(&circuit_flags);
         drop(_guard);
 
@@ -477,7 +472,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_x,
             chunks_y,
             chunks_query,
-            lookup_outputs,
+            jolt_polynomials.instruction_lookups.lookup_outputs.evals(),
             circuit_flags,
             instruction_flags,
         );
@@ -496,7 +491,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             io_aux_commitments,
             chunks_x_comms,
             chunks_y_comms,
-            lookup_outputs_comms,
             circuit_flags_comm,
             hyrax_generators,
         );
@@ -517,20 +511,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         proof
             .verify(commitments, C, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
-    }
-
-    #[tracing::instrument(skip_all, name = "Jolt::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<Option<Self::InstructionSet>>) -> Vec<F> {
-        instructions
-            .par_iter()
-            .map(|op| {
-                if let Some(op) = op {
-                    F::from_u64(op.lookup_entry()).unwrap()
-                } else {
-                    F::zero()
-                }
-            })
-            .collect()
     }
 }
 
