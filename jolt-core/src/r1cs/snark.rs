@@ -4,54 +4,54 @@ use crate::utils::transcript::AppendToTranscript;
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
 
 use ark_ec::CurveGroup;
-use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS};
+use common::{constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS}, rv_trace::NUM_CIRCUIT_FLAGS};
 use ark_ff::PrimeField;
 use merlin::Transcript;
 use rayon::prelude::*;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use strum::EnumCount;
 
-/// Reorder and drop first element [[a1, b1, c1], [a2, b2, c2]] => [[a2], [b2], [c2]]
-#[tracing::instrument(skip_all, name = "reassemble_segments_partial")]
-fn reassemble_segments_partial<F: PrimeField>(jolt_witnesses: Vec<Vec<F>>, num_front: usize, num_back: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-  let trace_len = jolt_witnesses.len();
-  let total_length = jolt_witnesses[0].len();
-  let mut front_result: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(trace_len); num_front]; 
-  let mut back_result: Vec<Vec<F>> = vec![unsafe_allocate_zero_vec(trace_len); num_back]; 
-
-  // [1 || output_state] starts at the beginning
-  front_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
-    for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][variable_idx+1]; // NOTE: 1 is at the beginning! // TODO(sragss): This prior comment is untrue now?
-    }
-  });
-
-  // [.. || aux] is the end
-  back_result.par_iter_mut().enumerate().for_each(|(variable_idx, variable_segment)| {
-    for step in 0..trace_len {
-      variable_segment[step] = jolt_witnesses[step][(total_length-num_back) + variable_idx]; 
-    }
-  });
-
-  drop_in_background_thread(jolt_witnesses);
-
-  (front_result, back_result)
-}
-
-#[tracing::instrument(name = "synthesize_state_aux_segments", skip_all)]
-fn synthesize_state_aux_segments<F: PrimeField>(inputs: &R1CSInputs<F>, num_state: usize, num_aux: usize) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
-  let jolt_witnesses = synthesize_witnesses(inputs);
-  // TODO(sragss / arasuarun): Synthsize witnesses should just return (io, aux)
-  reassemble_segments_partial(jolt_witnesses, num_state, num_aux)
-}
-
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
-fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>) -> Vec<Vec<F>> {
-  (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
-    let mut step: Vec<F> = inputs.clone_step(step_index);
-    R1CSBuilder::calculate_aux(&mut step);
-    step
-  }).collect()
+/// Returns (io, aux) = (pc_out, pc, aux)
+fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
+  let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
+  let _enter = span.enter();
+  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|step_index| {
+    let step = inputs.clone_step(step_index);
+    let pc_cur = step.input_pc;
+    let (aux, pc_next) = R1CSBuilder::calculate_aux(step, num_aux);
+    (aux, pc_next, pc_cur)
+  }).collect();
+  drop(_enter);
+
+  // TODO(sragss / arasuarun): Remove pc_out, pc from calculate_aux and triples_stepwise
+
+  // Convert step-wise to variable-wise
+  // [[aux_var_0, aux_var_1, ...], [aux_var_0, aux_var_1, ...], ...] => [[aux_var_0, aux_var_0, ...], [aux_var_1, aux_var_1, ...], ...]
+  // Aux result shape: aux[num_vars][num_steps]
+
+  let num_vars = triples_stepwise[0].0.len();
+  let mut aux: Vec<Vec<F>> = (0..num_vars).into_par_iter().map(|_| unsafe_allocate_zero_vec::<F>(inputs.padded_trace_len)).collect();
+  let mut pc_out: Vec<F> = unsafe_allocate_zero_vec(inputs.padded_trace_len);
+  let mut pc: Vec<F> = unsafe_allocate_zero_vec(inputs.padded_trace_len);
+
+  let other_span = tracing::span!(tracing::Level::TRACE, "aux_recombine");
+  let _enter = other_span.enter();
+  aux.par_iter_mut().enumerate().for_each(|(var_index, aux_varwise)| {
+    for step_index in 0..inputs.padded_trace_len {
+      aux_varwise[step_index] = triples_stepwise[step_index].0[var_index];
+    }
+  });
+  drop(_enter);
+
+  pc_out.par_iter_mut().zip(pc.par_iter_mut()).enumerate().for_each(|(step_index, (slot_out, slot))| {
+    *slot_out = triples_stepwise[step_index].1;
+    *slot = triples_stepwise[step_index].2;
+  });
+
+  drop_in_background_thread(triples_stepwise);
+
+  (pc_out, pc, aux)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -68,6 +68,19 @@ pub struct R1CSInputs<F: PrimeField> {
     lookup_outputs: Vec<F>,
     circuit_flags_bits: Vec<F>,
     instruction_flags_bits: Vec<F>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct R1CSStepInputs<F: PrimeField> {
+    pub padded_trace_len: usize,
+    pub input_pc: F, 
+    pub bytecode_v: Vec<F>,
+    pub memreg_v_reads: Vec<F>,
+    pub memreg_v_writes: Vec<F>,
+    pub chunks_y: Vec<F>,
+    pub chunks_query: Vec<F>,
+    pub lookup_outputs: Vec<F>,
+    pub circuit_flags_bits: Vec<F>,
 }
 
 impl<F: PrimeField> R1CSInputs<F> {
@@ -115,51 +128,40 @@ impl<F: PrimeField> R1CSInputs<F> {
     }
   }
 
-  #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_stepwise")]
-  pub fn clone_to_stepwise(&self) -> Vec<Vec<F>> {
-    let stepwise = (0..self.trace_len()).into_par_iter().map(|step_index| {self.clone_step(step_index)}).collect();
+  pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
+    let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
+      F::ZERO
+    } else {
+      self.bytecode_a[step_index] * F::from_u64(4u64).unwrap() + F::from_u64(RAM_START_ADDRESS).unwrap()
+    };
 
-    stepwise
-  }
+    let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
+      let num_vals = data.len() / self.padded_trace_len;
+      for var_index in 0..num_vals {
+        step.push(data[var_index * self.padded_trace_len + step_index]);
+      }
+    };
 
-  pub fn clone_step(&self, step_index: usize) -> Vec<F> {
-    const PREFIX_VARS_PER_STEP: usize = 3;
+    let mut output = R1CSStepInputs {
+      padded_trace_len: self.padded_trace_len,
+      input_pc: program_counter,
+      bytecode_v: Vec::with_capacity(6),
+      memreg_v_reads: Vec::with_capacity(7),
+      memreg_v_writes: Vec::with_capacity(7),
+      chunks_y: Vec::with_capacity(4),
+      chunks_query: Vec::with_capacity(4),
+      lookup_outputs: Vec::with_capacity(2),
+      circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
+    };
+    push_to_step(&self.bytecode_v, &mut output.bytecode_v);
+    push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads);
+    push_to_step(&self.memreg_v_writes, &mut output.memreg_v_writes);
+    push_to_step(&self.chunks_y, &mut output.chunks_y);
+    push_to_step(&self.chunks_query, &mut output.chunks_query);
+    push_to_step(&self.lookup_outputs, &mut output.lookup_outputs);
+    push_to_step(&self.circuit_flags_bits, &mut output.circuit_flags_bits);
 
-    // AUX_VARS_PER_STEP has to be greater than the number of additional vars pushed by the constraint system
-    const AUX_VARS_PER_STEP: usize = 20; 
-    let num_inputs_per_step = self.num_vars_per_step() + PREFIX_VARS_PER_STEP;
-    let mut step: Vec<F> = Vec::with_capacity(num_inputs_per_step + AUX_VARS_PER_STEP);
-      let program_counter = if step_index > 0 && self.bytecode_a[step_index] == F::ZERO {
-        F::ZERO
-      } else {
-        self.bytecode_a[step_index] * F::from(4u64) + F::from(RAM_START_ADDRESS)
-      };
-
-      // 1 is constant, 0s in slots 1, 2 are filled by aux computation
-      step.extend([F::from(1u64), F::from(0u64), program_counter]);
-
-      let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
-        let num_vals = data.len() / self.padded_trace_len;
-        for var_index in 0..num_vals {
-          step.push(data[var_index * self.padded_trace_len + step_index]);
-        }
-      };
-
-      push_to_step(&self.bytecode_a, &mut step);
-      push_to_step(&self.bytecode_v, &mut step);
-      push_to_step(&self.memreg_a_rw, &mut step);
-      push_to_step(&self.memreg_v_reads, &mut step);
-      push_to_step(&self.memreg_v_writes, &mut step);
-      push_to_step(&self.chunks_x, &mut step);
-      push_to_step(&self.chunks_y, &mut step);
-      push_to_step(&self.chunks_query, &mut step);
-      push_to_step(&self.lookup_outputs, &mut step);
-      push_to_step(&self.circuit_flags_bits, &mut step);
-      push_to_step(&self.instruction_flags_bits, &mut step);
-
-      assert_eq!(num_inputs_per_step, step.len());
-
-      step
+    output
   }
 
 
@@ -276,9 +278,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(_enter);
       drop(span);
 
-      let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
+      // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
+      let (pc_out, pc, aux) = synthesize_witnesses(&inputs, jolt_shape.num_internal);
+      let io_segments = vec![pc_out, pc];
       let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
-      let aux_comms = HyraxCommitment::batch_commit(&aux_segments, &generators);
+      let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
 
       let r1cs_commitments = R1CSInternalCommitments::<G> {
         io: io_comms,
@@ -289,11 +293,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let _enter = cloning_stuff_span.enter();
       let inputs_segments = inputs.clone_to_trace_len_chunks(padded_trace_len);
 
-      let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux_segments.len());
+      let mut w_segments: Vec<Vec<F>> = Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux.len());
       // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
       w_segments.par_extend(io_segments.into_par_iter());
       w_segments.par_extend(inputs_segments.into_par_iter());
-      w_segments.par_extend(aux_segments.into_par_iter());
+      w_segments.par_extend(aux.into_par_iter());
 
       drop(_enter);
       drop(cloning_stuff_span);

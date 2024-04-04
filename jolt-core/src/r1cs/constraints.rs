@@ -8,6 +8,8 @@ use strum::EnumCount;
 
 use crate::jolt::vm::rv32i_vm::RV32I;
 
+use super::snark::R1CSStepInputs;
+
 /* Compiler Variables */
 const C: usize = 4; 
 const N_FLAGS: usize = NUM_CIRCUIT_FLAGS + RV32I::COUNT; 
@@ -75,11 +77,17 @@ const INPUT_OFFSETS: [usize; INPUT_SIZES.len()] = {
     arr
 };
 
-fn GET_TOTAL_LEN() -> usize {
-    INPUT_SIZES.iter().map(|(_, value)| value).sum()
+const fn GET_TOTAL_LEN() -> usize {
+    let mut sum = 0;
+    let mut i = 0;
+    while i < INPUT_SIZES.len() {
+        sum += INPUT_SIZES[i].1;
+        i += 1;
+    }
+    sum
 }
 
-fn GET_INDEX(input_type: InputType, offset: usize) -> usize {
+const fn GET_INDEX(input_type: InputType, offset: usize) -> usize {
     INPUT_OFFSETS[input_type as usize] + offset
 }
 
@@ -555,144 +563,124 @@ impl R1CSBuilder {
         R1CSBuilder::move_constant_to_end(instance);
     }
 
-    pub fn calculate_aux<F: PrimeField>(inputs: &mut Vec<F>) {
-        // Parse the input indices 
-        let op_flags_packed = GET_INDEX(InputType::ProgVRW, 0);
-        let rd = GET_INDEX(InputType::ProgVRW, 1);
-        let rs1 = GET_INDEX(InputType::ProgVRW, 2);
-        let rs2 = GET_INDEX(InputType::ProgVRW, 3);
-        let immediate_before_processing = GET_INDEX(InputType::ProgVRW, 4);
+    /// Returns (aux, pc_next, pc)
+    pub fn calculate_aux<F: PrimeField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> (Vec<F>, F) {
+        // Index of values within the input vector variables
+        const RD: usize = 1; 
+        // Within circuit_flags 
+        const IMM_BEFORE_PRE: usize = 4; 
+        const IS_JUMP: usize = 4; 
+        const IS_BRANCH: usize = 5; 
+        const IF_UPDATE_RD_WITH_LOOKUP_OUTPUT: usize = 6; 
+        const SIGN_IMM_FLAG: usize = 9; 
+        const IS_LUI_AUIPC: usize = 11; 
+        const IS_SHIFT: usize = 12; 
 
-        let is_load_instr: usize = GET_INDEX(InputType::OpFlags, 2);
-        let is_store_instr: usize = GET_INDEX(InputType::OpFlags, 3);
-        let is_jump_instr: usize = GET_INDEX(InputType::OpFlags, 4);
-        let is_branch_instr: usize = GET_INDEX(InputType::OpFlags, 5);
-        let if_update_rd_with_lookup_output: usize = GET_INDEX(InputType::OpFlags, 6);
-        let is_add_instr: usize = GET_INDEX(InputType::OpFlags, 7);
-        let is_sub_instr: usize = GET_INDEX(InputType::OpFlags, 8);
-        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 9);
-        let is_concat: usize = GET_INDEX(InputType::OpFlags, 10);
-        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 11);
-        let is_shift: usize = GET_INDEX(InputType::OpFlags, 12);
-
-        let PC = GET_INDEX(InputType::InputState, PC_IDX); 
-
+        let mut aux: Vec<F> = Vec::with_capacity(num_aux);
 
         // 1. let immediate: usize = R1CSBuilder::if_else(instance, smallvec![(is_lui_auipc, 1)], smallvec![(immediate_before_processing, 1)], smallvec![(immediate_before_processing, 1<<12)]); 
-        let immediate = inputs.len(); 
-        inputs.push(
-            if inputs[is_lui_auipc].is_zero() {
-                inputs[immediate_before_processing]
+        let imm_index = aux.len(); 
+        aux.push(
+            if inputs.circuit_flags_bits[IS_LUI_AUIPC].is_zero() {
+                inputs.bytecode_v[IMM_BEFORE_PRE]
             } else {
-                inputs[immediate_before_processing] * F::from_u64(1u64<<12).unwrap()
+                inputs.bytecode_v[IMM_BEFORE_PRE] * F::from_u64(1u64<<12).unwrap()
             }
         );
 
-        let rs1_val = GET_INDEX(InputType::MemregVReads, 0);
-        let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
-
         // 2. let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 1), 8, MOPS-3);
-        let load_or_store_value = inputs.len();
-        inputs.push({
+        aux.push({
             let mut val = F::zero(); 
-            let (L, N) = (8, MOPS-3);
+            const L: usize = 8;
+            const N: usize = MOPS-3;
             for i in 0..N {
-                val += inputs[GET_INDEX(InputType::MemregVWrites, 1) + i] * F::from_u64(1u64<<(i*L)).unwrap();
+                val += inputs.memreg_v_writes[1 + i] * F::from_u64(1u64<<(i*L)).unwrap();
             }
             val 
         });
 
         // 3. let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
-        let x = inputs.len(); 
-        inputs.push(
-            if inputs[GET_INDEX(InputType::OpFlags, 0)].is_zero() {
-                inputs[rs1_val]
+        aux.push(
+            if inputs.circuit_flags_bits[0].is_zero() {
+                inputs.memreg_v_reads[0]
             } else {
-                inputs[PC]
+                inputs.input_pc
             }
         );
 
         // 4. let _y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
-        let _y = inputs.len();
-        inputs.push(
-            if inputs[GET_INDEX(InputType::OpFlags, 1)].is_zero() {
-                inputs[rs2_val]
+        aux.push(
+            if inputs.circuit_flags_bits[1].is_zero() {
+                inputs.memreg_v_reads[1]
             } else {
-                inputs[immediate]
+                aux[imm_index]
             }
         );
 
         // 5. let immediate_signed = R1CSBuilder::if_else(instance, smallvec![(sign_imm_flag, 1)], smallvec![(immediate, 1)], smallvec![(immediate, 1), (0, -ALL_ONES - 1)]);
-        let immediate_signed = inputs.len();
-        inputs.push(
-            if inputs[sign_imm_flag].is_zero() {
-                inputs[immediate]
+        let imm_signed_index = aux.len();
+        aux.push(
+            if inputs.circuit_flags_bits[SIGN_IMM_FLAG].is_zero() {
+                aux[imm_index]
             } else {
-                inputs[immediate] - F::from_u64((ALL_ONES+1) as u64).unwrap()
+                aux[imm_index] - F::from_u64((ALL_ONES+1) as u64).unwrap()
             }
         );
 
         // 6. let combined_z_chunks = R1CSBuilder::combine_be(instance, GET_INDEX(InputType::ChunksQuery, 0), LOG_M, C);
-        let combined_z_chunks = inputs.len();
-        inputs.push({
+        aux.push({
             let mut val = F::zero();
-            let (L, N) = (LOG_M, C);
+            const L: usize = LOG_M;
+            const N: usize = C;
             for i in 0..N {
-                val += inputs[GET_INDEX(InputType::ChunksQuery, 0) + i] * F::from_u64(1u64<<((N-1-i)*L)).unwrap();
+                val += inputs.chunks_query[i] * F::from_u64(1u64<<((N-1-i)*L)).unwrap();
             }
             val 
         });
 
         // 7-10. let chunk_y_used_i = R1CSBuilder::if_else_simple(&mut instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
-        let mut chunk_y_used = [0; C];
         for i in 0..C {
-            chunk_y_used[i] = inputs.len(); 
-            inputs.push(
-                if inputs[is_shift].is_zero() {
-                    inputs[GET_INDEX(InputType::ChunksY, i)]
+            aux.push(
+                if inputs.circuit_flags_bits[IS_SHIFT].is_zero() {
+                    inputs.chunks_y[i]
                 } else {
-                    inputs[GET_INDEX(InputType::ChunksY, C-1)]
+                    inputs.chunks_y[C-1]
                 }
             );
         }
 
-        let rd_val = GET_INDEX(InputType::MemregVWrites, 0);
-
         // 11. R1CSBuilder::constr_prod_0(smallvec![(rd, 1)], smallvec![(if_update_rd_with_lookup_output, 1)], smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], );
-        let _ = inputs.len();
-        inputs.push(inputs[rd] * inputs[if_update_rd_with_lookup_output]); 
+        aux.push(inputs.bytecode_v[RD] * inputs.circuit_flags_bits[IF_UPDATE_RD_WITH_LOOKUP_OUTPUT]); 
 
         // 12. constr_prod_0[is_jump_instr, rd, rd_val, prog_a_rw, 4]
-        let _ = inputs.len();
-        inputs.push(inputs[rd] * inputs[is_jump_instr]); 
+        aux.push(inputs.bytecode_v[RD] * inputs.circuit_flags_bits[IS_JUMP]); 
 
         // 13. let is_branch_times_lookup_output = R1CSBuilder::multiply(instance, smallvec![(is_branch_instr, 1)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]); 
-        let is_branch_times_lookup_output = inputs.len();
-        inputs.push(inputs[is_branch_instr] * inputs[GET_INDEX(InputType::LookupOutput, 0)]);
+        let is_branch_times_lookup_output = aux.len();
+        aux.push(inputs.circuit_flags_bits[IS_BRANCH] * inputs.lookup_outputs[0]);
 
         // 14. let next_pc_j = R1CSBuilder::if_else(instance, smallvec![(is_jump_instr, 1)], smallvec![(PC, 1), (0, 4)], smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]);
-        let next_pc_j = inputs.len();
-        inputs.push(
-            if inputs[is_jump_instr].is_zero() {
-                inputs[PC] + F::from_u64(4).unwrap()
+        let next_pc_j = aux.len();
+        aux.push(
+            if inputs.circuit_flags_bits[IS_JUMP].is_zero() {
+                inputs.input_pc + F::from_u64(4).unwrap()
             } else {
-                inputs[GET_INDEX(InputType::LookupOutput, 0)]
+                inputs.lookup_outputs[0]
             }
         );
 
         // 15. let next_pc_j_b = R1CSBuilder::if_else(instance, smallvec![(is_branch_times_lookup_output, 1)], smallvec![(next_pc_j, 1)], smallvec![(PC, 1), (immediate_signed, 1)]);
-        let next_pc_j_b = inputs.len();
-        inputs.push(
-            if inputs[is_branch_times_lookup_output].is_zero() {
-                inputs[next_pc_j]
+        let next_pc_j_b = aux.len();
+        aux.push(
+            if aux[is_branch_times_lookup_output].is_zero() {
+                aux[next_pc_j]
             } else {
-                inputs[PC] + inputs[immediate_signed]
+                inputs.input_pc + aux[imm_signed_index]
             }
         );
 
-
-        // Assign output state: PC
-        inputs[1] = inputs[next_pc_j_b];
+        let pc_next = aux[next_pc_j_b];
+        (aux, pc_next)
     }
 
     fn move_constant_to_end(&mut self) {
