@@ -18,10 +18,10 @@ use common::{
 };
 use tracer::ELFInstruction;
 
-use crate::jolt::{
+use crate::{jolt::{
     instruction::add::ADDInstruction,
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
-};
+}, utils::thread::unsafe_allocate_zero_vec};
 
 const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
 const DEFAULT_STACK_SIZE: usize = 4096;
@@ -68,7 +68,7 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
-            self.save_linker(self.memory_size);
+            self.save_linker();
 
             let mut envs = vec![("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))];
             if let Some(func) = &self.func {
@@ -123,7 +123,7 @@ impl Program {
     ) -> (
         JoltDevice,
         Vec<BytecodeRow>,
-        Vec<RV32I>,
+        Vec<Option<RV32I>>,
         Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         Vec<F>,
     ) {
@@ -136,14 +136,14 @@ impl Program {
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
             .collect();
 
-        let instruction_trace: Vec<RV32I> = trace
+        let instruction_trace: Vec<Option<RV32I>> = trace
             .par_iter()
             .map(|row| {
                 if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
+                    Some(jolt_instruction)
                 } else {
-                    // TODO(moodlezoup): Add a `padding` function to InstructionSet trait
-                    ADDInstruction(0_u64, 0_u64).into()
+                    // Instruction does not use lookups
+                    None
                 }
             })
             .collect();
@@ -152,7 +152,7 @@ impl Program {
             trace.par_iter().map(|row| row.into()).collect();
 
         let padded_trace_len = trace.len().next_power_of_two();
-        let mut circuit_flag_trace = vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
+        let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
         circuit_flag_trace
             .par_chunks_mut(padded_trace_len)
             .enumerate()
@@ -196,14 +196,15 @@ impl Program {
         (trace_len, counts)
     }
 
-    fn save_linker(&self, memory_size: usize) {
+    fn save_linker(&self) {
         let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
         if let Some(parent) = linker_path.parent() {
             fs::create_dir_all(parent).expect("could not create linker file");
         }
 
-        let linker_script =
-            LINKER_SCRIPT_TEMPLATE.replace("{MEMORY_SIZE}", &memory_size.to_string());
+        let linker_script = LINKER_SCRIPT_TEMPLATE
+            .replace("{MEMORY_SIZE}", &self.memory_size.to_string())
+            .replace("{STACK_SIZE}", &self.stack_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
         file.write(linker_script.as_bytes())
