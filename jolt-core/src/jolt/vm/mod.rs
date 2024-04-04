@@ -169,13 +169,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         padded_memory_trace.resize(
             trace_length.next_power_of_two(),
             [
-                MemoryOp::no_op(),
-                MemoryOp::no_op(),
-                MemoryOp::Write(0, 0),
-                MemoryOp::no_op(),
-                MemoryOp::no_op(),
-                MemoryOp::no_op(),
-                MemoryOp::no_op(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_write(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
+                MemoryOp::noop_read(),
             ],
         );
 
@@ -419,7 +419,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
         let _enter = span.enter();
-        let instruction_flags: Vec<F> = DensePolynomial::flatten(&jolt_polynomials.instruction_lookups.instruction_flag_polys);
+        let instruction_flags: Vec<F> =
+            DensePolynomial::flatten(&jolt_polynomials.instruction_lookups.instruction_flag_polys);
         drop(_enter);
         drop(span);
 

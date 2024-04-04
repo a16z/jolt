@@ -84,7 +84,7 @@ pub fn random_memory_trace<F: PrimeField>(
 
     for _ in 0..m {
         let mut ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] =
-            std::array::from_fn(|_| MemoryOp::no_op());
+            std::array::from_fn(|_| MemoryOp::noop_read());
 
         let rs1 = rng.next_u64() % REGISTER_COUNT;
         ops[0] = MemoryOp::Read(rs1, memory[rs1 as usize]);
@@ -111,7 +111,7 @@ pub fn random_memory_trace<F: PrimeField>(
                 // LB
                 ops[3] = MemoryOp::Read(ram_address, memory[remapped_address as usize]);
                 for i in 1..4 {
-                    ops[i + 3] = MemoryOp::Read(0, 0);
+                    ops[i + 3] = MemoryOp::noop_read();
                 }
                 for (i, flag) in load_store_flags.iter_mut().enumerate() {
                     flag.push(if i == 0 { 1 } else { 0 });
@@ -125,7 +125,7 @@ pub fn random_memory_trace<F: PrimeField>(
                     );
                 }
                 for i in 2..4 {
-                    ops[i + 3] = MemoryOp::Read(0, 0);
+                    ops[i + 3] = MemoryOp::noop_read();
                 }
                 for (i, flag) in load_store_flags.iter_mut().enumerate() {
                     flag.push(if i == 1 { 1 } else { 0 });
@@ -155,7 +155,7 @@ pub fn random_memory_trace<F: PrimeField>(
                 ops[3] = MemoryOp::Write(ram_address, ram_value);
                 memory[remapped_address as usize] = ram_value;
                 for i in 1..4 {
-                    ops[i + 3] = MemoryOp::Read(0, 0);
+                    ops[i + 3] = MemoryOp::noop_read();
                 }
                 for (i, flag) in load_store_flags.iter_mut().enumerate() {
                     flag.push(if i == 2 { 1 } else { 0 });
@@ -169,7 +169,7 @@ pub fn random_memory_trace<F: PrimeField>(
                     memory[i + remapped_address as usize] = ram_value;
                 }
                 for i in 2..4 {
-                    ops[i + 3] = MemoryOp::Read(0, 0);
+                    ops[i + 3] = MemoryOp::noop_read();
                 }
                 for (i, flag) in load_store_flags.iter_mut().enumerate() {
                     flag.push(if i == 3 { 1 } else { 0 });
@@ -188,7 +188,7 @@ pub fn random_memory_trace<F: PrimeField>(
             }
         } else {
             for i in 0..4 {
-                ops[i + 3] = MemoryOp::Read(0, 0);
+                ops[i + 3] = MemoryOp::noop_read();
             }
             for flag in load_store_flags.iter_mut() {
                 flag.push(0);
