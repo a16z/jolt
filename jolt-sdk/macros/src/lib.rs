@@ -125,7 +125,7 @@ impl MacroBuilder {
     }
 
     fn make_analyze_function(&self) -> TokenStream2 {
-        let set_mem_size = self.make_set_memory_size();
+        let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
 
@@ -153,7 +153,7 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_func(&self) -> TokenStream2 {
-        let set_mem_size = self.make_set_memory_size();
+        let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
 
@@ -345,25 +345,32 @@ impl MacroBuilder {
         }
     }
 
-    fn make_set_memory_size(&self) -> TokenStream2 {
-        if self.attr.len() == 1 {
-            match &self.attr[0] {
+    fn make_set_linker_parameters(&self) -> TokenStream2 {
+        let mut code: Vec<TokenStream2> = Vec::new();
+        for attr in &self.attr {
+            match attr {
                 NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
                     let ident = &path.get_ident().expect("Expected identifier");
-                    if ident.to_string() != "memory_size" {
-                        panic!("only allowed attribute is memory_size");
+                    match ident.to_string().as_str() {
+                        "memory_size" => {
+                            code.push(quote! {
+                                program.set_memory_size(#lit);
+                             });
+                        },
+                        "stack_size" => {
+                            code.push(quote! {
+                                program.set_stack_size(#lit);
+                             });
+                        },
+                        _ => panic!("invalid attribute"),
                     }
-
-                    quote! {
-                        program.set_memory_size(#lit);
-                    }
-                }
+                },
                 _ => panic!("expected integer literal"),
             }
-        } else if self.attr.len() > 1 {
-            panic!("only one attribute expected");
-        } else {
-            quote!()
+        } 
+
+        quote! {
+            #(#code;)*
         }
     }
 

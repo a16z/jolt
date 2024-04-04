@@ -24,6 +24,7 @@ use crate::{jolt::{
 }, utils::thread::unsafe_allocate_zero_vec};
 
 const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
+const DEFAULT_STACK_SIZE: usize = 4096;
 
 #[derive(Clone)]
 pub struct Program {
@@ -31,6 +32,7 @@ pub struct Program {
     func: Option<String>,
     input: Vec<u8>,
     memory_size: usize,
+    stack_size: usize,
     pub elf: Option<PathBuf>,
 }
 
@@ -41,6 +43,7 @@ impl Program {
             func: None,
             input: Vec::new(),
             memory_size: DEFAULT_MEMORY_SIZE,
+            stack_size: DEFAULT_STACK_SIZE,
             elf: None,
         }
     }
@@ -58,10 +61,14 @@ impl Program {
         self.memory_size = len;
     }
 
+    pub fn set_stack_size(&mut self, len: usize) {
+        self.stack_size = len;
+    }
+
     #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
-            self.save_linker(self.memory_size);
+            self.save_linker();
 
             let mut envs = vec![("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))];
             if let Some(func) = &self.func {
@@ -189,14 +196,15 @@ impl Program {
         (trace_len, counts)
     }
 
-    fn save_linker(&self, memory_size: usize) {
+    fn save_linker(&self) {
         let linker_path = PathBuf::from_str(&self.linker_path()).unwrap();
         if let Some(parent) = linker_path.parent() {
             fs::create_dir_all(parent).expect("could not create linker file");
         }
 
-        let linker_script =
-            LINKER_SCRIPT_TEMPLATE.replace("{MEMORY_SIZE}", &memory_size.to_string());
+        let linker_script = LINKER_SCRIPT_TEMPLATE
+            .replace("{MEMORY_SIZE}", &self.memory_size.to_string())
+            .replace("{STACK_SIZE}", &self.stack_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
         file.write(linker_script.as_bytes())
@@ -231,7 +239,7 @@ SECTIONS {
   } > program
 
   . = ALIGN(8);
-  . = . + 4096;
+  . = . + {STACK_SIZE};
   _STACK_PTR = .;
 }
 "#;
