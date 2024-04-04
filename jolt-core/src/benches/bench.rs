@@ -172,7 +172,7 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
-    let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
+    let ops: Vec<Option<RV32I>> = std::iter::repeat_with(|| Some(RV32I::random_instruction(&mut rng)))
         .take(num_cycles)
         .collect();
 

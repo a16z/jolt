@@ -86,6 +86,7 @@ pub struct R1CSStepInputs<F: PrimeField> {
     pub chunks_query: Vec<F>,
     pub lookup_outputs: Vec<F>,
     pub circuit_flags_bits: Vec<F>,
+    pub instruction_flags_bits: Vec<F>,
 }
 
 impl<F: PrimeField> R1CSInputs<F> {
@@ -157,6 +158,7 @@ impl<F: PrimeField> R1CSInputs<F> {
       chunks_query: Vec::with_capacity(4),
       lookup_outputs: Vec::with_capacity(2),
       circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
+      instruction_flags_bits: Vec::with_capacity(RV32I::COUNT),
     };
     push_to_step(&self.bytecode_v, &mut output.bytecode_v);
     push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads);
@@ -165,6 +167,7 @@ impl<F: PrimeField> R1CSInputs<F> {
     push_to_step(&self.chunks_query, &mut output.chunks_query);
     push_to_step(&self.lookup_outputs, &mut output.lookup_outputs);
     push_to_step(&self.circuit_flags_bits, &mut output.circuit_flags_bits);
+    push_to_step(&self.instruction_flags_bits, &mut output.instruction_flags_bits);
 
     output
   }

@@ -116,7 +116,7 @@ impl Program {
     ) -> (
         JoltDevice,
         Vec<BytecodeRow>,
-        Vec<RV32I>,
+        Vec<Option<RV32I>>,
         Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         Vec<F>,
     ) {
@@ -129,14 +129,14 @@ impl Program {
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
             .collect();
 
-        let instruction_trace: Vec<RV32I> = trace
+        let instruction_trace: Vec<Option<RV32I>> = trace
             .par_iter()
             .map(|row| {
                 if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    jolt_instruction
+                    Some(jolt_instruction)
                 } else {
-                    // TODO(moodlezoup): Add a `padding` function to InstructionSet trait
-                    ADDInstruction(0_u64, 0_u64).into()
+                    // Instruction does not use lookups
+                    None
                 }
             })
             .collect();

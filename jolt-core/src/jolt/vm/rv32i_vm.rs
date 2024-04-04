@@ -173,9 +173,10 @@ mod tests {
     fn instruction_lookups() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
         const NUM_CYCLES: usize = 100;
-        let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
-            .take(NUM_CYCLES)
-            .collect();
+        let ops: Vec<Option<RV32I>> =
+            std::iter::repeat_with(|| Some(RV32I::random_instruction(&mut rng)))
+                .take(NUM_CYCLES)
+                .collect();
 
         let mut prover_transcript = Transcript::new(b"example");
 

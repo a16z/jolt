@@ -847,7 +847,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
     pub fn prove_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<InstructionSet>,
+        ops: &Vec<Option<InstructionSet>>,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> (
@@ -999,7 +999,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
     fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<InstructionSet>,
+        ops: &Vec<Option<InstructionSet>>,
     ) -> InstructionPolynomials<F, G> {
         let m: usize = ops.len().next_power_of_two();
 
@@ -1018,17 +1018,19 @@ where
                 let mut subtable_lookups = vec![F::zero(); m];
 
                 for (j, op) in ops.iter().enumerate() {
-                    let memories_used = &preprocessing.instruction_to_memory_indices
-                        [InstructionSet::enum_index(op)];
-                    if memories_used.contains(&memory_index) {
-                        let memory_address = access_sequence[j];
-                        debug_assert!(memory_address < M);
-
-                        let counter = final_cts_i[memory_address];
-                        read_cts_i[j] = counter;
-                        final_cts_i[memory_address] = counter + 1;
-                        subtable_lookups[j] =
-                            preprocessing.materialized_subtables[subtable_index][memory_address];
+                    if let Some(op) = op {
+                        let memories_used = &preprocessing.instruction_to_memory_indices
+                            [InstructionSet::enum_index(&op)];
+                        if memories_used.contains(&memory_index) {
+                            let memory_address = access_sequence[j];
+                            debug_assert!(memory_address < M);
+    
+                            let counter = final_cts_i[memory_address];
+                            read_cts_i[j] = counter;
+                            final_cts_i[memory_address] = counter + 1;
+                            subtable_lookups[j] =
+                                preprocessing.materialized_subtables[subtable_index][memory_address];
+                        }
                     }
                 }
 
@@ -1066,7 +1068,9 @@ where
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
-            instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
+            if let Some(op) = op {
+                instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
+            }
         }
 
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
@@ -1324,7 +1328,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_sumcheck_claim")]
     fn compute_sumcheck_claim(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<InstructionSet>,
+        ops: &Vec<Option<InstructionSet>>,
         E_polys: &Vec<DensePolynomial<F>>,
         eq_evals: &Vec<F>,
     ) -> F {
@@ -1338,15 +1342,19 @@ where
             .par_iter()
             .enumerate()
             .map(|(k, op)| {
-                let memory_indices =
-                    &preprocessing.instruction_to_memory_indices[InstructionSet::enum_index(op)];
-                let filtered_operands: Vec<F> = memory_indices
-                    .iter()
-                    .map(|memory_index| E_polys[*memory_index][k])
-                    .collect();
+                if let Some(op) = op {
+                    let memory_indices = &preprocessing.instruction_to_memory_indices
+                        [InstructionSet::enum_index(op)];
+                    let filtered_operands: Vec<F> = memory_indices
+                        .iter()
+                        .map(|memory_index| E_polys[*memory_index][k])
+                        .collect();
 
-                let collation_eval = op.combine_lookups(&filtered_operands, C, M);
-                eq_evals[k] * collation_eval
+                    let collation_eval = op.combine_lookups(&filtered_operands, C, M);
+                    eq_evals[k] * collation_eval
+                } else {
+                    F::zero()
+                }
             })
             .sum();
 
@@ -1437,11 +1445,19 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &Vec<InstructionSet>) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &Vec<Option<InstructionSet>>) -> Vec<Vec<usize>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
-        let chunked_indices: Vec<Vec<usize>> =
-            ops.iter().map(|op| op.to_indices(C, log_M)).collect();
+        let chunked_indices: Vec<Vec<usize>> = ops
+            .iter()
+            .map(|op| {
+                if let Some(op) = op {
+                    op.to_indices(C, log_M)
+                } else {
+                    vec![0; C]
+                }
+            })
+            .collect();
 
         let mut subtable_lookup_indices: Vec<Vec<usize>> = Vec::with_capacity(C);
         for i in 0..C {
