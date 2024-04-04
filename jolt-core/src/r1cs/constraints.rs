@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use common::{constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET}, rv_trace::NUM_CIRCUIT_FLAGS};
 use strum::EnumCount;
 
-use crate::jolt::{instruction::{sub::SUBInstruction, JoltInstructionSet}, vm::rv32i_vm::RV32I};
+use crate::jolt::{instruction::{add::ADDInstruction, sub::SUBInstruction, JoltInstructionSet}, vm::rv32i_vm::RV32I};
 
 use super::snark::R1CSStepInputs;
 
@@ -305,15 +305,18 @@ impl R1CSBuilder {
         let is_jump_instr: usize = GET_INDEX(InputType::OpFlags, 4);
         let is_branch_instr: usize = GET_INDEX(InputType::OpFlags, 5);
         let if_update_rd_with_lookup_output: usize = GET_INDEX(InputType::OpFlags, 6);
-        let is_add_instr: usize = GET_INDEX(InputType::OpFlags, 7);
+        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 7);
+        let is_concat: usize = GET_INDEX(InputType::OpFlags, 8);
+        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 9);
+        let is_shift: usize = GET_INDEX(InputType::OpFlags, 10);
+        let is_add_instr: usize = GET_INDEX(
+            InputType::InstrFlags, 
+            RV32I::enum_index(&RV32I::ADD(ADDInstruction::default()))
+        );
         let is_sub_instr: usize = GET_INDEX(
             InputType::InstrFlags, 
             RV32I::enum_index(&RV32I::SUB(SUBInstruction::default()))
         );
-        let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 8);
-        let is_concat: usize = GET_INDEX(InputType::OpFlags, 9);
-        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 10);
-        let is_shift: usize = GET_INDEX(InputType::OpFlags, 11);
 
         let PC = GET_INDEX(InputType::InputState, PC_IDX); 
 
@@ -341,12 +344,12 @@ impl R1CSBuilder {
         ); 
 
         // Combine flag_bits and check that they equal op_flags_packed. 
-        // R1CSBuilder::combine_constraint(instance,
-        //     GET_INDEX(InputType::OpFlags, 0), 
-        //     1, 
-        //     N_FLAGS, 
-        //     op_flags_packed
-        // );
+        R1CSBuilder::combine_constraint(instance,
+            GET_INDEX(InputType::OpFlags, 0), 
+            1, 
+            N_FLAGS, 
+            op_flags_packed
+        );
 
         // Constraint: signal immediate <== if_else()([is_lui_auipc, immediate_before_processing, immediate_before_processing * (2**12)]);
         let immediate: usize = R1CSBuilder::if_else(instance, 
@@ -580,9 +583,9 @@ impl R1CSBuilder {
         const IS_JUMP: usize = 4; 
         const IS_BRANCH: usize = 5; 
         const IF_UPDATE_RD_WITH_LOOKUP_OUTPUT: usize = 6; 
-        const SIGN_IMM_FLAG: usize = 8; 
-        const IS_LUI_AUIPC: usize = 10; 
-        const IS_SHIFT: usize = 11; 
+        const SIGN_IMM_FLAG: usize = 7; 
+        const IS_LUI_AUIPC: usize = 9; 
+        const IS_SHIFT: usize = 10; 
 
         let mut aux: Vec<F> = Vec::with_capacity(num_aux);
 
