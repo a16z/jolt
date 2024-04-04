@@ -2,6 +2,8 @@
 
 extern crate proc_macro;
 
+use core::panic;
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -345,25 +347,32 @@ impl MacroBuilder {
         }
     }
 
-    fn make_set_memory_size(&self) -> TokenStream2 {
-        if self.attr.len() == 1 {
-            match &self.attr[0] {
+    fn make_set_linker_parameters(&self) -> TokenStream2 {
+        let mut code: Vec<TokenStream2> = Vec::new();
+        for attr in self.attr {
+            match attr {
                 NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
                     let ident = &path.get_ident().expect("Expected identifier");
-                    if ident.to_string() != "memory_size" {
-                        panic!("only allowed attribute is memory_size");
+                    match ident.to_string().as_str() {
+                        "memory_size" => {
+                            code.push(quote! {
+                                program.set_memory_size(#lit);
+                             });
+                        },
+                        "stack_size" => {
+                            code.push(quote! {
+                                program.set_stack_size(#lit);
+                             });
+                        },
+                        _ => panic!("only allowed attribute is memory_size"),
                     }
-
-                    quote! {
-                        program.set_memory_size(#lit);
-                    }
-                }
+                },
                 _ => panic!("expected integer literal"),
             }
-        } else if self.attr.len() > 1 {
-            panic!("only one attribute expected");
-        } else {
-            quote!()
+        } 
+
+        quote! {
+            #(#code;)*
         }
     }
 

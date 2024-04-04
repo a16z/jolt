@@ -18,12 +18,13 @@ use common::{
 };
 use tracer::ELFInstruction;
 
-use crate::{jolt::{
+use crate::jolt::{
     instruction::add::ADDInstruction,
     vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
-}, utils::thread::unsafe_allocate_zero_vec};
+};
 
 const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
+const DEFAULT_STACK_SIZE: usize = 4096;
 
 #[derive(Clone)]
 pub struct Program {
@@ -31,6 +32,7 @@ pub struct Program {
     func: Option<String>,
     input: Vec<u8>,
     memory_size: usize,
+    stack_size: usize,
     pub elf: Option<PathBuf>,
 }
 
@@ -41,6 +43,7 @@ impl Program {
             func: None,
             input: Vec::new(),
             memory_size: DEFAULT_MEMORY_SIZE,
+            stack_size: DEFAULT_STACK_SIZE,
             elf: None,
         }
     }
@@ -56,6 +59,10 @@ impl Program {
 
     pub fn set_memory_size(&mut self, len: usize) {
         self.memory_size = len;
+    }
+
+    pub fn set_stack_size(&mut self, len: usize) {
+        self.stack_size = len;
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
@@ -116,7 +123,7 @@ impl Program {
     ) -> (
         JoltDevice,
         Vec<BytecodeRow>,
-        Vec<Option<RV32I>>,
+        Vec<RV32I>,
         Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         Vec<F>,
     ) {
@@ -129,14 +136,14 @@ impl Program {
             .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
             .collect();
 
-        let instruction_trace: Vec<Option<RV32I>> = trace
+        let instruction_trace: Vec<RV32I> = trace
             .par_iter()
             .map(|row| {
                 if let Ok(jolt_instruction) = RV32I::try_from(row) {
-                    Some(jolt_instruction)
+                    jolt_instruction
                 } else {
-                    // Instruction does not use lookups
-                    None
+                    // TODO(moodlezoup): Add a `padding` function to InstructionSet trait
+                    ADDInstruction(0_u64, 0_u64).into()
                 }
             })
             .collect();
@@ -145,7 +152,7 @@ impl Program {
             trace.par_iter().map(|row| row.into()).collect();
 
         let padded_trace_len = trace.len().next_power_of_two();
-        let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
+        let mut circuit_flag_trace = vec![F::zero(); padded_trace_len * NUM_CIRCUIT_FLAGS];
         circuit_flag_trace
             .par_chunks_mut(padded_trace_len)
             .enumerate()
@@ -231,7 +238,7 @@ SECTIONS {
   } > program
 
   . = ALIGN(8);
-  . = . + 4096;
+  . = . + {STACK_SIZE};
   _STACK_PTR = .;
 }
 "#;
