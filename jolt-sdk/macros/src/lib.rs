@@ -362,7 +362,7 @@ impl MacroBuilder {
                                 program.set_stack_size(#lit);
                              });
                         },
-                        _ => panic!("only allowed attribute is memory_size"),
+                        _ => panic!("invalid attribute"),
                     }
                 },
                 _ => panic!("expected integer literal"),
