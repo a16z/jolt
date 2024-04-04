@@ -17,6 +17,7 @@ const W: usize = 32;
 const LOG_M: usize = 16; 
 const MEMORY_ADDRESS_OFFSET: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; 
 const PC_START_ADDRESS: u64 = RAM_START_ADDRESS;
+const PC_NOOP_SHIFT: usize = 4;
 // "memreg ops per step" 
 const MOPS: usize = 7;
 /* End of Compiler Variables */
@@ -331,7 +332,7 @@ impl R1CSBuilder {
 
         // Constraint: relation between PC and prog_a_rw
         R1CSBuilder::constr_abc(instance, 
-            smallvec![(GET_INDEX(InputType::ProgARW, 0), 4), (0, PC_START_ADDRESS as i64), (PC, -1)], 
+            smallvec![(GET_INDEX(InputType::ProgARW, 0), 1), (PC, -1)], 
             smallvec![(PC, 1)], 
             smallvec![], 
         ); 
@@ -369,12 +370,15 @@ impl R1CSBuilder {
 
         /*
             signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
-            signal _y <== if_else()([op_flags[1], rs2_val, immediate]);
-            signal y <== if_else()([1-is_advice_instr, lookup_output, _y]);
+            signal y <== if_else()([op_flags[1], rs2_val, immediate]);
          */
-        let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
+        // let x = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 0), rs1_val, PC);
+        let x = R1CSBuilder::if_else(instance, 
+            smallvec![(GET_INDEX(InputType::OpFlags, 0), 1)], 
+            smallvec![(rs1_val, 1)], 
+            smallvec![(PC, 4), (0, PC_START_ADDRESS as i64 -1 * PC_NOOP_SHIFT as i64)], 
+        );
         let y = R1CSBuilder::if_else_simple(instance, GET_INDEX(InputType::OpFlags, 1), rs2_val, immediate);
-        // let y = R1CSBuilder::if_else_simple(instance, is_advice_instr, _y, GET_INDEX(InputType::LookupOutput, 0)); 
 
         /* 
             signal immediate_signed <== if_else()([sign_imm_flag, immediate, -ALL_ONES() + immediate - 1]);
@@ -523,7 +527,7 @@ impl R1CSBuilder {
             instance, 
             smallvec![(rd, 1)], 
             smallvec![(is_jump_instr, 1)], 
-            smallvec![(rd_val, 1), (PC, -1), (0, -4)], 
+            smallvec![(rd_val, -1), (PC, 4), (0, PC_START_ADDRESS as i64 + 4 - PC_NOOP_SHIFT as i64)], // NOTE: the PC value is shifted by +4 already after pre-pending no-op
         ); 
         
         /*  Set next PC 
@@ -545,19 +549,19 @@ impl R1CSBuilder {
         ); 
         let next_pc_j = R1CSBuilder::if_else(instance, 
             smallvec![(is_jump_instr, 1)], 
-            smallvec![(PC, 1), (0, 4)], 
-            smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1)]
+            smallvec![(PC, 4), (0, PC_START_ADDRESS as i64 + 4)], 
+            smallvec![(GET_INDEX(InputType::LookupOutput, 0), 1), (0, 4)] // NOTE: +4 because jump instruction outputs are to the original addresses unshifted by no-ops
         );
         let next_pc_j_b = R1CSBuilder::if_else(instance, 
             smallvec![(is_branch_times_lookup_output, 1)], 
             smallvec![(next_pc_j, 1)], 
-            smallvec![(PC, 1), (immediate_signed, 1)]
+            smallvec![(PC, 4), (0, PC_START_ADDRESS as i64), (immediate_signed, 1)]
         );
 
-        R1CSBuilder::eq(instance, 
-            smallvec![(next_pc_j_b, 1)], 
-            GET_INDEX(InputType::OutputState, PC_IDX), 
-            true, 
+        R1CSBuilder::constr_abc(instance, 
+            smallvec![(next_pc_j_b, -1), (GET_INDEX(InputType::OutputState, PC_IDX), 4), (0, PC_START_ADDRESS as i64)], 
+            smallvec![(GET_INDEX(InputType::OutputState, PC_IDX), 1)], 
+            smallvec![], 
         );
 
         R1CSBuilder::move_constant_to_end(instance);
@@ -565,6 +569,7 @@ impl R1CSBuilder {
 
     /// Returns (aux, pc_next, pc)
     pub fn calculate_aux<F: PrimeField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> (Vec<F>, F) {
+        let four = F::from_u64(4).unwrap();
         // Index of values within the input vector variables
         const RD: usize = 1; 
         // Within circuit_flags 
@@ -604,7 +609,7 @@ impl R1CSBuilder {
             if inputs.circuit_flags_bits[0].is_zero() {
                 inputs.memreg_v_reads[0]
             } else {
-                inputs.input_pc
+                inputs.input_pc * four + F::from_u64(PC_START_ADDRESS).unwrap() - F::from_u64(PC_NOOP_SHIFT as u64).unwrap() 
             }
         );
 
@@ -663,9 +668,9 @@ impl R1CSBuilder {
         let next_pc_j = aux.len();
         aux.push(
             if inputs.circuit_flags_bits[IS_JUMP].is_zero() {
-                inputs.input_pc + F::from_u64(4).unwrap()
+                inputs.input_pc * four + F::from_u64(RAM_START_ADDRESS).unwrap() + F::from_u64(4).unwrap()
             } else {
-                inputs.lookup_outputs[0]
+                inputs.lookup_outputs[0] + four
             }
         );
 
@@ -675,7 +680,7 @@ impl R1CSBuilder {
             if aux[is_branch_times_lookup_output].is_zero() {
                 aux[next_pc_j]
             } else {
-                inputs.input_pc + aux[imm_signed_index]
+                inputs.input_pc * four + F::from_u64(PC_START_ADDRESS as u64).unwrap() + aux[imm_signed_index]
             }
         );
 
