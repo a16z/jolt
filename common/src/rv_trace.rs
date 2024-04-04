@@ -237,7 +237,7 @@ pub struct ELFInstruction {
     pub imm: Option<u32>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 13;
+pub const NUM_CIRCUIT_FLAGS: usize = 12;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -251,11 +251,10 @@ impl ELFInstruction {
         // 5: Branch instruciton
         // 6: Instruction writes lookup output to rd
         // 7: Instruction adds operands (ie, and uses the ADD lookup table)
-        // 8: Instruction subtracts operands
-        // 9: Sign-bit of imm
-        // 10: Is concat (Note: used to be is_lui)
-        // 11: is lui or auipc
-        // 12: is jal
+        // 8: Sign-bit of imm
+        // 9: Is concat (Note: used to be is_lui)
+        // 10: is lui or auipc
+        // 11: is shift
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -333,18 +332,13 @@ impl ELFInstruction {
             _ => false,
         };
 
-        flags[8] = match self.opcode {
-            RV32IM::SUB => true,
-            _ => false,
-        };
-
         let mask = 1u32 << 31;
-        flags[9] = match self.imm {
+        flags[8] = match self.imm {
             Some(imm) if imm & mask == mask => true,
             _ => false,
         };
 
-        flags[10] = match self.opcode {
+        flags[9] = match self.opcode {
             RV32IM::XOR
             | RV32IM::XORI
             | RV32IM::OR
@@ -370,12 +364,12 @@ impl ELFInstruction {
             _ => false,
         };
 
-        flags[11] = match self.opcode {
+        flags[10] = match self.opcode {
             RV32IM::LUI | RV32IM::AUIPC => true,
             _ => false,
         };
 
-        flags[12] = match self.opcode {
+        flags[11] = match self.opcode {
             RV32IM::SLL
             | RV32IM::SRL
             | RV32IM::SRA
