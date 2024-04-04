@@ -127,7 +127,7 @@ impl MacroBuilder {
     }
 
     fn make_analyze_function(&self) -> TokenStream2 {
-        let set_mem_size = self.make_set_memory_size();
+        let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
 
@@ -155,7 +155,7 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_func(&self) -> TokenStream2 {
-        let set_mem_size = self.make_set_memory_size();
+        let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
 
