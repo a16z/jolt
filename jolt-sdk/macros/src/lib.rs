@@ -349,7 +349,7 @@ impl MacroBuilder {
 
     fn make_set_linker_parameters(&self) -> TokenStream2 {
         let mut code: Vec<TokenStream2> = Vec::new();
-        for attr in self.attr {
+        for attr in &self.attr {
             match attr {
                 NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
                     let ident = &path.get_ident().expect("Expected identifier");
