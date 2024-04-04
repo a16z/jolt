@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use common::{constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET}, rv_trace::NUM_CIRCUIT_FLAGS};
 use strum::EnumCount;
 
-use crate::jolt::{instruction::{add::ADDInstruction, sub::SUBInstruction, JoltInstructionSet}, vm::rv32i_vm::RV32I};
+use crate::jolt::{instruction::{add::ADDInstruction, sll::SLLInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction, JoltInstructionSet}, vm::rv32i_vm::RV32I};
 
 use super::snark::R1CSStepInputs;
 
@@ -308,7 +308,6 @@ impl R1CSBuilder {
         let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 7);
         let is_concat: usize = GET_INDEX(InputType::OpFlags, 8);
         let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 9);
-        let is_shift: usize = GET_INDEX(InputType::OpFlags, 10);
         let is_add_instr: usize = GET_INDEX(
             InputType::InstrFlags, 
             RV32I::enum_index(&RV32I::ADD(ADDInstruction::default()))
@@ -317,6 +316,20 @@ impl R1CSBuilder {
             InputType::InstrFlags, 
             RV32I::enum_index(&RV32I::SUB(SUBInstruction::default()))
         );
+        let is_shift_instr = smallvec![
+            (
+                GET_INDEX(InputType::InstrFlags, RV32I::enum_index(&RV32I::SLL(SLLInstruction::default()))),
+                1
+            ),
+            (
+                GET_INDEX(InputType::InstrFlags, RV32I::enum_index(&RV32I::SRL(SRLInstruction::default()))),
+                1
+            ),
+            (
+                GET_INDEX(InputType::InstrFlags, RV32I::enum_index(&RV32I::SRA(SRAInstruction::default()))),
+                1
+            ),
+        ];
 
         let PC = GET_INDEX(InputType::InputState, PC_IDX); 
 
@@ -493,7 +506,12 @@ impl R1CSBuilder {
             }  
         */
         for i in 0..C {
-            let chunk_y_used_i = R1CSBuilder::if_else_simple(instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
+            let chunk_y_used_i = R1CSBuilder::if_else(
+                instance,
+                is_shift_instr.clone(),
+                smallvec![(GET_INDEX(InputType::ChunksY, i), 1)], 
+                smallvec![(GET_INDEX(InputType::ChunksY, C-1), 1)]
+            );
             R1CSBuilder::constr_abc(
                 instance,  
                 smallvec![(GET_INDEX(InputType::ChunksQuery, i), 1), (chunk_y_used_i, -1), (GET_INDEX(InputType::ChunksX, i), (1<<L_CHUNK)*-1)],
@@ -585,7 +603,6 @@ impl R1CSBuilder {
         const IF_UPDATE_RD_WITH_LOOKUP_OUTPUT: usize = 6; 
         const SIGN_IMM_FLAG: usize = 7; 
         const IS_LUI_AUIPC: usize = 9; 
-        const IS_SHIFT: usize = 10; 
 
         let mut aux: Vec<F> = Vec::with_capacity(num_aux);
 
@@ -650,12 +667,16 @@ impl R1CSBuilder {
         });
 
         // 7-10. let chunk_y_used_i = R1CSBuilder::if_else_simple(&mut instance, is_shift, GET_INDEX(InputType::ChunksY, i), GET_INDEX(InputType::ChunksY, C-1));
+        let is_shift = 
+            inputs.instruction_flags_bits[RV32I::enum_index(&RV32I::SLL(SLLInstruction::default()))].is_one() 
+            || inputs.instruction_flags_bits[RV32I::enum_index(&RV32I::SRL(SRLInstruction::default()))].is_one() 
+            || inputs.instruction_flags_bits[RV32I::enum_index(&RV32I::SRA(SRAInstruction::default()))].is_one();
         for i in 0..C {
             aux.push(
-                if inputs.circuit_flags_bits[IS_SHIFT].is_zero() {
-                    inputs.chunks_y[i]
-                } else {
+                if is_shift {
                     inputs.chunks_y[C-1]
+                } else {
+                    inputs.chunks_y[i]
                 }
             );
         }

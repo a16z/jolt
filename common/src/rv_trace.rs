@@ -237,7 +237,7 @@ pub struct ELFInstruction {
     pub imm: Option<u32>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 11;
+pub const NUM_CIRCUIT_FLAGS: usize = 10;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -253,7 +253,6 @@ impl ELFInstruction {
         // 7: Sign-bit of imm
         // 8: Is concat (Note: used to be is_lui)
         // 9: is lui or auipc
-        // 10: is shift
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -356,16 +355,6 @@ impl ELFInstruction {
 
         flags[9] = match self.opcode {
             RV32IM::LUI | RV32IM::AUIPC => true,
-            _ => false,
-        };
-
-        flags[10] = match self.opcode {
-            RV32IM::SLL
-            | RV32IM::SRL
-            | RV32IM::SRA
-            | RV32IM::SLLI
-            | RV32IM::SRLI
-            | RV32IM::SRAI => true,
             _ => false,
         };
 
