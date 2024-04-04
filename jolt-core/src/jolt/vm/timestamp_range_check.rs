@@ -725,7 +725,7 @@ where
             .collect();
 
         let t_read_commitments = &memory_commitment.read_write_commitments
-            [3 * MEMORY_OPS_PER_INSTRUCTION..4 * MEMORY_OPS_PER_INSTRUCTION];
+            [4 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
         let commitments: Vec<_> = self
             .commitment
             .commitments
@@ -824,7 +824,8 @@ mod tests {
         let bytecode = (0..BYTECODE_SIZE)
             .map(|i| ELFInstruction::random(i, &mut rng))
             .collect();
-        let memory_trace = random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
+        let (memory_trace, load_store_flags) =
+            random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
 
         let mut transcript: Transcript = Transcript::new(b"test_transcript");
 
@@ -832,6 +833,7 @@ mod tests {
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, G1Projective>, _) =
             ReadWriteMemory::new(
                 &JoltDevice::new(),
+                &load_store_flags,
                 &preprocessing,
                 memory_trace,
                 &mut transcript,

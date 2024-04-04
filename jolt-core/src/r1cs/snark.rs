@@ -321,7 +321,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
   ) -> Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>{
       let r1cs_commitments = &jolt_commitments.r1cs;
       let bytecode_read_write_commitments = &jolt_commitments.bytecode.read_write_commitments;
-      let ram_a_v_commitments = &jolt_commitments.read_write_memory.read_write_commitments[..MEMORY_OPS_PER_INSTRUCTION * 3]; // a_read_write, v_read, v_write
+      let ram_a_v_commitments = &jolt_commitments.read_write_memory.read_write_commitments[..4 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
       let instruction_lookup_indices_commitments = &jolt_commitments.instruction_lookups.dim_read_commitment[0..C];
       let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
 

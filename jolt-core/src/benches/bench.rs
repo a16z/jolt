@@ -35,11 +35,11 @@ pub fn benchmarks(
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
         BenchType::Poly => dense_ml_poly(),
-        BenchType::EverythingExceptR1CS => {
-            prove_e2e_except_r1cs(num_cycles, memory_size, bytecode_size)
-        }
+        // BenchType::EverythingExceptR1CS => {
+        //     prove_e2e_except_r1cs(num_cycles, memory_size, bytecode_size)
+        // }
         BenchType::Bytecode => prove_bytecode(num_cycles, bytecode_size),
-        BenchType::ReadWriteMemory => prove_memory(num_cycles, memory_size, bytecode_size),
+        // BenchType::ReadWriteMemory => prove_memory(num_cycles, memory_size, bytecode_size),
         BenchType::InstructionLookups => prove_instruction_lookups(num_cycles),
         BenchType::Sha2 => sha2(),
         BenchType::Sha3 => sha3(),
@@ -49,60 +49,60 @@ pub fn benchmarks(
     }
 }
 
-fn prove_e2e_except_r1cs(
-    num_cycles: Option<usize>,
-    memory_size: Option<usize>,
-    bytecode_size: Option<usize>,
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+// fn prove_e2e_except_r1cs(
+//     num_cycles: Option<usize>,
+//     memory_size: Option<usize>,
+//     bytecode_size: Option<usize>,
+// ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+//     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-    let memory_size = memory_size.unwrap_or(1 << 22); // 4,194,304 = 4 MB
-    let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
-    let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
+//     let memory_size = memory_size.unwrap_or(1 << 22); // 4,194,304 = 4 MB
+//     let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
+//     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
-    let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
-        .take(num_cycles)
-        .collect();
+//     let ops: Vec<RV32I> = std::iter::repeat_with(|| RV32I::random_instruction(&mut rng))
+//         .take(num_cycles)
+//         .collect();
 
-    let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
-        .map(|i| ELFInstruction::random(i, &mut rng))
-        .collect();
-    let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
-    let bytecode_rows: Vec<BytecodeRow> = (0..bytecode_size)
-        .map(|i| BytecodeRow::random(i, &mut rng))
-        .collect();
-    let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
+//     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
+//         .map(|i| ELFInstruction::random(i, &mut rng))
+//         .collect();
+//     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
+//     let bytecode_rows: Vec<BytecodeRow> = (0..bytecode_size)
+//         .map(|i| BytecodeRow::random(i, &mut rng))
+//         .collect();
+//     let bytecode_trace = random_bytecode_trace(&bytecode_rows, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, memory_size, num_cycles);
-    let mut transcript = Transcript::new(b"example");
+//     let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, memory_size, num_cycles);
+//     let mut transcript = Transcript::new(b"example");
 
-    let work = Box::new(move || {
-        let _: (_, BytecodePolynomials<Fr, G1Projective>, _) = RV32IJoltVM::prove_bytecode(
-            &preprocessing.bytecode,
-            bytecode_trace,
-            &preprocessing.generators,
-            &mut transcript,
-        );
-        let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
-            &JoltDevice::new(),
-            &preprocessing.read_write_memory,
-            memory_trace,
-            &preprocessing.generators,
-            &mut transcript,
-        );
-        let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
-            RV32IJoltVM::prove_instruction_lookups(
-                &preprocessing.instruction_lookups,
-                &ops,
-                &preprocessing.generators,
-                &mut transcript,
-            );
-    });
-    vec![(
-        tracing::info_span!("prove_bytecode + prove_memory + prove_instruction_lookups"),
-        work,
-    )]
-}
+//     let work = Box::new(move || {
+//         let _: (_, BytecodePolynomials<Fr, G1Projective>, _) = RV32IJoltVM::prove_bytecode(
+//             &preprocessing.bytecode,
+//             bytecode_trace,
+//             &preprocessing.generators,
+//             &mut transcript,
+//         );
+//         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
+//             JoltDevice::new(),
+//             &preprocessing.read_write_memory,
+//             memory_trace,
+//             &preprocessing.generators,
+//             &mut transcript,
+//         );
+//         let _: (_, InstructionPolynomials<Fr, G1Projective>, _) =
+//             RV32IJoltVM::prove_instruction_lookups(
+//                 &preprocessing.instruction_lookups,
+//                 ops,
+//                 &preprocessing.generators,
+//                 &mut transcript,
+//             );
+//     });
+//     vec![(
+//         tracing::info_span!("prove_bytecode + prove_memory + prove_instruction_lookups"),
+//         work,
+//     )]
+// }
 
 fn prove_bytecode(
     num_cycles: Option<usize>,
@@ -137,36 +137,36 @@ fn prove_bytecode(
     vec![(tracing::info_span!("prove_bytecode"), work)]
 }
 
-fn prove_memory(
-    num_cycles: Option<usize>,
-    memory_size: Option<usize>,
-    bytecode_size: Option<usize>,
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+// fn prove_memory(
+//     num_cycles: Option<usize>,
+//     memory_size: Option<usize>,
+//     bytecode_size: Option<usize>,
+// ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+//     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
 
-    let memory_size = memory_size.unwrap_or(1 << 22); // 4,194,304 = 4 MB
-    let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
-    let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
+//     let memory_size = memory_size.unwrap_or(1 << 22); // 4,194,304 = 4 MB
+//     let bytecode_size = bytecode_size.unwrap_or(1 << 16); // 65,536 = 64 kB
+//     let num_cycles = num_cycles.unwrap_or(1 << 16); // 65,536
 
-    let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
-        .map(|i| ELFInstruction::random(i, &mut rng))
-        .collect();
-    let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
+//     let bytecode: Vec<ELFInstruction> = (0..bytecode_size)
+//         .map(|i| ELFInstruction::random(i, &mut rng))
+//         .collect();
+//     let memory_trace = random_memory_trace(&bytecode, memory_size, num_cycles, &mut rng);
 
-    let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, memory_size, num_cycles);
+//     let preprocessing = RV32IJoltVM::preprocess(bytecode, bytecode_size, memory_size, num_cycles);
 
-    let work = Box::new(move || {
-        let mut transcript = Transcript::new(b"example");
-        let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
-            &JoltDevice::new(),
-            &preprocessing.read_write_memory,
-            memory_trace,
-            &preprocessing.generators,
-            &mut transcript,
-        );
-    });
-    vec![(tracing::info_span!("prove_memory"), work)]
-}
+//     let work = Box::new(move || {
+//         let mut transcript = Transcript::new(b"example");
+//         let _: (_, ReadWriteMemory<Fr, G1Projective>, _) = RV32IJoltVM::prove_memory(
+//             JoltDevice::new(),
+//             &preprocessing.read_write_memory,
+//             memory_trace,
+//             &preprocessing.generators,
+//             &mut transcript,
+//         );
+//     });
+//     vec![(tracing::info_span!("prove_memory"), work)]
+// }
 
 fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
@@ -258,13 +258,13 @@ fn prove_example<T: Serialize>(
             preprocessing.clone(),
         );
 
-        println!("Proof sizing:");
-        serialize_and_print_size("jolt_commitments", &jolt_commitments);
-        serialize_and_print_size("jolt_proof", &jolt_proof);
-        serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
-        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
-        serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
-        serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
+        // println!("Proof sizing:");
+        // serialize_and_print_size("jolt_commitments", &jolt_commitments);
+        // serialize_and_print_size("jolt_proof", &jolt_proof);
+        // serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
+        // serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
+        // serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
+        // serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
 
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(

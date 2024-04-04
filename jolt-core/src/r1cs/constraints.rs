@@ -52,9 +52,9 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::InputState,      STATE_LENGTH),
     (InputType::ProgARW,         1),
     (InputType::ProgVRW,         5),
-    (InputType::MemregARW,       7),
+    (InputType::MemregARW,       4),
     (InputType::MemregVReads,    7),
-    (InputType::MemregVWrites,   7),
+    (InputType::MemregVWrites,   5),
     (InputType::ChunksX,         C),
     (InputType::ChunksY,         C),
     (InputType::ChunksQuery,     C),
@@ -349,19 +349,15 @@ impl R1CSBuilder {
         R1CSBuilder::eq_simple(instance, rs2, GET_INDEX(InputType::MemregARW, 1));
         // Constraint: rd === memreg_a_rw[2];
         R1CSBuilder::eq_simple(instance, rd, GET_INDEX(InputType::MemregARW, 2));
-        // Constraint: memreg_v_reads[0] === memreg_v_writes[0];
-        R1CSBuilder::eq_simple(instance, GET_INDEX(InputType::MemregVReads, 0), GET_INDEX(InputType::MemregVWrites, 0)); 
-        // Constraint: memreg_v_reads[1] === memreg_v_writes[1];
-        R1CSBuilder::eq_simple(instance, GET_INDEX(InputType::MemregVReads, 1), GET_INDEX(InputType::MemregVWrites, 1));
 
         let rs1_val = GET_INDEX(InputType::MemregVReads, 0);
         let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
 
         /*
-            signal mem_v_bytes[MOPS()-3] <== subarray(3, MOPS()-3, MOPS())(memreg_v_writes);
+            signal mem_v_bytes[MOPS()-3] <== subarray(1, MOPS()-3, MOPS())(memreg_v_writes);
             signal load_or_store_value <== combine_chunks_le(MOPS()-3, 8)(mem_v_bytes); 
         */
-        let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 3), 8, MOPS-3); 
+        let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 1), 8, MOPS-3); 
 
         /*
             signal x <== if_else()([op_flags[0], rs1_val, PC]); // TODO: change this for virtual instructions
@@ -384,28 +380,14 @@ impl R1CSBuilder {
         ); 
 
         /*
-            for (var i=1; i<MOPS()-3; i++) {
-                // the first three are rs1, rs2, rd so memory starts are index 3
-                (memreg_a_rw[3+i] - (memreg_a_rw[3] + i)) *  memreg_a_rw[3+i] === 0; 
-            }
-        */
-        for i in 1..MOPS-3 {
-            R1CSBuilder::constr_abc(instance, 
-                smallvec![(GET_INDEX(InputType::MemregARW, 3+i), 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, i as i64 * -1)], 
-                smallvec![(GET_INDEX(InputType::MemregARW, 3+i), 1)], 
-                smallvec![]
-            );
-        }
-
-        /*
             for (var i=0; i<MOPS()-3; i++) {
-                (memreg_v_reads[3+i] - memreg_v_writes[3+i]) * is_load_instr === 0;
+                (memreg_v_reads[3+i] - memreg_v_writes[1+i]) * is_load_instr === 0;
             }
         */
         for i in 0..MOPS-3 {
             R1CSBuilder::constr_abc(instance, 
                 smallvec![(is_load_instr, 1)], 
-                smallvec![(GET_INDEX(InputType::MemregVReads, 3+i), 1), (GET_INDEX(InputType::MemregVWrites, 3+i), -1)], 
+                smallvec![(GET_INDEX(InputType::MemregVReads, 3+i), 1), (GET_INDEX(InputType::MemregVWrites, 1+i), -1)], 
                 smallvec![]
             );
         }
@@ -517,7 +499,7 @@ impl R1CSBuilder {
             component rd_test_jump = prodZeroTest(3); 
             rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
         */
-        let rd_val = GET_INDEX(InputType::MemregVWrites, 2);
+        let rd_val = GET_INDEX(InputType::MemregVWrites, 0);
         R1CSBuilder::constr_abc(instance, 
             smallvec![(is_load_instr, 1)], 
             smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], 
@@ -609,13 +591,13 @@ impl R1CSBuilder {
         let rs1_val = GET_INDEX(InputType::MemregVReads, 0);
         let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
 
-        // 2. let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 3), 8, MOPS-3);
+        // 2. let load_or_store_value = R1CSBuilder::combine_le(instance, GET_INDEX(InputType::MemregVWrites, 1), 8, MOPS-3);
         let load_or_store_value = inputs.len();
         inputs.push({
             let mut val = F::zero(); 
             let (L, N) = (8, MOPS-3);
             for i in 0..N {
-                val += inputs[GET_INDEX(InputType::MemregVWrites, 3) + i] * F::from_u64(1u64<<(i*L)).unwrap();
+                val += inputs[GET_INDEX(InputType::MemregVWrites, 1) + i] * F::from_u64(1u64<<(i*L)).unwrap();
             }
             val 
         });
@@ -674,7 +656,7 @@ impl R1CSBuilder {
             );
         }
 
-        let rd_val = GET_INDEX(InputType::MemregVWrites, 2);
+        let rd_val = GET_INDEX(InputType::MemregVWrites, 0);
 
         // 11. R1CSBuilder::constr_prod_0(smallvec![(rd, 1)], smallvec![(if_update_rd_with_lookup_output, 1)], smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], );
         let _ = inputs.len();
