@@ -336,7 +336,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let ram_a_v_commitments = &jolt_commitments.read_write_memory.read_write_commitments[..4 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
       let instruction_lookup_indices_commitments = &jolt_commitments.instruction_lookups.dim_read_commitment[0..C];
       let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
-
+      
       let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
       combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
 
