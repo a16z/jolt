@@ -135,6 +135,7 @@ impl Program {
                 if let Ok(jolt_instruction) = RV32I::try_from(row) {
                     Some(jolt_instruction)
                 } else {
+                    // Instruction does not use lookups
                     None
                 }
             })
