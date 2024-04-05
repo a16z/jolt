@@ -356,6 +356,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             transcript,
         );
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&polynomials, &generators);
+        commitment.append_to_transcript(b"MemoryCommitment", transcript);
 
         let proof = ReadWriteMemoryProof::prove(
             preprocessing,
@@ -381,6 +382,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
         preprocessing.program_io = Some(program_io);
 
+        commitment.append_to_transcript(b"MemoryCommitment", transcript);
         ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
     }
 

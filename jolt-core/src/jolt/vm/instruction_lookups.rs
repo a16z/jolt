@@ -89,6 +89,27 @@ pub struct InstructionCommitment<G: CurveGroup> {
     pub final_commitment: Vec<HyraxCommitment<64, G>>,
 }
 
+impl<G: CurveGroup> AppendToTranscript<G> for InstructionCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
+        transcript.append_message(label, b"InstructionCommitment_begin");
+        for commitment in &self.dim_read_commitment {
+            commitment.append_to_transcript(b"dim_read_commitment", transcript);
+        }
+        for commitment in &self.E_flag_commitment {
+            commitment.append_to_transcript(b"E_flag_commitment", transcript);
+        }
+        self.lookup_outputs_commitment.append_to_transcript(b"lookup_outputs_commitment", transcript);
+        for commitment in &self.final_commitment {
+            commitment.append_to_transcript(b"final_commitment", transcript);
+        }
+        transcript.append_message(label, b"InstructionCommitment_end");
+    }
+}
+
 // TODO: macro?
 impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
 where
@@ -873,9 +894,7 @@ where
         let polynomials = Self::polynomialize(preprocessing, ops);
         let commitment = polynomials.commit(generators);
 
-        commitment.E_flag_commitment.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"E_flag_commitment", transcript)
-        });
+        commitment.append_to_transcript(b"InstructionLookups", transcript);
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -943,9 +962,7 @@ where
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        commitment.E_flag_commitment.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"E_flag_commitment", transcript)
-        });
+        commitment.append_to_transcript(b"InstructionLookups", transcript);
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,

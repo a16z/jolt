@@ -29,6 +29,7 @@ use crate::{
         errors::ProofVerifyError, math::Math, mul_0_optimized, thread, transcript::ProofTranscript,
     },
 };
+use crate::utils::transcript::AppendToTranscript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MAX_INPUT_SIZE,
@@ -834,6 +835,22 @@ pub struct MemoryCommitment<G: CurveGroup> {
     pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     pub v_final_commitment: HyraxCommitment<1, G>,
     pub t_final_commitment: HyraxCommitment<1, G>,
+}
+
+impl<G: CurveGroup> AppendToTranscript<G> for MemoryCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
+        transcript.append_message(label, b"MemoryCommitment_begin");
+        for commitment in &self.read_write_commitments {
+            commitment.append_to_transcript(b"read_write_commitment", transcript);
+        }
+        self.v_final_commitment.append_to_transcript(b"v_final_commitment", transcript);
+        self.t_final_commitment.append_to_transcript(b"t_final_commitment", transcript);
+        transcript.append_message(label, b"MemoryCommitment_end");
+    }
 }
 
 impl<F, G> StructuredCommitment<G> for ReadWriteMemory<F, G>
