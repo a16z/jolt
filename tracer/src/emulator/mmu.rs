@@ -294,6 +294,7 @@ impl Mmu {
     /// * `v_address` Virtual address
     pub fn load(&mut self, v_address: u64) -> Result<u8, Trap> {
         let effective_address = self.get_effective_address(v_address);
+        self.trace_load(effective_address, 1);
         match self.translate_address(effective_address, &MemoryAccessType::Read) {
             Ok(p_address) => Ok(self.load_raw(p_address)),
             Err(()) => Err(Trap {
@@ -352,6 +353,8 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     pub fn load_halfword(&mut self, v_address: u64) -> Result<u16, Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_load(effective_address, 2);
         match self.load_bytes(v_address, 2) {
             Ok(data) => Ok(data as u16),
             Err(e) => Err(e),
@@ -364,6 +367,8 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     pub fn load_word(&mut self, v_address: u64) -> Result<u32, Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_load(effective_address, 4);
         match self.load_bytes(v_address, 4) {
             Ok(data) => Ok(data as u32),
             Err(e) => Err(e),
@@ -376,6 +381,8 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     pub fn load_doubleword(&mut self, v_address: u64) -> Result<u64, Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_load(effective_address, 8);
         match self.load_bytes(v_address, 8) {
             Ok(data) => Ok(data as u64),
             Err(e) => Err(e),
@@ -389,6 +396,8 @@ impl Mmu {
     /// * `v_address` Virtual address
     /// * `value`
     pub fn store(&mut self, v_address: u64, value: u8) -> Result<(), Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_store(effective_address, 1, value as u64);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
             Ok(p_address) => {
                 self.store_raw(p_address, value);
@@ -452,6 +461,8 @@ impl Mmu {
     /// * `v_address` Virtual address
     /// * `value` data written
     pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<(), Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_store(effective_address, 2, value as u64);
         self.store_bytes(v_address, value as u64, 2)
     }
 
@@ -462,6 +473,8 @@ impl Mmu {
     /// * `v_address` Virtual address
     /// * `value` data written
     pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<(), Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_store(effective_address, 4, value as u64);
         self.store_bytes(v_address, value as u64, 4)
     }
 
@@ -472,6 +485,8 @@ impl Mmu {
     /// * `v_address` Virtual address
     /// * `value` data written
     pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
+        let effective_address = self.get_effective_address(v_address);
+        self.trace_store(effective_address, 8, value as u64);
         self.store_bytes(v_address, value as u64, 8)
     }
 
@@ -494,17 +509,78 @@ impl Mmu {
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),
                 0x10000000..=0x100000ff => self.uart.load(effective_address),
                 0x10001000..=0x10001FFF => self.disk.load(effective_address),
+                INPUT_START_ADDRESS..=INPUT_END_ADDRESS => self.jolt_device.load(effective_address),
+                _ => panic!("Unknown memory mapping {:X}.", effective_address),
+            },
+        }
+    }
+
+    fn trace_load(&mut self, effective_address: u64, bytes: u64) {
+        if effective_address < DRAM_BASE {
+            match effective_address {
                 INPUT_START_ADDRESS..=INPUT_END_ADDRESS => {
-                    let value = self.jolt_device.load(effective_address);
+                    let mut value_bytes = [0u8; 8];
+                    for i in 0..bytes {
+                        value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+                    }
+                    let value = u64::from_le_bytes(value_bytes);
                     self.tracer.push_memory(MemoryState::Read {
                         address: effective_address,
                         value: value.into(),
                     });
-
-                    value
-                }
+                },
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
-            },
+            }
+        } else {
+            let mut value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
+            }
+            let value = u64::from_le_bytes(value_bytes);
+            self.tracer.push_memory(MemoryState::Read {
+                address: effective_address,
+                value: value.into(),
+            });
+        }
+    }
+
+    fn trace_store(&mut self, effective_address: u64, bytes: u64, value: u64,) {
+        if effective_address < DRAM_BASE {
+            match effective_address {
+                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
+                    let mut pre_value_bytes = [0u8; 8];
+                    for i in 0..bytes {
+                        pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+                    }
+                    let pre_value = u64::from_le_bytes(pre_value_bytes);
+
+                    self.tracer.push_memory(MemoryState::Write {
+                        address: effective_address,
+                        pre_value,
+                        post_value: value,
+                    });
+                },
+                PANIC_ADDRESS => {
+                    let pre_value = self.jolt_device.load(effective_address) as u64;
+                    self.tracer.push_memory(MemoryState::Write {
+                        address: effective_address,
+                        pre_value,
+                        post_value: value,
+                    });
+                },
+                _ => panic!("Unknown memory mapping {:X}.", effective_address),
+            }
+        } else {
+            let mut pre_value_bytes = [0u8; 8];
+            for i in 0..bytes {
+                pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
+            }
+            let pre_value = u64::from_le_bytes(pre_value_bytes);
+            self.tracer.push_memory(MemoryState::Write {
+                address: effective_address,
+                pre_value,
+                post_value: value,
+            });
         }
     }
 
@@ -590,26 +666,8 @@ impl Mmu {
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
-                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
-                    let pre_value = self.jolt_device.load(effective_address);
-                    self.tracer.push_memory(MemoryState::Write {
-                        address: effective_address,
-                        pre_value: pre_value.into(),
-                        post_value: value.into(),
-                    });
-
-                    self.jolt_device.store(effective_address, value)
-                }
-                PANIC_ADDRESS => {
-                    let pre_value = self.jolt_device.load(effective_address);
-                    self.tracer.push_memory(MemoryState::Write {
-                        address: effective_address,
-                        pre_value: pre_value.into(),
-                        post_value: value.into(),
-                    });
-
-                    self.jolt_device.store(effective_address, value)
-                }
+                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => self.jolt_device.store(effective_address, value),
+                PANIC_ADDRESS => self.jolt_device.store(effective_address, value),
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
             },
         };
@@ -1001,13 +1059,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let value = self.memory.read_byte(p_address - DRAM_BASE);
-        self.tracer.push_memory(MemoryState::Read {
-            address: p_address,
-            value: value.into(),
-        });
-
-        value
+        self.memory.read_byte(p_address - DRAM_BASE)
     }
 
     pub fn read_halfword(&mut self, p_address: u64) -> u16 {
@@ -1017,13 +1069,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let value = self.memory.read_halfword(p_address - DRAM_BASE);
-        self.tracer.push_memory(MemoryState::Read {
-            address: p_address,
-            value: value.into(),
-        });
-
-        value
+        self.memory.read_halfword(p_address - DRAM_BASE)
     }
 
     pub fn read_word(&mut self, p_address: u64) -> u32 {
@@ -1033,13 +1079,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let value = self.memory.read_word(p_address - DRAM_BASE);
-        self.tracer.push_memory(MemoryState::Read {
-            address: p_address,
-            value: value.into(),
-        });
-
-        value
+        self.memory.read_word(p_address - DRAM_BASE)
     }
 
     pub fn read_doubleword(&mut self, p_address: u64) -> u64 {
@@ -1049,13 +1089,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let value = self.memory.read_doubleword(p_address - DRAM_BASE);
-        self.tracer.push_memory(MemoryState::Read {
-            address: p_address,
-            value: value.into(),
-        });
-
-        value
+        self.memory.read_doubleword(p_address - DRAM_BASE)
     }
 
     pub fn write_byte(&mut self, p_address: u64, value: u8) {
@@ -1065,13 +1099,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let pre_value = self.memory.read_byte(p_address - DRAM_BASE);
         self.memory.write_byte(p_address - DRAM_BASE, value);
-        self.tracer.push_memory(MemoryState::Write {
-            address: p_address,
-            pre_value: pre_value.into(),
-            post_value: value.into(),
-        });
     }
 
     pub fn write_halfword(&mut self, p_address: u64, value: u16) {
@@ -1081,13 +1109,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let pre_value = self.memory.read_halfword(p_address - DRAM_BASE);
         self.memory.write_halfword(p_address - DRAM_BASE, value);
-        self.tracer.push_memory(MemoryState::Write {
-            address: p_address,
-            pre_value: pre_value.into(),
-            post_value: value.into(),
-        });
     }
 
     pub fn write_word(&mut self, p_address: u64, value: u32) {
@@ -1097,13 +1119,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let pre_value = self.memory.read_word(p_address - DRAM_BASE);
         self.memory.write_word(p_address - DRAM_BASE, value);
-        self.tracer.push_memory(MemoryState::Write {
-            address: p_address,
-            pre_value: pre_value.into(),
-            post_value: value.into(),
-        });
     }
 
     pub fn write_doubleword(&mut self, p_address: u64, value: u64) {
@@ -1113,13 +1129,7 @@ impl MemoryWrapper {
             p_address
         );
 
-        let pre_value = self.memory.read_doubleword(p_address - DRAM_BASE);
         self.memory.write_doubleword(p_address - DRAM_BASE, value);
-        self.tracer.push_memory(MemoryState::Write {
-            address: p_address,
-            pre_value: pre_value.into(),
-            post_value: value.into(),
-        });
     }
 
     pub fn validate_address(&self, address: u64) -> bool {
