@@ -808,7 +808,11 @@ mod tests {
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
-    use common::rv_trace::{ELFInstruction, JoltDevice};
+    use common::{
+        constants::RAM_START_ADDRESS,
+        rv_trace::{ELFInstruction, JoltDevice},
+    };
+    use rand::RngCore;
     use rand_core::SeedableRng;
 
     #[test]
@@ -816,17 +820,23 @@ mod tests {
         const MEMORY_SIZE: usize = 1 << 16;
         const NUM_OPS: usize = 1 << 8;
         const BYTECODE_SIZE: usize = 1 << 8;
+        const BYTECODE_OFFSET: u64 = 200;
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-        let bytecode = (0..BYTECODE_SIZE)
-            .map(|i| ELFInstruction::random(i, &mut rng))
+        let memory_init = (0..BYTECODE_SIZE)
+            .map(|i| {
+                (
+                    RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
+                    (rng.next_u32() & 0xff) as u8,
+                )
+            })
             .collect();
         let (memory_trace, load_store_flags) =
-            random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
+            random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
 
         let mut transcript: Transcript = Transcript::new(b"test_transcript");
 
-        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
+        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
         let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, G1Projective>, _) =
             ReadWriteMemory::new(
                 &JoltDevice::new(),

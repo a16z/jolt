@@ -110,7 +110,7 @@ impl Program {
         }
     }
 
-    pub fn decode(&mut self) -> Vec<ELFInstruction> {
+    pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         self.build();
         let elf = self.elf.as_ref().unwrap();
         tracer::decode(elf)

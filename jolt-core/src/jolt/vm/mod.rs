@@ -91,6 +91,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     #[tracing::instrument(skip_all, name = "Jolt::preprocess")]
     fn preprocess(
         bytecode: Vec<ELFInstruction>,
+        memory_init: Vec<(u64, u8)>,
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
@@ -119,7 +120,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             max_trace_length,
         );
 
-        let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
+        let read_write_memory_preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
 
         let bytecode_rows: Vec<BytecodeRow> = bytecode
             .iter()
