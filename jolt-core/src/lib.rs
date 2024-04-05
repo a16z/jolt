@@ -19,5 +19,4 @@ mod subprotocols;
 mod utils;
 
 // Benchmarks
-pub use crate::poly::dense_mlpoly::bench::dense_ml_poly_bench;
 pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;

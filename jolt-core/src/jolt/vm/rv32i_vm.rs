@@ -197,6 +197,7 @@ mod tests {
         let mut verifier_transcript = Transcript::new(b"example");
         assert!(RV32IJoltVM::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
+            &preprocessing.generators,
             proof,
             &commitment,
             &mut verifier_transcript

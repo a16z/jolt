@@ -12,10 +12,10 @@ use crate::poly::hyrax::{
     HyraxOpeningProof,
 };
 use crate::poly::pedersen::PedersenGenerators;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
 use common::to_ram_address;
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
 use rayon::prelude::*;
 
@@ -282,7 +282,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::get_polys_r1cs")]
     pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>) {
-        let (a_read_write, v_read_write) = rayon::join(|| self.a_read_write.evals(), || DensePolynomial::flatten(&self.v_read_write));
+        let (a_read_write, v_read_write) = rayon::join(
+            || self.a_read_write.evals(),
+            || DensePolynomial::flatten(&self.v_read_write),
+        );
 
         (a_read_write, v_read_write)
     }
@@ -321,12 +324,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 }
 
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeCommitment<G: CurveGroup> {
-    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    pub t_final_generators: HyraxGenerators<1, G>,
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
@@ -338,9 +338,7 @@ where
     type Commitment = BytecodeCommitment<G>;
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_generators =
-            HyraxGenerators::new(self.a_read_write.get_num_vars(), pedersen_generators);
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
@@ -351,16 +349,12 @@ where
             &self.v_read_write[4],
         ];
         let read_write_commitments =
-            HyraxCommitment::batch_commit_polys(read_write_polys, &read_write_generators);
+            HyraxCommitment::batch_commit_polys(read_write_polys, &generators);
 
-        let t_final_generators =
-            HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);
-        let t_final_commitment = HyraxCommitment::commit(&self.t_final, &t_final_generators);
+        let t_final_commitment = HyraxCommitment::commit(&self.t_final, &generators);
 
         Self::Commitment {
-            read_write_generators,
             read_write_commitments,
-            t_final_generators,
             t_final_commitment,
         }
     }
@@ -621,6 +615,7 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
@@ -633,7 +628,7 @@ where
         combined_openings.extend(self.v_read_write_openings.iter());
 
         opening_proof.verify(
-            &commitment.read_write_generators,
+            generators,
             opening_point,
             &combined_openings,
             &commitment.read_write_commitments.iter().collect::<Vec<_>>(),
@@ -704,13 +699,14 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
-            &commitment.t_final_generators,
+            generators,
             transcript,
             opening_point,
             &self.t_final,
@@ -788,8 +784,14 @@ mod tests {
         let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        BytecodeProof::verify_memory_checking(&preprocessing, proof, &commitments, &mut transcript)
-            .expect("proof should verify");
+        BytecodeProof::verify_memory_checking(
+            &preprocessing,
+            &generators,
+            proof,
+            &commitments,
+            &mut transcript,
+        )
+        .expect("proof should verify");
     }
 
     #[test]
@@ -820,8 +822,14 @@ mod tests {
         let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
         let mut transcript = Transcript::new(b"test_transcript");
-        BytecodeProof::verify_memory_checking(&preprocessing, proof, &commitments, &mut transcript)
-            .expect("should verify");
+        BytecodeProof::verify_memory_checking(
+            &preprocessing,
+            &generators,
+            proof,
+            &commitments,
+            &mut transcript,
+        )
+        .expect("should verify");
     }
 
     #[test]
