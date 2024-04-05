@@ -25,7 +25,8 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -
     } else {
         F::zero()
     };
-    (aux, pc_next, pc_cur)
+    // (aux, pc_next, pc_cur)
+    (aux, pc_cur, pc_next)
 }).collect();
   drop(_enter);
 

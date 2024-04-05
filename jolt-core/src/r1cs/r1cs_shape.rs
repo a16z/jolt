@@ -220,6 +220,11 @@ impl<F: PrimeField> R1CSShape<F> {
                 for &(_, col, val) in R {
                     if col == self.num_vars {
                         result.par_iter_mut().for_each(|x| *x += val);
+                    // } else if col == 0 { // PC_out
+                    //     let pc_start_idx = 1 * num_steps; // NOTE: Share the input PCs for output 
+                    //     result.par_iter_mut().enumerate().for_each(|(i, x)| {
+                    //         *x += mul_0_1_optimized(&val, &full_witness_vector[pc_start_idx+i+1]); // +1 as pc_out for step i is pc_in for step i+1 
+                    //     });
                     } else {
                         let witness_offset = col * num_steps;
                         result.par_iter_mut().enumerate().for_each(|(i, x)| {
@@ -260,18 +265,18 @@ impl<F: PrimeField> R1CSShape<F> {
             },
         );
 
-        /* IO consistency, enforced by adding the following constraint for each step i: 
-        A, B: empty 
-        C: C[output of step i] - C[input of step i+1]
-         */
-        let start_row_io_consistency = (self.num_cons-1) * num_steps; 
-        C[start_row_io_consistency..start_row_io_consistency + true_num_steps - 1]
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(i, c)| {
-                *c += full_witness_vector[i] - full_witness_vector[num_steps+i+1];
-            }
-        );
+        // /* IO consistency, enforced by adding the following constraint for each step i: 
+        // A, B: empty 
+        // C: C[output of step i] - C[input of step i+1]
+        //  */
+        // let start_row_io_consistency = (self.num_cons-1) * num_steps; 
+        // C[start_row_io_consistency..start_row_io_consistency + true_num_steps - 1]
+        //     .par_iter_mut()
+        //     .enumerate()
+        //     .for_each(|(i, c)| {
+        //         *c += full_witness_vector[i] - full_witness_vector[num_steps+i+1];
+        //     }
+        // );
 
         Ok(())
     }
