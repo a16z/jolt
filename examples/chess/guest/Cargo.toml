@@ -13,9 +13,3 @@ guest = []
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
 cozy-chess = { version = "0.3.3", default-features = false }
-
-
-
-
-
-

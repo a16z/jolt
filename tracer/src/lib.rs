@@ -64,7 +64,7 @@ pub fn trace(elf: &PathBuf, inputs: Vec<u8>) -> (Vec<RVTraceRow>, JoltDevice) {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u8, u64)>) {
+pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();
     elf_file.read_to_end(&mut elf_contents).unwrap();
@@ -105,11 +105,10 @@ pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u8, u64)>) {
                     imm: None,
                 });
             }
-        } else {
-            let address = section.address();
-            for (offset, byte) in raw_data.iter().enumerate() {
-                data.push((*byte, address + offset as u64));
-            }
+        }
+        let address = section.address();
+        for (offset, byte) in raw_data.iter().enumerate() {
+            data.push((address + offset as u64, *byte));
         }
     }
 
