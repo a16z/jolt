@@ -21,7 +21,6 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         inp_left: &DensePolynomial<F>,
         inp_right: &DensePolynomial<F>,
     ) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        // TODO(sragss): Write a cache checker for how many cache hits I'd have for a cacher.
         let len = inp_left.len() + inp_right.len();
         let outp_left = (0..len / 4)
             .map(|i| 

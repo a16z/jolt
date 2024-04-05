@@ -102,7 +102,6 @@ impl<G: CurveGroup> AppendToTranscript<G> for InstructionCommitment<G> {
     }
 }
 
-// TODO: macro?
 impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,

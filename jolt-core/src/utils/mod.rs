@@ -90,7 +90,6 @@ pub fn mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
     } else if b.is_one() {
         *a
     } else {
-        // TODO(sragss): Negative 1
         *a * b
     }
 }

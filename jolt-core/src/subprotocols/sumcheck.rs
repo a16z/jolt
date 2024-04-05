@@ -422,9 +422,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 })
                 .collect();
 
-            // TODO(sragss): OPTIMIZATION IDEAS
-            // - Compute 'r' bindings from 'm_a' / 'm_b
-
             let _span = trace_span!("eval_loop");
             let _enter = _span.enter();
             let evals: Vec<(F, F, F)> = (0..params.poly_As.len())

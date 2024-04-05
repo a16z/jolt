@@ -137,7 +137,6 @@ fn concat_constraint_vecs(mut x: SmallVec<[(usize, i64); SMALLVEC_SIZE]>, y: Sma
 }
 
 fn i64_to_f<F: PrimeField>(num: i64) -> F {
-    // TODO(sragss): Make from_u64
     if num < 0 {
         F::zero() - F::from_u64((-num) as u64).unwrap()
     } else {
