@@ -1,4 +1,4 @@
-use crate::{jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}}, r1cs::r1cs_shape::R1CSShape, utils::{thread::{drop_in_background_thread, unsafe_allocate_zero_vec}, transcript::ProofTranscript}};
+use crate::{jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments}, poly::{dense_mlpoly::DensePolynomial, hyrax::{HyraxCommitment, HyraxGenerators}, pedersen::PedersenGenerators}, r1cs::r1cs_shape::R1CSShape, utils::{thread::{drop_in_background_thread, unsafe_allocate_zero_vec}, transcript::ProofTranscript}};
 use crate::utils::transcript::AppendToTranscript;
 
 use super::{constraints::R1CSBuilder, spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof}}; 
@@ -226,8 +226,6 @@ pub struct R1CSUniqueCommitments<G: CurveGroup> {
   chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-
-  generators: HyraxGenerators<NUM_R1CS_POLYS, G>
 }
 
 impl<G: CurveGroup> R1CSUniqueCommitments<G> {
@@ -236,7 +234,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
         chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-        generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     ) -> Self {
       // TODO(sragss): Assert the sizes make sense.
         Self {
@@ -244,7 +241,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
             chunks_x,
             chunks_y,
             circuit_flags,
-            generators,
         }
     }
 
@@ -272,7 +268,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       _C: usize, 
       padded_trace_len: usize, 
       inputs: R1CSInputs<F>,
-      generators: &HyraxGenerators<NUM_R1CS_POLYS, G>,
+      generators: &PedersenGenerators<G>,
   ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSInternalCommitments<G>), SpartanError> {
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
@@ -363,12 +359,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
   pub fn verify(
     &self, 
+    generators: &PedersenGenerators<G>,
     jolt_commitments: JoltCommitments<G>,
     C: usize,
     transcript: &mut Transcript) -> Result<(), SpartanError> {
     // TODO(sragss): Fiat shamir (relevant) commitments
     let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
-    self.proof.verify_precommitted(witness_segment_commitments, &self.key, &[], &jolt_commitments.r1cs.generators, transcript)
+    self.proof.verify_precommitted(witness_segment_commitments, &self.key, &[], &generators, transcript)
   }
 }
 

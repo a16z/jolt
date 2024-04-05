@@ -79,16 +79,14 @@ where
 /// Commitments to BatchedInstructionPolynomials.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionCommitment<G: CurveGroup> {
-    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     /// Commitments to dim_i and read_cts_i polynomials.
     pub dim_read_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    pub final_generators: HyraxGenerators<64, G>,
-    /// Commitment to final_cts_i polynomials.
-    pub final_commitment: Vec<HyraxCommitment<64, G>>,
     /// Commitments to E_i and flag polynomials.
     pub E_flag_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     /// Commitment to lookup_outputs polynomial.
     pub lookup_outputs_commitment: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    /// Commitment to final_cts_i polynomials.
+    pub final_commitment: Vec<HyraxCommitment<64, G>>,
 }
 
 // TODO: macro?
@@ -100,32 +98,25 @@ where
     type Commitment = InstructionCommitment<G>;
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_num_vars = self.dim[0].get_num_vars();
-        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment =
-            HyraxCommitment::batch_commit_polys(dim_read_polys, &read_write_generators);
+        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
         let E_flag_polys: Vec<&DensePolynomial<F>> = self
             .E_polys
             .iter()
             .chain(self.instruction_flag_polys.iter())
             .collect();
-        let E_flag_commitment =
-            HyraxCommitment::batch_commit_polys(E_flag_polys, &read_write_generators);
-        let lookup_outputs_commitment =
-            HyraxCommitment::commit(&self.lookup_outputs, &read_write_generators);
+        let E_flag_commitment = HyraxCommitment::batch_commit_polys(E_flag_polys, &generators);
+        let lookup_outputs_commitment = HyraxCommitment::commit(&self.lookup_outputs, &generators);
 
         let final_num_vars = self.final_cts[0].get_num_vars();
-        let final_generators = HyraxGenerators::new(final_num_vars, pedersen_generators);
         let final_commitment =
-            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &final_generators);
+            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
 
         Self::Commitment {
-            read_write_generators,
             dim_read_commitment,
-            final_generators,
             final_commitment,
             E_flag_commitment,
             lookup_outputs_commitment,
@@ -188,6 +179,7 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
@@ -204,7 +196,7 @@ where
         primary_sumcheck_commitments.push(&commitment.lookup_outputs_commitment);
 
         opening_proof.verify(
-            &commitment.read_write_generators,
+            generators,
             opening_point,
             &primary_sumcheck_openings,
             &primary_sumcheck_commitments,
@@ -303,6 +295,7 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
@@ -316,7 +309,7 @@ where
         ]
         .concat();
         opening_proof.verify(
-            &commitment.read_write_generators,
+            generators,
             opening_point,
             &read_write_openings,
             &commitment
@@ -402,13 +395,14 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
-            &commitment.final_generators,
+            generators,
             opening_point,
             &self.final_openings,
             &commitment.final_commitment.iter().collect::<Vec<_>>(),
@@ -942,6 +936,7 @@ where
 
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<F>,
+        generators: &PedersenGenerators<G>,
         proof: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
         commitment: &InstructionCommitment<G>,
         transcript: &mut Transcript,
@@ -983,6 +978,7 @@ where
         );
 
         proof.primary_sumcheck.openings.verify_openings(
+            generators,
             &proof.primary_sumcheck.opening_proof,
             &commitment,
             &r_primary_sumcheck,
@@ -991,6 +987,7 @@ where
 
         Self::verify_memory_checking(
             preprocessing,
+            generators,
             proof.memory_checking,
             &commitment,
             transcript,

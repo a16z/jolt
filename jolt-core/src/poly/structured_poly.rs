@@ -61,6 +61,7 @@ where
     /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,

@@ -38,10 +38,8 @@ const SURGE_HYRAX_RATIO_FINAL: usize = 4;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeCommitment<G: CurveGroup> {
-    pub read_write_generators: HyraxGenerators<SURGE_HYRAX_RATIO_READ_WRITE, G>,
     /// Commitments to dim_i and read_cts_i polynomials.
     pub dim_read_commitment: Vec<HyraxCommitment<SURGE_HYRAX_RATIO_READ_WRITE, G>>,
-    pub final_generators: HyraxGenerators<SURGE_HYRAX_RATIO_FINAL, G>,
     /// Commitment to final_cts_i polynomials.
     pub final_commitment: Vec<HyraxCommitment<SURGE_HYRAX_RATIO_FINAL, G>>,
     /// Commitments to E_i polynomials.
@@ -56,27 +54,20 @@ where
     type Commitment = SurgeCommitment<G>;
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_num_vars = self.dim[0].get_num_vars();
-        let read_write_generators = HyraxGenerators::new(read_write_num_vars, pedersen_generators);
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment =
-            HyraxCommitment::batch_commit_polys(dim_read_polys, &read_write_generators);
-        let E_commitment = HyraxCommitment::batch_commit_polys(
-            self.E_polys.iter().collect(),
-            &read_write_generators,
-        );
+        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
+        let E_commitment =
+            HyraxCommitment::batch_commit_polys(self.E_polys.iter().collect(), &generators);
 
         let final_num_vars = self.final_cts[0].get_num_vars();
-        let final_generators = HyraxGenerators::new(final_num_vars, pedersen_generators);
         let final_commitment =
-            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &final_generators);
+            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
 
         Self::Commitment {
-            read_write_generators,
             dim_read_commitment,
-            final_generators,
             final_commitment,
             E_commitment,
         }
@@ -119,13 +110,14 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
-            &commitment.read_write_generators,
+            generators,
             opening_point,
             &self,
             &commitment.E_commitment.iter().collect::<Vec<_>>(),
@@ -192,6 +184,7 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
@@ -204,7 +197,7 @@ where
         ]
         .concat();
         opening_proof.verify(
-            &commitment.read_write_generators,
+            generators,
             opening_point,
             &read_write_openings,
             &commitment
@@ -284,13 +277,14 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
-            &commitment.final_generators,
+            generators,
             opening_point,
             &self.final_openings,
             &commitment.final_commitment.iter().collect::<Vec<_>>(),
@@ -566,6 +560,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        generators: &PedersenGenerators<G>,
         ops: Vec<Instruction>,
         transcript: &mut Transcript,
     ) -> Self {
@@ -573,10 +568,7 @@ where
 
         let num_lookups = ops.len().next_power_of_two();
         let polynomials = Self::construct_polys(preprocessing, &ops);
-        // TODO(sragss): Move upstream
-        let pedersen_generators =
-            PedersenGenerators::new(Self::num_generators(num_lookups), b"LassoV1");
-        let commitment = polynomials.commit(&pedersen_generators);
+        let commitment = polynomials.commit(&generators);
 
         let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
@@ -646,6 +638,7 @@ where
 
     pub fn verify(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
+        generators: &PedersenGenerators<G>,
         proof: SurgeProof<F, G, Instruction, C, M>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -682,6 +675,7 @@ where
         );
 
         proof.primary_sumcheck.openings.verify_openings(
+            generators,
             &proof.primary_sumcheck.opening_proof,
             &proof.commitment,
             &r_z,
@@ -690,6 +684,7 @@ where
 
         Self::verify_memory_checking(
             preprocessing,
+            generators,
             proof.memory_checking,
             &proof.commitment,
             transcript,
@@ -807,7 +802,10 @@ mod tests {
     use merlin::Transcript;
 
     use super::SurgePreprocessing;
-    use crate::{jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof};
+    use crate::{
+        jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof,
+        poly::pedersen::PedersenGenerators,
+    };
     use ark_bn254::{Fr, G1Projective};
 
     #[test]
@@ -823,14 +821,20 @@ mod tests {
 
         let mut transcript = Transcript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
+        let generators = PedersenGenerators::new(
+            SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::num_generators(16),
+            b"LassoV1",
+        );
         let proof = SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::prove(
             &preprocessing,
+            &generators,
             ops,
             &mut transcript,
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        SurgeProof::verify(&preprocessing, proof, &mut transcript).expect("should work");
+        SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
+            .expect("should work");
     }
 
     #[test]
@@ -847,13 +851,19 @@ mod tests {
 
         let mut transcript = Transcript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
+        let generators = PedersenGenerators::new(
+            SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::num_generators(16),
+            b"LassoV1",
+        );
         let proof = SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::prove(
             &preprocessing,
+            &generators,
             ops,
             &mut transcript,
         );
 
         let mut transcript = Transcript::new(b"test_transcript");
-        SurgeProof::verify(&preprocessing, proof, &mut transcript).expect("should work");
+        SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
+            .expect("should work");
     }
 }

@@ -4,7 +4,6 @@ use crate::jolt::vm::instruction_lookups::InstructionPolynomials;
 use crate::jolt::vm::read_write_memory::{random_memory_trace, RandomInstruction, ReadWriteMemory};
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
 use crate::jolt::vm::Jolt;
-use crate::poly::dense_mlpoly::bench::{init_commit_bench, run_commit_bench};
 use ark_bn254::{Fr, G1Projective};
 use ark_serialize::CanonicalSerialize;
 use common::rv_trace::{ELFInstruction, JoltDevice};
@@ -15,7 +14,6 @@ use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
-    Poly,
     EverythingExceptR1CS,
     Bytecode,
     ReadWriteMemory,
@@ -34,7 +32,6 @@ pub fn benchmarks(
     bytecode_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
-        BenchType::Poly => dense_ml_poly(),
         // BenchType::EverythingExceptR1CS => {
         //     prove_e2e_except_r1cs(num_cycles, memory_size, bytecode_size)
         // }
@@ -189,24 +186,6 @@ fn prove_instruction_lookups(num_cycles: Option<usize>) -> Vec<(tracing::Span, B
             );
     });
     vec![(tracing::info_span!("prove_instruction_lookups"), work)]
-}
-
-fn dense_ml_poly() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    let log_sizes = [20];
-    let mut tasks = Vec::new();
-
-    // Normal benchmark
-    for &log_size in &log_sizes {
-        let (gens, poly) = init_commit_bench(log_size);
-        let task = move || {
-            black_box(run_commit_bench(gens, poly));
-        };
-        tasks.push((
-            tracing::info_span!("DensePoly::commit", log_size = log_size),
-            Box::new(task) as Box<dyn FnOnce()>,
-        ));
-    }
-    tasks
 }
 
 fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {

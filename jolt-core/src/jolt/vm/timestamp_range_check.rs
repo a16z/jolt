@@ -167,7 +167,6 @@ where
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RangeCheckCommitment<G: CurveGroup> {
-    generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
@@ -179,10 +178,8 @@ where
     type Commitment = RangeCheckCommitment<G>;
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
         let num_vars = self.read_cts_read_timestamp[0].get_num_vars();
-        let generators = HyraxGenerators::new(num_vars, pedersen_generators);
-
         let polys: Vec<&DensePolynomial<F>> = self
             .read_cts_read_timestamp
             .iter()
@@ -192,10 +189,7 @@ where
             .collect();
         let commitments = HyraxCommitment::batch_commit_polys(polys, &generators);
 
-        Self::Commitment {
-            generators,
-            commitments,
-        }
+        Self::Commitment { commitments }
     }
 }
 
@@ -240,6 +234,7 @@ where
 
     fn verify_openings(
         &self,
+        _generators: &PedersenGenerators<G>,
         _opening_proof: &Self::Proof,
         _commitment: &RangeCheckCommitment<G>,
         _opening_point: &Vec<F>,
@@ -450,6 +445,7 @@ where
 {
     fn verify_memory_checking(
         _: &NoPreprocessing,
+        _: &PedersenGenerators<G>,
         mut _proof: MemoryCheckingProof<
             G,
             RangeCheckPolynomials<F, G>,
@@ -682,6 +678,7 @@ where
 
     pub fn verify(
         &mut self,
+        generators: &PedersenGenerators<G>,
         memory_commitment: &MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -734,7 +731,7 @@ where
             .collect();
 
         self.opening_proof.verify(
-            &self.commitment.generators,
+            generators,
             &r_grand_product,
             &openings,
             &commitments,
@@ -851,6 +848,7 @@ mod tests {
         let mut transcript: Transcript = Transcript::new(b"test_transcript");
         assert!(TimestampValidityProof::verify(
             &mut timestamp_validity_proof,
+            &generators,
             &commitments,
             &mut transcript,
         )

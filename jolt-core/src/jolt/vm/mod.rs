@@ -14,7 +14,7 @@ use crate::jolt::{
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::hyrax::{HyraxCommitment, HyraxGenerators};
+use crate::poly::hyrax::HyraxCommitment;
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSUniqueCommitments};
@@ -137,7 +137,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
 
         JoltPreprocessing {
-            generators: generators.clone(),
+            generators,
             instruction_lookups: instruction_lookups_preprocessing,
             bytecode: bytecode_preprocessing,
             read_write_memory: read_write_memory_preprocessing,
@@ -242,24 +242,32 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut transcript = Transcript::new(b"Jolt transcript");
         Self::verify_bytecode(
             &preprocessing.bytecode,
+            &preprocessing.generators,
             proof.bytecode,
             &commitments.bytecode,
             &mut transcript,
         )?;
         Self::verify_instruction_lookups(
             &preprocessing.instruction_lookups,
+            &preprocessing.generators,
             proof.instruction_lookups,
             &commitments.instruction_lookups,
             &mut transcript,
         )?;
         Self::verify_memory(
             &mut preprocessing.read_write_memory,
+            &preprocessing.generators,
             proof.read_write_memory,
             &commitments.read_write_memory,
             proof.program_io,
             &mut transcript,
         )?;
-        Self::verify_r1cs(proof.r1cs, commitments, &mut transcript)?;
+        Self::verify_r1cs(
+            &preprocessing.generators,
+            proof.r1cs,
+            commitments,
+            &mut transcript,
+        )?;
         Ok(())
     }
 
@@ -279,11 +287,12 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn verify_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
+        generators: &PedersenGenerators<G>,
         proof: InstructionLookupsProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
         commitment: &InstructionCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        InstructionLookupsProof::verify(preprocessing, proof, commitment, transcript)
+        InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_bytecode")]
@@ -306,11 +315,18 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn verify_bytecode(
         preprocessing: &BytecodePreprocessing<F>,
+        generators: &PedersenGenerators<G>,
         proof: BytecodeProof<F, G>,
         commitment: &BytecodeCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        BytecodeProof::verify_memory_checking(preprocessing, proof, &commitment, transcript)
+        BytecodeProof::verify_memory_checking(
+            preprocessing,
+            generators,
+            proof,
+            &commitment,
+            transcript,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_memory")]
@@ -352,6 +368,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn verify_memory(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
+        generators: &PedersenGenerators<G>,
         proof: ReadWriteMemoryProof<F, G>,
         commitment: &MemoryCommitment<G>,
         program_io: JoltDevice,
@@ -361,7 +378,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
         preprocessing.program_io = Some(program_io);
 
-        ReadWriteMemoryProof::verify(proof, preprocessing, commitment, transcript)
+        ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prove_r1cs")]
@@ -376,11 +393,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let padded_trace_len = trace_len.next_power_of_two();
 
         let log_M = log2(M) as usize;
-
-        let hyrax_generators: HyraxGenerators<NUM_R1CS_POLYS, G> = HyraxGenerators::new(
-            padded_trace_len.trailing_zeros() as usize,
-            &preprocessing.generators,
-        );
 
         /* Assemble the polynomials and commitments from the rest of Jolt.
         The ones that are extra, just for R1CS are:
@@ -449,7 +461,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // Commit to R1CS specific items
         let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
             data.par_chunks(padded_trace_len)
-                .map(|chunk| HyraxCommitment::commit_slice(chunk, &hyrax_generators))
+                .map(|chunk| HyraxCommitment::commit_slice(chunk, &preprocessing.generators))
                 .collect()
         };
 
@@ -484,7 +496,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 C,
                 padded_trace_len,
                 inputs,
-                &hyrax_generators,
+                &preprocessing.generators,
             )
             .expect("R1CSProof setup failed");
 
@@ -493,7 +505,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             chunks_x_comms,
             chunks_y_comms,
             circuit_flags_comm,
-            hyrax_generators,
         );
 
         r1cs_commitments.append_to_transcript(transcript);
@@ -504,13 +515,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn verify_r1cs(
+        generators: &PedersenGenerators<G>,
         proof: R1CSProof<F, G>,
         commitments: JoltCommitments<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         commitments.r1cs.append_to_transcript(transcript);
         proof
-            .verify(commitments, C, transcript)
+            .verify(generators, commitments, C, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 }

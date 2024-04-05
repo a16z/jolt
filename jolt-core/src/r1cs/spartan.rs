@@ -1,4 +1,5 @@
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
+use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -13,11 +14,7 @@ use thiserror::Error;
 
 use super::r1cs_shape::R1CSShape;
 use crate::{
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        hyrax::{HyraxCommitment, HyraxGenerators},
-    },
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxCommitment},
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
 use common::constants::NUM_R1CS_POLYS;
@@ -207,7 +204,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
             .collect::<Vec<F>>();
 
-        let combined_witness_size = (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
+        let combined_witness_size =
+            (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
 
         let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
 
@@ -223,13 +221,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             key.num_steps,
             &mut A_z,
             &mut B_z,
-            &mut C_z
+            &mut C_z,
         )?;
         let mut poly_Az = DensePolynomial::new(A_z);
         let mut poly_Bz = DensePolynomial::new(B_z);
         let mut poly_Cz = DensePolynomial::new(C_z);
-
-
 
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
@@ -338,13 +334,17 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
             let _enter = span.enter();
             // small_RLC_evals is 30% ones.
-            RLC_evals.par_chunks_mut(n_steps).take(key.num_vars_total / n_steps).enumerate().for_each(|(chunk_index, rlc_chunk)| {
-                if !small_RLC_evals[chunk_index].is_zero() {
-                    for (eq_index, item) in rlc_chunk.iter_mut().enumerate() {
-                        *item = eq_rx_ts[eq_index] * small_RLC_evals[chunk_index];
+            RLC_evals
+                .par_chunks_mut(n_steps)
+                .take(key.num_vars_total / n_steps)
+                .enumerate()
+                .for_each(|(chunk_index, rlc_chunk)| {
+                    if !small_RLC_evals[chunk_index].is_zero() {
+                        for (eq_index, item) in rlc_chunk.iter_mut().enumerate() {
+                            *item = eq_rx_ts[eq_index] * small_RLC_evals[chunk_index];
+                        }
                     }
-                }
-            });
+                });
             drop(_enter);
 
             // 3. Handles the constant 1 variable
@@ -445,7 +445,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         witness_segment_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>,
         key: &UniformSpartanKey<F>,
         io: &[F],
-        generators: &HyraxGenerators<NUM_R1CS_POLYS, G>,
+        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Result<(), SpartanError> {
         assert_eq!(io.len(), 0); // Currently not using io

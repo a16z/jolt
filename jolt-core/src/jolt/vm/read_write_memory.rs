@@ -831,12 +831,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCommitment<G: CurveGroup> {
-    /// Generators for a_read_write, v_read, v_write
-    pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-
-    /// Commitments for v_final, t_final
-    pub final_generators: HyraxGenerators<1, G>,
     pub v_final_commitment: HyraxCommitment<1, G>,
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
@@ -849,9 +844,7 @@ where
     type Commitment = MemoryCommitment<G>;
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
-    fn commit(&self, pedersen_generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_generators =
-            HyraxGenerators::new(self.a_rs1.get_num_vars(), pedersen_generators);
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
         let read_write_polys: Vec<&DensePolynomial<F>> =
             [&self.a_rs1, &self.a_rs2, &self.a_rd, &self.a_ram]
                 .into_iter()
@@ -862,19 +855,15 @@ where
                 .chain(self.t_write_ram.iter())
                 .collect();
         let read_write_commitments =
-            HyraxCommitment::batch_commit_polys(read_write_polys, &read_write_generators);
+            HyraxCommitment::batch_commit_polys(read_write_polys, &generators);
 
-        let final_generators =
-            HyraxGenerators::new(self.t_final.get_num_vars(), pedersen_generators);
         let (v_final_commitment, t_final_commitment) = rayon::join(
-            || HyraxCommitment::commit(&self.v_final, &final_generators),
-            || HyraxCommitment::commit(&self.t_final, &final_generators),
+            || HyraxCommitment::commit(&self.v_final, &generators),
+            || HyraxCommitment::commit(&self.t_final, &generators),
         );
 
         Self::Commitment {
-            read_write_generators,
             read_write_commitments,
-            final_generators,
             v_final_commitment,
             t_final_commitment,
         }
@@ -985,6 +974,7 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
@@ -999,7 +989,7 @@ where
             .chain(self.t_write_ram_opening.into_iter())
             .collect::<Vec<_>>();
         opening_proof.verify(
-            &commitment.read_write_generators,
+            generators,
             opening_point,
             &openings,
             &commitment.read_write_commitments.iter().collect::<Vec<_>>(),
@@ -1102,13 +1092,14 @@ where
 
     fn verify_openings(
         &self,
+        generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &MemoryCommitment<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.v_t_opening_proof.verify(
-            &commitment.final_generators,
+            generators,
             opening_point,
             &vec![self.v_final, self.t_final],
             &[
@@ -1454,6 +1445,7 @@ where
     fn verify(
         proof: &Self,
         preprocessing: &mut ReadWriteMemoryPreprocessing,
+        generators: &PedersenGenerators<G>,
         commitment: &MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -1512,7 +1504,7 @@ where
         );
 
         proof.opening_proof.verify(
-            &commitment.final_generators,
+            generators,
             transcript,
             &r_sumcheck,
             &proof.opening,
@@ -1572,18 +1564,31 @@ where
 
     pub fn verify(
         mut self,
+        generators: &PedersenGenerators<G>,
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         commitment: &MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,
+            generators,
             self.memory_checking_proof,
             commitment,
             transcript,
         )?;
-        OutputSumcheckProof::verify(&self.output_proof, preprocessing, commitment, transcript)?;
-        TimestampValidityProof::verify(&mut self.timestamp_validity_proof, commitment, transcript)
+        OutputSumcheckProof::verify(
+            &self.output_proof,
+            preprocessing,
+            generators,
+            commitment,
+            transcript,
+        )?;
+        TimestampValidityProof::verify(
+            &mut self.timestamp_validity_proof,
+            generators,
+            commitment,
+            transcript,
+        )
     }
 }
 
@@ -1629,6 +1634,7 @@ mod tests {
         preprocessing.program_io = Some(JoltDevice::new());
         ReadWriteMemoryProof::verify_memory_checking(
             &preprocessing,
+            &generators,
             proof,
             &commitments,
             &mut transcript,

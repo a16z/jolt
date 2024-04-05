@@ -2,8 +2,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::{
-    dense_mlpoly::DensePolynomial,
-    structured_poly::{StructuredCommitment, StructuredOpeningProof},
+    dense_mlpoly::DensePolynomial, pedersen::PedersenGenerators, structured_poly::{StructuredCommitment, StructuredOpeningProof}
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
@@ -351,6 +350,7 @@ where
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
+        generators: &PedersenGenerators<G>,
         mut proof: MemoryCheckingProof<
             G,
             Polynomials,
@@ -386,12 +386,14 @@ where
             .verify::<G, Transcript>(&init_final_hashes, transcript);
 
         proof.read_write_openings.verify_openings(
+            generators,
             &proof.read_write_opening_proof,
             commitments,
             &r_read_write,
             transcript,
         )?;
         proof.init_final_openings.verify_openings(
+            generators,
             &proof.init_final_opening_proof,
             commitments,
             &r_init_final,
