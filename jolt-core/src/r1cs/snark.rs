@@ -225,7 +225,6 @@ pub struct R1CSUniqueCommitments<G: CurveGroup> {
 
   chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-  lookup_outputs: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 
   generators: HyraxGenerators<NUM_R1CS_POLYS, G>
@@ -236,7 +235,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
         internal_commitments: R1CSInternalCommitments<G>,
         chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-        lookup_outputs: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
         generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     ) -> Self {
@@ -245,7 +243,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
             internal_commitments,
             chunks_x,
             chunks_y,
-            lookup_outputs,
             circuit_flags,
             generators,
         }
@@ -257,7 +254,6 @@ impl<G: CurveGroup> R1CSUniqueCommitments<G> {
       self.internal_commitments.aux.iter().for_each(|comm| comm.append_to_transcript(b"aux", transcript));
       self.chunks_x.iter().for_each(|comm| comm.append_to_transcript(b"chunk_x", transcript));
       self.chunks_y.iter().for_each(|comm| comm.append_to_transcript(b"chunk_y", transcript));
-      self.lookup_outputs.iter().for_each(|comm| comm.append_to_transcript(b"lookup_outputs", transcript));
       self.circuit_flags.iter().for_each(|comm| comm.append_to_transcript(b"circuit_flags", transcript));
     }
 }
@@ -336,7 +332,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let ram_a_v_commitments = &jolt_commitments.read_write_memory.read_write_commitments[..4 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
       let instruction_lookup_indices_commitments = &jolt_commitments.instruction_lookups.dim_read_commitment[0..C];
       let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
-
+      
       let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
       combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
 
@@ -354,7 +350,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       combined_commitments.extend(instruction_lookup_indices_commitments.iter());
 
-      combined_commitments.extend(r1cs_commitments.lookup_outputs.iter());
+      combined_commitments.push(&jolt_commitments.instruction_lookups.lookup_outputs_commitment);
 
       combined_commitments.extend(r1cs_commitments.circuit_flags.iter());
 
