@@ -1,7 +1,7 @@
 # Installing
 Start by installing the `jolt` command line tool.
 ```
-cargo install --git https://github.com/a16z/jolt --force
+cargo +nightly install --git https://github.com/a16z/jolt --force --bins jolt
 ```
 
 Next install the required toolchain using the `jolt` tool.
