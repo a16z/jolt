@@ -307,7 +307,6 @@ impl R1CSBuilder {
         let if_update_rd_with_lookup_output: usize = GET_INDEX(InputType::OpFlags, 6);
         let sign_imm_flag: usize = GET_INDEX(InputType::OpFlags, 7);
         let is_concat: usize = GET_INDEX(InputType::OpFlags, 8);
-        let is_lui_auipc: usize = GET_INDEX(InputType::OpFlags, 9);
         let is_add_instr: usize = GET_INDEX(
             InputType::InstrFlags, 
             RV32I::enum_index(&RV32I::ADD(ADDInstruction::default()))
@@ -595,7 +594,6 @@ impl R1CSBuilder {
         const IS_BRANCH: usize = 5; 
         const IF_UPDATE_RD_WITH_LOOKUP_OUTPUT: usize = 6; 
         const SIGN_IMM_FLAG: usize = 7; 
-        const IS_LUI_AUIPC: usize = 9; 
 
         let mut aux: Vec<F> = Vec::with_capacity(num_aux);
 
