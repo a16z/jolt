@@ -385,26 +385,26 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * constant_term_C;
 
 
-            /* 4. Add IO consistency constraints, which ensure that (output_pc[step i] - input_pc[step i+1]) * input_pc[step i+1] = 0
-                For each step i in (0..NUM_STEPS-1):
-                A, B: 0 
-                C: output of i - input of i+1 ==> (index i, value 1), (index NUM_STEPS+i+1, value -1)
-            */            
-            let row_io_consistency = key.shape_single_step.num_cons-1; // this is considered the last constraint
-            let r_sq_eq_rx_con = r_sq * eq_rx_con[row_io_consistency];
-            RLC_evals[0..key.true_num_steps-1]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, rlc)| {
-                    *rlc += r_sq_eq_rx_con * eq_rx_ts[i];
-                });
+            // /* 4. Add IO consistency constraints, which ensure that (output_pc[step i] - input_pc[step i+1]) * input_pc[step i+1] = 0
+            //     For each step i in (0..NUM_STEPS-1):
+            //     A, B: 0 
+            //     C: output of i - input of i+1 ==> (index i, value 1), (index NUM_STEPS+i+1, value -1)
+            // */            
+            // let row_io_consistency = key.shape_single_step.num_cons-1; // this is considered the last constraint
+            // let r_sq_eq_rx_con = r_sq * eq_rx_con[row_io_consistency];
+            // RLC_evals[0..key.true_num_steps-1]
+            //     .par_iter_mut()
+            //     .enumerate()
+            //     .for_each(|(i, rlc)| {
+            //         *rlc += r_sq_eq_rx_con * eq_rx_ts[i];
+            //     });
 
-            RLC_evals[key.num_steps+1..key.num_steps+key.true_num_steps]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, rlc)| {
-                    *rlc -= r_sq_eq_rx_con * eq_rx_ts[i];
-                });
+            // RLC_evals[key.num_steps+1..key.num_steps+key.true_num_steps]
+            //     .par_iter_mut()
+            //     .enumerate()
+            //     .for_each(|(i, rlc)| {
+            //         *rlc -= r_sq_eq_rx_con * eq_rx_ts[i];
+            //     });
 
             RLC_evals
         };
@@ -573,60 +573,66 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             (F::one() - inner_sumcheck_r[0]) * eval_W + inner_sumcheck_r[0] * eval_X
         };
 
-        let (T_x, T_y) = rayon::join(
-                || EqPolynomial::new(r_x.to_vec()).evals(),
-                || EqPolynomial::new(inner_sumcheck_r.to_vec()).evals(),
-            );
+        // let (T_x, T_y) = rayon::join(
+        //         || EqPolynomial::new(r_x.to_vec()).evals(),
+        //         || EqPolynomial::new(inner_sumcheck_r.to_vec()).evals(),
+        //     );
+
+        let num_steps_bits = key.num_steps.trailing_zeros();
+        let (rx_con, rx_ts) =
+            r_x.split_at(r_x.len() - num_steps_bits as usize);
+        let eq_rx_con = EqPolynomial::new(rx_con.to_vec()).evals();
+
+        let r_y = inner_sumcheck_r.clone(); 
+        let (ry_var, ry_ts) =
+        r_y.split_at(r_y.len() - num_steps_bits as usize);
+        let eq_ry_var= EqPolynomial::new(ry_var.to_vec()).evals();
+
+        // let eq_rx_ts = EqPolynomial::new(rx_ts.to_vec()).evals();
+        // let eq_ry_ts = EqPolynomial::new(ry_ts.to_vec()).evals();
+
+        let eq_rx_ry_ts = EqPolynomial::new(rx_ts.to_vec()).evaluate(ry_ts);
+        let eq_ry_0 = EqPolynomial::new(ry_ts.to_vec()).evaluate(vec![F::zero(); ry_ts.len()].as_slice());
 
         // compute evaluations of R1CS matrices
         let multi_evaluate_uniform =
-            |M_vec: &[&[(usize, usize, F)]], r_x: &[F], r_y: &[F], num_steps: usize| -> Vec<F> {
+            |M_vec: &[&[(usize, usize, F)]]| -> Vec<F> {
                 let evaluate_with_table_uniform =
-                    |M: &[(usize, usize, F)], T_x: &[F], T_y: &[F], num_steps: usize| -> F {
+                    |M: &[(usize, usize, F)]| -> F {
                         (0..M.len())
                             .into_par_iter()
                             .map(|i| {
                                 let (row, col, val) = M[i];
-                                (0..num_steps)
-                                    .into_par_iter()
-                                    .map(|j| {
-                                        let row = row * num_steps + j;
-                                        let col = if col != key.shape_single_step.num_vars {
-                                            col * num_steps + j
-                                        } else {
-                                            key.num_vars_total
-                                        };
-                                        let val = val * T_x[row] * T_y[col];
-                                        val
-                                    })
-                                    .sum::<F>()
+                                val * eq_rx_con[row] * eq_ry_var[col] *  
+                                    if col != key.shape_single_step.num_vars {
+                                        eq_rx_ry_ts
+                                    } else {
+                                        eq_ry_0
+                                    }
                             })
                             .sum()
                     };
 
                 (0..M_vec.len())
                     .into_par_iter()
-                    .map(|i| evaluate_with_table_uniform(M_vec[i], &T_x, &T_y, num_steps))
+                    .map(|i| evaluate_with_table_uniform(M_vec[i]))
                     .collect()
             };
 
-        let mut evals = multi_evaluate_uniform(
+        let evals = multi_evaluate_uniform(
             &[
                 &key.shape_single_step.A,
                 &key.shape_single_step.B,
                 &key.shape_single_step.C,
-            ],
-            &r_x,
-            &inner_sumcheck_r,
-            key.num_steps,
+            ]
         );
 
-        // Handle IO consistency  
-        let start_row_io_consistency = (key.shape_single_step.num_cons-1) * key.num_steps; 
-        evals[2] += (0..key.true_num_steps-1)
-            .into_par_iter()
-            .map(|i| T_x[start_row_io_consistency + i] * (T_y[i] - T_y[key.num_steps+i+1]))
-            .sum::<F>();
+        // // Handle IO consistency  
+        // let start_row_io_consistency = (key.shape_single_step.num_cons-1) * key.num_steps; 
+        // evals[2] += (0..key.true_num_steps-1)
+        //     .into_par_iter()
+        //     .map(|i| T_x[start_row_io_consistency + i] * (T_y[i] - T_y[key.num_steps+i+1]))
+        //     .sum::<F>();
 
         let left_expected = evals[0]
             + r_inner_sumcheck_RLC * evals[1]
