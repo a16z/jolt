@@ -388,11 +388,11 @@ impl RVTraceRow {
         match self.instruction.opcode.instruction_type() {
             RV32InstructionFormat::R => unimplemented!("R type does not use imm u64"),
             RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64,
-            RV32InstructionFormat::U => ((self.instruction.imm.unwrap() as u32) << 12u32) as u64,
+            RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64,
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
             // UJ-type instructions point to address offsets: even numbers.
             // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent.
-            RV32InstructionFormat::UJ => (self.instruction.imm.unwrap() as u64) << 0u64,
+            RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64,
             _ => unimplemented!(),
         }
     }

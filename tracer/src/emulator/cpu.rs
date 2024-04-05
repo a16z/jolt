@@ -1824,7 +1824,7 @@ fn normalize_b_imm(value: u64) -> u32 {
 }
 
 fn normalize_u_imm(value: u64) -> u32 {
-    ((value as i32) >> 12) as u32
+    value as i32 as u32
 }
 
 fn normalize_j_imm(value: u64) -> u32 {
