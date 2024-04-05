@@ -9,7 +9,7 @@ use emulator::{
     Emulator,
 };
 
-use object::{Object, ObjectSection};
+use object::{Object, ObjectSection, SectionKind};
 
 mod decode;
 mod emulator;
@@ -64,7 +64,7 @@ pub fn trace(elf: &PathBuf, inputs: Vec<u8>) -> (Vec<RVTraceRow>, JoltDevice) {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
+pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u8, u64)>) {
     let mut elf_file = File::open(elf).unwrap();
     let mut elf_contents = Vec::new();
     elf_file.read_to_end(&mut elf_contents).unwrap();
@@ -77,34 +77,43 @@ pub fn decode(elf: &PathBuf) -> Vec<ELFInstruction> {
         .collect::<Vec<_>>();
 
     let mut instructions = Vec::new();
+    let mut data = Vec::new();
+
     for section in sections {
-        let data = section.data().unwrap();
+        let raw_data = section.data().unwrap();
 
-        for (chunk, word) in data.chunks(4).enumerate() {
-            let word = u32::from_le_bytes(word.try_into().unwrap());
-            let address = chunk as u64 * 4 + section.address();
+        if let SectionKind::Text = section.kind() {
+            for (chunk, word) in raw_data.chunks(4).enumerate() {
+                let word = u32::from_le_bytes(word.try_into().unwrap());
+                let address = chunk as u64 * 4 + section.address();
 
-            if let Ok(inst) = decode_raw(word) {
-                if let Some(trace) = inst.trace {
-                    let inst = trace(&inst, &get_xlen(), word, address);
-                    instructions.push(inst);
-                    continue;
+                if let Ok(inst) = decode_raw(word) {
+                    if let Some(trace) = inst.trace {
+                        let inst = trace(&inst, &get_xlen(), word, address);
+                        instructions.push(inst);
+                        continue;
+                    }
                 }
+                // Unrecognized instruction, or from a ReadOnlyData section
+                instructions.push(ELFInstruction {
+                    address,
+                    opcode: RV32IM::from_str("UNIMPL"),
+                    raw: word,
+                    rs1: None,
+                    rs2: None,
+                    rd: None,
+                    imm: None,
+                });
             }
-            // Unrecognized instruction, or from a ReadOnlyData section
-            instructions.push(ELFInstruction {
-                address,
-                opcode: RV32IM::from_str("UNIMPL"),
-                raw: word,
-                rs1: None,
-                rs2: None,
-                rd: None,
-                imm: None,
-            });
+        } else {
+            let address = section.address();
+            for (offset, byte) in raw_data.iter().enumerate() {
+                data.push((*byte, address + offset as u64));
+            }
         }
     }
 
-    instructions
+    (instructions, data)
 }
 
 fn get_xlen() -> Xlen {
