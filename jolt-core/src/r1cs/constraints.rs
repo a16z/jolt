@@ -528,11 +528,6 @@ impl R1CSBuilder {
             rd_test_jump.in <== [rd, is_jump_instr, (rd_val - (prog_a_rw + 4))]; 
         */
         let rd_val = GET_INDEX(InputType::MemregVWrites, 0);
-        R1CSBuilder::constr_abc(instance, 
-            smallvec![(is_load_instr, 1)], 
-            smallvec![(rd_val, 1), (GET_INDEX(InputType::LookupOutput, 0), -1)], 
-            smallvec![]
-        );
         R1CSBuilder::constr_prod_0(
             instance, 
             smallvec![(rd, 1)], 

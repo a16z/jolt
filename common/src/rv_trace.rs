@@ -300,12 +300,7 @@ impl ELFInstruction {
 
         // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
         flags[6] = match self.opcode {
-            RV32IM::LB
-            | RV32IM::LH
-            | RV32IM::LW
-            | RV32IM::LBU
-            | RV32IM::LHU
-            | RV32IM::SB
+            RV32IM::SB
             | RV32IM::SH
             | RV32IM::SW
             | RV32IM::BEQ
