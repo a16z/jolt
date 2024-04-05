@@ -171,12 +171,13 @@ impl MacroBuilder {
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
                 #set_mem_size
-                let bytecode = program.decode();
+                let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltPreprocessing<jolt::F, jolt::G> =
                     RV32IJoltVM::preprocess(
                         bytecode,
+                        memory_init,
                         1 << 20,
                         1 << 20,
                         1 << 24

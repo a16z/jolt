@@ -38,6 +38,8 @@ members = [
     "examples/sha3-chain/guest",
     "examples/multi-function",
     "examples/multi-function/guest",
+    "examples/chess",
+    "examples/chess/guest",
 ]
 
 [features]

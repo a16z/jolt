@@ -16,18 +16,13 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::{
-            matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
-            HyraxOpeningProof,
-        },
+        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
-        errors::ProofVerifyError, math::Math, mul_0_optimized, thread, transcript::ProofTranscript,
-    },
+    utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -60,7 +55,7 @@ impl RandomInstruction for ELFInstruction {
 }
 
 pub fn random_memory_trace<F: PrimeField>(
-    bytecode: &Vec<ELFInstruction>,
+    memory_init: &Vec<(u64, u8)>,
     max_memory_address: usize,
     m: usize,
     rng: &mut StdRng,
@@ -69,13 +64,9 @@ pub fn random_memory_trace<F: PrimeField>(
     [DensePolynomial<F>; 5],
 ) {
     let mut memory: Vec<u64> = vec![0; max_memory_address];
-    for instr in bytecode {
-        let address = instr.address - RAM_START_ADDRESS + REGISTER_COUNT;
-        let raw = instr.raw;
-        for i in 0..(BYTES_PER_INSTRUCTION as u64) {
-            // Write one byte of raw to memory
-            memory[(address + i) as usize] = ((raw >> (i * 8)) & 0xff) as u64;
-        }
+    for (addr, byte) in memory_init {
+        let remapped_addr = addr - RAM_START_ADDRESS + REGISTER_COUNT;
+        memory[remapped_addr as usize] = *byte as u64;
     }
 
     let m = m.next_power_of_two();
@@ -223,30 +214,25 @@ pub struct ReadWriteMemoryPreprocessing {
 
 impl ReadWriteMemoryPreprocessing {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryPreprocessing::preprocess")]
-    pub fn preprocess(bytecode: &Vec<ELFInstruction>) -> Self {
-        let min_bytecode_address = bytecode
+    pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
+        let min_bytecode_address = memory_init
             .iter()
-            .map(|instr| instr.address)
+            .map(|(address, _)| *address)
             .min()
             .unwrap_or(0);
 
-        let max_bytecode_address = bytecode
+        let max_bytecode_address = memory_init
             .iter()
-            .map(|instr| instr.address)
+            .map(|(address, _)| *address)
             .max()
             .unwrap_or(0)
             + (BYTES_PER_INSTRUCTION as u64 - 1); // For RV32I, instructions occupy 4 bytes, so the max bytecode address is the max instruction address + 3
 
         let mut bytecode_bytes =
             vec![0u8; (max_bytecode_address - min_bytecode_address + 1) as usize];
-        for instr in bytecode.iter() {
-            let mut byte_index = instr.address - min_bytecode_address;
-            let raw = instr.raw;
-            for i in 0..(BYTES_PER_INSTRUCTION as u64) {
-                // Write one byte of raw to bytes
-                bytecode_bytes[byte_index as usize] = ((raw >> (i * 8)) & 0xff) as u8;
-                byte_index += 1;
-            }
+        for (address, byte) in memory_init.iter() {
+            let remapped_index = (address - min_bytecode_address) as usize;
+            bytecode_bytes[remapped_index] = *byte;
         }
 
         Self {
@@ -1603,17 +1589,23 @@ mod tests {
         const MEMORY_SIZE: usize = 1 << 16;
         const NUM_OPS: usize = 1 << 8;
         const BYTECODE_SIZE: usize = 1 << 8;
+        const BYTECODE_OFFSET: u64 = 200;
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-        let bytecode = (0..BYTECODE_SIZE)
-            .map(|i| ELFInstruction::random(i, &mut rng))
+        let memory_init = (0..BYTECODE_SIZE)
+            .map(|i| {
+                (
+                    RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
+                    (rng.next_u32() & 0xff) as u8,
+                )
+            })
             .collect();
         let (memory_trace, load_store_flags) =
-            random_memory_trace(&bytecode, MEMORY_SIZE, NUM_OPS, &mut rng);
+            random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
 
         let mut transcript = Transcript::new(b"test_transcript");
 
-        let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(&bytecode);
+        let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
         let (rw_memory, _): (ReadWriteMemory<Fr, G1Projective>, _) = ReadWriteMemory::new(
             &JoltDevice::new(),
             &load_store_flags,
