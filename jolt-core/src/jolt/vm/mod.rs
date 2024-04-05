@@ -38,6 +38,7 @@ use self::{
 };
 
 use super::instruction::JoltInstructionSet;
+use crate::utils::transcript::AppendToTranscript;
 
 #[derive(Clone)]
 pub struct JoltPreprocessing<F, G>
@@ -308,6 +309,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     ) {
         let polys: BytecodePolynomials<F, G> = BytecodePolynomials::new(preprocessing, trace);
         let commitment = BytecodePolynomials::commit(&polys, &generators);
+        commitment.append_to_transcript(b"bytecode", transcript);
         let proof = BytecodeProof::prove_memory_checking(preprocessing, &polys, transcript);
 
         (proof, polys, commitment)
@@ -320,6 +322,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         commitment: &BytecodeCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
+        commitment.append_to_transcript(b"bytecode", transcript);
         BytecodeProof::verify_memory_checking(
             preprocessing,
             generators,
