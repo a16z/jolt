@@ -970,12 +970,18 @@ where
             .chain(openings.t_read_opening.into_iter())
             .chain(openings.t_write_ram_opening.into_iter())
             .collect::<Vec<_>>();
-        BatchedHyraxOpeningProof::prove(
+        let proof = BatchedHyraxOpeningProof::prove(
             &read_write_polys,
             opening_point,
             &read_write_openings,
             transcript,
-        )
+        );
+
+        let proof_len = proof.joint_proof.vector_matrix_product.len();
+        println!("MemoryReadWriteOpenings::prove_openings proof len {}", proof_len);
+
+
+        proof
     }
 
     fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &Vec<F>) {

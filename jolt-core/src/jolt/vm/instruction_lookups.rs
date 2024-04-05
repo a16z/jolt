@@ -734,8 +734,8 @@ where
     InstructionSet: JoltInstructionSet,
 {
     _instructions: PhantomData<InstructionSet>,
-    primary_sumcheck: PrimarySumcheck<F, G>,
-    memory_checking: MemoryCheckingProof<
+    pub primary_sumcheck: PrimarySumcheck<F, G>,
+    pub memory_checking: MemoryCheckingProof<
         G,
         InstructionPolynomials<F, G>,
         InstructionReadWriteOpenings<F>,

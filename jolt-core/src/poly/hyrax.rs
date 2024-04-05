@@ -154,7 +154,7 @@ impl<const RATIO: usize, G: CurveGroup> AppendToTranscript<G> for HyraxCommitmen
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
-    vector_matrix_product: Vec<G::ScalarField>,
+    pub vector_matrix_product: Vec<G::ScalarField>,
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
@@ -176,6 +176,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
 
         // compute the L and R vectors
         let (L_size, _R_size) = matrix_dimensions(poly.get_num_vars(), RATIO);
+        println!("L_size {L_size}");
         let eq = EqPolynomial::new(opening_point.to_vec());
         let (L, _R) = eq.compute_factored_evals(L_size);
 
@@ -249,7 +250,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
-    joint_proof: HyraxOpeningProof<RATIO, G>,
+    pub joint_proof: HyraxOpeningProof<RATIO, G>,
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge

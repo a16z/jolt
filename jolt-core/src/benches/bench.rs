@@ -258,13 +258,13 @@ fn prove_example<T: Serialize>(
             preprocessing.clone(),
         );
 
-        // println!("Proof sizing:");
-        // serialize_and_print_size("jolt_commitments", &jolt_commitments);
-        // serialize_and_print_size("jolt_proof", &jolt_proof);
-        // serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
-        // serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
-        // serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
-        // serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
+        println!("Proof sizing:");
+        serialize_and_print_size("jolt_commitments", &jolt_commitments);
+        serialize_and_print_size("jolt_proof", &jolt_proof);
+        serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
+        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
+        serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
+        serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
 
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
@@ -306,6 +306,29 @@ fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             circuit_flags,
             preprocessing.clone(),
         );
+
+        println!("Proof sizing:");
+        serialize_and_print_size("jolt_commitments", &jolt_commitments);
+        serialize_and_print_size("jolt_proof", &jolt_proof);
+        serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
+        serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
+
+        serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof", &jolt_proof.read_write_memory.memory_checking_proof);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.multiset_hashes", &jolt_proof.read_write_memory.memory_checking_proof.multiset_hashes);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.read_write_grand_product", &jolt_proof.read_write_memory.memory_checking_proof.read_write_grand_product);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.init_final_grand_product", &jolt_proof.read_write_memory.memory_checking_proof.init_final_grand_product);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.read_write_openings", &jolt_proof.read_write_memory.memory_checking_proof.read_write_openings);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.read_write_opening_proof", &jolt_proof.read_write_memory.memory_checking_proof.read_write_opening_proof);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.init_final_openings", &jolt_proof.read_write_memory.memory_checking_proof.init_final_openings);
+        serialize_and_print_size(" jolt_proof.read_write_memory.memory_checking_proof.init_final_opening_proof", &jolt_proof.read_write_memory.memory_checking_proof.init_final_opening_proof);
+        serialize_and_print_size(" jolt_proof.read_write_memory.timestamp_validity_proof", &jolt_proof.read_write_memory.timestamp_validity_proof);
+        serialize_and_print_size(" jolt_proof.read_write_memory.output_proof", &jolt_proof.read_write_memory.output_proof);
+
+        serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
+        serialize_and_print_size(" jolt_proof.instruction_lookups.primary_sumcheck", &jolt_proof.instruction_lookups.primary_sumcheck);
+        serialize_and_print_size(" jolt_proof.instruction_lookups.memory_checking", &jolt_proof.instruction_lookups.memory_checking);
+
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),
