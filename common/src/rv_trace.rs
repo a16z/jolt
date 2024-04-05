@@ -237,7 +237,7 @@ pub struct ELFInstruction {
     pub imm: Option<u32>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 10;
+pub const NUM_CIRCUIT_FLAGS: usize = 9;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -252,7 +252,6 @@ impl ELFInstruction {
         // 6: Instruction writes lookup output to rd
         // 7: Sign-bit of imm
         // 8: Is concat (Note: used to be is_lui)
-        // 9: is lui or auipc
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -301,12 +300,7 @@ impl ELFInstruction {
 
         // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
         flags[6] = match self.opcode {
-            RV32IM::LB
-            | RV32IM::LH
-            | RV32IM::LW
-            | RV32IM::LBU
-            | RV32IM::LHU
-            | RV32IM::SB
+            RV32IM::SB
             | RV32IM::SH
             | RV32IM::SW
             | RV32IM::BEQ
@@ -353,11 +347,6 @@ impl ELFInstruction {
             _ => false,
         };
 
-        flags[9] = match self.opcode {
-            RV32IM::LUI | RV32IM::AUIPC => true,
-            _ => false,
-        };
-
         flags
     }
 }
@@ -388,11 +377,11 @@ impl RVTraceRow {
         match self.instruction.opcode.instruction_type() {
             RV32InstructionFormat::R => unimplemented!("R type does not use imm u64"),
             RV32InstructionFormat::I => self.instruction.imm.unwrap() as u64,
-            RV32InstructionFormat::U => ((self.instruction.imm.unwrap() as u32) << 12u32) as u64,
+            RV32InstructionFormat::U => self.instruction.imm.unwrap() as u64,
             RV32InstructionFormat::S => unimplemented!("S type does not use imm u64"),
             // UJ-type instructions point to address offsets: even numbers.
             // TODO(JOLT-88): De-normalizing was already done elsewhere. Should make this is consistent.
-            RV32InstructionFormat::UJ => (self.instruction.imm.unwrap() as u64) << 0u64,
+            RV32InstructionFormat::UJ => self.instruction.imm.unwrap() as u64,
             _ => unimplemented!(),
         }
     }
