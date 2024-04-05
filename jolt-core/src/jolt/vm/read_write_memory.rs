@@ -9,11 +9,10 @@ use std::collections::HashSet;
 use std::marker::PhantomData;
 
 use crate::{
-    lasso::memory_checking::{
+    jolt::vm::timestamp_range_check::RangeCheckPolynomials, lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
         NoPreprocessing,
-    },
-    poly::{
+    }, poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         hyrax::{
@@ -23,11 +22,9 @@ use crate::{
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
-    },
-    subprotocols::sumcheck::SumcheckInstanceProof,
-    utils::{
+    }, subprotocols::sumcheck::SumcheckInstanceProof, utils::{
         errors::ProofVerifyError, math::Math, mul_0_optimized, thread, transcript::ProofTranscript,
-    },
+    }
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
@@ -38,7 +35,7 @@ use common::constants::{
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
 use common::to_ram_address;
 
-use super::timestamp_range_check::TimestampValidityProof;
+use super::timestamp_range_check::{RangeCheckCommitment, TimestampValidityProof};
 
 pub trait RandomInstruction {
     fn random(index: usize, rng: &mut StdRng) -> Self;
@@ -306,6 +303,7 @@ where
     pub t_write_ram: [DensePolynomial<F>; 4],
     /// MLE of the final timestamps.
     pub t_final: DensePolynomial<F>,
+    pub rangecheck: RangeCheckPolynomials<F, G>
 }
 
 fn map_to_polys<F: PrimeField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePolynomial<F>; N] {
@@ -324,7 +322,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         preprocessing: &ReadWriteMemoryPreprocessing,
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         transcript: &mut Transcript,
-    ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
+    ) -> Self {
         let lb_flag = &load_store_flags[0];
         let lh_flag = &load_store_flags[1];
         let sb_flag = &load_store_flags[2];
@@ -755,25 +753,25 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             || map_to_polys(&t_write_ram)
         );
 
-        (
-            Self {
-                _group: PhantomData,
-                memory_size,
-                v_init,
-                a_rs1,
-                a_rs2,
-                a_rd,
-                a_ram,
-                v_read,
-                v_write_rd,
-                v_write_ram,
-                v_final,
-                t_read: t_read_polys,
-                t_write_ram,
-                t_final,
-            },
-            t_read,
-        )
+        let rangecheck = RangeCheckPolynomials::new(t_read);
+
+        Self {
+            _group: PhantomData,
+            memory_size,
+            v_init,
+            a_rs1,
+            a_rs2,
+            a_rd,
+            a_ram,
+            v_read,
+            v_write_rd,
+            v_write_ram,
+            v_final,
+            t_read: t_read_polys,
+            t_write_ram,
+            t_final,
+            rangecheck
+        }
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
@@ -835,6 +833,9 @@ pub struct MemoryCommitment<G: CurveGroup> {
     pub read_write_generators: HyraxGenerators<NUM_R1CS_POLYS, G>,
     pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 
+    /// Commitments for timestamp rangecheck
+    pub rangecheck_commitment: RangeCheckCommitment<G>,
+
     /// Commitments for v_final, t_final
     pub final_generators: HyraxGenerators<1, G>,
     pub v_final_commitment: HyraxCommitment<1, G>,
@@ -871,9 +872,12 @@ where
             || HyraxCommitment::commit(&self.t_final, &final_generators),
         );
 
+        let rangecheck_commitment = RangeCheckPolynomials::commit(&self.rangecheck, &pedersen_generators);
+
         Self::Commitment {
             read_write_generators,
             read_write_commitments,
+            rangecheck_commitment,
             final_generators,
             v_final_commitment,
             t_final_commitment,
@@ -1546,7 +1550,6 @@ where
     pub fn prove(
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &ReadWriteMemory<F, G>,
-        read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
         program_io: &JoltDevice,
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
@@ -1557,17 +1560,19 @@ where
         let output_proof = OutputSumcheckProof::prove_outputs(polynomials, program_io, transcript);
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
-            read_timestamps,
+            &polynomials.rangecheck,
             &polynomials.t_read,
             &generators,
             transcript,
         );
 
-        Self {
+        // (
+            Self {
             memory_checking_proof,
             output_proof,
             timestamp_validity_proof,
         }
+        // , timestamp_commitment)
     }
 
     pub fn verify(

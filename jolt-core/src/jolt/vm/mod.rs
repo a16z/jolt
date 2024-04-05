@@ -329,7 +329,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         // TODO(moodlezoup): Make generic
         let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
 
-        let (polynomials, read_timestamps) = ReadWriteMemory::new(
+        let polynomials = ReadWriteMemory::new(
             program_io,
             load_store_flags,
             preprocessing,
@@ -338,10 +338,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         );
         let commitment: MemoryCommitment<G> = ReadWriteMemory::commit(&polynomials, &generators);
 
-        let proof = ReadWriteMemoryProof::prove(
+        let proof  = ReadWriteMemoryProof::prove(
             preprocessing,
             &polynomials,
-            read_timestamps,
             program_io,
             generators,
             transcript,

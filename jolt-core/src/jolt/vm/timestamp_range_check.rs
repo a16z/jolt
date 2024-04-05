@@ -557,7 +557,6 @@ where
     openings: RangeCheckOpenings<F, G>,
     opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
     batched_grand_product: BatchedGrandProductArgument<F>,
-    pub commitment: RangeCheckCommitment<G>,
 }
 
 impl<F, G> TimestampValidityProof<F, G>
@@ -567,14 +566,12 @@ where
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove(
-        read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
+        range_check_polys: &RangeCheckPolynomials<F, G>,
         t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
         generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
-        let range_check_polys: RangeCheckPolynomials<F, G> =
-            RangeCheckPolynomials::new(read_timestamps);
-        let range_check_commitment = RangeCheckPolynomials::commit(&range_check_polys, &generators);
+        // let range_check_commitment = RangeCheckPolynomials::commit(&range_check_polys, &generators);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
@@ -614,13 +611,14 @@ where
             identity_poly_opening: None,
         };
 
+        // (
         Self {
             multiset_hashes,
             openings,
             opening_proof,
             batched_grand_product,
-            commitment: range_check_commitment,
         }
+        // , range_check_commitment)
     }
 
     fn prove_grand_products(
@@ -726,15 +724,14 @@ where
 
         let t_read_commitments = &memory_commitment.read_write_commitments
             [4 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
-        let commitments: Vec<_> = self
-            .commitment
+        let commitments: Vec<_> = memory_commitment.rangecheck_commitment
             .commitments
             .iter()
             .chain(t_read_commitments.iter())
             .collect();
 
         self.opening_proof.verify(
-            &self.commitment.generators,
+            &memory_commitment.rangecheck_commitment.generators,
             &r_grand_product,
             &openings,
             &commitments,
