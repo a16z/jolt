@@ -4,7 +4,6 @@ use ark_std::cmp::Ordering;
 use ark_std::vec::Vec;
 use rayon::prelude::*;
 
-#[cfg(not(feature = "ark-msm"))]
 impl<G: CurveGroup> VariableBaseMSM for G {}
 
 /// Copy of ark_ec::VariableBaseMSM with minor modifications to speed up

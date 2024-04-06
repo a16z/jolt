@@ -77,4 +77,3 @@ default = [
     "multicore",
 ]
 multicore = ["rayon"]
-ark-msm = [] # run with arkworks MSM without small field element optimization

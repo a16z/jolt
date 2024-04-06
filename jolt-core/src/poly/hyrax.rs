@@ -13,10 +13,6 @@ use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
-#[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
 pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize, usize) {
