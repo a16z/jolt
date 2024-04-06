@@ -14,8 +14,8 @@ authors = [
 ]
 edition = "2021"
 description = "The lookup singularity. Based on Spartan; built on Arkworks."
-documentation = "https://github.com/a16z/lasso/README.md"
-repository = "https://github.com/a16z/lasso"
+documentation = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
 license-file = "LICENSE"
 keywords = ["SNARK", "cryptography", "proofs"]
 
