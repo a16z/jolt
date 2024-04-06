@@ -1,4 +1,4 @@
-![Jolt Alpha](imgs/jolt_alpha.png)
+![Jolt Alpha](../../imgs/jolt_alpha.png)
 
 [Jolt](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) is a zkVM framework built around the [Lasso](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf) lookup argument. 
 
