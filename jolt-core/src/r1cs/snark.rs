@@ -211,43 +211,21 @@ impl<F: PrimeField> R1CSInputs<F> {
   }
 }
 
-/// Derived elements exclusive to the R1CS circuit.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSInternalCommitments<G: CurveGroup> {
-  io: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-  aux: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-}
-
 /// Commitments unique to R1CS.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSUniqueCommitments<G: CurveGroup> {
-  internal_commitments: R1CSInternalCommitments<G>,
-
+pub struct R1CSCommitment<G: CurveGroup> {
+  io: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+  aux: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
   circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
-impl<G: CurveGroup> R1CSUniqueCommitments<G> {
-    pub fn new(
-        internal_commitments: R1CSInternalCommitments<G>,
-        chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-        chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-        circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    ) -> Self {
-      // TODO(sragss): Assert the sizes make sense.
-        Self {
-            internal_commitments,
-            chunks_x,
-            chunks_y,
-            circuit_flags,
-        }
-    }
-
-    #[tracing::instrument(skip_all, name = "R1CSUniqueCommitments::append_to_transcript")]
+impl<G: CurveGroup> R1CSCommitment<G> {
+    #[tracing::instrument(skip_all, name = "R1CSCommitment::append_to_transcript")]
     pub fn append_to_transcript(&self, transcript: &mut Transcript) {
-      self.internal_commitments.io.iter().for_each(|comm| comm.append_to_transcript(b"io", transcript));
-      self.internal_commitments.aux.iter().for_each(|comm| comm.append_to_transcript(b"aux", transcript));
+      self.io.iter().for_each(|comm| comm.append_to_transcript(b"io", transcript));
+      self.aux.iter().for_each(|comm| comm.append_to_transcript(b"aux", transcript));
       self.chunks_x.iter().for_each(|comm| comm.append_to_transcript(b"chunk_x", transcript));
       self.chunks_y.iter().for_each(|comm| comm.append_to_transcript(b"chunk_y", transcript));
       self.circuit_flags.iter().for_each(|comm| comm.append_to_transcript(b"circuit_flags", transcript));
@@ -269,7 +247,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       padded_trace_len: usize, 
       inputs: &R1CSInputs<F>,
       generators: &PedersenGenerators<G>,
-  ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSInternalCommitments<G>), SpartanError> {
+  ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>), SpartanError> {
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
       let _enter = span.enter();
       let mut jolt_shape = R1CSBuilder::default(); 
@@ -284,9 +262,26 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
       let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
 
-      let r1cs_commitments = R1CSInternalCommitments::<G> {
+      // Commit to R1CS specific items
+      let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+          data.par_chunks(padded_trace_len)
+              .map(|chunk| HyraxCommitment::commit_slice(chunk, generators))
+              .collect()
+      };
+
+      let span = tracing::span!(tracing::Level::INFO, "new_commitments");
+      let _guard = span.enter();
+      let chunks_x_comms = commit_to_chunks(&inputs.chunks_x);
+      let chunks_y_comms = commit_to_chunks(&inputs.chunks_y);
+      let circuit_flags_comm = commit_to_chunks(&inputs.circuit_flags_bits);
+      drop(_guard);
+
+      let r1cs_commitments = R1CSCommitment {
         io: io_comms,
         aux: aux_comms,
+        chunks_x: chunks_x_comms,
+        chunks_y: chunks_y_comms,
+        circuit_flags: circuit_flags_comm
       };
 
       let cloning_stuff_span = tracing::span!(tracing::Level::TRACE, "cloning_to_witness_segments");
@@ -330,7 +325,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
       
       let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
-      combined_commitments.extend(r1cs_commitments.internal_commitments.io.iter());
+      combined_commitments.extend(r1cs_commitments.io.iter());
 
       combined_commitments.push(&bytecode_read_write_commitments[0]); // a
       combined_commitments.push(&bytecode_read_write_commitments[2]); // op_flags_packed
@@ -352,7 +347,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       combined_commitments.extend(instruction_flag_commitments.iter());
 
-      combined_commitments.extend(r1cs_commitments.internal_commitments.aux.iter());
+      combined_commitments.extend(r1cs_commitments.aux.iter());
 
       combined_commitments
   }

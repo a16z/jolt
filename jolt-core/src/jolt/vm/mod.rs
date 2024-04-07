@@ -2,7 +2,6 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::NUM_R1CS_POLYS;
 use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
@@ -14,10 +13,9 @@ use crate::jolt::{
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::hyrax::HyraxCommitment;
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::StructuredCommitment;
-use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSUniqueCommitments};
+use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSCommitment};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
@@ -82,7 +80,7 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub bytecode: BytecodeCommitment<G>,
     pub read_write_memory: MemoryCommitment<G>,
     pub instruction_lookups: InstructionCommitment<G>,
-    pub r1cs: R1CSUniqueCommitments<G>,
+    pub r1cs: R1CSCommitment<G>,
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
@@ -364,16 +362,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         polynomials: &JoltPolynomials<F, G>,
         circuit_flags: Vec<F>,
         generators: &PedersenGenerators<G>,
-    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSUniqueCommitments<G>) {
+    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>) {
         let log_M = log2(M) as usize;
 
-        /* Assemble the polynomials and commitments from the rest of Jolt.
-        The ones that are extra, just for R1CS are:
-            - chunks_x
-            - chunks_y
-            - lookup_output
-            - circuit_flags
-        */
+        // Assemble the polynomials and commitments from the rest of Jolt.
 
         // Derive chunks_x and chunks_y
         let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
@@ -431,20 +423,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         }
         drop(_guard);
 
-        // Commit to R1CS specific items
-        let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
-            data.par_chunks(padded_trace_length)
-                .map(|chunk| HyraxCommitment::commit_slice(chunk, generators))
-                .collect()
-        };
-
-        let span = tracing::span!(tracing::Level::INFO, "new_commitments");
-        let _guard = span.enter();
-        let chunks_x_comms = commit_to_chunks(&chunks_x);
-        let chunks_y_comms = commit_to_chunks(&chunks_y);
-        let circuit_flags_comm = commit_to_chunks(&circuit_flags);
-        drop(_guard);
-
         // Flattening this out into a Vec<F> and chunking into padded_trace_length-sized chunks
         // will be the exact witness vector to feed into the R1CS
         // after pre-pending IO and appending the AUX
@@ -463,7 +441,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             instruction_flags,
         );
 
-        let (spartan_key, witness_segments, io_aux_commitments) =
+        let (spartan_key, witness_segments, r1cs_commitments) =
             R1CSProof::<F, G>::compute_witness_commit(
                 32,
                 C,
@@ -472,13 +450,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 generators,
             )
             .expect("R1CSProof setup failed");
-
-        let r1cs_commitments = R1CSUniqueCommitments::new(
-            io_aux_commitments,
-            chunks_x_comms,
-            chunks_y_comms,
-            circuit_flags_comm,
-        );
 
         (spartan_key, witness_segments, r1cs_commitments)
     }
