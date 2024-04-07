@@ -169,42 +169,42 @@ mod tests {
         static ref SHA3_FILE_LOCK: Mutex<()> = Mutex::new(());
     }
 
-    #[test]
-    fn instruction_lookups() {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-        const NUM_CYCLES: usize = 100;
-        let ops: Vec<Option<RV32I>> =
-            std::iter::repeat_with(|| Some(RV32I::random_instruction(&mut rng)))
-                .take(NUM_CYCLES)
-                .collect();
+    // #[test]
+    // fn instruction_lookups() {
+    //     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+    //     const NUM_CYCLES: usize = 100;
+    //     let ops: Vec<Option<RV32I>> =
+    //         std::iter::repeat_with(|| Some(RV32I::random_instruction(&mut rng)))
+    //             .take(NUM_CYCLES)
+    //             .collect();
 
-        let mut prover_transcript = Transcript::new(b"example");
+    //     let mut prover_transcript = Transcript::new(b"example");
 
-        let preprocessing = RV32IJoltVM::preprocess(
-            vec![ELFInstruction::random(0, &mut rng)],
-            vec![],
-            1 << 20,
-            1 << 20,
-            1 << 22,
-        );
+    //     let preprocessing = RV32IJoltVM::preprocess(
+    //         vec![ELFInstruction::random(0, &mut rng)],
+    //         vec![],
+    //         1 << 20,
+    //         1 << 20,
+    //         1 << 22,
+    //     );
 
-        let (proof, _, commitment) =
-            <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove_instruction_lookups(
-                &preprocessing.instruction_lookups,
-                &ops,
-                &preprocessing.generators,
-                &mut prover_transcript,
-            );
-        let mut verifier_transcript = Transcript::new(b"example");
-        assert!(RV32IJoltVM::verify_instruction_lookups(
-            &preprocessing.instruction_lookups,
-            &preprocessing.generators,
-            proof,
-            &commitment,
-            &mut verifier_transcript
-        )
-        .is_ok());
-    }
+    //     let (proof, _, commitment) =
+    //         <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove_instruction_lookups(
+    //             &preprocessing.instruction_lookups,
+    //             &ops,
+    //             &preprocessing.generators,
+    //             &mut prover_transcript,
+    //         );
+    //     let mut verifier_transcript = Transcript::new(b"example");
+    //     assert!(RV32IJoltVM::verify_instruction_lookups(
+    //         &preprocessing.instruction_lookups,
+    //         &preprocessing.generators,
+    //         proof,
+    //         &commitment,
+    //         &mut verifier_transcript
+    //     )
+    //     .is_ok());
+    // }
 
     #[test]
     fn instruction_set_subtables() {

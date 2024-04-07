@@ -99,7 +99,6 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
         let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
@@ -111,7 +110,6 @@ where
         let E_flag_commitment = HyraxCommitment::batch_commit_polys(E_flag_polys, &generators);
         let lookup_outputs_commitment = HyraxCommitment::commit(&self.lookup_outputs, &generators);
 
-        let final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
             HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
 
@@ -857,35 +855,24 @@ where
     const NUM_SUBTABLES: usize = Subtables::COUNT;
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
-    pub fn prove_lookups(
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
+    pub fn prove(
+        polynomials: &InstructionPolynomials<F, G>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<Option<InstructionSet>>,
-        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
-    ) -> (
-        InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-        InstructionPolynomials<F, G>,
-        InstructionCommitment<G>,
-    ) {
+    ) -> InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        let polynomials = Self::polynomialize(preprocessing, ops);
-        let commitment = polynomials.commit(generators);
-
-        commitment.E_flag_commitment.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"E_flag_commitment", transcript)
-        });
-
+        let trace_length = polynomials.dim[0].len();
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
             b"Jolt instruction lookups",
-            ops.len().log_2(),
+            trace_length.log_2(),
         );
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
         let mut eq_poly = DensePolynomial::new(eq_evals);
-        let num_rounds = ops.len().log_2();
+        let num_rounds = trace_length.log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
@@ -923,15 +910,11 @@ where
 
         let memory_checking = Self::prove_memory_checking(preprocessing, &polynomials, transcript);
 
-        (
-            InstructionLookupsProof {
-                _instructions: PhantomData,
-                primary_sumcheck,
-                memory_checking,
-            },
-            polynomials,
-            commitment,
-        )
+        InstructionLookupsProof {
+            _instructions: PhantomData,
+            primary_sumcheck,
+            memory_checking,
+        }
     }
 
     pub fn verify(
@@ -942,10 +925,6 @@ where
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-        commitment.E_flag_commitment.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"E_flag_commitment", transcript)
-        });
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -998,7 +977,7 @@ where
 
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
-    fn polynomialize(
+    pub fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<Option<InstructionSet>>,
     ) -> InstructionPolynomials<F, G> {

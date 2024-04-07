@@ -267,7 +267,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       _W: usize, 
       _C: usize, 
       padded_trace_len: usize, 
-      inputs: R1CSInputs<F>,
+      inputs: &R1CSInputs<F>,
       generators: &PedersenGenerators<G>,
   ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSInternalCommitments<G>), SpartanError> {
       let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
@@ -279,7 +279,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       drop(span);
 
       // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
-      let (pc_out, pc, aux) = synthesize_witnesses(&inputs, jolt_shape.num_internal);
+      let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
       let io_segments = vec![pc_out, pc];
       let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
       let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
