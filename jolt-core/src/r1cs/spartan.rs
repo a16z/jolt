@@ -25,7 +25,6 @@ pub struct UniformSpartanKey<F: PrimeField> {
     shape_single_step: R1CSShape<F>, // Single step shape
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
-    true_num_steps: usize,           // Number of steps
     num_steps: usize,                // Padded number of steps
     vk_digest: F,                    // digest of the verifier's key
 }
@@ -160,7 +159,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
     pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
         circuit: &C,
-        true_num_steps: usize, 
         padded_num_steps: usize,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
         let shape_single_step = circuit.single_step_shape();
@@ -178,7 +176,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             shape_single_step,
             num_cons_total: pad_num_constraints,
             num_vars_total: pad_num_aux,
-            true_num_steps: true_num_steps, 
             num_steps: padded_num_steps,
             vk_digest,
         };
@@ -222,7 +219,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         key.shape_single_step.multiply_vec_uniform(
             &segmented_padded_witness,
-            key.true_num_steps, 
             key.num_steps,
             &mut A_z,
             &mut B_z,
