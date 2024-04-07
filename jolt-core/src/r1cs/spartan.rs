@@ -286,7 +286,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
         let poly_ABC = {
-            let num_steps_bits = key.num_steps.trailing_zeros();
+            let num_steps_bits = key.num_steps.ilog2();
             let (rx_con, rx_ts) =
                 outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
             let (eq_rx_con, eq_rx_ts) = rayon::join(
@@ -340,71 +340,28 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
             let _enter = span.enter();
-            // small_RLC_evals is 30% ones.
+            
+            // Handle all variables but pc_out and the constant 
             RLC_evals
                 .par_chunks_mut(n_steps)
-                .take(key.num_vars_total / n_steps)
+                .take(key.num_vars_total / n_steps) // Note that this ignores the last variable which is the constant
                 .enumerate()
-                .for_each(|(chunk_index, rlc_chunk)| {
-                    if !small_RLC_evals[chunk_index].is_zero() {
-                        for (eq_index, item) in rlc_chunk.iter_mut().enumerate() {
-                            *item = eq_rx_ts[eq_index] * small_RLC_evals[chunk_index];
+                .for_each(|(var_index, var_chunk)| { 
+                    if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
+                        for (ts, item) in var_chunk.iter_mut().enumerate() {
+                            *item = eq_rx_ts[ts] * small_RLC_evals[var_index];
                         }
                     }
                 });
             drop(_enter);
 
-            // 3. Handles the constant 1 variable, which was left over from the previous step. 
-            // The difference is that there is only one constnat variable, so it takes in all of eq_rx_ts (hence, eq_sum below). 
-            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_constant");
-            let _enter = span.enter();
-            let eq_sum = eq_rx_ts.par_iter().sum::<F>();
-            let compute_eval_constant_column = |small_M: &Vec<(usize, usize, F)>| -> F {
-                let constant_sum: F = small_M.iter()
-                    .filter(|(_, col, _)| *col == key.shape_single_step.num_vars)   // expecting ~1
-                    .map(|(row, _, val)| {
-                        *val * eq_rx_con[*row] * eq_sum
-                    }).sum();
+            // Handle pc_out 
+            RLC_evals[1..key.num_steps].par_iter_mut().enumerate().for_each(|(i, rlc)| {
+                *rlc += eq_rx_ts[i] * small_RLC_evals[1]; // take the intended mle eval at pc_out and add it instead to pc_in
+            });
 
-                constant_sum
-            };
-
-            let (constant_term_A, (constant_term_B, constant_term_C)) = rayon::join(
-                || compute_eval_constant_column(&key.shape_single_step.A),
-                || {
-                    rayon::join(
-                        || compute_eval_constant_column(&key.shape_single_step.B),
-                        || compute_eval_constant_column(&key.shape_single_step.C),
-                    )
-                },
-            );
-            drop(_enter);
-
-            RLC_evals[key.num_vars_total] = constant_term_A
-                + r_inner_sumcheck_RLC * constant_term_B
-                + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * constant_term_C;
-
-
-            // /* 4. Add IO consistency constraints, which ensure that (output_pc[step i] - input_pc[step i+1]) * input_pc[step i+1] = 0
-            //     For each step i in (0..NUM_STEPS-1):
-            //     A, B: 0 
-            //     C: output of i - input of i+1 ==> (index i, value 1), (index NUM_STEPS+i+1, value -1)
-            // */            
-            // let row_io_consistency = key.shape_single_step.num_cons-1; // this is considered the last constraint
-            // let r_sq_eq_rx_con = r_sq * eq_rx_con[row_io_consistency];
-            // RLC_evals[0..key.true_num_steps-1]
-            //     .par_iter_mut()
-            //     .enumerate()
-            //     .for_each(|(i, rlc)| {
-            //         *rlc += r_sq_eq_rx_con * eq_rx_ts[i];
-            //     });
-
-            // RLC_evals[key.num_steps+1..key.num_steps+key.true_num_steps]
-            //     .par_iter_mut()
-            //     .enumerate()
-            //     .for_each(|(i, rlc)| {
-            //         *rlc -= r_sq_eq_rx_con * eq_rx_ts[i];
-            //     });
+            // Handle the constant 
+            RLC_evals[key.num_vars_total] =  small_RLC_evals[key.shape_single_step.num_vars]; // constant 
 
             RLC_evals
         };
@@ -425,9 +382,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         // The number of prefix bits needed to identify a segment within the witness vector
         // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
         // The +1 is the first element used to separate the inputs and the witness.
-        // TODO(sragss): Are these `.trailing_zeros()` calls in place of log_2()?
-        let n_prefix = (key.num_vars_total.trailing_zeros() as usize
-            - key.num_steps.trailing_zeros() as usize)
+        // TODO(sragss): Are these `.ilog2()` calls in place of log_2()?
+        let n_prefix = (key.num_vars_total.ilog2() as usize
+            - key.num_steps.ilog2() as usize)
             + 1; // TODO(sragss): This is a hack!
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
@@ -533,8 +490,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // verify claim_inner_final
         // this should be log (num segments)
-        let n_prefix = (key.num_vars_total.trailing_zeros() as usize
-            - key.num_steps.trailing_zeros() as usize)
+        let n_prefix = (key.num_vars_total.ilog2() as usize
+            - key.num_steps.ilog2() as usize)
             + 1; // TODO(sragss): HACK!
 
         let eval_Z = {
@@ -573,23 +530,51 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             (F::one() - inner_sumcheck_r[0]) * eval_W + inner_sumcheck_r[0] * eval_X
         };
 
-
-
-        let num_steps_bits = key.num_steps.trailing_zeros();
+        /* MLE evaluation */
+        let num_steps_bits = key.num_steps.ilog2();
         let (rx_con, rx_ts) =
             r_x.split_at(r_x.len() - num_steps_bits as usize);
-        let eq_rx_con = EqPolynomial::new(rx_con.to_vec()).evals();
 
         let r_y = inner_sumcheck_r.clone(); 
         let (ry_var, ry_ts) =
         r_y.split_at(r_y.len() - num_steps_bits as usize);
-        let eq_ry_var= EqPolynomial::new(ry_var.to_vec()).evals();
 
-        // let eq_rx_ts = EqPolynomial::new(rx_ts.to_vec()).evals();
-        // let eq_ry_ts = EqPolynomial::new(ry_ts.to_vec()).evals();
+        let eq_rx_con = EqPolynomial::new(rx_con.to_vec()).evals();
+        let eq_ry_var= EqPolynomial::new(ry_var.to_vec()).evals();
 
         let eq_rx_ry_ts = EqPolynomial::new(rx_ts.to_vec()).evaluate(ry_ts);
         let eq_ry_0 = EqPolynomial::new(ry_ts.to_vec()).evaluate(vec![F::zero(); ry_ts.len()].as_slice());
+
+        /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2]. 
+        That is, it ignores the case where x is all 1s, outputting 0. 
+        Assumes x and y are provided big-endian. */
+        let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
+            let one = F::from(1 as u64);
+            let two = F::from(2 as u64);
+        
+            /* If y+1 = x, then the two bit vectors are of the following form. 
+                Let k be the longest suffix of 1s in x. 
+                In y, those k bits are 0. 
+                Then, the next bit in x is 0 and the next bit in y is 1.
+                The remaining higher bits are the same in x and y.
+            */
+            (0..l).into_par_iter().map(|k| {
+                let lower_bits_product = 
+                    (0..k)
+                    .map(|i| 
+                        x[l-1-i] * (F::one() - y[l-1-i])
+                    ).product::<F>();
+                let kth_bit_product = (F::one() - x[l-1-k]) * y[l-1-k];
+                let higher_bits_product = 
+                    ((k+1)..l)
+                    .map(|i| 
+                        x[l-1-i] * y[l-1-i] + (one - x[l-1-i]) * (one - y[l-1-i])
+                    ).product::<F>();
+                lower_bits_product * kth_bit_product * higher_bits_product
+            }).sum()
+        };
+
+        let y_eq_x_plus_1 = plus_1_mle(rx_ts, ry_ts, num_steps_bits as usize);
 
         // compute evaluations of R1CS matrices
         let multi_evaluate_uniform =
@@ -600,11 +585,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                             .into_par_iter()
                             .map(|i| {
                                 let (row, col, val) = M[i];
-                                val * eq_rx_con[row] * eq_ry_var[col] *  
-                                    if col != key.shape_single_step.num_vars {
-                                        eq_rx_ry_ts
+                                val * eq_rx_con[row] * 
+                                    if col == 1 { // pc_out (col 1) is redirected to pc_in (col 0)
+                                       eq_ry_var[0] * y_eq_x_plus_1 
+                                    } else if col == key.shape_single_step.num_vars {
+                                        eq_ry_var[col] * eq_ry_0
                                     } else {
-                                        eq_ry_0
+                                        eq_ry_var[col] * eq_rx_ry_ts
                                     }
                             })
                             .sum()
@@ -624,24 +611,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             ]
         );
 
-        // // Handle IO consistency  
-        // let (T_x, T_y) = rayon::join(
-        //         || EqPolynomial::new(r_x.to_vec()).evals(),
-        //         || EqPolynomial::new(inner_sumcheck_r.to_vec()).evals(),
-        //     );
-        // let start_row_io_consistency = (key.shape_single_step.num_cons-1) * key.num_steps; 
-        // evals[2] += (0..key.true_num_steps-1)
-        //     .into_par_iter()
-        //     .map(|i| T_x[start_row_io_consistency + i] * (T_y[i] - T_y[key.num_steps+i+1]))
-        //     .sum::<F>();
-
         let left_expected = evals[0]
             + r_inner_sumcheck_RLC * evals[1]
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * evals[2];
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
         if claim_inner_final != claim_inner_final_expected {
-            // DEDUPE(arasuarun): add
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 

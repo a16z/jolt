@@ -220,11 +220,10 @@ impl<F: PrimeField> R1CSShape<F> {
                 for &(_, col, val) in R {
                     if col == self.num_vars {
                         result.par_iter_mut().for_each(|x| *x += val);
-                    // } else if col == 0 { // PC_out
-                    //     let pc_start_idx = 1 * num_steps; // NOTE: Share the input PCs for output 
-                    //     result.par_iter_mut().enumerate().for_each(|(i, x)| {
-                    //         *x += mul_0_1_optimized(&val, &full_witness_vector[pc_start_idx+i+1]); // +1 as pc_out for step i is pc_in for step i+1 
-                    //     });
+                    } else if col == 1 { // pc_out variable index is 1 (pc_in is 0)
+                        result.par_iter_mut().enumerate().for_each(|(i, x)| {
+                            *x += mul_0_1_optimized(&val, &full_witness_vector[i+1]); // pc_out[i] = pc_in[i+1] = index i+1 in z
+                        });
                     } else {
                         let witness_offset = col * num_steps;
                         result.par_iter_mut().enumerate().for_each(|(i, x)| {
