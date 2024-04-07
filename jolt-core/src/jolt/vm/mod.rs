@@ -7,6 +7,7 @@ use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
 
+use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
 use crate::jolt::{
     instruction::JoltInstruction, subtable::JoltSubtableSet,
     vm::timestamp_range_check::TimestampValidityProof,
@@ -15,7 +16,7 @@ use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::StructuredCommitment;
-use crate::r1cs::snark::{R1CSInputs, R1CSProof, R1CSCommitment};
+use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
@@ -31,6 +32,7 @@ use self::instruction_lookups::{
 use self::read_write_memory::{
     MemoryCommitment, ReadWriteMemory, ReadWriteMemoryPreprocessing, ReadWriteMemoryProof,
 };
+use self::timestamp_range_check::RangeCheckCommitment;
 use self::{
     bytecode::{BytecodeCommitment, BytecodePolynomials, BytecodeProof, BytecodeRow},
     instruction_lookups::InstructionPolynomials,
@@ -79,6 +81,7 @@ where
 pub struct JoltCommitments<G: CurveGroup> {
     pub bytecode: BytecodeCommitment<G>,
     pub read_write_memory: MemoryCommitment<G>,
+    pub timestamp_range_check: RangeCheckCommitment<G>,
     pub instruction_lookups: InstructionCommitment<G>,
     pub r1cs: R1CSCommitment<G>,
 }
@@ -199,6 +202,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut transcript,
         );
 
+        let range_check_polys: RangeCheckPolynomials<F, G> =
+            RangeCheckPolynomials::new(read_timestamps);
+        let range_check_commitment =
+            RangeCheckPolynomials::commit(&range_check_polys, &preprocessing.generators);
+
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
@@ -226,6 +234,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let jolt_commitments = JoltCommitments {
             bytecode: bytecode_commitment,
             read_write_memory: memory_commitment,
+            timestamp_range_check: range_check_commitment,
             instruction_lookups: instruction_commitment,
             r1cs: r1cs_commitments,
         };
@@ -245,9 +254,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.read_write_memory,
             &jolt_polynomials.read_write_memory,
-            read_timestamps,
+            &range_check_polys,
             &program_io,
-            &preprocessing.generators,
             &mut transcript,
         );
 
@@ -292,6 +300,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &preprocessing.generators,
             proof.read_write_memory,
             &commitments.read_write_memory,
+            &commitments.timestamp_range_check,
             proof.program_io,
             &mut transcript,
         )?;
@@ -335,6 +344,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         generators: &PedersenGenerators<G>,
         proof: ReadWriteMemoryProof<F, G>,
         commitment: &MemoryCommitment<G>,
+        range_check_commitment: &RangeCheckCommitment<G>,
         program_io: JoltDevice,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -342,7 +352,14 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
         preprocessing.program_io = Some(program_io);
 
-        ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
+        ReadWriteMemoryProof::verify(
+            proof,
+            generators,
+            preprocessing,
+            commitment,
+            range_check_commitment,
+            transcript,
+        )
     }
 
     fn verify_r1cs(

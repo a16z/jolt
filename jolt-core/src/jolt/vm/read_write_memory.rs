@@ -33,7 +33,9 @@ use common::constants::{
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
 use common::to_ram_address;
 
-use super::timestamp_range_check::TimestampValidityProof;
+use super::timestamp_range_check::{
+    RangeCheckCommitment, RangeCheckPolynomials, TimestampValidityProof,
+};
 
 pub trait RandomInstruction {
     fn random(index: usize, rng: &mut StdRng) -> Self;
@@ -1524,9 +1526,8 @@ where
     pub fn prove(
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &ReadWriteMemory<F, G>,
-        read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
+        range_check_polys: &RangeCheckPolynomials<F, G>,
         program_io: &JoltDevice,
-        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
         let memory_checking_proof =
@@ -1535,9 +1536,8 @@ where
         let output_proof = OutputSumcheckProof::prove_outputs(polynomials, program_io, transcript);
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
-            read_timestamps,
+            range_check_polys,
             &polynomials.t_read,
-            &generators,
             transcript,
         );
 
@@ -1553,6 +1553,7 @@ where
         generators: &PedersenGenerators<G>,
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         commitment: &MemoryCommitment<G>,
+        range_check_commitment: &RangeCheckCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
@@ -1572,6 +1573,7 @@ where
         TimestampValidityProof::verify(
             &mut self.timestamp_validity_proof,
             generators,
+            range_check_commitment,
             commitment,
             transcript,
         )
