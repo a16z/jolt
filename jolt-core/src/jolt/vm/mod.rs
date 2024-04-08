@@ -109,19 +109,14 @@ where
         ];
         let num_bytecode_trace_polys = bytecode_trace_polys.len();
 
-        let memory_trace_polys: Vec<&DensePolynomial<F>> = [
-            &self.read_write_memory.a_rs1,
-            &self.read_write_memory.a_rs2,
-            &self.read_write_memory.a_rd,
-            &self.read_write_memory.a_ram,
-        ]
-        .into_iter()
-        .chain(self.read_write_memory.v_read.iter())
-        .chain([&self.read_write_memory.v_write_rd].into_iter())
-        .chain(self.read_write_memory.v_write_ram.iter())
-        .chain(self.read_write_memory.t_read.iter())
-        .chain(self.read_write_memory.t_write_ram.iter())
-        .collect();
+        let memory_trace_polys: Vec<&DensePolynomial<F>> = [&self.read_write_memory.a_ram]
+            .into_iter()
+            .chain(self.read_write_memory.v_read.iter())
+            .chain([&self.read_write_memory.v_write_rd].into_iter())
+            .chain(self.read_write_memory.v_write_ram.iter())
+            .chain(self.read_write_memory.t_read.iter())
+            .chain(self.read_write_memory.t_write_ram.iter())
+            .collect();
         let num_memory_trace_polys = memory_trace_polys.len();
 
         let range_check_polys: Vec<&DensePolynomial<F>> = self

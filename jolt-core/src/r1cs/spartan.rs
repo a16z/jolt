@@ -1,4 +1,3 @@
-use crate::jolt::subtable::eq;
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::compute_dotproduct_low_optimized;
