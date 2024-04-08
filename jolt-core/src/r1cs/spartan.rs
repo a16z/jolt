@@ -34,10 +34,10 @@ pub struct UniformSpartanKey<F: PrimeField> {
 
 impl<F: PrimeField> UniformSpartanKey<F> {
   /// Returns the digest of the r1cs shape
-  pub fn compute_digest(&self) -> F {
+  pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
     let mut compressed_bytes = Vec::new();
-    self.shape_single_step.serialize_compressed(&mut compressed_bytes).unwrap(); 
-    compressed_bytes.append(&mut self.num_steps.to_be_bytes().to_vec());
+    shape_single_step.serialize_compressed(&mut compressed_bytes).unwrap(); 
+    compressed_bytes.append(&mut num_steps.to_be_bytes().to_vec());
     let mut hasher = Sha3_256::new();
     hasher.input(compressed_bytes);
 
@@ -203,15 +203,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let pad_num_constraints = num_constraints_total.next_power_of_two();
         let pad_num_aux = num_aux_total.next_power_of_two();
 
-        let mut key = UniformSpartanKey {
+        let vk_digest = UniformSpartanKey::compute_digest(&shape_single_step, padded_num_steps); 
+
+        let key = UniformSpartanKey {
             shape_single_step,            
             num_cons_total: pad_num_constraints,
             num_vars_total: pad_num_aux,
             num_steps: padded_num_steps,
-            vk_digest: F::one(),
+            vk_digest
         };
-
-        key.compute_digest(); 
 
         Ok(key)
     }
