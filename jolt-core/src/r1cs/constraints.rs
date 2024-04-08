@@ -34,8 +34,8 @@ const STATE_LENGTH: usize = 1;
 #[derive(Debug, PartialEq, Eq, Hash)]
 enum InputType {
     Constant       = 0,
-    OutputState    = 1,
-    InputState     = 2,
+    InputState     = 1,
+    OutputState    = 2,
     ProgARW        = 3,
     ProgVRW        = 4,
     MemregARW      = 5,
@@ -51,8 +51,8 @@ enum InputType {
 
 const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::Constant,        1), 
-    (InputType::OutputState,     STATE_LENGTH),
     (InputType::InputState,      STATE_LENGTH),
+    (InputType::OutputState,     STATE_LENGTH),
     (InputType::ProgARW,         1),
     (InputType::ProgVRW,         5),
     (InputType::MemregARW,       4),

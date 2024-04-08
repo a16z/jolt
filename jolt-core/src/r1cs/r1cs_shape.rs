@@ -192,7 +192,7 @@ impl<F: PrimeField> R1CSShape<F> {
     pub fn multiply_vec_uniform<P: IndexablePoly<F>>(
         &self,
         full_witness_vector: &P,
-        num_steps: usize,
+        num_steps: usize, // padded length
         A: &mut Vec<F>,
         B: &mut Vec<F>,
         C: &mut Vec<F>
@@ -219,6 +219,10 @@ impl<F: PrimeField> R1CSShape<F> {
                 for &(_, col, val) in R {
                     if col == self.num_vars {
                         result.par_iter_mut().for_each(|x| *x += val);
+                    } else if col == 1 { // pc_out variable index is 1 (pc_in is 0)
+                        result.par_iter_mut().enumerate().for_each(|(i, x)| {
+                            *x += mul_0_1_optimized(&val, &full_witness_vector[i+1]); // pc_out[i] = pc_in[i+1] = index i+1 in z
+                        });
                     } else {
                         let witness_offset = col * num_steps;
                         result.par_iter_mut().enumerate().for_each(|(i, x)| {
@@ -258,6 +262,7 @@ impl<F: PrimeField> R1CSShape<F> {
                 )
             },
         );
+
         Ok(())
     }
 

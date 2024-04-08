@@ -25,7 +25,7 @@ fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -
     } else {
         F::zero()
     };
-    (aux, pc_next, pc_cur)
+    (aux, pc_cur, F::zero())
 }).collect();
   drop(_enter);
 
@@ -378,7 +378,7 @@ impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
         A: constraints_F.0,
         B: constraints_F.1,
         C: constraints_F.2,
-        num_cons: jolt_shape.num_constraints,
+        num_cons: jolt_shape.num_constraints+1, // +1 for the IO consistency constraint 
         num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
         num_io: jolt_shape.num_inputs,
     };
