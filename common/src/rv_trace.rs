@@ -616,6 +616,7 @@ impl JoltDevice {
 
     pub fn store(&mut self, address: u64, value: u8) {
         if address == PANIC_ADDRESS {
+            println!("GUEST PANIC");
             self.panic = true;
             return;
         }

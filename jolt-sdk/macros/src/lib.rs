@@ -56,7 +56,7 @@ impl MacroBuilder {
 
         quote! {
             #build_fn
-            #execute_fn
+            // #execute_fn
             #analyze_fn
             #preprocess_fn
             #prove_fn
@@ -275,13 +275,13 @@ impl MacroBuilder {
         let max_output_len = (OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS) as usize;
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {},
-            ReturnType::Type(_, _) => quote! {
+            ReturnType::Type(_, ty) => quote! {
                 let output_ptr = #OUTPUT_START_ADDRESS as *mut u8;
                 let output_slice = unsafe {
                     core::slice::from_raw_parts_mut(output_ptr, #max_output_len)
                 };
 
-                jolt::postcard::to_slice(&to_return, output_slice).unwrap();
+                jolt::postcard::to_slice::<#ty>(&to_return, output_slice).unwrap();
             },
         };
 
@@ -302,8 +302,25 @@ impl MacroBuilder {
             ");
 
             #[cfg(feature = "guest")]
+             extern "C" {
+                static _HEAP_PTR: u8;
+            }
+
+            // #[cfg(feature = "guest")]
+            // static mut ARENA: [u8; 10000] = [0; 10000];
+
+            #[cfg(feature = "guest")]
+            #[global_allocator]
+            static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
+
+            #[cfg(feature = "guest")]
             #[no_mangle]
             pub extern "C" fn main() {
+                unsafe {
+                    let heap_start = _HEAP_PTR as *const u8 as usize;
+                    ALLOCATOR.init(heap_start);
+                }
+
                 let mut offset = 0;
                 #get_input_slice
                 #(#args_fetch;)*

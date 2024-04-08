@@ -2,6 +2,7 @@
 
 extern crate jolt_sdk_macros;
 
+use core::{alloc::{GlobalAlloc, Layout}, cell::UnsafeCell, ptr, slice::SliceIndex};
 #[cfg(feature = "std")]
 use std::fs::File;
 #[cfg(feature = "std")]
@@ -66,3 +67,49 @@ impl Proof {
     }
 }
 
+pub struct BumpAllocator {
+    free_memory: UnsafeCell<usize>,
+}
+ 
+unsafe impl Sync for BumpAllocator {}
+
+impl BumpAllocator {
+    pub const fn new() -> Self {
+        Self {
+            free_memory: UnsafeCell::new(0),
+        }
+    }
+
+    pub fn init(&self, heap_start: usize) {
+        unsafe {
+            *self.free_memory.get() = heap_start;
+        }
+    }
+
+    pub fn free_memory(&self) -> usize {
+        self.free_memory.get() as usize
+    }
+}
+
+unsafe impl GlobalAlloc for BumpAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let alloc_start = align_up(*self.free_memory.get(), layout.align());
+        let alloc_end = alloc_start + layout.size();
+        *self.free_memory.get() = alloc_end;
+
+        alloc_start as *mut u8
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        
+    }
+}
+
+fn align_up(addr: usize, align: usize) -> usize {
+    let remainder = addr % align;
+    if remainder == 0 {
+        addr // addr already aligned
+    } else {
+        addr - remainder + align
+    }
+}
