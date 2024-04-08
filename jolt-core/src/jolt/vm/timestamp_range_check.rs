@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
+use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -28,7 +29,6 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
-use crate::utils::transcript::AppendToTranscript;
 
 use super::read_write_memory::MemoryCommitment;
 
@@ -184,7 +184,6 @@ impl<G: CurveGroup> AppendToTranscript<G> for RangeCheckCommitment<G> {
         transcript.append_message(label, b"RangeCheckCommitment_end");
     }
 }
-
 
 impl<F, G> StructuredCommitment<G> for RangeCheckPolynomials<F, G>
 where
@@ -807,70 +806,4 @@ where
     fn protocol_name() -> &'static [u8] {
         b"Timestamp validity proof memory checking"
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::jolt::vm::read_write_memory::{
-        random_memory_trace, RandomInstruction, ReadWriteMemory, ReadWriteMemoryPreprocessing,
-    };
-
-    use super::*;
-    use ark_bn254::{Fr, G1Projective};
-    use common::{
-        constants::RAM_START_ADDRESS,
-        rv_trace::{ELFInstruction, JoltDevice},
-    };
-    use rand::RngCore;
-    use rand_core::SeedableRng;
-
-    // #[test]
-    // fn timestamp_range_check() {
-    //     const MEMORY_SIZE: usize = 1 << 16;
-    //     const NUM_OPS: usize = 1 << 8;
-    //     const BYTECODE_SIZE: usize = 1 << 8;
-    //     const BYTECODE_OFFSET: u64 = 200;
-
-    //     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-    //     let memory_init = (0..BYTECODE_SIZE)
-    //         .map(|i| {
-    //             (
-    //                 RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
-    //                 (rng.next_u32() & 0xff) as u8,
-    //             )
-    //         })
-    //         .collect();
-    //     let (memory_trace, load_store_flags) =
-    //         random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
-
-    //     let mut transcript: Transcript = Transcript::new(b"test_transcript");
-
-    //     let preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
-    //     let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, G1Projective>, _) =
-    //         ReadWriteMemory::new(
-    //             &JoltDevice::new(),
-    //             &load_store_flags,
-    //             &preprocessing,
-    //             memory_trace,
-    //             &mut transcript,
-    //         );
-    //     let generators = PedersenGenerators::new(1 << 10, b"Test generators");
-    //     let commitments = rw_memory.commit(&generators);
-
-    //     let mut timestamp_validity_proof = TimestampValidityProof::prove(
-    //         read_timestamps,
-    //         &rw_memory.t_read,
-    //         &generators,
-    //         &mut transcript,
-    //     );
-
-    //     let mut transcript: Transcript = Transcript::new(b"test_transcript");
-    //     assert!(TimestampValidityProof::verify(
-    //         &mut timestamp_validity_proof,
-    //         &generators,
-    //         &commitments,
-    //         &mut transcript,
-    //     )
-    //     .is_ok());
-    // }
 }

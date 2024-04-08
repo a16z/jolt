@@ -8,6 +8,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
+use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -24,7 +25,6 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
 };
-use crate::utils::transcript::AppendToTranscript;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MAX_INPUT_SIZE,
@@ -812,11 +812,13 @@ impl<G: CurveGroup> AppendToTranscript<G> for MemoryCommitment<G> {
         transcript: &mut T,
     ) {
         transcript.append_message(label, b"MemoryCommitment_begin");
-        for commitment in &self.trace_commitments{
+        for commitment in &self.trace_commitments {
             commitment.append_to_transcript(b"trace_commit", transcript);
         }
-        self.v_final_commitment.append_to_transcript(b"v_final_commit", transcript);
-        self.t_final_commitment.append_to_transcript(b"t_final_commit", transcript);
+        self.v_final_commitment
+            .append_to_transcript(b"v_final_commit", transcript);
+        self.t_final_commitment
+            .append_to_transcript(b"t_final_commit", transcript);
         transcript.append_message(label, b"MemoryCommitment_end");
     }
 }
@@ -1558,61 +1560,4 @@ where
             transcript,
         )
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_bn254::{Fr, G1Projective};
-    use rand_core::SeedableRng;
-
-    // #[test]
-    // fn e2e_memchecking() {
-    //     const MEMORY_SIZE: usize = 1 << 16;
-    //     const NUM_OPS: usize = 1 << 8;
-    //     const BYTECODE_SIZE: usize = 1 << 8;
-    //     const BYTECODE_OFFSET: u64 = 200;
-
-    //     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-    //     let memory_init = (0..BYTECODE_SIZE)
-    //         .map(|i| {
-    //             (
-    //                 RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
-    //                 (rng.next_u32() & 0xff) as u8,
-    //             )
-    //         })
-    //         .collect();
-    //     let (memory_trace, load_store_flags) =
-    //         random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
-
-    //     let mut transcript = Transcript::new(b"test_transcript");
-
-    //     let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
-    //     let (rw_memory, _): (ReadWriteMemory<Fr, G1Projective>, _) = ReadWriteMemory::new(
-    //         &JoltDevice::new(),
-    //         &load_store_flags,
-    //         &preprocessing,
-    //         memory_trace,
-    //         &mut transcript,
-    //     );
-    //     let generators = PedersenGenerators::new(1 << 10, b"test");
-    //     let commitments = rw_memory.commit(&generators);
-
-    //     let proof = ReadWriteMemoryProof::prove_memory_checking(
-    //         &preprocessing,
-    //         &rw_memory,
-    //         &mut transcript,
-    //     );
-
-    //     let mut transcript = Transcript::new(b"test_transcript");
-    //     preprocessing.program_io = Some(JoltDevice::new());
-    //     ReadWriteMemoryProof::verify_memory_checking(
-    //         &preprocessing,
-    //         &generators,
-    //         proof,
-    //         &commitments,
-    //         &mut transcript,
-    //     )
-    //     .expect("proof should verify");
-    // }
 }
