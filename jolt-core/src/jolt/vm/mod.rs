@@ -22,6 +22,7 @@ use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
+use crate::utils::transcript::AppendToTranscript;
 use common::{
     constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
     rv_trace::{ELFInstruction, MemoryOp},
@@ -87,6 +88,16 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub timestamp_range_check: RangeCheckCommitment<G>,
     pub instruction_lookups: InstructionCommitment<G>,
     pub r1cs: Option<R1CSCommitment<G>>,
+}
+
+impl<G: CurveGroup> JoltCommitments<G> {
+    fn append_to_transcript(&self, transcript: &mut Transcript) {
+        self.bytecode.append_to_transcript(b"bytecode", transcript);
+        self.read_write_memory.append_to_transcript(b"read_write_memory", transcript);
+        self.timestamp_range_check.append_to_transcript(b"timestamp_range_check", transcript);
+        self.instruction_lookups.append_to_transcript(b"instruction_lookups", transcript);
+        self.r1cs.as_ref().unwrap().append_to_transcript(b"r1cs", transcript);
+    }
 }
 
 impl<F, G> StructuredCommitment<G> for JoltPolynomials<F, G>
@@ -309,7 +320,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             load_store_flags,
             &preprocessing.read_write_memory,
             padded_memory_trace,
-            &mut transcript,
         );
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
@@ -332,6 +342,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         );
 
         jolt_commitments.r1cs = Some(r1cs_commitments);
+
+        jolt_commitments.append_to_transcript(&mut transcript);
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.bytecode,
@@ -374,6 +386,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = Transcript::new(b"Jolt transcript");
+        commitments.append_to_transcript(&mut transcript);
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,

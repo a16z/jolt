@@ -12,6 +12,7 @@ use crate::poly::hyrax::{
     HyraxOpeningProof,
 };
 use crate::poly::pedersen::PedersenGenerators;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
@@ -328,6 +329,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 pub struct BytecodeCommitment<G: CurveGroup> {
     pub trace_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     pub t_final_commitment: HyraxCommitment<1, G>,
+}
+
+impl<G: CurveGroup> AppendToTranscript<G> for BytecodeCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
+        <T as ProofTranscript<G>>::append_protocol_name(transcript, label);
+
+        for commitment in &self.trace_commitments{
+            commitment.append_to_transcript(b"trace", transcript);
+        }
+
+        self.t_final_commitment.append_to_transcript(b"final", transcript);
+    }
 }
 
 impl<F, G> StructuredCommitment<G> for BytecodePolynomials<F, G>
