@@ -2,11 +2,10 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::NUM_R1CS_POLYS;
-use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
+use strum::EnumCount;
 
 use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
 use crate::jolt::{
@@ -24,8 +23,8 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::AppendToTranscript;
 use common::{
-    constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION},
-    rv_trace::{ELFInstruction, MemoryOp},
+    constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
+    rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
 
 use self::bytecode::BytecodePreprocessing;
@@ -63,6 +62,7 @@ where
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
+    pub trace_length: usize,
     pub program_io: JoltDevice,
     pub bytecode: BytecodeProof<F, G>,
     pub read_write_memory: ReadWriteMemoryProof<F, G>,
@@ -291,6 +291,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         println!("Trace length: {}", trace_length);
 
         let mut transcript = Transcript::new(b"Jolt transcript");
+        Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
 
         let instruction_polynomials = InstructionLookupsProof::<
             C,
@@ -376,6 +377,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             R1CSProof::prove(spartan_key, witness_segments, &mut transcript).expect("proof failed");
 
         let jolt_proof = JoltProof {
+            trace_length,
             program_io,
             bytecode: bytecode_proof,
             read_write_memory: memory_proof,
@@ -392,6 +394,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         commitments: JoltCommitments<G>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = Transcript::new(b"Jolt transcript");
+        Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
+
         commitments.append_to_transcript(&mut transcript);
         Self::verify_bytecode(
             &preprocessing.bytecode,
@@ -572,6 +576,23 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .expect("R1CSProof setup failed");
 
         (spartan_key, witness_segments, r1cs_commitments)
+    }
+
+    fn fiat_shamir_preamble(
+        transcript: &mut Transcript,
+        program_io: &JoltDevice,
+        trace_length: usize,
+    ) {
+        transcript.append_u64(b"Unpadded trace length", trace_length as u64);
+        transcript.append_u64(b"C", C as u64);
+        transcript.append_u64(b"M", M as u64);
+        transcript.append_u64(b"# instructions", Self::InstructionSet::COUNT as u64);
+        transcript.append_u64(b"# subtables", Self::Subtables::COUNT as u64);
+        transcript.append_u64(b"Max input size", MAX_INPUT_SIZE);
+        transcript.append_u64(b"Max output size", MAX_OUTPUT_SIZE);
+        transcript.append_message(b"Program inputs", &program_io.inputs);
+        transcript.append_message(b"Program outputs", &program_io.outputs);
+        transcript.append_u64(b"Program panic", program_io.panic as u64);
     }
 }
 
