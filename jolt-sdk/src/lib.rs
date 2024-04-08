@@ -94,12 +94,6 @@ impl BumpAllocator {
     pub fn free_memory(&self) -> usize {
         heap_start() + (self.offset.get() as usize)
     }
-
-    pub fn fake_alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe {
-            self.alloc(layout)
-        }
-    }
 }
 
 unsafe impl GlobalAlloc for BumpAllocator {
