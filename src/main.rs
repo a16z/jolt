@@ -122,10 +122,8 @@ fn display_greeting() {
 fn display_sysinfo() {
     let mut sys = System::new_all();
 
-    // First we update all information of our `System` struct.
     sys.refresh_all();
 
-    // Display system information:
     println!("OS:             {}", System::name().unwrap_or("UNKNOWN".to_string()));
     println!("version:        {}", System::os_version().unwrap_or("UNKNOWN".to_string()));
     println!("Host:           {}", System::host_name().unwrap_or("UNKNOWN".to_string()));
