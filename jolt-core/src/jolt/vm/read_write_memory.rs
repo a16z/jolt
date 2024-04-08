@@ -819,7 +819,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCommitment<G: CurveGroup> {
-    pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+    pub trace_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     pub v_final_commitment: HyraxCommitment<1, G>,
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
@@ -833,7 +833,7 @@ where
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_polys: Vec<&DensePolynomial<F>> =
+        let trace_polys: Vec<&DensePolynomial<F>> =
             [&self.a_rs1, &self.a_rs2, &self.a_rd, &self.a_ram]
                 .into_iter()
                 .chain(self.v_read.iter())
@@ -842,8 +842,8 @@ where
                 .chain(self.t_read.iter())
                 .chain(self.t_write_ram.iter())
                 .collect();
-        let read_write_commitments =
-            HyraxCommitment::batch_commit_polys(read_write_polys, &generators);
+        let trace_commitments =
+            HyraxCommitment::batch_commit_polys(trace_polys, &generators);
 
         let (v_final_commitment, t_final_commitment) = rayon::join(
             || HyraxCommitment::commit(&self.v_final, &generators),
@@ -851,7 +851,7 @@ where
         );
 
         Self::Commitment {
-            read_write_commitments,
+            trace_commitments,
             v_final_commitment,
             t_final_commitment,
         }
@@ -980,7 +980,7 @@ where
             generators,
             opening_point,
             &openings,
-            &commitment.read_write_commitments.iter().collect::<Vec<_>>(),
+            &commitment.trace_commitments.iter().collect::<Vec<_>>(),
             transcript,
         )
     }
