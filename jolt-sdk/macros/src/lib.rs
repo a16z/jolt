@@ -56,7 +56,7 @@ impl MacroBuilder {
 
         quote! {
             #build_fn
-            // #execute_fn
+            #execute_fn
             #analyze_fn
             #preprocess_fn
             #prove_fn
@@ -302,25 +302,12 @@ impl MacroBuilder {
             ");
 
             #[cfg(feature = "guest")]
-             extern "C" {
-                static _HEAP_PTR: u8;
-            }
-
-            // #[cfg(feature = "guest")]
-            // static mut ARENA: [u8; 10000] = [0; 10000];
-
-            #[cfg(feature = "guest")]
             #[global_allocator]
             static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
 
             #[cfg(feature = "guest")]
             #[no_mangle]
             pub extern "C" fn main() {
-                unsafe {
-                    let heap_start = _HEAP_PTR as *const u8 as usize;
-                    ALLOCATOR.init(heap_start);
-                }
-
                 let mut offset = 0;
                 #get_input_slice
                 #(#args_fetch;)*

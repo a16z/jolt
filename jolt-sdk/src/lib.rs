@@ -68,34 +68,44 @@ impl Proof {
 }
 
 pub struct BumpAllocator {
-    free_memory: UnsafeCell<usize>,
+    offset: UnsafeCell<usize>,
 }
  
 unsafe impl Sync for BumpAllocator {}
 
+extern "C" {
+    static _HEAP_PTR: u8;
+}
+
+fn heap_start() -> usize {
+    unsafe {
+        _HEAP_PTR as *const u8 as usize
+    }
+}
+
 impl BumpAllocator {
     pub const fn new() -> Self {
         Self {
-            free_memory: UnsafeCell::new(0),
-        }
-    }
-
-    pub fn init(&self, heap_start: usize) {
-        unsafe {
-            *self.free_memory.get() = heap_start;
+            offset: UnsafeCell::new(0),
         }
     }
 
     pub fn free_memory(&self) -> usize {
-        self.free_memory.get() as usize
+        heap_start() + (self.offset.get() as usize)
+    }
+
+    pub fn fake_alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe {
+            self.alloc(layout)
+        }
     }
 }
 
 unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let alloc_start = align_up(*self.free_memory.get(), layout.align());
+        let alloc_start = align_up(self.free_memory(), layout.align());
         let alloc_end = alloc_start + layout.size();
-        *self.free_memory.get() = alloc_end;
+        *self.offset.get() = alloc_end - self.free_memory();
 
         alloc_start as *mut u8
     }

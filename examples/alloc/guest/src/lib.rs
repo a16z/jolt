@@ -2,14 +2,16 @@
 #![no_main]
 
 extern crate alloc;
+
 use alloc::vec::Vec;
 
 #[jolt::provable]
 fn alloc(n: u32) -> u32 {
-    // let mut v = Vec::<u32>::with_capacity(5);
-    // v.push(5);
+    let mut v = Vec::<u32>::new();
+    for i in 0..100 {
+        v.push(i);
+    }
 
-    //ALLOCATOR.free_memory() as u32
-    5
+    v[n as usize]
 }
 
