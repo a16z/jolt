@@ -27,7 +27,7 @@ pub struct UniformSpartanKey<F: PrimeField> {
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
     num_steps: usize,                // Padded number of steps
-    vk_digest: F,                    // digest of the verifier's key
+    pub(crate) vk_digest: F,         // digest of the verifier's key
 }
 
 
@@ -222,9 +222,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         witness_segments: Vec<Vec<F>>,
         transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
-        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
-        <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-
         let poly_ABC_len = 2 * key.num_vars_total;
 
         let segmented_padded_witness =
@@ -466,9 +463,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         assert_eq!(io.len(), 0); // Currently not using io
 
         let N_SEGMENTS = witness_segment_commitments.len();
-
-        // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
-        <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
 
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),

@@ -21,7 +21,7 @@ use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
-use crate::utils::transcript::AppendToTranscript;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use common::{
     constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
@@ -348,6 +348,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &preprocessing.generators,
         );
 
+        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
+        <Transcript as ProofTranscript<G>>::append_scalar(
+            &mut transcript,
+            b"spartan key",
+            &spartan_key.vk_digest,
+        );
+
         jolt_commitments.r1cs = Some(r1cs_commitments);
 
         jolt_commitments.append_to_transcript(&mut transcript);
@@ -396,7 +403,15 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let mut transcript = Transcript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
 
+        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
+        <Transcript as ProofTranscript<G>>::append_scalar(
+            &mut transcript,
+            b"spartan key",
+            &proof.r1cs.key.vk_digest,
+        );
+
         commitments.append_to_transcript(&mut transcript);
+        
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,
