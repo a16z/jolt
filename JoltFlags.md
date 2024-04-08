@@ -3,6 +3,14 @@ $$
 \sum_{x \in \{0,1\}^{log(m)}}{\widetilde{eq}(r,x) \cdot g(E_1(x), ... E_\alpha(x))}
 $$
 
+This sum expresses how the results of sub-table lookups are collated into the result of the big-table lookup. More precisely, if the $\alpha$ subtable lookups return values $E_1(x), ... E_\alpha(x)$, the big-table lookup should return $g(E_1(x), ... E_\alpha(x))$. 
+
+For example, when computing the bitwise AND of two $32$-bit inputs $a$ and $b$, we could break $a$ and $b$
+into 8-bit chunks, use a sub-table lookup to evaluate the bitwise-AND of each chunk, and use $g$ to concatenate the results. 
+In this case, there is just one sub-table, namely the size-$2^{16}$ evaluation table of bitwise-AND on two $8$-bit inputs. We do four lookups into this subtable, one for each $8$-bit chunk of $x$ and $y$,
+and $g(y_1, \dots, y_4) = y_4 + 2^{8} y_3  + 2^{16} y_2 + 2^{24} y_1$ implements concatenation:
+if $g$ is fed the results of the four lookups into the sub-table, it outputs the field element representing their concatenation. 
+
 ## Jolt primary sumcheck:
 - $F$: number of instructions ($f$ for flags)
 $$\sum_{x \in \{0,1\}^{log(m)}} \sum_{f \in \{0,1\}^{log(F)}} {\widetilde{eq}(r,x) \cdot \widetilde{flags}(x,f) \cdot g_f(\text{terms}_f)}$$
