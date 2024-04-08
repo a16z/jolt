@@ -74,6 +74,7 @@ where
 {
     pub bytecode: BytecodePolynomials<F, G>,
     pub read_write_memory: ReadWriteMemory<F, G>,
+    pub timestamp_range_check: RangeCheckPolynomials<F, G>,
     pub instruction_lookups: InstructionPolynomials<F, G>,
 }
 
@@ -83,7 +84,7 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub read_write_memory: MemoryCommitment<G>,
     pub timestamp_range_check: RangeCheckCommitment<G>,
     pub instruction_lookups: InstructionCommitment<G>,
-    pub r1cs: R1CSCommitment<G>,
+    pub r1cs: Option<R1CSCommitment<G>>,
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
@@ -201,15 +202,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             padded_memory_trace,
             &mut transcript,
         );
-
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
-        let range_check_commitment =
-            RangeCheckPolynomials::commit(&range_check_polys, &preprocessing.generators);
 
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
+            timestamp_range_check: range_check_polys,
             instruction_lookups: instruction_polynomials,
         };
 
@@ -222,8 +221,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &jolt_polynomials.read_write_memory,
             &preprocessing.generators,
         );
+        let range_check_commitment =
+            RangeCheckPolynomials::commit(&jolt_polynomials.timestamp_range_check, &preprocessing.generators);
 
-        let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_bullshit(
+        let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_setup(
             padded_trace_length,
             &instructions,
             &jolt_polynomials,
@@ -236,7 +237,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             read_write_memory: memory_commitment,
             timestamp_range_check: range_check_commitment,
             instruction_lookups: instruction_commitment,
-            r1cs: r1cs_commitments,
+            r1cs: Some(r1cs_commitments),
         };
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
@@ -254,7 +255,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.read_write_memory,
             &jolt_polynomials.read_write_memory,
-            &range_check_polys,
+            &jolt_polynomials.timestamp_range_check,
             &program_io,
             &mut transcript,
         );
@@ -373,7 +374,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
-    fn r1cs_bullshit(
+    fn r1cs_setup(
         padded_trace_length: usize,
         instructions: &Vec<Option<Self::InstructionSet>>,
         polynomials: &JoltPolynomials<F, G>,

@@ -325,7 +325,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
       let instruction_flag_commitments = &jolt_commitments.instruction_lookups.E_flag_commitment[jolt_commitments.instruction_lookups.E_flag_commitment.len()-RV32I::COUNT..];
       
       let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
-      combined_commitments.extend(r1cs_commitments.io.iter());
+      combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
 
       combined_commitments.push(&bytecode_read_write_commitments[0]); // a
       combined_commitments.push(&bytecode_read_write_commitments[2]); // op_flags_packed
@@ -336,18 +336,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
       combined_commitments.extend(ram_a_v_commitments.iter());
 
-      combined_commitments.extend(r1cs_commitments.chunks_x.iter());
-      combined_commitments.extend(r1cs_commitments.chunks_y.iter());
+      combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks_x.iter());
+      combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks_y.iter());
 
       combined_commitments.extend(instruction_lookup_indices_commitments.iter());
 
       combined_commitments.push(&jolt_commitments.instruction_lookups.lookup_outputs_commitment);
 
-      combined_commitments.extend(r1cs_commitments.circuit_flags.iter());
+      combined_commitments.extend(r1cs_commitments.as_ref().unwrap().circuit_flags.iter());
 
       combined_commitments.extend(instruction_flag_commitments.iter());
 
-      combined_commitments.extend(r1cs_commitments.aux.iter());
+      combined_commitments.extend(r1cs_commitments.as_ref().unwrap().aux.iter());
 
       combined_commitments
   }
