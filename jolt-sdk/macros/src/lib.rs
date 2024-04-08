@@ -275,13 +275,13 @@ impl MacroBuilder {
         let max_output_len = (OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS) as usize;
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {},
-            ReturnType::Type(_, _) => quote! {
+            ReturnType::Type(_, ty) => quote! {
                 let output_ptr = #OUTPUT_START_ADDRESS as *mut u8;
                 let output_slice = unsafe {
                     core::slice::from_raw_parts_mut(output_ptr, #max_output_len)
                 };
 
-                jolt::postcard::to_slice(&to_return, output_slice).unwrap();
+                jolt::postcard::to_slice::<#ty>(&to_return, output_slice).unwrap();
             },
         };
 
