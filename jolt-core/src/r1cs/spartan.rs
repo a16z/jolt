@@ -1,4 +1,3 @@
-use crate::jolt::subtable::eq;
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::compute_dotproduct_low_optimized;
@@ -11,6 +10,8 @@ use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use merlin::Transcript;
 use rayon::prelude::*;
+use sha3::Digest;
+use sha3::Sha3_256;
 use thiserror::Error;
 
 use super::r1cs_shape::R1CSShape;
@@ -26,7 +27,39 @@ pub struct UniformSpartanKey<F: PrimeField> {
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
     num_steps: usize,                // Padded number of steps
-    vk_digest: F,                    // digest of the verifier's key
+    pub(crate) vk_digest: F,         // digest of the verifier's key
+}
+
+
+impl<F: PrimeField> UniformSpartanKey<F> {
+  /// Returns the digest of the r1cs shape
+  pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
+    let mut compressed_bytes = Vec::new();
+    shape_single_step.serialize_compressed(&mut compressed_bytes).unwrap(); 
+    compressed_bytes.append(&mut num_steps.to_be_bytes().to_vec());
+    let mut hasher = Sha3_256::new();
+    hasher.input(compressed_bytes);
+
+    let map_to_field = |digest: &[u8]| -> F {
+        let bv = (0..250).map(|i| {
+          let (byte_pos, bit_pos) = (i / 8, i % 8);
+          let bit = (digest[byte_pos] >> bit_pos) & 1;
+          bit == 1
+        });
+    
+        // turn the bit vector into a scalar
+        let mut digest = F::ZERO;
+        let mut coeff = F::ONE;
+        for bit in bv {
+          if bit {
+            digest += coeff;
+          }
+          coeff += coeff;
+        }
+        digest
+      }; 
+    map_to_field(&hasher.result())
+  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -169,16 +202,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let pad_num_constraints = num_constraints_total.next_power_of_two();
         let pad_num_aux = num_aux_total.next_power_of_two();
 
-        // TODO(sragss / arasuarun): Verifier key digest
-        let vk_digest = F::one();
+        let vk_digest = UniformSpartanKey::compute_digest(&shape_single_step, padded_num_steps); 
 
         let key = UniformSpartanKey {
-            shape_single_step,
+            shape_single_step,            
             num_cons_total: pad_num_constraints,
             num_vars_total: pad_num_aux,
             num_steps: padded_num_steps,
-            vk_digest,
+            vk_digest
         };
+
         Ok(key)
     }
 
@@ -189,9 +222,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         witness_segments: Vec<Vec<F>>,
         transcript: &mut Transcript,
     ) -> Result<Self, SpartanError> {
-        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
-        <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-
         let poly_ABC_len = 2 * key.num_vars_total;
 
         let segmented_padded_witness =
@@ -377,11 +407,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // The number of prefix bits needed to identify a segment within the witness vector
         // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
-        // The +1 is the first element used to separate the inputs and the witness.
-        // TODO(sragss): Are these `.ilog2()` calls in place of log_2()?
+        // The +1 is for the first element in r_y used as indicator between input or witness. 
         let n_prefix = (key.num_vars_total.ilog2() as usize
             - key.num_steps.ilog2() as usize)
-            + 1; // TODO(sragss): This is a hack!
+            + 1; 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
@@ -435,9 +464,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let N_SEGMENTS = witness_segment_commitments.len();
 
-        // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
-        <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
-
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),
             (usize::try_from(key.num_vars_total.ilog2()).unwrap() + 1),
@@ -484,23 +510,15 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .verify::<G, Transcript>(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
-        // verify claim_inner_final
-        // this should be log (num segments)
+        // n_prefix = n_segments + 1
         let n_prefix = (key.num_vars_total.ilog2() as usize
             - key.num_steps.ilog2() as usize)
-            + 1; // TODO(sragss): HACK!
+            + 1; 
 
         let eval_Z = {
             let eval_X = {
                 // constant term
                 let mut poly_X = vec![(0, F::one())];
-                //remaining inputs
-                // TODO(sragss / arasuarun): I believe this is supposed to be io -- which is empty??
-                // poly_X.extend(
-                //     (0..self.witness_segment_commitments.len())
-                //         .map(|i| (i + 1, self.witness_segment_commitments[i]))
-                //         .collect::<Vec<(usize, F)>>(),
-                // );
                 SparsePolynomial::new(usize::try_from(key.num_vars_total.ilog2()).unwrap(), poly_X)
                     .evaluate(&inner_sumcheck_r[1..])
             };

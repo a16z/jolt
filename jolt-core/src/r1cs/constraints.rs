@@ -55,7 +55,7 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::OutputState,     STATE_LENGTH),
     (InputType::ProgARW,         1),
     (InputType::ProgVRW,         5),
-    (InputType::MemregARW,       4),
+    (InputType::MemregARW,       1),
     (InputType::MemregVReads,    7),
     (InputType::MemregVWrites,   5),
     (InputType::ChunksX,         C),
@@ -363,13 +363,6 @@ impl R1CSBuilder {
             op_flags_packed
         );
 
-        // Constraint: rs1 === memreg_a_rw[0];
-        R1CSBuilder::eq_simple(instance, rs1, GET_INDEX(InputType::MemregARW, 0)); 
-        // Constraint: rs2 === memreg_a_rw[1];
-        R1CSBuilder::eq_simple(instance, rs2, GET_INDEX(InputType::MemregARW, 1));
-        // Constraint: rd === memreg_a_rw[2];
-        R1CSBuilder::eq_simple(instance, rd, GET_INDEX(InputType::MemregARW, 2));
-
         let rs1_val = GET_INDEX(InputType::MemregVReads, 0);
         let rs2_val = GET_INDEX(InputType::MemregVReads, 1);
 
@@ -398,7 +391,7 @@ impl R1CSBuilder {
         let immediate_signed = R1CSBuilder::if_else(instance, smallvec![(sign_imm_flag, 1)], smallvec![(immediate, 1)], smallvec![(immediate, 1), (0, -ALL_ONES - 1)]);
         R1CSBuilder::constr_abc(instance, 
             smallvec![(is_load_instr, 1), (is_store_instr, 1)], 
-            smallvec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX(InputType::MemregARW, 3), -1), (0, -1 * MEMORY_ADDRESS_OFFSET as i64)], 
+            smallvec![(rs1_val, 1), (immediate_signed, 1), (GET_INDEX(InputType::MemregARW, 0), -1), (0, -1 * MEMORY_ADDRESS_OFFSET as i64)], 
             smallvec![]
         ); 
 
