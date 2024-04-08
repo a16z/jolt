@@ -190,6 +190,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     ) -> Result<Self, SpartanError> {
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
+        <Transcript as ProofTranscript<G>>::append_u64(transcript, b"vk", key.num_steps as u64);
 
         let poly_ABC_len = 2 * key.num_vars_total;
 
@@ -454,6 +455,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // append the digest of R1CS matrices and the RelaxedR1CSInstance to the transcript
         <Transcript as ProofTranscript<G>>::append_scalar(transcript, b"vk", &key.vk_digest);
+        <Transcript as ProofTranscript<G>>::append_u64(transcript, b"vk", key.num_steps as u64);
 
         let (num_rounds_x, num_rounds_y) = (
             usize::try_from(key.num_cons_total.ilog2()).unwrap(),
