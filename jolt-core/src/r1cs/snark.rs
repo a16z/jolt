@@ -299,24 +299,29 @@ pub struct R1CSCommitment<G: CurveGroup> {
     circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
-impl<G: CurveGroup> R1CSCommitment<G> {
-    #[tracing::instrument(skip_all, name = "R1CSCommitment::append_to_transcript")]
-    pub fn append_to_transcript(&self, transcript: &mut Transcript) {
-        self.io
-            .iter()
-            .for_each(|comm| comm.append_to_transcript(b"io", transcript));
-        self.aux
-            .iter()
-            .for_each(|comm| comm.append_to_transcript(b"aux", transcript));
-        self.chunks_x
-            .iter()
-            .for_each(|comm| comm.append_to_transcript(b"chunk_x", transcript));
-        self.chunks_y
-            .iter()
-            .for_each(|comm| comm.append_to_transcript(b"chunk_y", transcript));
-        self.circuit_flags
-            .iter()
-            .for_each(|comm| comm.append_to_transcript(b"circuit_flags", transcript));
+impl<G: CurveGroup> AppendToTranscript<G> for R1CSCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
+        transcript.append_message(label, b"R1CSCommitment_begin");
+        for commitment in &self.io {
+            commitment.append_to_transcript(b"io", transcript);
+        }
+        for commitment in &self.aux {
+            commitment.append_to_transcript(b"aux", transcript);
+        }
+        for commitment in &self.chunks_x {
+            commitment.append_to_transcript(b"chunks_x", transcript);
+        }
+        for commitment in &self.chunks_y {
+            commitment.append_to_transcript(b"chunks_y", transcript);
+        }
+        for commitment in &self.circuit_flags {
+            commitment.append_to_transcript(b"circuit_flags", transcript);
+        }
+        transcript.append_message(label, b"R1CSCommitment_end");
     }
 }
 

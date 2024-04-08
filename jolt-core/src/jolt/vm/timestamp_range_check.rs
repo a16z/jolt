@@ -28,6 +28,7 @@ use crate::{
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
+use crate::utils::transcript::AppendToTranscript;
 
 use super::read_write_memory::MemoryCommitment;
 
@@ -169,6 +170,21 @@ where
 pub struct RangeCheckCommitment<G: CurveGroup> {
     pub(super) commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
+
+impl<G: CurveGroup> AppendToTranscript<G> for RangeCheckCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
+        transcript.append_message(label, b"RangeCheckCommitment_begin");
+        for commitment in &self.commitments {
+            commitment.append_to_transcript(b"range", transcript);
+        }
+        transcript.append_message(label, b"RangeCheckCommitment_end");
+    }
+}
+
 
 impl<F, G> StructuredCommitment<G> for RangeCheckPolynomials<F, G>
 where
