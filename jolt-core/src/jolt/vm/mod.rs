@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
+use common::constants::NUM_R1CS_POLYS;
 use common::rv_trace::JoltDevice;
 use itertools::max;
 use merlin::Transcript;
@@ -14,6 +15,7 @@ use crate::jolt::{
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::hyrax::HyraxCommitment;
 use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
@@ -74,6 +76,7 @@ where
 {
     pub bytecode: BytecodePolynomials<F, G>,
     pub read_write_memory: ReadWriteMemory<F, G>,
+    pub timestamp_range_check: RangeCheckPolynomials<F, G>,
     pub instruction_lookups: InstructionPolynomials<F, G>,
 }
 
@@ -83,7 +86,114 @@ pub struct JoltCommitments<G: CurveGroup> {
     pub read_write_memory: MemoryCommitment<G>,
     pub timestamp_range_check: RangeCheckCommitment<G>,
     pub instruction_lookups: InstructionCommitment<G>,
-    pub r1cs: R1CSCommitment<G>,
+    pub r1cs: Option<R1CSCommitment<G>>,
+}
+
+impl<F, G> StructuredCommitment<G> for JoltPolynomials<F, G>
+where
+    F: PrimeField,
+    G: CurveGroup<ScalarField = F>,
+{
+    type Commitment = JoltCommitments<G>;
+
+    #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
+        let bytecode_trace_polys = vec![
+            &self.bytecode.a_read_write,
+            &self.bytecode.t_read,
+            &self.bytecode.v_read_write[0],
+            &self.bytecode.v_read_write[1],
+            &self.bytecode.v_read_write[2],
+            &self.bytecode.v_read_write[3],
+            &self.bytecode.v_read_write[4],
+        ];
+        let num_bytecode_trace_polys = bytecode_trace_polys.len();
+
+        let memory_trace_polys: Vec<&DensePolynomial<F>> = [&self.read_write_memory.a_ram]
+            .into_iter()
+            .chain(self.read_write_memory.v_read.iter())
+            .chain([&self.read_write_memory.v_write_rd].into_iter())
+            .chain(self.read_write_memory.v_write_ram.iter())
+            .chain(self.read_write_memory.t_read.iter())
+            .chain(self.read_write_memory.t_write_ram.iter())
+            .collect();
+        let num_memory_trace_polys = memory_trace_polys.len();
+
+        let range_check_polys: Vec<&DensePolynomial<F>> = self
+            .timestamp_range_check
+            .read_cts_read_timestamp
+            .iter()
+            .chain(self.timestamp_range_check.read_cts_global_minus_read.iter())
+            .chain(self.timestamp_range_check.final_cts_read_timestamp.iter())
+            .chain(
+                self.timestamp_range_check
+                    .final_cts_global_minus_read
+                    .iter(),
+            )
+            .collect();
+        let num_range_check_polys = range_check_polys.len();
+
+        let instruction_trace_polys: Vec<&DensePolynomial<F>> = self
+            .instruction_lookups
+            .dim
+            .iter()
+            .chain(self.instruction_lookups.read_cts.iter())
+            .chain(self.instruction_lookups.E_polys.iter())
+            .chain(self.instruction_lookups.instruction_flag_polys.iter())
+            .chain([&self.instruction_lookups.lookup_outputs].into_iter())
+            .collect();
+
+        let all_trace_polys = bytecode_trace_polys
+            .into_iter()
+            .chain(memory_trace_polys.into_iter())
+            .chain(range_check_polys.into_iter())
+            .chain(instruction_trace_polys.into_iter())
+            .collect::<Vec<_>>();
+        let mut trace_comitments =
+            HyraxCommitment::<NUM_R1CS_POLYS, G>::batch_commit_polys(all_trace_polys, &generators);
+
+        let bytecode_trace_commitment = trace_comitments
+            .drain(..num_bytecode_trace_polys)
+            .collect::<Vec<_>>();
+        let memory_trace_commitment = trace_comitments
+            .drain(..num_memory_trace_polys)
+            .collect::<Vec<_>>();
+        let range_check_commitment = trace_comitments
+            .drain(..num_range_check_polys)
+            .collect::<Vec<_>>();
+        let instruction_trace_commitment = trace_comitments;
+
+        let bytecode_t_final_commitment =
+            HyraxCommitment::<1, G>::commit(&self.bytecode.t_final, &generators);
+        let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
+            || HyraxCommitment::<1, G>::commit(&self.read_write_memory.v_final, &generators),
+            || HyraxCommitment::<1, G>::commit(&self.read_write_memory.t_final, &generators),
+        );
+        let instruction_final_commitment = HyraxCommitment::<64, G>::batch_commit_polys(
+            self.instruction_lookups.final_cts.iter().collect(),
+            &generators,
+        );
+
+        JoltCommitments {
+            bytecode: BytecodeCommitment {
+                trace_commitments: bytecode_trace_commitment,
+                t_final_commitment: bytecode_t_final_commitment,
+            },
+            read_write_memory: MemoryCommitment {
+                trace_commitments: memory_trace_commitment,
+                v_final_commitment: memory_v_final_commitment,
+                t_final_commitment: memory_t_final_commitment,
+            },
+            timestamp_range_check: RangeCheckCommitment {
+                commitments: range_check_commitment,
+            },
+            instruction_lookups: InstructionCommitment {
+                trace_commitment: instruction_trace_commitment,
+                final_commitment: instruction_final_commitment,
+            },
+            r1cs: None,
+        }
+    }
 }
 
 pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
@@ -201,29 +311,19 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             padded_memory_trace,
             &mut transcript,
         );
-
         let range_check_polys: RangeCheckPolynomials<F, G> =
             RangeCheckPolynomials::new(read_timestamps);
-        let range_check_commitment =
-            RangeCheckPolynomials::commit(&range_check_polys, &preprocessing.generators);
 
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
             read_write_memory: memory_polynomials,
+            timestamp_range_check: range_check_polys,
             instruction_lookups: instruction_polynomials,
         };
 
-        let bytecode_commitment =
-            BytecodePolynomials::commit(&jolt_polynomials.bytecode, &preprocessing.generators);
-        let instruction_commitment = jolt_polynomials
-            .instruction_lookups
-            .commit(&preprocessing.generators);
-        let memory_commitment = ReadWriteMemory::commit(
-            &jolt_polynomials.read_write_memory,
-            &preprocessing.generators,
-        );
+        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
 
-        let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_bullshit(
+        let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_setup(
             padded_trace_length,
             &instructions,
             &jolt_polynomials,
@@ -231,13 +331,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &preprocessing.generators,
         );
 
-        let jolt_commitments = JoltCommitments {
-            bytecode: bytecode_commitment,
-            read_write_memory: memory_commitment,
-            timestamp_range_check: range_check_commitment,
-            instruction_lookups: instruction_commitment,
-            r1cs: r1cs_commitments,
-        };
+        jolt_commitments.r1cs = Some(r1cs_commitments);
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
             &preprocessing.bytecode,
@@ -253,8 +347,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.read_write_memory,
-            &jolt_polynomials.read_write_memory,
-            &range_check_polys,
+            &jolt_polynomials,
             &program_io,
             &mut transcript,
         );
@@ -299,8 +392,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut preprocessing.read_write_memory,
             &preprocessing.generators,
             proof.read_write_memory,
-            &commitments.read_write_memory,
-            &commitments.timestamp_range_check,
+            &commitments,
             proof.program_io,
             &mut transcript,
         )?;
@@ -343,8 +435,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PedersenGenerators<G>,
         proof: ReadWriteMemoryProof<F, G>,
-        commitment: &MemoryCommitment<G>,
-        range_check_commitment: &RangeCheckCommitment<G>,
+        commitment: &JoltCommitments<G>,
         program_io: JoltDevice,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -352,14 +443,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
         preprocessing.program_io = Some(program_io);
 
-        ReadWriteMemoryProof::verify(
-            proof,
-            generators,
-            preprocessing,
-            commitment,
-            range_check_commitment,
-            transcript,
-        )
+        ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
     }
 
     fn verify_r1cs(
@@ -373,7 +457,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
-    fn r1cs_bullshit(
+    fn r1cs_setup(
         padded_trace_length: usize,
         instructions: &Vec<Option<Self::InstructionSet>>,
         polynomials: &JoltPolynomials<F, G>,

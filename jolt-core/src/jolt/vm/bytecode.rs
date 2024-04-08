@@ -145,15 +145,15 @@ pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
     _group: PhantomData<G>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
-    a_read_write: DensePolynomial<F>,
+    pub(super) a_read_write: DensePolynomial<F>,
     /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read values and write values are the same. There are five values (bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_read_write` comprises five polynomials.
-    v_read_write: [DensePolynomial<F>; 5],
+    pub(super) v_read_write: [DensePolynomial<F>; 5],
     /// MLE of the read timestamps.
-    t_read: DensePolynomial<F>,
+    pub(super) t_read: DensePolynomial<F>,
     /// MLE of the final timestamps.
-    t_final: DensePolynomial<F>,
+    pub(super) t_final: DensePolynomial<F>,
 }
 
 #[derive(Clone)]
@@ -326,7 +326,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeCommitment<G: CurveGroup> {
-    pub read_write_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+    pub trace_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
@@ -339,7 +339,7 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_polys = vec![
+        let trace_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
             &self.v_read_write[0],
@@ -348,13 +348,13 @@ where
             &self.v_read_write[3],
             &self.v_read_write[4],
         ];
-        let read_write_commitments =
-            HyraxCommitment::batch_commit_polys(read_write_polys, &generators);
+        let trace_commitments =
+            HyraxCommitment::batch_commit_polys(trace_polys, &generators);
 
         let t_final_commitment = HyraxCommitment::commit(&self.t_final, &generators);
 
         Self::Commitment {
-            read_write_commitments,
+            trace_commitments,
             t_final_commitment,
         }
     }
@@ -631,7 +631,7 @@ where
             generators,
             opening_point,
             &combined_openings,
-            &commitment.read_write_commitments.iter().collect::<Vec<_>>(),
+            &commitment.trace_commitments.iter().collect::<Vec<_>>(),
             transcript,
         )
     }

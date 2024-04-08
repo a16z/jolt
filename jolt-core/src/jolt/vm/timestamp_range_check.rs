@@ -167,7 +167,7 @@ where
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RangeCheckCommitment<G: CurveGroup> {
-    commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+    pub(super) commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
 impl<F, G> StructuredCommitment<G> for RangeCheckPolynomials<F, G>
@@ -179,7 +179,6 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let num_vars = self.read_cts_read_timestamp[0].get_num_vars();
         let polys: Vec<&DensePolynomial<F>> = self
             .read_cts_read_timestamp
             .iter()
@@ -716,8 +715,8 @@ where
             .chain(self.openings.memory_t_read.into_iter())
             .collect();
 
-        let t_read_commitments = &memory_commitment.read_write_commitments
-            [4 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
+        let t_read_commitments = &memory_commitment.trace_commitments
+            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
         let commitments: Vec<_> = range_check_commitment
             .commitments
             .iter()

@@ -79,12 +79,7 @@ where
 /// Commitments to BatchedInstructionPolynomials.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionCommitment<G: CurveGroup> {
-    /// Commitments to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    /// Commitments to E_i and flag polynomials.
-    pub E_flag_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    /// Commitment to lookup_outputs polynomial.
-    pub lookup_outputs_commitment: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub trace_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     /// Commitment to final_cts_i polynomials.
     pub final_commitment: Vec<HyraxCommitment<64, G>>,
 }
@@ -99,25 +94,22 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let dim_read_polys: Vec<&DensePolynomial<F>> =
-            self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
-        let E_flag_polys: Vec<&DensePolynomial<F>> = self
-            .E_polys
+        let trace_polys: Vec<&DensePolynomial<F>> = self
+            .dim
             .iter()
+            .chain(self.read_cts.iter())
+            .chain(self.E_polys.iter())
             .chain(self.instruction_flag_polys.iter())
+            .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let E_flag_commitment = HyraxCommitment::batch_commit_polys(E_flag_polys, &generators);
-        let lookup_outputs_commitment = HyraxCommitment::commit(&self.lookup_outputs, &generators);
+        let trace_commitment = HyraxCommitment::batch_commit_polys(trace_polys, &generators);
 
         let final_commitment =
             HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
 
         Self::Commitment {
-            dim_read_commitment,
+            trace_commitment,
             final_commitment,
-            E_flag_commitment,
-            lookup_outputs_commitment,
         }
     }
 }
@@ -189,9 +181,10 @@ where
         ]
         .concat();
         primary_sumcheck_openings.push(self.lookup_outputs_opening);
-        let mut primary_sumcheck_commitments =
-            commitment.E_flag_commitment.iter().collect::<Vec<_>>();
-        primary_sumcheck_commitments.push(&commitment.lookup_outputs_commitment);
+        let primary_sumcheck_commitments = commitment.trace_commitment
+            [commitment.trace_commitment.len() - primary_sumcheck_openings.len()..]
+            .iter()
+            .collect::<Vec<_>>();
 
         opening_proof.verify(
             generators,
@@ -310,10 +303,8 @@ where
             generators,
             opening_point,
             &read_write_openings,
-            &commitment
-                .dim_read_commitment
+            &commitment.trace_commitment[..read_write_openings.len()]
                 .iter()
-                .chain(commitment.E_flag_commitment.iter())
                 .collect::<Vec<_>>(),
             transcript,
         )
