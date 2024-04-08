@@ -1,8 +1,8 @@
 [package]
-name = "chess"
+name = "alloc"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 jolt-sdk = { path = "../../jolt-sdk", features = ["std"] }
-guest = { package = "chess-guest", path = "./guest" }
+guest = { package = "alloc-guest", path = "./guest" }

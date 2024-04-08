@@ -302,6 +302,10 @@ impl MacroBuilder {
             ");
 
             #[cfg(feature = "guest")]
+            #[global_allocator]
+            static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
+
+            #[cfg(feature = "guest")]
             #[no_mangle]
             pub extern "C" fn main() {
                 let mut offset = 0;

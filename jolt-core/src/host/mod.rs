@@ -241,5 +241,7 @@ SECTIONS {
   . = ALIGN(8);
   . = . + {STACK_SIZE};
   _STACK_PTR = .;
+  . = ALIGN(8);
+  _HEAP_PTR = .;
 }
 "#;
