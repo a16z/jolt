@@ -106,7 +106,6 @@ fn display_greeting() {
         "We heard you like sumcheck.",
         "Reed and Solomon were quite the chaps.",
         "Techno optimistic Jolt.",
-        "First there was Mosaic, then there was Jolt.",
         "zk is a misnomer.",
         "Twice as fast as Apollo 11.",
         "Mason's favorite zkVM.",
