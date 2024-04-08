@@ -352,8 +352,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.read_write_memory,
-            &jolt_polynomials.read_write_memory,
-            &jolt_polynomials.timestamp_range_check,
+            &jolt_polynomials,
             &program_io,
             &mut transcript,
         );
@@ -398,8 +397,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &mut preprocessing.read_write_memory,
             &preprocessing.generators,
             proof.read_write_memory,
-            &commitments.read_write_memory,
-            &commitments.timestamp_range_check,
+            &commitments,
             proof.program_io,
             &mut transcript,
         )?;
@@ -442,8 +440,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PedersenGenerators<G>,
         proof: ReadWriteMemoryProof<F, G>,
-        commitment: &MemoryCommitment<G>,
-        range_check_commitment: &RangeCheckCommitment<G>,
+        commitment: &JoltCommitments<G>,
         program_io: JoltDevice,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -451,14 +448,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
         preprocessing.program_io = Some(program_io);
 
-        ReadWriteMemoryProof::verify(
-            proof,
-            generators,
-            preprocessing,
-            commitment,
-            range_check_commitment,
-            transcript,
-        )
+        ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
     }
 
     fn verify_r1cs(

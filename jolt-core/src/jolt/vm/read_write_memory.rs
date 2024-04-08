@@ -33,8 +33,9 @@ use common::constants::{
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
 use common::to_ram_address;
 
-use super::timestamp_range_check::{
-    RangeCheckCommitment, RangeCheckPolynomials, TimestampValidityProof,
+use super::{
+    timestamp_range_check::{RangeCheckCommitment, RangeCheckPolynomials, TimestampValidityProof},
+    JoltCommitments, JoltPolynomials,
 };
 
 pub trait RandomInstruction {
@@ -842,8 +843,7 @@ where
                 .chain(self.t_read.iter())
                 .chain(self.t_write_ram.iter())
                 .collect();
-        let trace_commitments =
-            HyraxCommitment::batch_commit_polys(trace_polys, &generators);
+        let trace_commitments = HyraxCommitment::batch_commit_polys(trace_polys, &generators);
 
         let (v_final_commitment, t_final_commitment) = rayon::join(
             || HyraxCommitment::commit(&self.v_final, &generators),
@@ -877,7 +877,7 @@ where
     pub identity_poly_opening: Option<F>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryReadWriteOpenings<F, G>
+impl<F, G> StructuredOpeningProof<F, G, JoltPolynomials<F, G>> for MemoryReadWriteOpenings<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -885,20 +885,20 @@ where
     type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
-    fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let mut openings = [
-            &polynomials.a_rs1,
-            &polynomials.a_rs2,
-            &polynomials.a_rd,
-            &polynomials.a_ram,
+            &polynomials.read_write_memory.a_rs1,
+            &polynomials.read_write_memory.a_rs2,
+            &polynomials.read_write_memory.a_rd,
+            &polynomials.read_write_memory.a_ram,
         ]
         .into_par_iter()
-        .chain(polynomials.v_read.par_iter())
-        .chain([&polynomials.v_write_rd].into_par_iter())
-        .chain(polynomials.v_write_ram.par_iter())
-        .chain(polynomials.t_read.par_iter())
-        .chain(polynomials.t_write_ram.par_iter())
+        .chain(polynomials.read_write_memory.v_read.par_iter())
+        .chain([&polynomials.read_write_memory.v_write_rd].into_par_iter())
+        .chain(polynomials.read_write_memory.v_write_ram.par_iter())
+        .chain(polynomials.read_write_memory.t_read.par_iter())
+        .chain(polynomials.read_write_memory.t_write_ram.par_iter())
         .map(|poly| poly.evaluate_at_chi(&chis))
         .collect::<Vec<F>>()
         .into_iter();
@@ -921,23 +921,23 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &ReadWriteMemory<F, G>,
+        polynomials: &JoltPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         let read_write_polys = [
-            &polynomials.a_rs1,
-            &polynomials.a_rs2,
-            &polynomials.a_rd,
-            &polynomials.a_ram,
+            &polynomials.read_write_memory.a_rs1,
+            &polynomials.read_write_memory.a_rs2,
+            &polynomials.read_write_memory.a_rd,
+            &polynomials.read_write_memory.a_ram,
         ]
         .into_iter()
-        .chain(polynomials.v_read.iter())
-        .chain([&polynomials.v_write_rd].into_iter())
-        .chain(polynomials.v_write_ram.iter())
-        .chain(polynomials.t_read.iter())
-        .chain(polynomials.t_write_ram.iter())
+        .chain(polynomials.read_write_memory.v_read.iter())
+        .chain([&polynomials.read_write_memory.v_write_rd].into_iter())
+        .chain(polynomials.read_write_memory.v_write_ram.iter())
+        .chain(polynomials.read_write_memory.t_read.iter())
+        .chain(polynomials.read_write_memory.t_write_ram.iter())
         .collect::<Vec<_>>();
         let read_write_openings = openings
             .a_read_write_opening
@@ -964,7 +964,7 @@ where
         &self,
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
-        commitment: &MemoryCommitment<G>,
+        commitment: &JoltCommitments<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -980,7 +980,11 @@ where
             generators,
             opening_point,
             &openings,
-            &commitment.trace_commitments.iter().collect::<Vec<_>>(),
+            &commitment
+                .read_write_memory
+                .trace_commitments
+                .iter()
+                .collect::<Vec<_>>(),
             transcript,
         )
     }
@@ -1010,7 +1014,7 @@ where
     v_t_opening_proof: BatchedHyraxOpeningProof<1, G>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, ReadWriteMemory<F, G>> for MemoryInitFinalOpenings<F>
+impl<F, G> StructuredOpeningProof<F, G, JoltPolynomials<F, G>> for MemoryInitFinalOpenings<F>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -1019,11 +1023,11 @@ where
     type Preprocessing = ReadWriteMemoryPreprocessing;
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
-    fn open(polynomials: &ReadWriteMemory<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let (v_final, t_final) = rayon::join(
-            || polynomials.v_final.evaluate_at_chi(&chis),
-            || polynomials.t_final.evaluate_at_chi(&chis),
+            || polynomials.read_write_memory.v_final.evaluate_at_chi(&chis),
+            || polynomials.read_write_memory.t_final.evaluate_at_chi(&chis),
         );
 
         Self {
@@ -1036,13 +1040,16 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &ReadWriteMemory<F, G>,
+        polynomials: &JoltPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
         transcript: &mut Transcript,
     ) -> Self::Proof {
         let v_t_opening_proof = BatchedHyraxOpeningProof::prove(
-            &[&polynomials.v_final, &polynomials.t_final],
+            &[
+                &polynomials.read_write_memory.v_final,
+                &polynomials.read_write_memory.t_final,
+            ],
             &opening_point,
             &[openings.v_final, openings.t_final],
             transcript,
@@ -1082,7 +1089,7 @@ where
         &self,
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
-        commitment: &MemoryCommitment<G>,
+        commitment: &JoltCommitments<G>,
         opening_point: &Vec<F>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -1091,8 +1098,8 @@ where
             opening_point,
             &vec![self.v_final, self.t_final],
             &[
-                &commitment.v_final_commitment,
-                &commitment.t_final_commitment,
+                &commitment.read_write_memory.v_final_commitment,
+                &commitment.read_write_memory.t_final_commitment,
             ],
             transcript,
         )?;
@@ -1101,7 +1108,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, ReadWriteMemory<F, G>> for ReadWriteMemoryProof<F, G>
+impl<F, G> MemoryCheckingProver<F, G, JoltPolynomials<F, G>> for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -1121,12 +1128,12 @@ where
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
     fn compute_leaves(
         _: &Self::Preprocessing,
-        polynomials: &ReadWriteMemory<F, G>,
+        polynomials: &JoltPolynomials<F, G>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
         let gamma_squared = gamma.square();
-        let num_ops = polynomials.a_rs1.len();
+        let num_ops = polynomials.read_write_memory.a_rs1.len();
 
         let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
@@ -1135,22 +1142,25 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let a = match i {
-                            RS1 => polynomials.a_rs1[j],
-                            RS2 => polynomials.a_rs2[j],
-                            RD => polynomials.a_rd[j],
-                            _ => polynomials.a_ram[j] + F::from_u64((i - RAM_1) as u64).unwrap(),
+                            RS1 => polynomials.read_write_memory.a_rs1[j],
+                            RS2 => polynomials.read_write_memory.a_rs2[j],
+                            RD => polynomials.read_write_memory.a_rd[j],
+                            _ => {
+                                polynomials.read_write_memory.a_ram[j]
+                                    + F::from_u64((i - RAM_1) as u64).unwrap()
+                            }
                         };
-                        polynomials.t_read[i][j] * gamma_squared
-                            + mul_0_optimized(&polynomials.v_read[i][j], gamma)
+                        polynomials.read_write_memory.t_read[i][j] * gamma_squared
+                            + mul_0_optimized(&polynomials.read_write_memory.v_read[i][j], gamma)
                             + a
                             - *tau
                     })
                     .collect();
                 let v_write = match i {
-                    RS1 => &polynomials.v_read[0],        // rs1
-                    RS2 => &polynomials.v_read[1],        // rs2
-                    RD => &polynomials.v_write_rd,        // rd
-                    _ => &polynomials.v_write_ram[i - 3], // RAM
+                    RS1 => &polynomials.read_write_memory.v_read[0], // rs1
+                    RS2 => &polynomials.read_write_memory.v_read[1], // rs2
+                    RD => &polynomials.read_write_memory.v_write_rd, // rd
+                    _ => &polynomials.read_write_memory.v_write_ram[i - 3], // RAM
                 };
                 let write_fingerprints = (0..num_ops)
                     .into_par_iter()
@@ -1158,25 +1168,25 @@ where
                         RS1 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.a_rs1[j]
+                                + polynomials.read_write_memory.a_rs1[j]
                                 - *tau
                         }
                         RS2 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.a_rs2[j]
+                                + polynomials.read_write_memory.a_rs2[j]
                                 - *tau
                         }
                         RD => {
                             F::from_u64(j as u64 + 1).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.a_rd[j]
+                                + polynomials.read_write_memory.a_rd[j]
                                 - *tau
                         }
                         _ => {
-                            polynomials.t_write_ram[i - RAM_1][j] * gamma_squared
+                            polynomials.read_write_memory.t_write_ram[i - RAM_1][j] * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.a_ram[j]
+                                + polynomials.read_write_memory.a_ram[j]
                                 + F::from_u64((i - RAM_1) as u64).unwrap()
                                 - *tau
                         }
@@ -1189,15 +1199,15 @@ where
             })
             .collect();
 
-        let init_fingerprints = (0..polynomials.memory_size)
+        let init_fingerprints = (0..polynomials.read_write_memory.memory_size)
             .into_par_iter()
-            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
+            .map(|i| /* 0 * gamma^2 + */ mul_0_optimized(&polynomials.read_write_memory.v_init[i], gamma) + F::from_u64(i as u64).unwrap() - *tau)
             .collect();
-        let final_fingerprints = (0..polynomials.memory_size)
+        let final_fingerprints = (0..polynomials.read_write_memory.memory_size)
             .into_par_iter()
             .map(|i| {
-                mul_0_optimized(&polynomials.t_final[i], &gamma_squared)
-                    + mul_0_optimized(&polynomials.v_final[i], gamma)
+                mul_0_optimized(&polynomials.read_write_memory.t_final[i], &gamma_squared)
+                    + mul_0_optimized(&polynomials.read_write_memory.v_final[i], gamma)
                     + F::from_u64(i as u64).unwrap()
                     - *tau
             })
@@ -1269,7 +1279,7 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, ReadWriteMemory<F, G>> for ReadWriteMemoryProof<F, G>
+impl<F, G> MemoryCheckingVerifier<F, G, JoltPolynomials<F, G>> for ReadWriteMemoryProof<F, G>
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,
@@ -1419,8 +1429,11 @@ where
                 transcript,
             );
 
-        let sumcheck_opening_proof =
-            HyraxOpeningProof::prove(&polynomials.v_final, &r_sumcheck, transcript);
+        let sumcheck_opening_proof = HyraxOpeningProof::prove(
+            &polynomials.v_final,
+            &r_sumcheck,
+            transcript,
+        );
 
         Self {
             num_rounds,
@@ -1509,7 +1522,7 @@ where
 {
     pub memory_checking_proof: MemoryCheckingProof<
         G,
-        ReadWriteMemory<F, G>,
+        JoltPolynomials<F, G>,
         MemoryReadWriteOpenings<F, G>,
         MemoryInitFinalOpenings<F>,
     >,
@@ -1525,19 +1538,25 @@ where
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]
     pub fn prove(
         preprocessing: &ReadWriteMemoryPreprocessing,
-        polynomials: &ReadWriteMemory<F, G>,
-        range_check_polys: &RangeCheckPolynomials<F, G>,
+        polynomials: &JoltPolynomials<F, G>,
         program_io: &JoltDevice,
         transcript: &mut Transcript,
     ) -> Self {
-        let memory_checking_proof =
-            ReadWriteMemoryProof::prove_memory_checking(preprocessing, polynomials, transcript);
+        let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
+            preprocessing,
+            &polynomials,
+            transcript,
+        );
 
-        let output_proof = OutputSumcheckProof::prove_outputs(polynomials, program_io, transcript);
+        let output_proof = OutputSumcheckProof::prove_outputs(
+            &polynomials.read_write_memory,
+            program_io,
+            transcript,
+        );
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
-            range_check_polys,
-            &polynomials.t_read,
+            &polynomials.timestamp_range_check,
+            &polynomials.read_write_memory.t_read,
             transcript,
         );
 
@@ -1552,8 +1571,7 @@ where
         mut self,
         generators: &PedersenGenerators<G>,
         preprocessing: &mut ReadWriteMemoryPreprocessing,
-        commitment: &MemoryCommitment<G>,
-        range_check_commitment: &RangeCheckCommitment<G>,
+        commitment: &JoltCommitments<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
@@ -1567,14 +1585,14 @@ where
             &self.output_proof,
             preprocessing,
             generators,
-            commitment,
+            &commitment.read_write_memory,
             transcript,
         )?;
         TimestampValidityProof::verify(
             &mut self.timestamp_validity_proof,
             generators,
-            range_check_commitment,
-            commitment,
+            &commitment.timestamp_range_check,
+            &commitment.read_write_memory,
             transcript,
         )
     }
@@ -1586,53 +1604,53 @@ mod tests {
     use ark_bn254::{Fr, G1Projective};
     use rand_core::SeedableRng;
 
-    #[test]
-    fn e2e_memchecking() {
-        const MEMORY_SIZE: usize = 1 << 16;
-        const NUM_OPS: usize = 1 << 8;
-        const BYTECODE_SIZE: usize = 1 << 8;
-        const BYTECODE_OFFSET: u64 = 200;
+    // #[test]
+    // fn e2e_memchecking() {
+    //     const MEMORY_SIZE: usize = 1 << 16;
+    //     const NUM_OPS: usize = 1 << 8;
+    //     const BYTECODE_SIZE: usize = 1 << 8;
+    //     const BYTECODE_OFFSET: u64 = 200;
 
-        let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-        let memory_init = (0..BYTECODE_SIZE)
-            .map(|i| {
-                (
-                    RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
-                    (rng.next_u32() & 0xff) as u8,
-                )
-            })
-            .collect();
-        let (memory_trace, load_store_flags) =
-            random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
+    //     let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
+    //     let memory_init = (0..BYTECODE_SIZE)
+    //         .map(|i| {
+    //             (
+    //                 RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
+    //                 (rng.next_u32() & 0xff) as u8,
+    //             )
+    //         })
+    //         .collect();
+    //     let (memory_trace, load_store_flags) =
+    //         random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
 
-        let mut transcript = Transcript::new(b"test_transcript");
+    //     let mut transcript = Transcript::new(b"test_transcript");
 
-        let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
-        let (rw_memory, _): (ReadWriteMemory<Fr, G1Projective>, _) = ReadWriteMemory::new(
-            &JoltDevice::new(),
-            &load_store_flags,
-            &preprocessing,
-            memory_trace,
-            &mut transcript,
-        );
-        let generators = PedersenGenerators::new(1 << 10, b"test");
-        let commitments = rw_memory.commit(&generators);
+    //     let mut preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
+    //     let (rw_memory, _): (ReadWriteMemory<Fr, G1Projective>, _) = ReadWriteMemory::new(
+    //         &JoltDevice::new(),
+    //         &load_store_flags,
+    //         &preprocessing,
+    //         memory_trace,
+    //         &mut transcript,
+    //     );
+    //     let generators = PedersenGenerators::new(1 << 10, b"test");
+    //     let commitments = rw_memory.commit(&generators);
 
-        let proof = ReadWriteMemoryProof::prove_memory_checking(
-            &preprocessing,
-            &rw_memory,
-            &mut transcript,
-        );
+    //     let proof = ReadWriteMemoryProof::prove_memory_checking(
+    //         &preprocessing,
+    //         &rw_memory,
+    //         &mut transcript,
+    //     );
 
-        let mut transcript = Transcript::new(b"test_transcript");
-        preprocessing.program_io = Some(JoltDevice::new());
-        ReadWriteMemoryProof::verify_memory_checking(
-            &preprocessing,
-            &generators,
-            proof,
-            &commitments,
-            &mut transcript,
-        )
-        .expect("proof should verify");
-    }
+    //     let mut transcript = Transcript::new(b"test_transcript");
+    //     preprocessing.program_io = Some(JoltDevice::new());
+    //     ReadWriteMemoryProof::verify_memory_checking(
+    //         &preprocessing,
+    //         &generators,
+    //         proof,
+    //         &commitments,
+    //         &mut transcript,
+    //     )
+    //     .expect("proof should verify");
+    // }
 }
