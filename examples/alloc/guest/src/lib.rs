@@ -2,7 +2,6 @@
 #![no_main]
 
 extern crate alloc;
-
 use alloc::vec::Vec;
 
 #[jolt::provable]

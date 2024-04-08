@@ -117,10 +117,5 @@ unsafe impl GlobalAlloc for BumpAllocator {
 }
 
 fn align_up(addr: usize, align: usize) -> usize {
-    let remainder = addr % align;
-    if remainder == 0 {
-        addr // addr already aligned
-    } else {
-        addr - remainder + align
-    }
+    (addr + align - 1) & !(align - 1)
 }
