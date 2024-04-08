@@ -93,10 +93,16 @@ pub struct JoltCommitments<G: CurveGroup> {
 impl<G: CurveGroup> JoltCommitments<G> {
     fn append_to_transcript(&self, transcript: &mut Transcript) {
         self.bytecode.append_to_transcript(b"bytecode", transcript);
-        self.read_write_memory.append_to_transcript(b"read_write_memory", transcript);
-        self.timestamp_range_check.append_to_transcript(b"timestamp_range_check", transcript);
-        self.instruction_lookups.append_to_transcript(b"instruction_lookups", transcript);
-        self.r1cs.as_ref().unwrap().append_to_transcript(b"r1cs", transcript);
+        self.read_write_memory
+            .append_to_transcript(b"read_write_memory", transcript);
+        self.timestamp_range_check
+            .append_to_transcript(b"timestamp_range_check", transcript);
+        self.instruction_lookups
+            .append_to_transcript(b"instruction_lookups", transcript);
+        self.r1cs
+            .as_ref()
+            .unwrap()
+            .append_to_transcript(b"r1cs", transcript);
     }
 }
 
@@ -286,9 +292,6 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let mut transcript = Transcript::new(b"Jolt transcript");
 
-        let bytecode_polynomials: BytecodePolynomials<F, G> =
-            BytecodePolynomials::new(&preprocessing.bytecode, bytecode_trace);
-
         let instruction_polynomials = InstructionLookupsProof::<
             C,
             M,
@@ -321,8 +324,11 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             &preprocessing.read_write_memory,
             padded_memory_trace,
         );
-        let range_check_polys: RangeCheckPolynomials<F, G> =
-            RangeCheckPolynomials::new(read_timestamps);
+
+        let (bytecode_polynomials, range_check_polys) = rayon::join(
+            || BytecodePolynomials::<F, G>::new(&preprocessing.bytecode, bytecode_trace),
+            || RangeCheckPolynomials::<F, G>::new(read_timestamps),
+        );
 
         let jolt_polynomials = JoltPolynomials {
             bytecode: bytecode_polynomials,
