@@ -2,11 +2,12 @@
 
 extern crate jolt_sdk_macros;
 
-use core::{alloc::{GlobalAlloc, Layout}, cell::UnsafeCell, ptr, slice::SliceIndex};
 #[cfg(feature = "std")]
 use std::fs::File;
 #[cfg(feature = "std")]
 use std::path::PathBuf;
+
+use core::{alloc::{GlobalAlloc, Layout}, cell::UnsafeCell};
 
 #[cfg(feature = "std")]
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
@@ -110,7 +111,7 @@ unsafe impl GlobalAlloc for BumpAllocator {
         alloc_start as *mut u8
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
         
     }
 }
