@@ -117,7 +117,6 @@ impl MacroBuilder {
         let body = &self.func.block;
 
         quote! {
-             #[cfg(not(feature = "guest"))]
              pub fn #execute_fn_name(#inputs) #output {
                  #body
              }
