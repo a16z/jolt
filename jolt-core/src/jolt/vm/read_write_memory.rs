@@ -20,7 +20,7 @@ use crate::{
         hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
-        structured_poly::{StructuredCommitment, StructuredOpeningProof},
+        structured_poly::{StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
@@ -438,6 +438,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
             let step_index = timestamp as usize;
             let mut is_v_write_ram = false;
+            #[allow(unused_assignments)]
             let mut ram_word_address = 0;
             // Only the LB/SB/LH/SH/LW/SW instructions access ≥1 byte of RAM
             if lb_flag[step_index].is_one()

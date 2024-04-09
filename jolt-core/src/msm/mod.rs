@@ -362,7 +362,7 @@ fn msm_u64<V: VariableBaseMSM>(bases: &[V::MulBase], scalars: &[u64], max_num_bi
                     scalar >>= w_start;
 
                     // We mod the remaining bits by 2^{window size}, thus taking `c` bits.
-                    scalar %= (1 << c);
+                    scalar %= 1 << c;
 
                     // If the scalar is non-zero, we update the corresponding
                     // bucket.

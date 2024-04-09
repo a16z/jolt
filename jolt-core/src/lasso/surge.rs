@@ -11,7 +11,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
+        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
@@ -55,14 +55,14 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_num_vars = self.dim[0].get_num_vars();
+        let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
         let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
         let E_commitment =
             HyraxCommitment::batch_commit_polys(self.E_polys.iter().collect(), &generators);
 
-        let final_num_vars = self.final_cts[0].get_num_vars();
+        let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
             HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
 

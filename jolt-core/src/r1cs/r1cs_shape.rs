@@ -74,15 +74,6 @@ impl<F: PrimeField> R1CSShape<F> {
         Ok(shape.pad())
     }
 
-    // Checks regularity conditions on the R1CSShape, required in Spartan-class SNARKs
-    // Panics if num_cons, num_vars, or num_io are not powers of two, or if num_io > num_vars
-    #[inline]
-    pub(crate) fn check_regular_shape(&self) {
-        assert_eq!(self.num_cons.next_power_of_two(), self.num_cons);
-        assert_eq!(self.num_vars.next_power_of_two(), self.num_vars);
-        assert!(self.num_io < self.num_vars);
-    }
-
     #[tracing::instrument(skip_all, name = "R1CSShape::multiply_vec")]
     pub fn multiply_vec(&self, z: &[F]) -> Result<(Vec<F>, Vec<F>, Vec<F>), SpartanError> {
         if z.len() != self.num_io + self.num_vars + 1 {

@@ -518,7 +518,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let eval_Z = {
             let eval_X = {
                 // constant term
-                let mut poly_X = vec![(0, F::one())];
+                let poly_X = vec![(0, F::one())];
                 SparsePolynomial::new(usize::try_from(key.num_vars_total.ilog2()).unwrap(), poly_X)
                     .evaluate(&inner_sumcheck_r[1..])
             };
@@ -563,7 +563,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         Assumes x and y are provided big-endian. */
         let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
             let one = F::from(1 as u64);
-            let two = F::from(2 as u64);
+            let _two = F::from(2 as u64);
 
             /* If y+1 = x, then the two bit vectors are of the following form.
                 Let k be the longest suffix of 1s in x.
@@ -617,7 +617,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 .collect()
         };
 
-        let mut evals = multi_evaluate_uniform(&[
+        let evals = multi_evaluate_uniform(&[
             &key.shape_single_step.A,
             &key.shape_single_step.B,
             &key.shape_single_step.C,

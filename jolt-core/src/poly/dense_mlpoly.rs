@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
+use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
 use crate::utils::math::Math;
 use ark_ff::PrimeField;
@@ -226,10 +226,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         compute_dotproduct_low_optimized(&self.Z, &chis)
     }
 
-    fn vec(&self) -> &Vec<F> {
-        &self.Z
-    }
-
     pub fn evals(&self) -> Vec<F> {
         self.Z.clone()
     }
@@ -314,6 +310,7 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_bn254::G1Projective;
+    use ark_ec::CurveGroup;
     use ark_std::test_rng;
     use ark_std::One;
     use ark_std::UniformRand;

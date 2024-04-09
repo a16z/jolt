@@ -1,9 +1,8 @@
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
-    jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments},
+    jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
     poly::{
-        dense_mlpoly::DensePolynomial,
-        hyrax::{HyraxCommitment, HyraxGenerators},
+        hyrax::{HyraxCommitment},
         pedersen::PedersenGenerators,
     },
     r1cs::r1cs_shape::R1CSShape,
@@ -22,7 +21,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{
-    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS},
+    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
     rv_trace::NUM_CIRCUIT_FLAGS,
 };
 use merlin::Transcript;

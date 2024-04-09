@@ -24,7 +24,6 @@ use super::snark::R1CSStepInputs;
 /* Compiler Variables */
 const C: usize = 4;
 const N_FLAGS: usize = NUM_CIRCUIT_FLAGS + RV32I::COUNT;
-const W: usize = 32;
 const LOG_M: usize = 16;
 const MEMORY_START_ADDRESS: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; // accounts for the 32 registers being considered a part of the RAM
 const PC_START_ADDRESS: u64 = RAM_START_ADDRESS;
@@ -304,15 +303,6 @@ impl R1CSBuilder {
         )
     }
 
-    // Constriants the values are the two indices to be equal
-    fn eq_simple(&mut self, left_idx: usize, right_idx: usize) {
-        let constraint_A = smallvec![(left_idx, 1)];
-        let constraint_B = smallvec![ONE];
-        let constraint_C = smallvec![(right_idx, 1)];
-
-        self.new_constraint(constraint_A, constraint_B, constraint_C);
-    }
-
     // Constrains the products of three lcs to be 0.
     fn constr_prod_0(
         &mut self,
@@ -336,8 +326,8 @@ impl R1CSBuilder {
         let PC_mapped = GET_INDEX(InputType::InputState, 0);
         let op_flags_packed = GET_INDEX(InputType::ProgVRW, 0);
         let rd = GET_INDEX(InputType::ProgVRW, 1);
-        let rs1 = GET_INDEX(InputType::ProgVRW, 2);
-        let rs2 = GET_INDEX(InputType::ProgVRW, 3);
+        let _rs1 = GET_INDEX(InputType::ProgVRW, 2);
+        let _rs2 = GET_INDEX(InputType::ProgVRW, 3);
         let immediate = GET_INDEX(InputType::ProgVRW, 4);
 
         // Indices of flags.
@@ -753,7 +743,7 @@ impl R1CSBuilder {
         });
 
         // 14. let next_pc_j_b = R1CSBuilder::if_else(instance, smallvec![(is_branch_times_lookup_output, 1)], smallvec![(next_pc_j, 1)], smallvec![(PC_mapped, 4), (0, PC_START_ADDRESS as i64), (immediate_signed, 1)]);
-        let next_pc_j_b = aux.len();
+        let _next_pc_j_b = aux.len();
         aux.push(if aux[is_branch_times_lookup_output].is_zero() {
             aux[next_pc_j]
         } else {

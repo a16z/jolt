@@ -1205,7 +1205,7 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                     &claim,
                     params,
                     &coeffs,
@@ -1250,7 +1250,7 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                     &claim,
                     params,
                     &coeffs,
@@ -1297,7 +1297,7 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                     &joint_claim,
                     params,
                     &coeffs,
