@@ -7,10 +7,10 @@ and instruction lookups).
 
 ## Uniformity
 
-The R1CS constraint system of Jolt is uniform, which means
-that the constraint system for an entire program is just repeated copies of the constraint 
-system for a single CPU step. 
-Each step is conceptually simply and involves just around 60 constraints and about 80 variables. 
+Jolt's R1CS is uniform, which means
+that the constraint matrices for an entire program are just repeated copies of the constraint 
+matrices for a single CPU step. 
+Each step is conceptually simply and involves around 60 constraints and 80 variables. 
 
 ## Input Variables and constraints
 
@@ -25,13 +25,13 @@ The inputs required for the constraint system for a single CPU step are:
 * The (starting) memory address read by the instruction: if the instruction is not a load/store, this is 0.
 * The bytes written to or read from memory.
 
-####  Pertaining to the lookup 
+####  Pertaining to instruction lookups
 * The chunks of the instruction's operands `x` and `y`. 
 * The chunks of the lookup query. 
 * The lookup output. 
 
 ### Circuit and Instruction flags: 
-* There are nine circuit flags used to guide the constraints and are dependent only on the opcode of the instruction. These are thus stored are part of the program code in Jolt. 
+* There are nine circuit flags used to guide the constraints and are dependent only on the opcode of the instruction. These are thus stored as part of the program code in Jolt. 
     1. `operand_x_flag`: 0 if the first operand is the value in `rs1` or the `PC`. 
     2. `operand_y_flag`: 0 if the second operand is the value in `rs2` or the `imm`. 
     3. `is_load_instr`
@@ -58,7 +58,7 @@ and the lookup chunks, output and flags are used in the instruction lookup proof
 For Jolt to be sound, it must be ensured that the same inputs are fed to all relevant proofs. 
 We do this by re-using the commitments themselves. 
 This can be seen in the `format_commitments()` function in the `r1cs/snark` module. 
-The proving backend used (Spartan) is adapted to take pre-committed witness variables. 
+Spartan is adapted to take pre-committed witness variables. 
 
 ## Exploiting uniformity 
 
