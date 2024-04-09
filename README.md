@@ -4,9 +4,9 @@
 
 Just One Lookup Table.
 
-Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. Contributors are welcome!
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). _Contributors are welcome!_
 
-The Jolt [paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). 
+The Jolt [paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler. 
 
 ## Resources
 
@@ -34,7 +34,7 @@ For developers looking to contribute to Jolt, follow the instructions below.
 ## Installation
 
 You will need Rust [nightly](./rust-toolchain). 
-To compile the guest programs to RV32I, you will need to add the compilation target using rustup:
+To compile the guest programs to RV32I, you will need to add the compilation target using `rustup`:
 
 ```rustup target add riscv32i-unknown-none-elf```
 
