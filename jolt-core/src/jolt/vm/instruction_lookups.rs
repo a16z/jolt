@@ -12,9 +12,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{
-    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
-};
+use crate::poly::hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
@@ -79,17 +77,28 @@ where
 /// Commitments to BatchedInstructionPolynomials.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionCommitment<G: CurveGroup> {
-    /// Commitments to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    /// Commitments to E_i and flag polynomials.
-    pub E_flag_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    /// Commitment to lookup_outputs polynomial.
-    pub lookup_outputs_commitment: HyraxCommitment<NUM_R1CS_POLYS, G>,
+    pub trace_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
     /// Commitment to final_cts_i polynomials.
     pub final_commitment: Vec<HyraxCommitment<64, G>>,
 }
 
-// TODO: macro?
+impl<G: CurveGroup> AppendToTranscript<G> for InstructionCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
+        transcript.append_message(label, b"InstructionCommitment_begin");
+        for commitment in &self.trace_commitment {
+            commitment.append_to_transcript(b"trace_commitment", transcript);
+        }
+        for commitment in &self.final_commitment {
+            commitment.append_to_transcript(b"final_commitment", transcript);
+        }
+        transcript.append_message(label, b"InstructionCommitment_end");
+    }
+}
+
 impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,
@@ -99,27 +108,22 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let read_write_num_vars = self.dim[0].get_num_vars();
-        let dim_read_polys: Vec<&DensePolynomial<F>> =
-            self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
-        let E_flag_polys: Vec<&DensePolynomial<F>> = self
-            .E_polys
+        let trace_polys: Vec<&DensePolynomial<F>> = self
+            .dim
             .iter()
+            .chain(self.read_cts.iter())
+            .chain(self.E_polys.iter())
             .chain(self.instruction_flag_polys.iter())
+            .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let E_flag_commitment = HyraxCommitment::batch_commit_polys(E_flag_polys, &generators);
-        let lookup_outputs_commitment = HyraxCommitment::commit(&self.lookup_outputs, &generators);
+        let trace_commitment = HyraxCommitment::batch_commit_polys(trace_polys, &generators);
 
-        let final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
             HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
 
         Self::Commitment {
-            dim_read_commitment,
+            trace_commitment,
             final_commitment,
-            E_flag_commitment,
-            lookup_outputs_commitment,
         }
     }
 }
@@ -191,9 +195,10 @@ where
         ]
         .concat();
         primary_sumcheck_openings.push(self.lookup_outputs_opening);
-        let mut primary_sumcheck_commitments =
-            commitment.E_flag_commitment.iter().collect::<Vec<_>>();
-        primary_sumcheck_commitments.push(&commitment.lookup_outputs_commitment);
+        let primary_sumcheck_commitments = commitment.trace_commitment
+            [commitment.trace_commitment.len() - primary_sumcheck_openings.len()..]
+            .iter()
+            .collect::<Vec<_>>();
 
         opening_proof.verify(
             generators,
@@ -312,10 +317,8 @@ where
             generators,
             opening_point,
             &read_write_openings,
-            &commitment
-                .dim_read_commitment
+            &commitment.trace_commitment[..read_write_openings.len()]
                 .iter()
-                .chain(commitment.E_flag_commitment.iter())
                 .collect::<Vec<_>>(),
             transcript,
         )
@@ -857,35 +860,24 @@ where
     const NUM_SUBTABLES: usize = Subtables::COUNT;
     const NUM_INSTRUCTIONS: usize = InstructionSet::COUNT;
 
-    #[tracing::instrument(skip_all, name = "InstructionLookups::prove_lookups")]
-    pub fn prove_lookups(
+    #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
+    pub fn prove(
+        polynomials: &InstructionPolynomials<F, G>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<Option<InstructionSet>>,
-        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
-    ) -> (
-        InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-        InstructionPolynomials<F, G>,
-        InstructionCommitment<G>,
-    ) {
+    ) -> InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
 
-        let polynomials = Self::polynomialize(preprocessing, ops);
-        let commitment = polynomials.commit(generators);
-
-        commitment.E_flag_commitment.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"E_flag_commitment", transcript)
-        });
-
+        let trace_length = polynomials.dim[0].len();
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
             b"Jolt instruction lookups",
-            ops.len().log_2(),
+            trace_length.log_2(),
         );
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
         let mut eq_poly = DensePolynomial::new(eq_evals);
-        let num_rounds = ops.len().log_2();
+        let num_rounds = trace_length.log_2();
 
         // TODO: compartmentalize all primary sumcheck logic
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
@@ -923,15 +915,11 @@ where
 
         let memory_checking = Self::prove_memory_checking(preprocessing, &polynomials, transcript);
 
-        (
-            InstructionLookupsProof {
-                _instructions: PhantomData,
-                primary_sumcheck,
-                memory_checking,
-            },
-            polynomials,
-            commitment,
-        )
+        InstructionLookupsProof {
+            _instructions: PhantomData,
+            primary_sumcheck,
+            memory_checking,
+        }
     }
 
     pub fn verify(
@@ -942,10 +930,6 @@ where
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
         <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
-
-        commitment.E_flag_commitment.iter().for_each(|commitment| {
-            commitment.append_to_transcript(b"E_flag_commitment", transcript)
-        });
 
         let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
             transcript,
@@ -998,7 +982,7 @@ where
 
     /// Constructs the polynomials used in the primary sumcheck and memory checking.
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
-    fn polynomialize(
+    pub fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<Option<InstructionSet>>,
     ) -> InstructionPolynomials<F, G> {

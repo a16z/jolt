@@ -1,4 +1,7 @@
-use std::{fs::{self, File}, io::Write};
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
@@ -145,7 +148,7 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["std"] }
 guest = { path = "./guest" }
 
 [patch.crates-io]
@@ -180,7 +183,7 @@ path = "./src/lib.rs"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt" }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]

@@ -1,5 +1,5 @@
 [package]
-name = "chess-guest"
+name = "alloc-guest"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,4 +12,3 @@ guest = []
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
-cozy-chess = { version = "0.3.3", default-features = false }

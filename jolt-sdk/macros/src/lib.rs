@@ -48,7 +48,7 @@ impl MacroBuilder {
             if self.get_func_name().to_string() == func {
                 self.make_main_func()
             } else {
-                quote!{}
+                quote! {}
             }
         } else {
             self.make_main_func()
@@ -275,13 +275,13 @@ impl MacroBuilder {
         let max_output_len = (OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS) as usize;
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {},
-            ReturnType::Type(_, _) => quote! {
+            ReturnType::Type(_, ty) => quote! {
                 let output_ptr = #OUTPUT_START_ADDRESS as *mut u8;
                 let output_slice = unsafe {
                     core::slice::from_raw_parts_mut(output_ptr, #max_output_len)
                 };
 
-                jolt::postcard::to_slice(&to_return, output_slice).unwrap();
+                jolt::postcard::to_slice::<#ty>(&to_return, output_slice).unwrap();
             },
         };
 
@@ -300,6 +300,10 @@ impl MacroBuilder {
                     jal main\n\
                     j .\n\
             ");
+
+            #[cfg(feature = "guest")]
+            #[global_allocator]
+            static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
 
             #[cfg(feature = "guest")]
             #[no_mangle]
@@ -355,20 +359,20 @@ impl MacroBuilder {
                     match ident.to_string().as_str() {
                         "memory_size" => {
                             code.push(quote! {
-                                program.set_memory_size(#lit);
-                             });
-                        },
+                               program.set_memory_size(#lit);
+                            });
+                        }
                         "stack_size" => {
                             code.push(quote! {
-                                program.set_stack_size(#lit);
-                             });
-                        },
+                               program.set_stack_size(#lit);
+                            });
+                        }
                         _ => panic!("invalid attribute"),
                     }
-                },
+                }
                 _ => panic!("expected integer literal"),
             }
-        } 
+        }
 
         quote! {
             #(#code;)*

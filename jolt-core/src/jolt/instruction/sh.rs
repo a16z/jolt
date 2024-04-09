@@ -1,5 +1,5 @@
 use ark_ff::PrimeField;
-use ark_std::log2;
+
 use rand::prelude::StdRng;
 
 use super::{JoltInstruction, SubtableIndices};

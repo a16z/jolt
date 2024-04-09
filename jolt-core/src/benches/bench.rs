@@ -1,7 +1,7 @@
 use crate::host;
-use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M, RV32I};
+use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
-use ark_bn254::{Fr, G1Projective};
+use ark_bn254::G1Projective;
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -15,9 +15,9 @@ pub enum BenchType {
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
 pub fn benchmarks(
     bench_type: BenchType,
-    num_cycles: Option<usize>,
-    memory_size: Option<usize>,
-    bytecode_size: Option<usize>,
+    _num_cycles: Option<usize>,
+    _memory_size: Option<usize>,
+    _bytecode_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     match bench_type {
         BenchType::Sha2 => sha2(),
@@ -40,6 +40,7 @@ fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
     prove_example("sha3-guest", &vec![5u8; 2048])
 }
 
+#[allow(dead_code)]
 fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSerialize) {
     use std::fs::File;
     let mut file = File::create("temp_file").unwrap();

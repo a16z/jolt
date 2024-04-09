@@ -52,7 +52,7 @@ impl JoltInstruction for BGEUInstruction {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
-    use ark_std::{test_rng, One};
+    use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
@@ -84,7 +84,7 @@ mod test {
         let instructions = vec![
             BGEUInstruction(100, 0),
             BGEUInstruction(0, 100),
-            BGEUInstruction(1 , 0),
+            BGEUInstruction(1, 0),
             BGEUInstruction(0, u32_max),
             BGEUInstruction(u32_max, 0),
             BGEUInstruction(u32_max, u32_max),

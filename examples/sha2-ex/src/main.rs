@@ -5,7 +5,6 @@ pub fn main() {
     let (output, proof) = prove_sha2(input);
     let is_valid = verify_sha2(proof);
 
-
     println!("output: {}", hex::encode(output));
     println!("valid: {}", is_valid);
 }

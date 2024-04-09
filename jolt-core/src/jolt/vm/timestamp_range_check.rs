@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
+use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
         MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier, MultisetHashes,
@@ -18,7 +19,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
+        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
@@ -167,7 +168,21 @@ where
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RangeCheckCommitment<G: CurveGroup> {
-    commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+    pub(super) commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+}
+
+impl<G: CurveGroup> AppendToTranscript<G> for RangeCheckCommitment<G> {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
+        transcript.append_message(label, b"RangeCheckCommitment_begin");
+        for commitment in &self.commitments {
+            commitment.append_to_transcript(b"range", transcript);
+        }
+        transcript.append_message(label, b"RangeCheckCommitment_end");
+    }
 }
 
 impl<F, G> StructuredCommitment<G> for RangeCheckPolynomials<F, G>
@@ -179,7 +194,6 @@ where
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
     fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
-        let num_vars = self.read_cts_read_timestamp[0].get_num_vars();
         let polys: Vec<&DensePolynomial<F>> = self
             .read_cts_read_timestamp
             .iter()
@@ -553,7 +567,6 @@ where
     openings: RangeCheckOpenings<F, G>,
     opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
     batched_grand_product: BatchedGrandProductArgument<F>,
-    pub commitment: RangeCheckCommitment<G>,
 }
 
 impl<F, G> TimestampValidityProof<F, G>
@@ -563,14 +576,10 @@ where
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove(
-        read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
+        range_check_polys: &RangeCheckPolynomials<F, G>,
         t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-        generators: &PedersenGenerators<G>,
         transcript: &mut Transcript,
     ) -> Self {
-        let range_check_polys: RangeCheckPolynomials<F, G> =
-            RangeCheckPolynomials::new(read_timestamps);
-        let range_check_commitment = RangeCheckPolynomials::commit(&range_check_polys, &generators);
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
 
@@ -615,7 +624,6 @@ where
             openings,
             opening_proof,
             batched_grand_product,
-            commitment: range_check_commitment,
         }
     }
 
@@ -679,6 +687,7 @@ where
     pub fn verify(
         &mut self,
         generators: &PedersenGenerators<G>,
+        range_check_commitment: &RangeCheckCommitment<G>,
         memory_commitment: &MemoryCommitment<G>,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
@@ -721,10 +730,9 @@ where
             .chain(self.openings.memory_t_read.into_iter())
             .collect();
 
-        let t_read_commitments = &memory_commitment.read_write_commitments
-            [4 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
-        let commitments: Vec<_> = self
-            .commitment
+        let t_read_commitments = &memory_commitment.trace_commitments
+            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
+        let commitments: Vec<_> = range_check_commitment
             .commitments
             .iter()
             .chain(t_read_commitments.iter())
@@ -797,71 +805,5 @@ where
 
     fn protocol_name() -> &'static [u8] {
         b"Timestamp validity proof memory checking"
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::jolt::vm::read_write_memory::{
-        random_memory_trace, RandomInstruction, ReadWriteMemory, ReadWriteMemoryPreprocessing,
-    };
-
-    use super::*;
-    use ark_bn254::{Fr, G1Projective};
-    use common::{
-        constants::RAM_START_ADDRESS,
-        rv_trace::{ELFInstruction, JoltDevice},
-    };
-    use rand::RngCore;
-    use rand_core::SeedableRng;
-
-    #[test]
-    fn timestamp_range_check() {
-        const MEMORY_SIZE: usize = 1 << 16;
-        const NUM_OPS: usize = 1 << 8;
-        const BYTECODE_SIZE: usize = 1 << 8;
-        const BYTECODE_OFFSET: u64 = 200;
-
-        let mut rng = rand::rngs::StdRng::seed_from_u64(1234567890);
-        let memory_init = (0..BYTECODE_SIZE)
-            .map(|i| {
-                (
-                    RAM_START_ADDRESS + BYTECODE_OFFSET + i as u64,
-                    (rng.next_u32() & 0xff) as u8,
-                )
-            })
-            .collect();
-        let (memory_trace, load_store_flags) =
-            random_memory_trace(&memory_init, MEMORY_SIZE, NUM_OPS, &mut rng);
-
-        let mut transcript: Transcript = Transcript::new(b"test_transcript");
-
-        let preprocessing = ReadWriteMemoryPreprocessing::preprocess(memory_init);
-        let (rw_memory, read_timestamps): (ReadWriteMemory<Fr, G1Projective>, _) =
-            ReadWriteMemory::new(
-                &JoltDevice::new(),
-                &load_store_flags,
-                &preprocessing,
-                memory_trace,
-                &mut transcript,
-            );
-        let generators = PedersenGenerators::new(1 << 10, b"Test generators");
-        let commitments = rw_memory.commit(&generators);
-
-        let mut timestamp_validity_proof = TimestampValidityProof::prove(
-            read_timestamps,
-            &rw_memory.t_read,
-            &generators,
-            &mut transcript,
-        );
-
-        let mut transcript: Transcript = Transcript::new(b"test_transcript");
-        assert!(TimestampValidityProof::verify(
-            &mut timestamp_validity_proof,
-            &generators,
-            &commitments,
-            &mut transcript,
-        )
-        .is_ok());
     }
 }

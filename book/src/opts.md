@@ -4,12 +4,6 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Anticipated speedup: 8% of prover time (and a significant space reduction).
 
-- Each step of the RISC-V CPU reads/writes 3 registers and up to four bytes of RAM. As Jolt currently supports byte-addressable RAM, this means up to 7 reads/writes in total. But many operations don't access RAM at all (and some only read one or two bytes). In this case, we currently have the RISC-V CPU do four reads to RAM _anyway_, to memory cell 0 which we ensure stores value 0. This is silly. In the Spice-inspired memory-checking procedure used by Jolt for RAM, it causes cell 0's timestamp to increment unnecessarily, and each timestamp that arises gets committed by the prover (and is range-checked to boot). Instead, we should introduce some {0, 1}-valued flags, where a 0-flag tells a read to RAM to be ignored by the Spice-inspired procedure. This will let the prover avoid committments to four non-zero timestamps for every instruction that does not access RAM.
-
-    By lowering the maximum timestamp value, it will also let us lower the range size when the read/write timestamps get range-checked. This will speed up those range checks.
-
-    Anticipated speedup: 8% of prover time. 
-
 - When Spartan is applied to the R1CS arising in Jolt, the prover’s work in the first round involves computation over 64-bit integers, not arbitrary field elements. The implementation does not yet take advantage of this: each multiplication in the first round is currently implemented via a 256-bit Montgomery multiplication rather than a primitive 64-bit multiplication. This is about half of the prover’s total work in this sum-check invocation. (The same optimization applies for computing the three matrix-vector multiplications needed to compute Az, Bz, and Cz before beginning this first sum-check).  
 
     Anticipated speedup: 4% of overall prover time. <check>
@@ -18,7 +12,7 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Anticipated speedup: 3% of total prover time.
 
-- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir. See [this github issue](https://github.com/a16z/Lasso/issues/208).
+- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir. See [this github issue](https://github.com/a16z/jolt/issues/208).
 
     Anticipated speedup: 3% of total prover time.
 
@@ -38,4 +32,4 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Most benchmarks get compiled into RISC-V programs that mostly read entire words at once. Switching to word-addressable memory will improve Jolt’s speed on these benchmarks by 5%. 
 
-<b> Total anticipated prover time reduction</b>: 30%-35%. 
+<b> Total anticipated prover time reduction</b>: 20%-30%. 

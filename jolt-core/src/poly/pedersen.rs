@@ -1,15 +1,11 @@
 use ark_ec::CurveGroup;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::SeedableRng;
 use digest::{ExtendableOutput, Input};
 use rand_chacha::ChaCha20Rng;
 use sha3::Shake256;
 use std::io::Read;
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
-#[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -38,7 +34,6 @@ impl<G: CurveGroup> PedersenGenerators<G> {
 
         Self { generators }
     }
-
 
     pub fn clone_n(&self, n: usize) -> PedersenGenerators<G> {
         assert!(
