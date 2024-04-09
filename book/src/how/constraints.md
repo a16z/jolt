@@ -30,7 +30,7 @@ The inputs required for the constraint system for a single CPU step are:
 * The chunks of the lookup query. 
 * The lookup output. 
 
-### Circuit and Instruction flags: 
+### Circuit and Instruction subtable flags: 
 * There are nine circuit flags used to guide the constraints and are dependent only on the opcode of the instruction. These are thus stored as part of the program code in Jolt. 
     1. `operand_x_flag`: 0 if the first operand is the value in `rs1` or the `PC`. 
     2. `operand_y_flag`: 0 if the second operand is the value in `rs2` or the `imm`. 
@@ -41,7 +41,7 @@ The inputs required for the constraint system for a single CPU step are:
     7. `if_update_rd_with_lookup_output`: 1 if the lookup output is to be stored in `rd` at the end of the step. 
     8. `sign_imm_flag`: used in load/store and branch instructions where the instruction is added as constraints. 
     9. `is_concat`: indicates whether the instruction performs a concat-type lookup. 
-* Instruction flags: these are the unary bits used to indicate which lookup subtable is queried by this instruction. There are as many per step as the number of unique subtables in Jolt, which is 19. 
+* Subtable flags: these are the unary bits used to indicate which lookup subtable is queried by this instruction. There are as many per step as the number of unique subtables in Jolt, which is 19. 
 
 #### Constraint system 
 
