@@ -111,13 +111,12 @@ impl MacroBuilder {
 
     fn make_execute_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let execute_fn_name = Ident::new(&format!("execute_{}", fn_name), fn_name.span());
         let inputs = &self.func.sig.inputs;
         let output = &self.func.sig.output;
         let body = &self.func.block;
 
         quote! {
-             pub fn #execute_fn_name(#inputs) #output {
+             pub fn #fn_name(#inputs) #output {
                  #body
              }
         }

@@ -5,7 +5,7 @@
 fn collatz_convergence_range(start: u128, end: u128) -> u128 {
     let mut max_num_steps = 0;
     for n in start..end {
-        let num_steps = execute_collatz_convergence(n);
+        let num_steps = collatz_convergence(n);
         if num_steps > max_num_steps {
             max_num_steps = num_steps;
         }
