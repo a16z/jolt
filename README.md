@@ -8,11 +8,17 @@ Jolt is a zkVM for RISC-V. The Jolt [paper](https://people.cs.georgetown.edu/jth
 
 ## Resources
 
--   [Docs](https://jolt.a16zcrypto.com/)
--   [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
--   [Understanding Lasso and Jolt, from theory to code](https://a16zcrypto.com/posts/article/building-on-lasso-and-jolt/)
--   [Lasso paper](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf)
--   [Jolt paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf)
+- [Docs](https://jolt.a16zcrypto.com/)
+- Blog posts
+  - [Accelerating the world computer: Implementing Jolt, a new state-of-the-art zkVM](https://a16zcrypto.com/posts/article/accelerating-the-world-computer-implementing-jolt)
+  - [Building Jolt: A fast, easy-to-use zkVM](https://a16zcrypto.com/posts/article/building-jolt/)
+  - [FAQs on Jolt’s initial implementation](https://a16zcrypto.com/posts/article/faqs-on-jolts-initial-implementation)
+  - [A new era in SNARK design: Releasing Jolt](https://a16zcrypto.com/posts/article/a-new-era-in-snark-design-releasing-jolt)
+  - [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
+  - [Understanding Lasso and Jolt, from theory to code](https://a16zcrypto.com/posts/article/building-on-lasso-and-jolt/)
+- Papers
+  - [Lasso paper](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf)
+  - [Jolt paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf)
 
 ## Quickstart
 
