@@ -31,27 +31,16 @@ use strum::EnumCount;
 
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
 /// Returns (io, aux) = (pc_out, pc, aux)
-fn synthesize_witnesses<F: PrimeField>(
-    inputs: &R1CSInputs<F>,
-    num_aux: usize,
-) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
-    let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
-    let _enter = span.enter();
-    let triples_stepwise: Vec<(Vec<F>, F, F)> = (0..inputs.padded_trace_len)
-        .into_par_iter()
-        .map(|i| {
-            let step = inputs.clone_step(i);
-            let pc_cur = step.input_pc;
-            let (aux, _) = R1CSBuilder::calculate_aux(step, num_aux);
-            let pc_next = if i < inputs.padded_trace_len - 1 {
-                inputs.bytecode_a[i + 1]
-            } else {
-                F::zero()
-            };
-            (aux, pc_cur, F::zero())
-        })
-        .collect();
-    drop(_enter);
+fn synthesize_witnesses<F: PrimeField>(inputs: &R1CSInputs<F>, num_aux: usize) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
+  let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
+  let _enter = span.enter();
+  let triples_stepwise: Vec<(Vec<F>, F, F)>  = (0..inputs.padded_trace_len).into_par_iter().map(|i| {
+    let step = inputs.clone_step(i);
+    let pc_cur = step.input_pc;
+    let aux = R1CSBuilder::calculate_jolt_aux(step, num_aux);
+    (aux, pc_cur, F::zero())
+}).collect();
+  drop(_enter);
 
     // TODO(sragss / arasuarun): Remove pc_out, pc from calculate_aux and triples_stepwise
 
@@ -332,25 +321,25 @@ pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
 }
 
 impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
-    /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
-    #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
-    pub fn compute_witness_commit(
-        _W: usize,
-        _C: usize,
-        padded_trace_len: usize,
-        inputs: &R1CSInputs<F>,
-        generators: &PedersenGenerators<G>,
-    ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>), SpartanError> {
-        let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
-        let _enter = span.enter();
-        let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::get_matrices(&mut jolt_shape);
-        let key = UniformSpartanProof::<F, G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
-        drop(_enter);
-        drop(span);
+  /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
+  #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
+  pub fn compute_witness_commit(
+      _W: usize, 
+      _C: usize, 
+      padded_trace_len: usize, 
+      inputs: &R1CSInputs<F>,
+      generators: &PedersenGenerators<G>,
+  ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>), SpartanError> {
+      let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
+      let _enter = span.enter();
+      let mut jolt_shape = R1CSBuilder::default(); 
+      R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape); 
+      let key = UniformSpartanProof::<F,G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
+      drop(_enter);
+      drop(span);
 
         // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
-        let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
+        let (pc_out, pc, aux) = synthesize_witnesses(&inputs, jolt_shape.num_internal);
         let io_segments = vec![pc_out, pc];
         let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
         let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
@@ -477,18 +466,18 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 }
 
 impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
-    fn single_step_shape(&self) -> R1CSShape<F> {
-        let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::get_matrices(&mut jolt_shape);
-        let constraints_F = jolt_shape.convert_to_field();
-        let shape_single = R1CSShape::<F> {
-            A: constraints_F.0,
-            B: constraints_F.1,
-            C: constraints_F.2,
-            num_cons: jolt_shape.num_constraints + 1, // +1 for the IO consistency constraint
-            num_vars: jolt_shape.num_aux,             // shouldn't include 1 or IO
-            num_io: jolt_shape.num_inputs,
-        };
+  fn single_step_shape(&self) -> R1CSShape<F> {
+    let mut jolt_shape = R1CSBuilder::default(); 
+    R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape); 
+    let constraints_F = jolt_shape.convert_to_field(); 
+    let shape_single = R1CSShape::<F> {
+        A: constraints_F.0,
+        B: constraints_F.1,
+        C: constraints_F.2,
+        num_cons: jolt_shape.num_constraints+1, // +1 for the IO consistency constraint 
+        num_vars: jolt_shape.num_aux, // shouldn't include 1 or IO 
+        num_io: jolt_shape.num_inputs,
+    };
 
         shape_single.pad_vars()
     }
