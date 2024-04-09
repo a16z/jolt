@@ -5,6 +5,8 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use rand::prelude::SliceRandom;
+use sysinfo::System;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -39,10 +41,12 @@ fn create_project(name: String) {
 }
 
 fn install_toolchain() {
-    std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32i-unknown-none-elf"])
-        .output()
-        .expect("could not install toolchain");
+   std::process::Command::new("rustup")
+       .args(["target", "add", "riscv32i-unknown-none-elf"])
+       .output()
+       .expect("could not install toolchain");
+
+    display_welcome();
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
@@ -79,6 +83,55 @@ fn create_guest_files(name: &str) -> Result<()> {
     lib_file.write(GUEST_LIB.as_bytes())?;
 
     Ok(())
+}
+
+fn display_welcome() {
+    display_greeting();
+    println!("{}", "-".repeat(80));
+    display_sysinfo();
+}
+
+fn display_greeting() {
+    let jolt_logo_ascii = include_str!("ascii/jolt_ascii.ans");
+    println!("\n\n\n\n");
+    println!("{}", jolt_logo_ascii);
+    println!("\n\n\n\n");
+
+    let prompts = [
+        "The most Snarky zkVM. Watch out for the lasso.",
+        "Buckle your seat belt.",
+        "zkVMs are compressors.",
+        "Never dupe your network's compute.",
+        "You look great today.",
+        "Satiate your cores.",
+        "The multilinear one.",
+        "Transforming network architectures since 2025.",
+        "We heard you like sumcheck.",
+        "Reed and Solomon were quite the chaps.",
+        "Techno optimistic Jolt.",
+        "zk is a misnomer.",
+        "Twice as fast as Apollo 11.",
+        "Mason's favorite zkVM.",
+        "Sumcheck Is All You Need",
+        "Lasso-ing RV32 instructions since 2024.",
+        "Read. Write. Jolt.",
+        "Jolt is not financial advice. Jolt is a zkVM.",
+    ];
+    let prompt = prompts.choose(&mut rand::thread_rng()).unwrap();
+    println!("\x1B[1mWelcome to Jolt.\x1B[0m");
+    println!("\x1B[3m{}\x1B[0m", prompt);
+}
+
+fn display_sysinfo() {
+    let mut sys = System::new_all();
+
+    sys.refresh_all();
+
+    println!("OS:             {}", System::name().unwrap_or("UNKNOWN".to_string()));
+    println!("version:        {}", System::os_version().unwrap_or("UNKNOWN".to_string()));
+    println!("Host:           {}", System::host_name().unwrap_or("UNKNOWN".to_string()));
+    println!("CPUs:           {}", sys.cpus().len());
+    println!("RAM:            {:.2} GB", sys.total_memory() as f64 / 1_000_000_000.0);
 }
 
 const HOST_CARGO_TEMPLATE: &str = r#"[package]
