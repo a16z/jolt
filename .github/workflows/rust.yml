@@ -1,10 +1,10 @@
-name: Build and Test Lasso
+name: Build and Test Jolt
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 env:
   RUSTFLAGS: -D warnings
@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchain nightly-2022-09-22
+      - name: Install toolchain nightly-2023-09-22
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2022-09-22
+          toolchain: nightly-2023-09-22
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
@@ -37,10 +37,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchain nightly-2022-09-22
+      - name: Install toolchain nightly-2023-09-22
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2022-09-22
+          toolchain: nightly-2023-09-22
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:

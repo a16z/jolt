@@ -7,16 +7,12 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{One, Zero};
+use ark_std::Zero;
 use merlin::Transcript;
 use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
-#[cfg(not(feature = "ark-msm"))]
 use crate::msm::VariableBaseMSM;
 
 pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize, usize) {
@@ -34,15 +30,6 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
-}
-
-impl<const RATIO: usize, G: CurveGroup> HyraxGenerators<RATIO, G> {
-    // the number of variables in the multilinear polynomial
-    pub fn new(num_vars: usize, pedersen_generators: &PedersenGenerators<G>) -> Self {
-        let (_left, right) = matrix_dimensions(num_vars, RATIO);
-        let gens = pedersen_generators.clone_n(right);
-        HyraxGenerators { gens }
-    }
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]

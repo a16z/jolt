@@ -12,7 +12,7 @@ Below are known optimizations that we will be implementing in the coming weeks, 
 
     Anticipated speedup: 3% of total prover time.
 
-- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir. See [this github issue](https://github.com/a16z/Lasso/issues/208).
+- Switching the commitment scheme from Hyrax to one with much smaller commitments (e.g., HyperKZG, Zeromorph) will not only shorten the proofs, but also save the prover the time of serializing and hashing the commitments for Fiat-Shamir. See [this github issue](https://github.com/a16z/jolt/issues/208).
 
     Anticipated speedup: 3% of total prover time.
 

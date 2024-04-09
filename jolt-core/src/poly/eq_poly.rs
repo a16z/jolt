@@ -56,22 +56,22 @@ impl<F: PrimeField> EqPolynomial<F> {
         let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
         let mut size = 1;
         evals[0] = F::one();
-    
+
         for r in self.r.iter().rev() {
             let (evals_left, evals_right) = evals.split_at_mut(size);
             let (evals_right, _) = evals_right.split_at_mut(size);
-    
+
             evals_left
-            .par_iter_mut()
-            .zip(evals_right.par_iter_mut())
-            .for_each(|(x, y)| {
-                *y = *x * r;
-                *x -= &*y;
-            });
-    
+                .par_iter_mut()
+                .zip(evals_right.par_iter_mut())
+                .for_each(|(x, y)| {
+                    *y = *x * r;
+                    *x -= &*y;
+                });
+
             size *= 2;
         }
-    
+
         evals
     }
 

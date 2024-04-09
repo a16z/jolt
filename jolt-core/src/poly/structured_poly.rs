@@ -4,10 +4,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
 
 use super::pedersen::PedersenGenerators;
-use crate::{
-    lasso::memory_checking::NoPreprocessing,
-    utils::errors::ProofVerifyError,
-};
+use crate::{lasso::memory_checking::NoPreprocessing, utils::errors::ProofVerifyError};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
@@ -17,17 +14,15 @@ pub trait StructuredCommitment<G: CurveGroup>: Send + Sync + Sized {
     type Commitment;
 
     /// Commits to batched polynomials, typically using `HyraxCommitment::batch_commit_polys`.
-    fn commit(
-        &self,
-        generators: &PedersenGenerators<G>,
-    ) -> Self::Commitment;
+    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
 /// Note that there may be a one-to-many mapping from `StructuredCommitment` to `StructuredOpeningProof`:
 /// different subset of the same polynomials may be opened at different points, resulting in
 /// different opening proofs.
-pub trait StructuredOpeningProof<F, G, Polynomials>: Sync + CanonicalSerialize + CanonicalDeserialize
+pub trait StructuredOpeningProof<F, G, Polynomials>:
+    Sync + CanonicalSerialize + CanonicalDeserialize
 where
     F: PrimeField,
     G: CurveGroup<ScalarField = F>,

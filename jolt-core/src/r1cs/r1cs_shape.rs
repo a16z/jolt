@@ -74,15 +74,6 @@ impl<F: PrimeField> R1CSShape<F> {
         Ok(shape.pad())
     }
 
-    // Checks regularity conditions on the R1CSShape, required in Spartan-class SNARKs
-    // Panics if num_cons, num_vars, or num_io are not powers of two, or if num_io > num_vars
-    #[inline]
-    pub(crate) fn check_regular_shape(&self) {
-        assert_eq!(self.num_cons.next_power_of_two(), self.num_cons);
-        assert_eq!(self.num_vars.next_power_of_two(), self.num_vars);
-        assert!(self.num_io < self.num_vars);
-    }
-
     #[tracing::instrument(skip_all, name = "R1CSShape::multiply_vec")]
     pub fn multiply_vec(&self, z: &[F]) -> Result<(Vec<F>, Vec<F>, Vec<F>), SpartanError> {
         if z.len() != self.num_io + self.num_vars + 1 {
@@ -195,7 +186,7 @@ impl<F: PrimeField> R1CSShape<F> {
         num_steps: usize, // padded length
         A: &mut Vec<F>,
         B: &mut Vec<F>,
-        C: &mut Vec<F>
+        C: &mut Vec<F>,
     ) -> Result<(), SpartanError> {
         if full_witness_vector.len() != (self.num_io + self.num_vars) * num_steps {
             return Err(SpartanError::InvalidWitnessLength);
@@ -219,9 +210,11 @@ impl<F: PrimeField> R1CSShape<F> {
                 for &(_, col, val) in R {
                     if col == self.num_vars {
                         result.par_iter_mut().for_each(|x| *x += val);
-                    } else if col == 1 { // pc_out variable index is 1 (pc_in is 0)
+                    } else if col == 1 {
+                        // pc_out variable index is 1 (pc_in is 0)
                         result.par_iter_mut().enumerate().for_each(|(i, x)| {
-                            *x += mul_0_1_optimized(&val, &full_witness_vector[i+1]); // pc_out[i] = pc_in[i+1] = index i+1 in z
+                            *x += mul_0_1_optimized(&val, &full_witness_vector[i + 1]);
+                            // pc_out[i] = pc_in[i+1] = index i+1 in z
                         });
                     } else {
                         let witness_offset = col * num_steps;
@@ -250,7 +243,6 @@ impl<F: PrimeField> R1CSShape<F> {
                         let row = &M[row_pointers[row_index]..row_pointers[row_index + 1]];
                         multiply_row_vec_uniform(row, row_output, num_steps);
                     });
-
             };
 
         rayon::join(

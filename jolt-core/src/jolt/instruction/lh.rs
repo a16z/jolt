@@ -15,7 +15,7 @@ impl JoltInstruction for LHInstruction {
         [0, self.0]
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: PrimeField>(&self, vals: &[F], _C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
         assert!(vals.len() == 2);

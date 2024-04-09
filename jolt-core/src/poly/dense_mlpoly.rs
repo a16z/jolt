@@ -1,22 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized, mul_0_1_optimized};
+use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
-use super::hyrax::{HyraxCommitment, HyraxGenerators};
-use super::pedersen::PedersenGenerators;
 use crate::utils::math::Math;
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use core::ops::Index;
 use rayon::prelude::*;
 use std::ops::AddAssign;
-
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
-#[cfg(not(feature = "ark-msm"))]
-use crate::msm::VariableBaseMSM;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DensePolynomial<F> {
@@ -235,10 +226,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         compute_dotproduct_low_optimized(&self.Z, &chis)
     }
 
-    fn vec(&self) -> &Vec<F> {
-        &self.Z
-    }
-
     pub fn evals(&self) -> Vec<F> {
         self.Z.clone()
     }
@@ -250,17 +237,21 @@ impl<F: PrimeField> DensePolynomial<F> {
     #[tracing::instrument(skip_all, name = "DensePoly::flatten")]
     pub fn flatten(polys: &[DensePolynomial<F>]) -> Vec<F> {
         let poly_len = polys[0].len();
-        polys.iter().for_each(|poly| assert_eq!(poly_len, poly.len()));
+        polys
+            .iter()
+            .for_each(|poly| assert_eq!(poly_len, poly.len()));
 
         let num_polys = polys.len();
         let flat_len = num_polys * poly_len;
         let mut flat: Vec<F> = unsafe_allocate_zero_vec(flat_len);
-        flat.par_chunks_mut(poly_len).enumerate().for_each(|(poly_index, result)| {
-            let evals = polys[poly_index].evals_ref();
-            for (eval_index, eval) in evals.iter().enumerate() {
-                result[eval_index] = *eval;
-            }
-        });
+        flat.par_chunks_mut(poly_len)
+            .enumerate()
+            .for_each(|(poly_index, result)| {
+                let evals = polys[poly_index].evals_ref();
+                for (eval_index, eval) in evals.iter().enumerate() {
+                    result[eval_index] = *eval;
+                }
+            });
         flat
     }
 
@@ -319,6 +310,7 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_bn254::G1Projective;
+    use ark_ec::CurveGroup;
     use ark_std::test_rng;
     use ark_std::One;
     use ark_std::UniformRand;

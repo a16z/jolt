@@ -411,7 +411,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         );
 
         commitments.append_to_transcript(&mut transcript);
-        
+
         Self::verify_bytecode(
             &preprocessing.bytecode,
             &preprocessing.generators,

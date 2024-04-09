@@ -2,7 +2,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::{
-    dense_mlpoly::DensePolynomial, pedersen::PedersenGenerators, structured_poly::{StructuredCommitment, StructuredOpeningProof}
+    dense_mlpoly::DensePolynomial,
+    pedersen::PedersenGenerators,
+    structured_poly::{StructuredCommitment, StructuredOpeningProof},
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
@@ -210,7 +212,7 @@ where
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::read_write_grand_product")]
     fn read_write_grand_product(
-        preprocessing: &Self::Preprocessing,
+        _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
         read_write_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
@@ -233,7 +235,7 @@ where
     /// with the given leaves. Also returns the corresponding multiset hashes for each memory.
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::init_final_grand_product")]
     fn init_final_grand_product(
-        preprocessing: &Self::Preprocessing,
+        _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
         init_final_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {

@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
-use tracing::span::Attributes;
-use tracing::span::Record;
-use tracing::Event;
+
 use tracing::Id;
 use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
@@ -32,7 +30,7 @@ impl FlushGuard {
             println!("||     Filter Details         ||");
             println!("===============================");
             for name in filter {
-                let mut padding = if name.len() > 28 { 0 } else { 28 - name.len() };
+                let padding = if name.len() > 28 { 0 } else { 28 - name.len() };
                 let left_padding = padding / 2;
                 let right_padding = padding - left_padding;
                 println!(

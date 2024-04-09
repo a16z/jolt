@@ -21,19 +21,16 @@ impl<F: PrimeField> GrandProductCircuit<F> {
         inp_left: &DensePolynomial<F>,
         inp_right: &DensePolynomial<F>,
     ) -> (DensePolynomial<F>, DensePolynomial<F>) {
-        // TODO(sragss): Write a cache checker for how many cache hits I'd have for a cacher.
         let len = inp_left.len() + inp_right.len();
         let outp_left = (0..len / 4)
-            .map(|i| 
+            .map(|i|
                 // inp_left[i] * inp_right[i]
-                mul_0_1_optimized(&inp_left[i], &inp_right[i])
-            )
+                mul_0_1_optimized(&inp_left[i], &inp_right[i]))
             .collect::<Vec<F>>();
         let outp_right = (len / 4..len / 2)
-            .map(|i| 
+            .map(|i|
                 // inp_left[i] * inp_right[i]
-                mul_0_1_optimized(&inp_left[i], &inp_right[i])
-            )
+                mul_0_1_optimized(&inp_left[i], &inp_right[i]))
             .collect::<Vec<F>>();
 
         (
@@ -68,7 +65,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
 
     #[tracing::instrument(skip_all, name = "GrandProductCircuit::new_split")]
     pub fn new_split(left_leaves: DensePolynomial<F>, right_leaves: DensePolynomial<F>) -> Self {
-        let num_layers = left_leaves.len().log_2() + 1; 
+        let num_layers = left_leaves.len().log_2() + 1;
         let mut left_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
         let mut right_vec: Vec<DensePolynomial<F>> = Vec::with_capacity(num_layers);
 
@@ -254,10 +251,9 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
-            let (proof, rand_prod, claims_prod) =
-                SumcheckInstanceProof::prove_cubic_batched::<G>(
-                    &claim, params, &coeff_vec, transcript,
-                );
+            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched::<G>(
+                &claim, params, &coeff_vec, transcript,
+            );
 
             let (claims_poly_A, claims_poly_B, _claim_eq) = claims_prod;
             for i in 0..batch.circuits.len() {
@@ -274,7 +270,9 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 );
             }
 
-            if sumcheck_type == CubicSumcheckType::Prod || sumcheck_type == CubicSumcheckType::ProdOnes {
+            if sumcheck_type == CubicSumcheckType::Prod
+                || sumcheck_type == CubicSumcheckType::ProdOnes
+            {
                 // Prod layers must generate an additional random coefficient. The sumcheck randomness indexes into the current layer,
                 // but the resulting randomness and claims are about the next layer. The next layer is indexed by an additional variable
                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
@@ -426,7 +424,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 #[cfg(test)]
 mod grand_product_circuit_tests {
     use super::*;
-    use ark_bn254::{G1Projective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use ark_std::{One, Zero};
 
     #[test]

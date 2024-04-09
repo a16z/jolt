@@ -11,8 +11,8 @@ authors = [
 ]
 description = "RISC-V emulator for Jolt"
 license = "MIT"
-homepage = "https://github.com/a16z/lasso/README.md"
-repository = "https://github.com/a16z/lasso"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [dependencies]
