@@ -58,6 +58,10 @@ Unit and end-to-end tests for `jolt-core` can be run using the following command
 
 ```cargo test -p jolt-core```
 
+Examples in the [`examples`](./examples/) directory can be run using e.g.
+
+```cargo run --release -p sha2-chain`
+
 
 ## Performance profiling
 
