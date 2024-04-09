@@ -65,7 +65,7 @@ tracer = { path = "../tracer" }
 common = { path = "../common" }
 
 [lib]
-name = "liblasso"
+name = "jolt_core"
 path = "src/lib.rs"
 
 [features]

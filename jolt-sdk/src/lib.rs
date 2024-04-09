@@ -32,11 +32,11 @@ pub use common::{
     rv_trace::{MemoryOp, RV32IM},
 };
 #[cfg(feature = "std")]
-pub use liblasso::host;
+pub use jolt_core::host;
 #[cfg(feature = "std")]
-pub use liblasso::jolt::instruction;
+pub use jolt_core::jolt::instruction;
 #[cfg(feature = "std")]
-pub use liblasso::jolt::vm::{
+pub use jolt_core::jolt::vm::{
     bytecode::BytecodeRow,
     rv32i_vm::{RV32IJoltProof, RV32IJoltVM, RV32I},
     Jolt, JoltCommitments, JoltPreprocessing, JoltProof,

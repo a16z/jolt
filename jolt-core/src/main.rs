@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use liblasso::benches::{
+use jolt_core::benches::{
     bench::{benchmarks, BenchType},
     sum_timer::CumulativeTimingLayer,
 };
