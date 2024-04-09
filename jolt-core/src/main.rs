@@ -5,10 +5,10 @@ use liblasso::benches::{
     sum_timer::CumulativeTimingLayer,
 };
 
-use std::{any::Any};
+use std::any::Any;
 
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_flame::{FlameLayer};
+use tracing_flame::FlameLayer;
 use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 use tracing_texray::TeXRayLayer;
 

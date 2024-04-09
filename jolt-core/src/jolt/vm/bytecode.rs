@@ -8,8 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
-    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment,
-    HyraxOpeningProof,
+    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof,
 };
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};

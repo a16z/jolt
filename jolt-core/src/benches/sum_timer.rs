@@ -3,8 +3,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
 
-
-
 use tracing::Id;
 use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};

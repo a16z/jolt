@@ -1,7 +1,7 @@
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
-use ark_bn254::{G1Projective};
+use ark_bn254::G1Projective;
 use serde::Serialize;
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]

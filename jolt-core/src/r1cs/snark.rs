@@ -1,10 +1,7 @@
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    poly::{
-        hyrax::{HyraxCommitment},
-        pedersen::PedersenGenerators,
-    },
+    poly::{hyrax::HyraxCommitment, pedersen::PedersenGenerators},
     r1cs::r1cs_shape::R1CSShape,
     utils::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},

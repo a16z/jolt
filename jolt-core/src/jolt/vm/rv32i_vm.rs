@@ -151,9 +151,7 @@ pub type RV32IJoltProof<F, G> = JoltProof<C, M, F, G, RV32I, RV32ISubtables<F>>;
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Fr, G1Projective};
-    
-    
-    
+
     use std::collections::HashSet;
 
     use crate::host;

@@ -7,7 +7,7 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{Zero};
+use ark_std::Zero;
 use merlin::Transcript;
 use num_integer::Roots;
 use rayon::prelude::*;
