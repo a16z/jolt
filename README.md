@@ -4,7 +4,9 @@
 
 Just One Lookup Table.
 
-Jolt is a zkVM for RISC-V. The Jolt [paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). 
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. Contributors are welcome!
+
+The Jolt [paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). 
 
 ## Resources
 
@@ -21,6 +23,9 @@ Jolt is a zkVM for RISC-V. The Jolt [paper](https://people.cs.georgetown.edu/jth
   - [Jolt paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf)
 
 ## Quickstart
+
+> [!NOTE]
+> Jolt is in alpha and is not suitable for production use yet.
 
 For developers looking to build using Jolt, check out the [Quickstart guide](https://jolt.a16zcrypto.com/usage/quickstart.html).
 
