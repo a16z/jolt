@@ -4,8 +4,11 @@
 
 Just One Lookup Table.
 
+Jolt is a zkVM for RISC-V. The Jolt [paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). 
+
 ## Resources
 
+-   [Docs](https://jolt.a16zcrypto.com/)
 -   [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
 -   [Understanding Lasso and Jolt, from theory to code](https://a16zcrypto.com/posts/article/building-on-lasso-and-jolt/)
 -   [Lasso paper](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf)
