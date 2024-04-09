@@ -176,7 +176,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             let mle_half = polys[0].len() / 2;
 
-            let accum: Vec<Vec<F>> = (0..mle_half).into_par_iter()
+            let accum: Vec<Vec<F>> = (0..mle_half)
+                .into_par_iter()
                 .map(|poly_term_i| {
                     let mut accum = vec![F::zero(); combined_degree + 1];
                     // Evaluate P({0, ..., |g(r)|})
@@ -244,7 +245,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
+            polys
+                .par_iter_mut()
+                .for_each(|poly| poly.bound_poly_var_top(&r_j));
             compressed_polys.push(round_uni_poly.compress());
         }
 
@@ -264,9 +267,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         G: CurveGroup<ScalarField = F>,
     {
         match params.sumcheck_type {
-            CubicSumcheckType::Prod => Self::prove_cubic_batched_prod::<G>(claim, params, coeffs, transcript),
-            CubicSumcheckType::ProdOnes => Self::prove_cubic_batched_prod_ones::<G>(claim, params, coeffs, transcript),
-            CubicSumcheckType::Flags => Self::prove_cubic_batched_flags::<G>(claim, params, coeffs, transcript)
+            CubicSumcheckType::Prod => {
+                Self::prove_cubic_batched_prod::<G>(claim, params, coeffs, transcript)
+            }
+            CubicSumcheckType::ProdOnes => {
+                Self::prove_cubic_batched_prod_ones::<G>(claim, params, coeffs, transcript)
+            }
+            CubicSumcheckType::Flags => {
+                Self::prove_cubic_batched_flags::<G>(claim, params, coeffs, transcript)
+            }
         }
     }
 
@@ -282,7 +291,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     {
         assert_eq!(params.poly_As.len(), params.poly_Bs.len());
         assert_eq!(params.poly_As.len(), coeffs.len());
-        
+
         let mut params = params;
 
         let mut e = *claim;
@@ -292,14 +301,15 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         for _j in 0..params.num_rounds {
             let len = params.poly_As[0].len() / 2;
             let eq = &params.poly_eq;
-            
+
             let _span = trace_span!("eval_loop");
             let _enter = _span.enter();
-            let evals = (0..len).into_par_iter()
+            let evals = (0..len)
+                .into_par_iter()
                 .map(|low_index| {
                     let high_index = low_index + len;
 
-                    let eq_evals = { 
+                    let eq_evals = {
                         let eval_point_0 = eq[low_index];
                         let m_eq = eq[high_index] - eq[low_index];
                         let eval_point_2 = eq[high_index] + m_eq;
@@ -309,7 +319,9 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                     let mut evals = (F::zero(), F::zero(), F::zero());
 
-                    for (coeff, poly_A, poly_B) in multizip((coeffs, &params.poly_As, &params.poly_Bs)) {
+                    for (coeff, poly_A, poly_B) in
+                        multizip((coeffs, &params.poly_As, &params.poly_Bs))
+                    {
                         // We want to compute:
                         //     evals.0 += coeff * poly_A[low_index] * poly_B[low_index]
                         //     evals.1 += coeff * (2 * poly_A[high_index] - poly_A[low_index]) * (2 * poly_B[high_index] - poly_B[low_index])
@@ -345,12 +357,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             drop(_enter);
             drop(_span);
 
-            let evals = [
-                evals.0,
-                e - evals.0,
-                evals.1,
-                evals.2,
-            ];
+            let evals = [evals.0, e - evals.0, evals.1, evals.2];
             let poly = UniPoly::from_evals(&evals);
 
             // append the prover's message to the transcript
@@ -367,12 +374,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = trace_span!("binding");
             let _enter = _span.enter();
 
-            let poly_iter = params.poly_As.par_iter_mut()
+            let poly_iter = params
+                .poly_As
+                .par_iter_mut()
                 .chain(params.poly_Bs.par_iter_mut());
 
             rayon::join(
                 || poly_iter.for_each(|poly| poly.bound_poly_var_top(&r_j)),
-                || params.poly_eq.bound_poly_var_top(&r_j)
+                || params.poly_eq.bound_poly_var_top(&r_j),
             );
 
             drop(_enter);
@@ -447,13 +456,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                             let eval_point_0: F = if a_low_one && b_low_one {
                                 eq_evals[low].0
-                            } 
+                            }
                             else if a_low_one {
                                 poly_B[low] * eq_evals[low].0
-                            } 
+                            }
                             else if b_low_one {
                                 poly_A[low] * eq_evals[low].0
-                            } 
+                            }
                             else {
                                 poly_A[low] * poly_B[low] * eq_evals[low].0
                             };
@@ -463,7 +472,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                             let (eval_point_2, eval_point_3) = if m_a_zero && m_b_zero {
                                 (eq_evals[low].1, eq_evals[low].2)
-                            } 
+                            }
                             else if m_a_zero {
                                 let m_b = poly_B[high] - poly_B[low];
                                 let point_2_B = poly_B[high] + m_b;
@@ -480,7 +489,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                                 let eval_point_2 = eq_evals[low].1 * point_2_A;
                                 let eval_point_3 = eq_evals[low].2 * point_3_A;
                                 (eval_point_2, eval_point_3)
-                            } 
+                            }
                             else {
                                 let m_a = poly_A[high] - poly_A[low];
                                 let m_b = poly_B[high] - poly_B[low];
@@ -541,12 +550,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let _span = trace_span!("binding (ones)");
             let _enter = _span.enter();
 
-            let poly_iter = params.poly_As.par_iter_mut()
+            let poly_iter = params
+                .poly_As
+                .par_iter_mut()
                 .chain(params.poly_Bs.par_iter_mut());
 
             rayon::join(
                 || poly_iter.for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j)),
-                || params.poly_eq.bound_poly_var_top(&r_j)
+                || params.poly_eq.bound_poly_var_top(&r_j),
             );
 
             drop(_enter);
@@ -564,12 +575,19 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[tracing::instrument(skip_all, name = "SumcheckInstanceProof::compute_cubic_evals_flags")]
-    fn compute_cubic_evals_flags(flags: &DensePolynomial<F>, leaves: &DensePolynomial<F>, eq_evals: &Vec<(F, F, F)>, len: usize) -> (F, F, F) {
+    fn compute_cubic_evals_flags(
+        flags: &DensePolynomial<F>,
+        leaves: &DensePolynomial<F>,
+        eq_evals: &Vec<(F, F, F)>,
+        len: usize,
+    ) -> (F, F, F) {
         let (flags_low, flags_high) = flags.split_evals(len);
         let (leaves_low, leaves_high) = leaves.split_evals(len);
 
         let mut evals = (F::zero(), F::zero(), F::zero());
-        for (&flag_low, &flag_high, &leaf_low, &leaf_high, eq_eval) in multizip((flags_low, flags_high, leaves_low, leaves_high, eq_evals)) {
+        for (&flag_low, &flag_high, &leaf_low, &leaf_high, eq_eval) in
+            multizip((flags_low, flags_high, leaves_low, leaves_high, eq_evals))
+        {
             let m_eq: F = flag_high - flag_low;
             let (flag_eval_point_2, flag_eval_point_3) = if m_eq.is_zero() {
                 (flag_high, flag_high)
@@ -649,7 +667,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let mut eq_evals: Vec<(F, F, F)> = Vec::with_capacity(params.poly_As[0].len() / 2);
 
         for _j in 0..params.num_rounds {
-
             let len = params.poly_As[0].len() / 2;
             let eq_span = trace_span!("eq_evals");
             let _eq_enter = eq_span.enter();
@@ -673,17 +690,36 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             let _span = trace_span!("eval_loop");
             let _enter = _span.enter();
-            let evals: Vec<(F, F, F)> = params.poly_Bs.par_iter().enumerate().flat_map(|(memory_index, memory_flag_poly)| {
-                let read_leaves = &params.poly_As[2 * memory_index];
-                let write_leaves = &params.poly_As[2 * memory_index + 1];
+            let evals: Vec<(F, F, F)> = params
+                .poly_Bs
+                .par_iter()
+                .enumerate()
+                .flat_map(|(memory_index, memory_flag_poly)| {
+                    let read_leaves = &params.poly_As[2 * memory_index];
+                    let write_leaves = &params.poly_As[2 * memory_index + 1];
 
-                let (read_evals, write_evals) = rayon::join(
-                    || Self::compute_cubic_evals_flags(memory_flag_poly, read_leaves, &eq_evals, len),
-                    || Self::compute_cubic_evals_flags(memory_flag_poly, write_leaves, &eq_evals, len),
-                );
+                    let (read_evals, write_evals) = rayon::join(
+                        || {
+                            Self::compute_cubic_evals_flags(
+                                memory_flag_poly,
+                                read_leaves,
+                                &eq_evals,
+                                len,
+                            )
+                        },
+                        || {
+                            Self::compute_cubic_evals_flags(
+                                memory_flag_poly,
+                                write_leaves,
+                                &eq_evals,
+                                len,
+                            )
+                        },
+                    );
 
-                [read_evals, write_evals]
-            }).collect();
+                    [read_evals, write_evals]
+                })
+                .collect();
             drop(_enter);
             drop(_span);
 
@@ -711,24 +747,30 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
             let poly_As_span = trace_span!("Bind leaves");
             let _poly_As_enter = poly_As_span.enter();
-            params.poly_As.par_iter_mut()
+            params
+                .poly_As
+                .par_iter_mut()
                 .for_each(|poly| poly.bound_poly_var_top(&r_j));
             drop(_poly_As_enter);
             drop(poly_As_span);
-            
+
             let poly_other_span = trace_span!("Bind EQ and flags");
             let _poly_other_enter = poly_other_span.enter();
             rayon::join(
                 || params.poly_eq.bound_poly_var_top(&r_j),
-                || params.poly_Bs.par_iter_mut().for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j))
+                || {
+                    params
+                        .poly_Bs
+                        .par_iter_mut()
+                        .for_each(|poly| poly.bound_poly_var_top_many_ones(&r_j))
+                },
             );
             drop(_poly_other_enter);
             drop(poly_other_span);
-            
+
             e = poly.evaluate(&r_j);
             cubic_polys.push(poly.compress());
         }
-
 
         let leaves_claims: Vec<F> = (0..params.poly_As.len())
             .map(|i| params.poly_As[i][0])
@@ -748,7 +790,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[inline]
-    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic")]
+    #[tracing::instrument(
+        skip_all,
+        name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic"
+    )]
     pub fn compute_eval_points_spartan_cubic<Func>(
         poly_A: &DensePolynomial<F>,
         poly_B: &DensePolynomial<F>,
@@ -822,49 +867,51 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let mut claim_per_round = *claim;
 
         for _ in 0..num_rounds {
-        let poly = {
-            // Make an iterator returning the contributions to the evaluations
-            let (eval_point_0, eval_point_2, eval_point_3) =
-            Self::compute_eval_points_spartan_cubic(poly_A, poly_B, poly_C, poly_D, &comb_func);
+            let poly = {
+                // Make an iterator returning the contributions to the evaluations
+                let (eval_point_0, eval_point_2, eval_point_3) =
+                    Self::compute_eval_points_spartan_cubic(
+                        poly_A, poly_B, poly_C, poly_D, &comb_func,
+                    );
 
-            let evals = [
-                eval_point_0,
-                claim_per_round - eval_point_0,
-                eval_point_2,
-                eval_point_3,
-            ];
-            UniPoly::from_evals(&evals)
-        };
+                let evals = [
+                    eval_point_0,
+                    claim_per_round - eval_point_0,
+                    eval_point_2,
+                    eval_point_3,
+                ];
+                UniPoly::from_evals(&evals)
+            };
 
-        // append the prover's message to the transcript
-        <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            // append the prover's message to the transcript
+            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
-        //derive the verifier's challenge for the next round
-        let r_i = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"challenge_nextround",
-        );
-        r.push(r_i);
-        polys.push(poly.compress());
+            //derive the verifier's challenge for the next round
+            let r_i = <Transcript as ProofTranscript<G>>::challenge_scalar(
+                transcript,
+                b"challenge_nextround",
+            );
+            r.push(r_i);
+            polys.push(poly.compress());
 
-        // Set up next round
-        claim_per_round = poly.evaluate(&r_i);
+            // Set up next round
+            claim_per_round = poly.evaluate(&r_i);
 
-        // bound all tables to the verifier's challenege
-        rayon::join(
-            || poly_A.bound_poly_var_top_par(&r_i),
-            || {
+            // bound all tables to the verifier's challenege
             rayon::join(
-                || poly_B.bound_poly_var_top_zero_optimized(&r_i),
+                || poly_A.bound_poly_var_top_par(&r_i),
                 || {
-                rayon::join(
-                    || poly_C.bound_poly_var_top_zero_optimized(&r_i),
-                    || poly_D.bound_poly_var_top_zero_optimized(&r_i),
-                )
+                    rayon::join(
+                        || poly_B.bound_poly_var_top_zero_optimized(&r_i),
+                        || {
+                            rayon::join(
+                                || poly_C.bound_poly_var_top_zero_optimized(&r_i),
+                                || poly_D.bound_poly_var_top_zero_optimized(&r_i),
+                            )
+                        },
+                    )
                 },
-            )
-            },
-        );
+            );
         }
 
         (
@@ -926,7 +973,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                     }
                 })
                 .sum();
-            eval_point_2 += mul_0_optimized(&(poly_A[len] + poly_A[len] - poly_A[0]), &(F::from_u64(2).unwrap() - W[0]));
+            eval_point_2 += mul_0_optimized(
+                &(poly_A[len] + poly_A[len] - poly_A[0]),
+                &(F::from_u64(2).unwrap() - W[0]),
+            );
 
             let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
             UniPoly::from_evals(&evals)
@@ -936,7 +986,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+        let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(
+            transcript,
+            b"challenge_nextround",
+        );
         r.push(r_i);
         polys.push(poly.compress());
 
@@ -945,8 +998,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
         // bound all tables to the verifier's challenge
         let (_, mut poly_B) = rayon::join(
-        || poly_A.bound_poly_var_top_zero_optimized(&r_i),
-        || {
+            || poly_A.bound_poly_var_top_zero_optimized(&r_i),
+            || {
                 // Simulates `poly_B.bound_poly_var_top(&r_i)`
                 // We need to do this because we don't actually have
                 // a `MultilinearPolynomial` instance for `poly_B` yet,
@@ -956,14 +1009,14 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
                 let one = [F::one()];
                 let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
                 let Z_iter = W_iter
-                .chain(one.par_iter())
-                .chain(rayon::iter::repeatn(&zero, len));
+                    .chain(one.par_iter())
+                    .chain(rayon::iter::repeatn(&zero, len));
                 let left_iter = Z_iter.clone().take(len);
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter
-                .zip(right_iter)
-                .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
-                .collect();
+                    .zip(right_iter)
+                    .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
+                    .collect();
                 DensePolynomial::new(B)
             },
         );
@@ -973,7 +1026,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         for _ in 1..num_rounds {
             let poly = {
                 let (eval_point_0, eval_point_2) =
-                Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
+                    Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
 
                 let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
                 UniPoly::from_evals(&evals)
@@ -983,7 +1036,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_nextround");
+            let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(
+                transcript,
+                b"challenge_nextround",
+            );
 
             r.push(r_i);
             polys.push(poly.compress());
@@ -1001,11 +1057,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         let evals = vec![poly_A[0], poly_B[0]];
         drop_in_background_thread(poly_B);
 
-        (
-            SumcheckInstanceProof::new(polys),
-            r,
-            evals
-        )
+        (SumcheckInstanceProof::new(polys), r, evals)
     }
 
     #[inline]
@@ -1036,10 +1088,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 
                 (eval_point_0, eval_point_2)
             })
-            .reduce(
-                || (F::zero(), F::zero()),
-                |a, b| (a.0 + b.0, a.1 + b.1),
-            )
+            .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
     }
 }
 
@@ -1117,7 +1166,7 @@ pub mod bench {
     use crate::poly::eq_poly::EqPolynomial;
     use crate::subprotocols::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
     use crate::utils::index_to_field_bitvector;
-    use ark_bn254::{G1Projective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use ark_std::{rand::Rng, test_rng, One, UniformRand, Zero};
     use criterion::black_box;
 
@@ -1156,9 +1205,12 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<
-                    G1Projective,
-                >(&claim, params, &coeffs, &mut transcript);
+                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                    &claim,
+                    params,
+                    &coeffs,
+                    &mut transcript,
+                );
             })
         });
 
@@ -1198,9 +1250,12 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<
-                    G1Projective,
-                >(&claim, params, &coeffs, &mut transcript);
+                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                    &claim,
+                    params,
+                    &coeffs,
+                    &mut transcript,
+                );
             })
         });
 
@@ -1242,10 +1297,11 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = Transcript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<
-                    G1Projective,
-                >(
-                    &joint_claim, params, &coeffs, &mut transcript
+                let (proof, r, evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                    &joint_claim,
+                    params,
+                    &coeffs,
+                    &mut transcript,
                 );
             })
         });
@@ -1257,7 +1313,7 @@ mod test {
     use super::*;
     use crate::utils::test::TestTranscript;
     use crate::{poly::eq_poly::EqPolynomial, utils::math::Math};
-    use ark_bn254::{G1Projective, Fr};
+    use ark_bn254::{Fr, G1Projective};
     use ark_ff::Zero;
     use ark_std::One;
 
@@ -1333,7 +1389,7 @@ mod test {
         let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
-            vec![factorial.clone(),factorial.clone()],
+            vec![factorial.clone(), factorial.clone()],
             vec![flags.clone()],
             eq.clone(),
             num_rounds,

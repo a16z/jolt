@@ -6,7 +6,7 @@ use liblasso::benches::{
 };
 use plotters::prelude::*;
 use rgb::RGB8;
-use std::{fs::File, io::BufWriter, time::Instant, any::Any};
+use std::{any::Any, fs::File, io::BufWriter, time::Instant};
 use textplots::{Chart, ColorPlot, Plot, Shape};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_flame::{FlameLayer, FlushGuard};

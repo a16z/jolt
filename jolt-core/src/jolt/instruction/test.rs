@@ -10,7 +10,7 @@ macro_rules! jolt_instruction_test {
         use ark_ff::PrimeField;
 
         let subtable_lookup_indices = $instr.to_indices(C, ark_std::log2(M) as usize);
-        
+
         let mut subtable_values: Vec<Fr> = vec![];
         for (subtable, dimension_indices) in $instr.subtables::<Fr>(C, M) {
             let materialized_subtable = subtable.materialize(M);

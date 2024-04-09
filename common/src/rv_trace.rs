@@ -1,4 +1,6 @@
-use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, PANIC_ADDRESS, INPUT_START_ADDRESS, OUTPUT_START_ADDRESS};
+use crate::constants::{
+    INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
+};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
@@ -63,7 +65,9 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
         };
 
         let ram_byte_read = |index: usize| match self.memory_state {
-            Some(MemoryState::Read { address, value }) => (self.register_state.rd_post_val.unwrap() >> (index * 8)) as u8,
+            Some(MemoryState::Read { address, value }) => {
+                (self.register_state.rd_post_val.unwrap() >> (index * 8)) as u8
+            }
             Some(MemoryState::Write {
                 address,
                 pre_value,
@@ -511,65 +515,61 @@ impl RV32IM {
     #[rustfmt::skip] // keep matches pretty
     pub fn instruction_type(&self) -> RV32InstructionFormat {
         match self {
-            RV32IM::ADD
-            | RV32IM::SUB
-            | RV32IM::XOR
-            | RV32IM::OR
-            | RV32IM::AND
-            | RV32IM::SLL
-            | RV32IM::SRL
-            | RV32IM::SRA
-            | RV32IM::SLT
-            | RV32IM::SLTU
-            | RV32IM::MUL
-            | RV32IM::MULH
-            | RV32IM::MULSU
-            | RV32IM::MULU
-            | RV32IM::DIV
-            | RV32IM::DIVU
-            | RV32IM::REM
-            | RV32IM::REMU => RV32InstructionFormat::R,
+            RV32IM::ADD   |
+            RV32IM::SUB   |
+            RV32IM::XOR   |
+            RV32IM::OR    |
+            RV32IM::AND   |
+            RV32IM::SLL   |
+            RV32IM::SRL   |
+            RV32IM::SRA   |
+            RV32IM::SLT   |
+            RV32IM::SLTU  |
+            RV32IM::MUL   |
+            RV32IM::MULH  |
+            RV32IM::MULSU |
+            RV32IM::MULU  |
+            RV32IM::DIV   |
+            RV32IM::DIVU  |
+            RV32IM::REM   |
+            RV32IM::REMU => RV32InstructionFormat::R,
 
-            RV32IM::ADDI
-            | RV32IM::XORI
-            | RV32IM::ORI
-            | RV32IM::ANDI
-            | RV32IM::SLLI
-            | RV32IM::SRLI
-            | RV32IM::SRAI
-            | RV32IM::SLTI
-            | RV32IM::SLTIU => RV32InstructionFormat::I,
+            RV32IM::ADDI |
+            RV32IM::XORI |
+            RV32IM::ORI  |
+            RV32IM::ANDI |
+            RV32IM::SLLI |
+            RV32IM::SRLI |
+            RV32IM::SRAI |
+            RV32IM::SLTI |
+            RV32IM::SLTIU => RV32InstructionFormat::I,
 
-            RV32IM::LB 
-            | RV32IM::LH 
-            | RV32IM::LW 
-            | RV32IM::LBU 
-            | RV32IM::LHU 
-            | RV32IM::JALR => {
-                RV32InstructionFormat::I
-            }
+            RV32IM::LB  |
+            RV32IM::LH  |
+            RV32IM::LW  |
+            RV32IM::LBU |
+            RV32IM::LHU |
+            RV32IM::JALR => RV32InstructionFormat::I,
 
-            RV32IM::SB 
-            | RV32IM::SH 
-            | RV32IM::SW => RV32InstructionFormat::S,
+            RV32IM::SB |
+            RV32IM::SH |
+            RV32IM::SW => RV32InstructionFormat::S,
 
-            RV32IM::BEQ 
-            | RV32IM::BNE 
-            | RV32IM::BLT 
-            | RV32IM::BGE 
-            | RV32IM::BLTU 
-            | RV32IM::BGEU => {
-                RV32InstructionFormat::SB
-            }
+            RV32IM::BEQ  |
+            RV32IM::BNE  |
+            RV32IM::BLT  |
+            RV32IM::BGE  |
+            RV32IM::BLTU |
+            RV32IM::BGEU => RV32InstructionFormat::SB,
 
-            RV32IM::LUI 
-            | RV32IM::AUIPC => RV32InstructionFormat::U,
+            RV32IM::LUI |
+            RV32IM::AUIPC => RV32InstructionFormat::U,
 
             RV32IM::JAL => RV32InstructionFormat::UJ,
 
-            RV32IM::ECALL 
-            | RV32IM::EBREAK 
-            | RV32IM::UNIMPL => unimplemented!(),
+            RV32IM::ECALL |
+            RV32IM::EBREAK |
+            RV32IM::UNIMPL => unimplemented!(),
         }
     }
 }
@@ -578,7 +578,9 @@ impl RV32IM {
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+)]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
     pub outputs: Vec<u8>,

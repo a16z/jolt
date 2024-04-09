@@ -2,7 +2,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::{
-    dense_mlpoly::DensePolynomial, pedersen::PedersenGenerators, structured_poly::{StructuredCommitment, StructuredOpeningProof}
+    dense_mlpoly::DensePolynomial,
+    pedersen::PedersenGenerators,
+    structured_poly::{StructuredCommitment, StructuredOpeningProof},
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,

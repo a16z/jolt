@@ -1,4 +1,7 @@
-use std::{fs::{self, File}, io::Write};
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
@@ -36,11 +39,10 @@ fn create_project(name: String) {
 }
 
 fn install_toolchain() {
-   std::process::Command::new("rustup")
-       .args(["target", "add", "riscv32i-unknown-none-elf"])
-       .output()
-       .expect("could not install toolchain");
-
+    std::process::Command::new("rustup")
+        .args(["target", "add", "riscv32i-unknown-none-elf"])
+        .output()
+        .expect("could not install toolchain");
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {

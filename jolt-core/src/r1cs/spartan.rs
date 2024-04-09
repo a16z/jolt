@@ -30,36 +30,37 @@ pub struct UniformSpartanKey<F: PrimeField> {
     pub(crate) vk_digest: F,         // digest of the verifier's key
 }
 
-
 impl<F: PrimeField> UniformSpartanKey<F> {
-  /// Returns the digest of the r1cs shape
-  pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
-    let mut compressed_bytes = Vec::new();
-    shape_single_step.serialize_compressed(&mut compressed_bytes).unwrap(); 
-    compressed_bytes.append(&mut num_steps.to_be_bytes().to_vec());
-    let mut hasher = Sha3_256::new();
-    hasher.input(compressed_bytes);
+    /// Returns the digest of the r1cs shape
+    pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
+        let mut compressed_bytes = Vec::new();
+        shape_single_step
+            .serialize_compressed(&mut compressed_bytes)
+            .unwrap();
+        compressed_bytes.append(&mut num_steps.to_be_bytes().to_vec());
+        let mut hasher = Sha3_256::new();
+        hasher.input(compressed_bytes);
 
-    let map_to_field = |digest: &[u8]| -> F {
-        let bv = (0..250).map(|i| {
-          let (byte_pos, bit_pos) = (i / 8, i % 8);
-          let bit = (digest[byte_pos] >> bit_pos) & 1;
-          bit == 1
-        });
-    
-        // turn the bit vector into a scalar
-        let mut digest = F::ZERO;
-        let mut coeff = F::ONE;
-        for bit in bv {
-          if bit {
-            digest += coeff;
-          }
-          coeff += coeff;
-        }
-        digest
-      }; 
-    map_to_field(&hasher.result())
-  }
+        let map_to_field = |digest: &[u8]| -> F {
+            let bv = (0..250).map(|i| {
+                let (byte_pos, bit_pos) = (i / 8, i % 8);
+                let bit = (digest[byte_pos] >> bit_pos) & 1;
+                bit == 1
+            });
+
+            // turn the bit vector into a scalar
+            let mut digest = F::ZERO;
+            let mut coeff = F::ONE;
+            for bit in bv {
+                if bit {
+                    digest += coeff;
+                }
+                coeff += coeff;
+            }
+            digest
+        };
+        map_to_field(&hasher.result())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -202,14 +203,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let pad_num_constraints = num_constraints_total.next_power_of_two();
         let pad_num_aux = num_aux_total.next_power_of_two();
 
-        let vk_digest = UniformSpartanKey::compute_digest(&shape_single_step, padded_num_steps); 
+        let vk_digest = UniformSpartanKey::compute_digest(&shape_single_step, padded_num_steps);
 
         let key = UniformSpartanKey {
-            shape_single_step,            
+            shape_single_step,
             num_cons_total: pad_num_constraints,
             num_vars_total: pad_num_aux,
             num_steps: padded_num_steps,
-            vk_digest
+            vk_digest,
         };
 
         Ok(key)
@@ -342,7 +343,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                     )
                 },
             );
-            
+
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_small_RLC_evals");
             let _enter = span.enter();
             let r_sq = r_inner_sumcheck_RLC * r_inner_sumcheck_RLC;
@@ -356,8 +357,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 .collect::<Vec<F>>();
             drop(_enter);
 
-            // 2. Obtains the MLE evaluation for each variable y in the full matrix. 
-            // We first handle all entries but the last one with the constant 1 variable. 
+            // 2. Obtains the MLE evaluation for each variable y in the full matrix.
+            // We first handle all entries but the last one with the constant 1 variable.
             // Each entry is just the small_RLC_evals for the corresponding variable multiplied with eq_rx_tx[timestamp of variable]
             let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
             let _other_enter = other_span.enter();
@@ -366,13 +367,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
             let _enter = span.enter();
-            
-            // Handle all variables but pc_out and the constant 
+
+            // Handle all variables but pc_out and the constant
             RLC_evals
                 .par_chunks_mut(n_steps)
                 .take(key.num_vars_total / n_steps) // Note that this ignores the last variable which is the constant
                 .enumerate()
-                .for_each(|(var_index, var_chunk)| { 
+                .for_each(|(var_index, var_chunk)| {
                     if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
                         for (ts, item) in var_chunk.iter_mut().enumerate() {
                             *item = eq_rx_ts[ts] * small_RLC_evals[var_index];
@@ -381,13 +382,16 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
                 });
             drop(_enter);
 
-            // Handle pc_out 
-            RLC_evals[1..key.num_steps].par_iter_mut().enumerate().for_each(|(i, rlc)| {
-                *rlc += eq_rx_ts[i] * small_RLC_evals[1]; // take the intended mle eval at pc_out and add it instead to pc_in
-            });
+            // Handle pc_out
+            RLC_evals[1..key.num_steps]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, rlc)| {
+                    *rlc += eq_rx_ts[i] * small_RLC_evals[1]; // take the intended mle eval at pc_out and add it instead to pc_in
+                });
 
-            // Handle the constant 
-            RLC_evals[key.num_vars_total] =  small_RLC_evals[key.shape_single_step.num_vars]; // constant 
+            // Handle the constant
+            RLC_evals[key.num_vars_total] = small_RLC_evals[key.shape_single_step.num_vars]; // constant
 
             RLC_evals
         };
@@ -407,10 +411,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // The number of prefix bits needed to identify a segment within the witness vector
         // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
-        // The +1 is for the first element in r_y used as indicator between input or witness. 
-        let n_prefix = (key.num_vars_total.ilog2() as usize
-            - key.num_steps.ilog2() as usize)
-            + 1; 
+        // The +1 is for the first element in r_y used as indicator between input or witness.
+        let n_prefix = (key.num_vars_total.ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
@@ -511,9 +513,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // n_prefix = n_segments + 1
-        let n_prefix = (key.num_vars_total.ilog2() as usize
-            - key.num_steps.ilog2() as usize)
-            + 1; 
+        let n_prefix = (key.num_vars_total.ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
 
         let eval_Z = {
             let eval_X = {
@@ -546,84 +546,82 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         /* MLE evaluation */
         let num_steps_bits = key.num_steps.ilog2();
-        let (rx_con, rx_ts) =
-            r_x.split_at(r_x.len() - num_steps_bits as usize);
+        let (rx_con, rx_ts) = r_x.split_at(r_x.len() - num_steps_bits as usize);
 
-        let r_y = inner_sumcheck_r.clone(); 
-        let (ry_var, ry_ts) =
-        r_y.split_at(r_y.len() - num_steps_bits as usize);
+        let r_y = inner_sumcheck_r.clone();
+        let (ry_var, ry_ts) = r_y.split_at(r_y.len() - num_steps_bits as usize);
 
         let eq_rx_con = EqPolynomial::new(rx_con.to_vec()).evals();
-        let eq_ry_var= EqPolynomial::new(ry_var.to_vec()).evals();
+        let eq_ry_var = EqPolynomial::new(ry_var.to_vec()).evals();
 
         let eq_rx_ry_ts = EqPolynomial::new(rx_ts.to_vec()).evaluate(ry_ts);
-        let eq_ry_0 = EqPolynomial::new(ry_ts.to_vec()).evaluate(vec![F::zero(); ry_ts.len()].as_slice());
+        let eq_ry_0 =
+            EqPolynomial::new(ry_ts.to_vec()).evaluate(vec![F::zero(); ry_ts.len()].as_slice());
 
-        /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2]. 
-        That is, it ignores the case where x is all 1s, outputting 0. 
+        /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
+        That is, it ignores the case where x is all 1s, outputting 0.
         Assumes x and y are provided big-endian. */
         let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
             let one = F::from(1 as u64);
             let two = F::from(2 as u64);
-        
-            /* If y+1 = x, then the two bit vectors are of the following form. 
-                Let k be the longest suffix of 1s in x. 
-                In y, those k bits are 0. 
+
+            /* If y+1 = x, then the two bit vectors are of the following form.
+                Let k be the longest suffix of 1s in x.
+                In y, those k bits are 0.
                 Then, the next bit in x is 0 and the next bit in y is 1.
                 The remaining higher bits are the same in x and y.
             */
-            (0..l).into_par_iter().map(|k| {
-                let lower_bits_product = 
-                    (0..k)
-                    .map(|i| 
-                        x[l-1-i] * (F::one() - y[l-1-i])
-                    ).product::<F>();
-                let kth_bit_product = (F::one() - x[l-1-k]) * y[l-1-k];
-                let higher_bits_product = 
-                    ((k+1)..l)
-                    .map(|i| 
-                        x[l-1-i] * y[l-1-i] + (one - x[l-1-i]) * (one - y[l-1-i])
-                    ).product::<F>();
-                lower_bits_product * kth_bit_product * higher_bits_product
-            }).sum()
+            (0..l)
+                .into_par_iter()
+                .map(|k| {
+                    let lower_bits_product = (0..k)
+                        .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
+                        .product::<F>();
+                    let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
+                    let higher_bits_product = ((k + 1)..l)
+                        .map(|i| {
+                            x[l - 1 - i] * y[l - 1 - i]
+                                + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
+                        })
+                        .product::<F>();
+                    lower_bits_product * kth_bit_product * higher_bits_product
+                })
+                .sum()
         };
 
         let y_eq_x_plus_1 = plus_1_mle(rx_ts, ry_ts, num_steps_bits as usize);
 
         // compute evaluations of R1CS matrices
-        let multi_evaluate_uniform =
-            |M_vec: &[&[(usize, usize, F)]]| -> Vec<F> {
-                let evaluate_with_table_uniform =
-                    |M: &[(usize, usize, F)]| -> F {
-                        (0..M.len())
-                            .into_par_iter()
-                            .map(|i| {
-                                let (row, col, val) = M[i];
-                                val * eq_rx_con[row] * 
-                                    if col == 1 { // pc_out (col 1) is redirected to pc_in (col 0)
-                                       eq_ry_var[0] * y_eq_x_plus_1 
-                                    } else if col == key.shape_single_step.num_vars {
-                                        eq_ry_var[col] * eq_ry_0
-                                    } else {
-                                        eq_ry_var[col] * eq_rx_ry_ts
-                                    }
-                            })
-                            .sum()
-                    };
-
-                (0..M_vec.len())
+        let multi_evaluate_uniform = |M_vec: &[&[(usize, usize, F)]]| -> Vec<F> {
+            let evaluate_with_table_uniform = |M: &[(usize, usize, F)]| -> F {
+                (0..M.len())
                     .into_par_iter()
-                    .map(|i| evaluate_with_table_uniform(M_vec[i]))
-                    .collect()
+                    .map(|i| {
+                        let (row, col, val) = M[i];
+                        val * eq_rx_con[row]
+                            * if col == 1 {
+                                // pc_out (col 1) is redirected to pc_in (col 0)
+                                eq_ry_var[0] * y_eq_x_plus_1
+                            } else if col == key.shape_single_step.num_vars {
+                                eq_ry_var[col] * eq_ry_0
+                            } else {
+                                eq_ry_var[col] * eq_rx_ry_ts
+                            }
+                    })
+                    .sum()
             };
 
-        let mut evals = multi_evaluate_uniform(
-            &[
-                &key.shape_single_step.A,
-                &key.shape_single_step.B,
-                &key.shape_single_step.C,
-            ]
-        );
+            (0..M_vec.len())
+                .into_par_iter()
+                .map(|i| evaluate_with_table_uniform(M_vec[i]))
+                .collect()
+        };
+
+        let mut evals = multi_evaluate_uniform(&[
+            &key.shape_single_step.A,
+            &key.shape_single_step.B,
+            &key.shape_single_step.C,
+        ]);
 
         let left_expected = evals[0]
             + r_inner_sumcheck_RLC * evals[1]

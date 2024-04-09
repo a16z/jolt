@@ -7,10 +7,13 @@ use std::fs::File;
 #[cfg(feature = "std")]
 use std::path::PathBuf;
 
-use core::{alloc::{GlobalAlloc, Layout}, cell::UnsafeCell};
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    cell::UnsafeCell,
+};
 
 #[cfg(feature = "std")]
-use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "std")]
 use eyre::Result;
 
@@ -18,13 +21,16 @@ pub use jolt_sdk_macros::provable;
 pub use postcard;
 
 #[cfg(feature = "std")]
+pub use ark_bn254::{Fr as F, G1Projective as G};
+#[cfg(feature = "std")]
 pub use ark_ec::CurveGroup;
 #[cfg(feature = "std")]
 pub use ark_ff::PrimeField;
 #[cfg(feature = "std")]
-pub use ark_bn254::{Fr as F, G1Projective as G};
-#[cfg(feature = "std")]
-pub use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::{MemoryOp, RV32IM}};
+pub use common::{
+    constants::MEMORY_OPS_PER_INSTRUCTION,
+    rv_trace::{MemoryOp, RV32IM},
+};
 #[cfg(feature = "std")]
 pub use liblasso::host;
 #[cfg(feature = "std")]
@@ -71,7 +77,7 @@ impl Proof {
 pub struct BumpAllocator {
     offset: UnsafeCell<usize>,
 }
- 
+
 unsafe impl Sync for BumpAllocator {}
 
 extern "C" {
@@ -79,9 +85,7 @@ extern "C" {
 }
 
 fn heap_start() -> usize {
-    unsafe {
-        _HEAP_PTR as *const u8 as usize
-    }
+    unsafe { _HEAP_PTR as *const u8 as usize }
 }
 
 impl BumpAllocator {
@@ -105,9 +109,7 @@ unsafe impl GlobalAlloc for BumpAllocator {
         alloc_start as *mut u8
     }
 
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        
-    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
 }
 
 fn align_up(addr: usize, align: usize) -> usize {
