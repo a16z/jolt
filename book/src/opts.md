@@ -1,4 +1,4 @@
-Below are known optimizations that we will be implementing in the coming weeks, and the anticipated reduction in prover costs (all percentages are reltaive to the Jolt prover's speed on initial public release in April 2024). 
+Below are known optimizations that we will be implementing in the coming weeks, and the anticipated reduction in prover costs (all percentages are relative to the Jolt prover's speed on initial public release in April 2024). 
 
 - The way we implemented Lasso leads to grand product arguments for which about 90% of the factors being multiplied together are equal to 1. The current implementation explicitly stores all these values (assigning 256 bits to each value). Instead, we can store a densified representation of them (i.e., list only the values that are _not_ 1, and assume all the others are 1). This will speed up the prover, but more importantly it will reduce total prover space usage by a factor of about 8x. 
 
