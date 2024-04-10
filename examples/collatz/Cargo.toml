@@ -6,6 +6,3 @@ edition = "2021"
 [dependencies]
 jolt-sdk = { path = "../../jolt-sdk", features = ["std"] }
 guest = { package = "collatz-guest", path = "./guest" }
-
-hex = "0.4.3"
-sha3 = { version = "0.10.8", default-features = false }
