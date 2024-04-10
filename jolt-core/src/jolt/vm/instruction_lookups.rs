@@ -12,9 +12,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{
-    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
-};
+use crate::poly::hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment};
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
@@ -84,7 +82,6 @@ pub struct InstructionCommitment<G: CurveGroup> {
     pub final_commitment: Vec<HyraxCommitment<64, G>>,
 }
 
-
 impl<G: CurveGroup> AppendToTranscript<G> for InstructionCommitment<G> {
     fn append_to_transcript<T: ProofTranscript<G>>(
         &self,
@@ -95,14 +92,13 @@ impl<G: CurveGroup> AppendToTranscript<G> for InstructionCommitment<G> {
         for commitment in &self.trace_commitment {
             commitment.append_to_transcript(b"trace_commitment", transcript);
         }
-        for commitment in &self.final_commitment{
+        for commitment in &self.final_commitment {
             commitment.append_to_transcript(b"final_commitment", transcript);
         }
         transcript.append_message(label, b"InstructionCommitment_end");
     }
 }
 
-// TODO: macro?
 impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
 where
     F: PrimeField,

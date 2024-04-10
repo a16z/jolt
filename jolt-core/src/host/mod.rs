@@ -18,10 +18,10 @@ use common::{
 };
 use tracer::ELFInstruction;
 
-use crate::{jolt::{
-    instruction::add::ADDInstruction,
-    vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
-}, utils::thread::unsafe_allocate_zero_vec};
+use crate::{
+    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+    utils::thread::unsafe_allocate_zero_vec,
+};
 
 const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
 const DEFAULT_STACK_SIZE: usize = 4096;

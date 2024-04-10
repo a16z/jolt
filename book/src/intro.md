@@ -1,6 +1,6 @@
 ![Jolt Alpha](imgs/jolt_alpha.png)
 
-[Jolt](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) is a zkVM framework built around the [Lasso](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf) lookup argument. 
+[Jolt](https://eprint.iacr.org/2023/1217.pdf) is a zkVM framework built around the [Lasso](https://eprint.iacr.org/2023/1216.pdf) lookup argument. 
 
 Jolt powers succinct proofs of execution of programs written in any high level language. Jolt's sumcheck-based SNARK is makes extensive use of multivariate polynomials and commitment schemes. Jolt zkVMs have state-of-the-art prover performance and have substantial room for growth over the coming decades.
 
@@ -24,6 +24,6 @@ reconstruct the output of the original instruction from the outputs of the funct
 
 
 ## Credits
-[Lasso](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf) was written by Srinath Setty, Justin Thaler and Riad Wahby. [Jolt](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler.
+[Lasso](https://eprint.iacr.org/2023/1216.pdf) was written by Srinath Setty, Justin Thaler and Riad Wahby. [Jolt](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler.
 
 Jolt was initially forked from Srinath Setty's work on [microsoft/Spartan](https://github.com/microsoft/spartan), specifically the [arkworks-rs/Spartan](https://github.com/arkworks-rs/spartan) fork in order to use the excellent Arkworks-rs prime field arithmetic library. Jolt's R1CS is also proven using a version of Spartan (forked from the [microsoft/Spartan2](https://github.com/microsoft/Spartan2) codebase) optimized to the case of uniform R1CS constraints.

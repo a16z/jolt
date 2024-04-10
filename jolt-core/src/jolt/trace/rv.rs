@@ -128,7 +128,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
 
 fn load_value(row: &RVTraceRow) -> u64 {
     match row.memory_state.as_ref().unwrap() {
-        MemoryState::Read { address, value } => *value,
+        MemoryState::Read { address: _, value } => *value,
         _ => panic!("Unexpected Write"),
     }
 }

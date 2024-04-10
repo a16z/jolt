@@ -20,7 +20,7 @@ impl JoltInstruction for SLTInstruction {
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
         let vals_by_subtable = self.slice_values(vals, C, M);
-        
+
         let gt_msb = vals_by_subtable[0];
         let eq_msb = vals_by_subtable[1];
         let ltu = vals_by_subtable[2];

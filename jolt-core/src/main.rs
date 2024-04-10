@@ -1,16 +1,15 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use itertools::izip;
-use liblasso::benches::{
+
+use jolt_core::benches::{
     bench::{benchmarks, BenchType},
     sum_timer::CumulativeTimingLayer,
 };
-use plotters::prelude::*;
-use rgb::RGB8;
-use std::{fs::File, io::BufWriter, time::Instant, any::Any};
-use textplots::{Chart, ColorPlot, Plot, Shape};
+
+use std::any::Any;
+
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_flame::{FlameLayer, FlushGuard};
-use tracing_subscriber::{self, fmt, fmt::format::FmtSpan, prelude::*};
+use tracing_flame::FlameLayer;
+use tracing_subscriber::{self, fmt::format::FmtSpan, prelude::*};
 use tracing_texray::TeXRayLayer;
 
 /// Search for a pattern in a file and display the lines that contain it.

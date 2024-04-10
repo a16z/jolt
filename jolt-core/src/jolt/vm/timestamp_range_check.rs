@@ -19,7 +19,7 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators},
+        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},

@@ -528,7 +528,7 @@ impl Mmu {
                         address: effective_address,
                         value: value.into(),
                     });
-                },
+                }
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
             }
         } else {
@@ -544,7 +544,7 @@ impl Mmu {
         }
     }
 
-    fn trace_store(&mut self, effective_address: u64, bytes: u64, value: u64,) {
+    fn trace_store(&mut self, effective_address: u64, bytes: u64, value: u64) {
         if effective_address < DRAM_BASE {
             match effective_address {
                 OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
@@ -559,7 +559,7 @@ impl Mmu {
                         pre_value,
                         post_value: value,
                     });
-                },
+                }
                 PANIC_ADDRESS => {
                     let pre_value = self.jolt_device.load(effective_address) as u64;
                     self.tracer.push_memory(MemoryState::Write {
@@ -567,7 +567,7 @@ impl Mmu {
                         pre_value,
                         post_value: value,
                     });
-                },
+                }
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
             }
         } else {
@@ -666,7 +666,9 @@ impl Mmu {
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
-                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => self.jolt_device.store(effective_address, value),
+                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
+                    self.jolt_device.store(effective_address, value)
+                }
                 PANIC_ADDRESS => self.jolt_device.store(effective_address, value),
                 _ => panic!("Unknown memory mapping {:X}.", effective_address),
             },

@@ -22,7 +22,7 @@ cd <PROJECT_NAME>
 ```
 
 ## Project Tour
-The main folder contains the host, which is the code that can generate and verify proofs. Within this main folder, there is another package called `guest` which contains the Rust functions that we can prove from the host. For more information about these concepts refer to the [guests and hosts](./usafe/guests_hosts.md) section.
+The main folder contains the host, which is the code that can generate and verify proofs. Within this main folder, there is another package called `guest` which contains the Rust functions that we can prove from the host. For more information about these concepts refer to the [guests and hosts](./usage/guests_hosts.md) section.
 
 We'll start by taking a look at our guest. We can view the guest code in `guest/src/lib.rs`.
 

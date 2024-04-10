@@ -8,8 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
-    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxGenerators,
-    HyraxOpeningProof,
+    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof,
 };
 use crate::poly::pedersen::PedersenGenerators;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -332,14 +331,19 @@ pub struct BytecodeCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript<G> for BytecodeCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(&self, label: &'static [u8], transcript: &mut T) {
+    fn append_to_transcript<T: ProofTranscript<G>>(
+        &self,
+        label: &'static [u8],
+        transcript: &mut T,
+    ) {
         <T as ProofTranscript<G>>::append_protocol_name(transcript, label);
 
-        for commitment in &self.trace_commitments{
+        for commitment in &self.trace_commitments {
             commitment.append_to_transcript(b"trace", transcript);
         }
 
-        self.t_final_commitment.append_to_transcript(b"final", transcript);
+        self.t_final_commitment
+            .append_to_transcript(b"final", transcript);
     }
 }
 
@@ -361,8 +365,7 @@ where
             &self.v_read_write[3],
             &self.v_read_write[4],
         ];
-        let trace_commitments =
-            HyraxCommitment::batch_commit_polys(trace_polys, &generators);
+        let trace_commitments = HyraxCommitment::batch_commit_polys(trace_polys, &generators);
 
         let t_final_commitment = HyraxCommitment::commit(&self.t_final, &generators);
 

@@ -1,11 +1,7 @@
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
-    jolt::vm::{rv32i_vm::RV32I, Jolt, JoltCommitments},
-    poly::{
-        dense_mlpoly::DensePolynomial,
-        hyrax::{HyraxCommitment, HyraxGenerators},
-        pedersen::PedersenGenerators,
-    },
+    jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
+    poly::{hyrax::HyraxCommitment, pedersen::PedersenGenerators},
     r1cs::r1cs_shape::R1CSShape,
     utils::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
@@ -22,7 +18,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{
-    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS},
+    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
     rv_trace::NUM_CIRCUIT_FLAGS,
 };
 use merlin::Transcript;
@@ -42,12 +38,7 @@ fn synthesize_witnesses<F: PrimeField>(
         .map(|i| {
             let step = inputs.clone_step(i);
             let pc_cur = step.input_pc;
-            let (aux, _) = R1CSBuilder::calculate_aux(step, num_aux);
-            let pc_next = if i < inputs.padded_trace_len - 1 {
-                inputs.bytecode_a[i + 1]
-            } else {
-                F::zero()
-            };
+            let aux = R1CSBuilder::calculate_jolt_aux(step, num_aux);
             (aux, pc_cur, F::zero())
         })
         .collect();
@@ -344,13 +335,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
         let _enter = span.enter();
         let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::get_matrices(&mut jolt_shape);
+        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape);
         let key = UniformSpartanProof::<F, G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
         drop(_enter);
         drop(span);
 
         // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
-        let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
+        let (pc_out, pc, aux) = synthesize_witnesses(&inputs, jolt_shape.num_internal);
         let io_segments = vec![pc_out, pc];
         let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
         let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
@@ -416,12 +407,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
             [..1 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
         let instruction_lookup_indices_commitments =
             &jolt_commitments.instruction_lookups.trace_commitment[..C];
-        let instruction_flag_commitments = &jolt_commitments
-            .instruction_lookups
-            .trace_commitment[jolt_commitments.instruction_lookups.trace_commitment.len()
-            - RV32I::COUNT
-            - 1
-            ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
+        let instruction_flag_commitments = &jolt_commitments.instruction_lookups.trace_commitment
+            [jolt_commitments.instruction_lookups.trace_commitment.len() - RV32I::COUNT - 1
+                ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
 
         let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
@@ -479,7 +467,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
     fn single_step_shape(&self) -> R1CSShape<F> {
         let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::get_matrices(&mut jolt_shape);
+        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape);
         let constraints_F = jolt_shape.convert_to_field();
         let shape_single = R1CSShape::<F> {
             A: constraints_F.0,

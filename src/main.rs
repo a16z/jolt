@@ -1,7 +1,12 @@
-use std::{fs::{self, File}, io::Write};
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use rand::prelude::SliceRandom;
+use sysinfo::System;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -41,6 +46,7 @@ fn install_toolchain() {
        .output()
        .expect("could not install toolchain");
 
+    display_welcome();
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
@@ -57,7 +63,7 @@ fn create_host_files(name: &str) -> Result<()> {
     toolchain_file.write("nightly-2023-09-22".as_bytes())?;
 
     let mut gitignore_file = File::create(format!("{}/.gitignore", name))?;
-    gitignore_file.write(GITIGORE.as_bytes())?;
+    gitignore_file.write(GITIGNORE.as_bytes())?;
 
     let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
     let mut cargo_file = File::create(format!("{}/Cargo.toml", name))?;
@@ -79,6 +85,55 @@ fn create_guest_files(name: &str) -> Result<()> {
     Ok(())
 }
 
+fn display_welcome() {
+    display_greeting();
+    println!("{}", "-".repeat(80));
+    display_sysinfo();
+}
+
+fn display_greeting() {
+    let jolt_logo_ascii = include_str!("ascii/jolt_ascii.ans");
+    println!("\n\n\n\n");
+    println!("{}", jolt_logo_ascii);
+    println!("\n\n\n\n");
+
+    let prompts = [
+        "The most Snarky zkVM. Watch out for the lasso.",
+        "Buckle your seat belt.",
+        "zkVMs are compressors.",
+        "Never dupe your network's compute.",
+        "You look great today.",
+        "Satiate your cores.",
+        "The multilinear one.",
+        "Transforming network architectures since 2025.",
+        "We heard you like sumcheck.",
+        "Reed and Solomon were quite the chaps.",
+        "Techno optimistic Jolt.",
+        "zk is a misnomer.",
+        "Twice as fast as Apollo 11.",
+        "Mason's favorite zkVM.",
+        "Sumcheck Is All You Need",
+        "Lasso-ing RV32 instructions since 2024.",
+        "Read. Write. Jolt.",
+        "Jolt is not financial advice. Jolt is a zkVM.",
+    ];
+    let prompt = prompts.choose(&mut rand::thread_rng()).unwrap();
+    println!("\x1B[1mWelcome to Jolt.\x1B[0m");
+    println!("\x1B[3m{}\x1B[0m", prompt);
+}
+
+fn display_sysinfo() {
+    let mut sys = System::new_all();
+
+    sys.refresh_all();
+
+    println!("OS:             {}", System::name().unwrap_or("UNKNOWN".to_string()));
+    println!("version:        {}", System::os_version().unwrap_or("UNKNOWN".to_string()));
+    println!("Host:           {}", System::host_name().unwrap_or("UNKNOWN".to_string()));
+    println!("CPUs:           {}", sys.cpus().len());
+    println!("RAM:            {:.2} GB", sys.total_memory() as f64 / 1_000_000_000.0);
+}
+
 const HOST_CARGO_TEMPLATE: &str = r#"[package]
 name = "{NAME}"
 version = "0.1.0"
@@ -93,7 +148,7 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt", features = ["std"] }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["std"] }
 guest = { path = "./guest" }
 
 [patch.crates-io]
@@ -113,7 +168,7 @@ const HOST_MAIN: &str = r#"pub fn main() {
 }
 "#;
 
-const GITIGORE: &str = "target";
+const GITIGNORE: &str = "target";
 
 const GUEST_CARGO: &str = r#"[package]
 name = "guest"
@@ -128,7 +183,7 @@ path = "./src/lib.rs"
 guest = []
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/Lasso", branch = "jolt" }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
 "#;
 
 const GUEST_LIB: &str = r#"#![cfg_attr(feature = "guest", no_std)]

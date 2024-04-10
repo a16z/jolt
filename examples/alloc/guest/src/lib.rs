@@ -13,4 +13,3 @@ fn alloc(n: u32) -> u32 {
 
     v[n as usize]
 }
-

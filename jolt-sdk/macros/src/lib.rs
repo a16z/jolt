@@ -48,7 +48,7 @@ impl MacroBuilder {
             if self.get_func_name().to_string() == func {
                 self.make_main_func()
             } else {
-                quote!{}
+                quote! {}
             }
         } else {
             self.make_main_func()
@@ -359,20 +359,20 @@ impl MacroBuilder {
                     match ident.to_string().as_str() {
                         "memory_size" => {
                             code.push(quote! {
-                                program.set_memory_size(#lit);
-                             });
-                        },
+                               program.set_memory_size(#lit);
+                            });
+                        }
                         "stack_size" => {
                             code.push(quote! {
-                                program.set_stack_size(#lit);
-                             });
-                        },
+                               program.set_stack_size(#lit);
+                            });
+                        }
                         _ => panic!("invalid attribute"),
                     }
-                },
+                }
                 _ => panic!("expected integer literal"),
             }
-        } 
+        }
 
         quote! {
             #(#code;)*

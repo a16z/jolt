@@ -1,70 +1,83 @@
-# Lasso
+# Jolt
 
-![imgs/lasso_logo.png](imgs/lasso_logo.png)
+![imgs/jolt_alpha.png](imgs/jolt_alpha.png)
 
-Lookup Arguments via Sum-check and Sparse polynomial commitments, including for Oversized tables. 
+Just One Lookup Table.
 
-*This repository was forked from https://github.com/arkworks-rs/spartan. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty.*
+Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V, built to be the simplest, fastest, and most extensible general-purpose of its kind. This repository currently contains an implementation of Jolt for the RISC-V 32-bit Base Integer instruction set (RV32I). _Contributors are welcome!_
+
+The Jolt [paper](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Arun, Srinath Setty, and Justin Thaler. 
 
 ## Resources
 
--   [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
--   [Understanding Lasso and Jolt, from theory to code](https://a16zcrypto.com/posts/article/building-on-lasso-and-jolt/)
--   See [EngineeringOverview.md](EngineeringOverview.md) for a high level technical outline
--   See [HowToTable.md](HowToTable.md) for instructions on adding a new table type
--   [Lasso paper](https://people.cs.georgetown.edu/jthaler/Lasso-paper.pdf)
--   [Jolt paper](https://people.cs.georgetown.edu/jthaler/Jolt-paper.pdf)
+- [Docs](https://jolt.a16zcrypto.com/)
+- Blog posts
+  - [Accelerating the world computer: Implementing Jolt, a new state-of-the-art zkVM](https://a16zcrypto.com/posts/article/accelerating-the-world-computer-implementing-jolt)
+  - [Building Jolt: A fast, easy-to-use zkVM](https://a16zcrypto.com/posts/article/building-jolt/)
+  - [FAQs on Jolt’s initial implementation](https://a16zcrypto.com/posts/article/faqs-on-jolts-initial-implementation)
+  - [A new era in SNARK design: Releasing Jolt](https://a16zcrypto.com/posts/article/a-new-era-in-snark-design-releasing-jolt)
+  - [Introducing Lasso and Jolt](https://a16zcrypto.com/posts/article/introducing-lasso-and-jolt/)
+  - [Understanding Lasso and Jolt, from theory to code](https://a16zcrypto.com/posts/article/building-on-lasso-and-jolt/)
+- Papers
+  - [Lasso paper](https://eprint.iacr.org/2023/1216.pdf)
+  - [Jolt paper](https://eprint.iacr.org/2023/1217.pdf)
 
-## Current usage
+## Quickstart
 
-```rust
-  let mut dense: DensifiedRepresentation<F, C> = DensifiedRepresentation::from(&nz, log_M);
-  let commitment = dense.commit::<G>(&gens);
+> [!NOTE]
+> Jolt is in alpha and is not suitable for production use yet.
 
-  let proof =
-    SparsePolynomialEvaluationProof::<G, C, M, SubtableStrategy>::prove(
-        &mut dense,
-        &r,
-        &gens,
-        &mut prover_transcript,
-        &mut random_tape,
-    );
-```
+For developers looking to build using Jolt, check out the [Quickstart guide](https://jolt.a16zcrypto.com/usage/quickstart.html).
 
-## Cmds
+For developers looking to contribute to Jolt, follow the instructions below.
 
-Note: requires nightly Rust
+## Installation
 
--   `cargo build --release`
--   `cargo run --release -p jolt-core -- --name <bench_name>`
--   `cargo run --release -- -p jolt-core --name <bench_name> --chart`: Display performance gant chart
--   `cargo run --release -p jolt-core --features ark-msm -- --name <bench_name>`: Run without MSM small field optimizations
+You will need Rust [nightly](./rust-toolchain). 
+To compile the guest programs to RV32I, you will need to add the compilation target using `rustup`:
 
-## Performance plots
+```rustup target add riscv32i-unknown-none-elf```
 
-Example:
-```
-cargo run -p jolt-core --release -- plot  --bench bytecode instruction-lookups read-write-memory --out test.svg --num-cycles 65536 131072 262144 524288  --bytecode-size 65536 --memory-size 2097152
-```
+Finally, clone this repo:
 
-## Flamegraph
+```git clone git@github.com:a16z/jolt.git```
 
-Requires `inferno`:
+## Build
 
-```
-cargo install inferno
-```
+This repository uses workspaces, and each workspace can be built individually, e.g.
 
-Then run 
-```
-cargo run -p jolt-core --release -- --name rv32 --format flamegraph && cat tracing.folded | inferno-flamegraph > tracing-flamegraph.svg
-```
+```cargo build -p jolt-core```
 
-## Circom Install
-Circom is required to build `jolt-core`. Details can be found [here](https://docs.circom.io/getting-started/installation/#installing-dependencies).
+For faster incremental builds, use the `build-fast` profile:
 
-## rv32i-unknown-none-elf
-Running example programs requires the Rust RV32I compiler. Install using `rustup target add riscv32i-unknown-none-elf`.
+```cargo build --profile build-fast jolt-core```
+
+## Test
+
+Unit and end-to-end tests for `jolt-core` can be run using the following command:
+
+```cargo test -p jolt-core```
+
+Examples in the [`examples`](./examples/) directory can be run using e.g.
+
+```cargo run --release -p sha2-chain```
+
+
+## Performance profiling
+
+Jolt uses [tracing_chrome](https://crates.io/crates/tracing-chrome) for performance profiling. 
+
+To generate a trace, run:
+
+```cargo run --profile build-fast -p jolt-core trace --name sha3 --format chrome```
+
+Where `--name` can be `sha2`, `sha3`, `sha2-chain`, or `fibonacci`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-core/src/benches/bench.rs).
+
+The above command will output a JSON file, e.g. `trace-1712455107389520.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/). 
+
+## Acknowledgements
+
+*This repository started as a fork of https://github.com/arkworks-rs/spartan. Original Spartan [code](https://github.com/microsoft/Spartan) by Srinath Setty.*
 
 ## Disclaimer
 
