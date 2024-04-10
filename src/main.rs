@@ -59,8 +59,8 @@ fn create_folder_structure(name: &str) -> Result<()> {
 }
 
 fn create_host_files(name: &str) -> Result<()> {
-    let mut toolchain_file = File::create(format!("{}/rust-toolchain", name))?;
-    toolchain_file.write("nightly-2023-09-22".as_bytes())?;
+    let mut toolchain_file = File::create(format!("{}/rust-toolchain.toml", name))?;
+    toolchain_file.write(RUST_TOOLCHAIN.as_bytes())?;
 
     let mut gitignore_file = File::create(format!("{}/.gitignore", name))?;
     gitignore_file.write(GITIGORE.as_bytes())?;
@@ -133,6 +133,11 @@ fn display_sysinfo() {
     println!("CPUs:           {}", sys.cpus().len());
     println!("RAM:            {:.2} GB", sys.total_memory() as f64 / 1_000_000_000.0);
 }
+
+const RUST_TOOLCHAIN: &str = r#"[toolchain]
+channel = "nightly-2023-09-22"
+targets = ["riscv32i-unknown-none-elf"]
+"#;
 
 const HOST_CARGO_TEMPLATE: &str = r#"[package]
 name = "{NAME}"
