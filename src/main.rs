@@ -63,7 +63,7 @@ fn create_host_files(name: &str) -> Result<()> {
     toolchain_file.write("nightly-2023-09-22".as_bytes())?;
 
     let mut gitignore_file = File::create(format!("{}/.gitignore", name))?;
-    gitignore_file.write(GITIGORE.as_bytes())?;
+    gitignore_file.write(GITIGNORE.as_bytes())?;
 
     let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
     let mut cargo_file = File::create(format!("{}/Cargo.toml", name))?;
@@ -168,7 +168,7 @@ const HOST_MAIN: &str = r#"pub fn main() {
 }
 "#;
 
-const GITIGORE: &str = "target";
+const GITIGNORE: &str = "target";
 
 const GUEST_CARGO: &str = r#"[package]
 name = "guest"
