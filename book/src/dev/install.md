@@ -1,9 +1,14 @@
 # Development Installation
+
 ## Rust
+
 - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- `rustup target add riscv32i-unknown-none-elf`
+- Rustup should automatically install Rust toolchain and necessary targets on
+the first `cargo` invocation.  If you need to add the RISC-V target for building
+guest programs manually use `rustup target add riscv32i-unknown-none-elf`.
 
 ## mdBook
-For building this book: 
+
+For building this book:
 
 `cargo install mdbook`

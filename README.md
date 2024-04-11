@@ -33,14 +33,20 @@ For developers looking to contribute to Jolt, follow the instructions below.
 
 ## Installation
 
-You will need Rust [nightly](./rust-toolchain). 
-To compile the guest programs to RV32I, you will need to add the compilation target using `rustup`:
+You will need Rust [nightly](./rust-toolchain.toml).
 
-```rustup target add riscv32i-unknown-none-elf```
+If you have `rustup` installed, you do not need to do anything as it will
+automatically install the right toolchain and install additional target on the
+first `cargo` invocation.
 
-Finally, clone this repo:
+Clone this repo:
 
 ```git clone git@github.com:a16z/jolt.git```
+
+To check if `rustup` has picked the right version of Rust run `rustup show`
+inside the cloned repository.
+
+```cd jolt; rustup show```.
 
 ## Build
 
