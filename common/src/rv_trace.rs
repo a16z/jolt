@@ -1,6 +1,4 @@
-use crate::constants::{
-    INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
-};
+use crate::constants::{JOLT_DEVICE_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
@@ -588,19 +586,23 @@ pub struct JoltDevice {
     pub inputs: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
+    max_input_size: u64,
+    max_output_size: u64,
 }
 
 impl JoltDevice {
-    pub fn new() -> Self {
+    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
         Self {
             inputs: Vec::new(),
             outputs: Vec::new(),
             panic: false,
+            max_input_size,
+            max_output_size,
         }
     }
 
     pub fn load(&self, address: u64) -> u8 {
-        let internal_address = convert_read_address(address);
+        let internal_address = self.convert_read_address(address);
         if self.inputs.len() <= internal_address {
             0
         } else {
@@ -609,13 +611,13 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address == PANIC_ADDRESS {
+        if address == self.panic_address() {
             println!("GUEST PANIC");
             self.panic = true;
             return;
         }
 
-        let internal_address = convert_write_address(address);
+        let internal_address = self.convert_write_address(address);
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
@@ -626,12 +628,25 @@ impl JoltDevice {
     pub fn size(&self) -> usize {
         self.inputs.len() + self.outputs.len()
     }
+
+    fn input_start(&self) -> u64 {
+        JOLT_DEVICE_START_ADDRESS
+    }
+
+    fn output_start(&self) -> u64 {
+        JOLT_DEVICE_START_ADDRESS + self.max_input_size
+    }
+
+    fn panic_address(&self) -> u64 {
+        JOLT_DEVICE_START_ADDRESS + self.max_input_size + self.max_output_size
+    }
+
+    fn convert_read_address(&self, address: u64) -> usize {
+        (address - self.input_start()) as usize
+    }
+    
+    fn convert_write_address(&self, address: u64) -> usize {
+        (address - self.output_start()) as usize
+    }
 }
 
-fn convert_read_address(address: u64) -> usize {
-    (address - INPUT_START_ADDRESS) as usize
-}
-
-fn convert_write_address(address: u64) -> usize {
-    (address - OUTPUT_START_ADDRESS) as usize
-}
