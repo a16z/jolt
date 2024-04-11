@@ -36,7 +36,6 @@ itertools = "0.10.0"
 lazy_static = "1.4.0"
 merlin = "3.0.0"
 num-integer = "0.1.45"
-plotters = "0.3.5"
 postcard = { version = "1.0.8", default-features = false, features = [
     "use-std",
 ] }
