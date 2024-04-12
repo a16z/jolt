@@ -179,6 +179,15 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                 ],
+                RV32IM::FENCE => [
+                    MemoryOp::noop_read(),
+                    MemoryOp::noop_read(),
+                    MemoryOp::noop_write(),
+                    MemoryOp::noop_read(),
+                    MemoryOp::noop_read(),
+                    MemoryOp::noop_read(),
+                    MemoryOp::noop_read(),
+                ],
                 _ => unreachable!("{self:?}"),
             },
             RV32InstructionFormat::S => match self.instruction.opcode {
@@ -445,6 +454,7 @@ pub enum RV32IM {
     DIVU,
     REM,
     REMU,
+    FENCE,
     UNIMPL,
 }
 
@@ -498,6 +508,7 @@ impl RV32IM {
             "DIVU" => Self::DIVU,
             "REM" => Self::REM,
             "REMU" => Self::REMU,
+            "FENCE" => Self::FENCE,
             "UNIMPL" => Self::UNIMPL,
             _ => panic!("Could not match instruction to RV32IM set."),
         }
@@ -537,14 +548,15 @@ impl RV32IM {
             RV32IM::REM   |
             RV32IM::REMU => RV32InstructionFormat::R,
 
-            RV32IM::ADDI |
-            RV32IM::XORI |
-            RV32IM::ORI  |
-            RV32IM::ANDI |
-            RV32IM::SLLI |
-            RV32IM::SRLI |
-            RV32IM::SRAI |
-            RV32IM::SLTI |
+            RV32IM::ADDI  |
+            RV32IM::XORI  |
+            RV32IM::ORI   |
+            RV32IM::ANDI  |
+            RV32IM::SLLI  |
+            RV32IM::SRLI  |
+            RV32IM::SRAI  |
+            RV32IM::SLTI  |
+            RV32IM::FENCE |
             RV32IM::SLTIU => RV32InstructionFormat::I,
 
             RV32IM::LB  |

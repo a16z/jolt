@@ -2664,7 +2664,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_empty,
-        trace: None,
+        trace: Some(trace_i),
     },
     Instruction {
         mask: 0x0000707f,
