@@ -27,11 +27,9 @@ use crate::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
-    memory_address_to_witness_index, BYTES_PER_INSTRUCTION, INPUT_START_ADDRESS, MAX_INPUT_SIZE,
-    MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, OUTPUT_START_ADDRESS,
-    PANIC_ADDRESS, RAM_START_ADDRESS, RAM_WITNESS_OFFSET, REGISTER_COUNT,
+    memory_address_to_witness_index, BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT
 };
-use common::rv_trace::{ELFInstruction, JoltDevice, MemoryOp, RV32IM};
+use common::rv_trace::{ELFInstruction, JoltDevice, MemoryLayout, MemoryOp, RV32IM};
 use common::to_ram_address;
 
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
@@ -244,9 +242,9 @@ impl ReadWriteMemoryPreprocessing {
     }
 }
 
-fn remap_address(a: u64) -> u64 {
-    if a >= INPUT_START_ADDRESS {
-        memory_address_to_witness_index(a) as u64
+fn remap_address(a: u64, memory_layout: &MemoryLayout) -> u64 {
+    if a >= memory_layout.input_start {
+        memory_address_to_witness_index(a, memory_layout.ram_witness_offset) as u64
     } else if a < REGISTER_COUNT {
         // If a < REGISTER_COUNT, it is one of the registers and doesn't
         // need to be remapped
@@ -314,8 +312,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let sh_flag = &load_store_flags[3];
         let sw_flag = &load_store_flags[4];
 
-        assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
-        assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+        assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
+        assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
         let m = memory_trace.len();
         assert!(m.is_power_of_two());
@@ -324,23 +322,23 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             .iter()
             .flat_map(|step| {
                 step.iter().map(|op| match op {
-                    MemoryOp::Read(a, _) => remap_address(*a),
-                    MemoryOp::Write(a, _) => remap_address(*a),
+                    MemoryOp::Read(a, _) => remap_address(*a, &program_io.memory_layout),
+                    MemoryOp::Write(a, _) => remap_address(*a, &program_io.memory_layout),
                 })
             })
             .max()
             .unwrap_or(0);
 
-        let memory_size = (RAM_WITNESS_OFFSET + max_trace_address).next_power_of_two() as usize;
+        let memory_size = (program_io.memory_layout.ram_witness_offset + max_trace_address).next_power_of_two() as usize;
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
-        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address);
+        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address, program_io.memory_layout.ram_witness_offset);
         for byte in preprocessing.bytecode_bytes.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
         // Copy input bytes
-        v_init_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
+        v_init_index = memory_address_to_witness_index(program_io.memory_layout.input_start, program_io.memory_layout.ram_witness_offset);
         for byte in program_io.inputs.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
@@ -449,8 +447,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             {
                 match step[RAM_1] {
                     MemoryOp::Read(a, v) => {
-                        assert!(a >= INPUT_START_ADDRESS);
-                        let remapped_a = remap_address(a);
+                        assert!(a >= program_io.memory_layout.input_start);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         debug_assert_eq!(v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
@@ -468,8 +466,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                         ram_word_address = a;
                     }
                     MemoryOp::Write(a, v_new) => {
-                        assert!(a >= INPUT_START_ADDRESS);
-                        let remapped_a = remap_address(a);
+                        assert!(a >= program_io.memory_layout.input_start);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
@@ -525,7 +523,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     MemoryOp::Read(a, v) => {
                         assert!(!is_v_write_ram);
                         assert_eq!(a, ram_word_address + 1);
-                        let remapped_a = remap_address(a);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         debug_assert_eq!(v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
@@ -543,7 +541,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     MemoryOp::Write(a, v_new) => {
                         assert!(is_v_write_ram);
                         assert_eq!(a, ram_word_address + 1);
-                        let remapped_a = remap_address(a);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
@@ -594,7 +592,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     MemoryOp::Read(a, v) => {
                         assert!(!is_v_write_ram);
                         assert_eq!(a, ram_word_address + 2);
-                        let remapped_a = remap_address(a);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         debug_assert_eq!(v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
@@ -612,7 +610,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     MemoryOp::Write(a, v_new) => {
                         assert!(is_v_write_ram);
                         assert_eq!(a, ram_word_address + 2);
-                        let remapped_a = remap_address(a);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
@@ -633,7 +631,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     MemoryOp::Read(a, v) => {
                         assert!(!is_v_write_ram);
                         assert_eq!(a, ram_word_address + 3);
-                        let remapped_a = remap_address(a);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         debug_assert_eq!(v, v_final[remapped_a as usize]);
 
                         #[cfg(test)]
@@ -651,7 +649,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     MemoryOp::Write(a, v_new) => {
                         assert!(is_v_write_ram);
                         assert_eq!(a, ram_word_address + 3);
-                        let remapped_a = remap_address(a);
+                        let remapped_a = remap_address(a, &program_io.memory_layout);
                         let v_old = v_final[remapped_a as usize];
 
                         #[cfg(test)]
@@ -1031,17 +1029,19 @@ where
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
 
+        let memory_layout = preprocessing.program_io.unwrap().memory_layout;
+
         // TODO(moodlezoup): Compute opening without instantiating v_init polynomial itself
         let memory_size = opening_point.len().pow2();
         let mut v_init: Vec<u64> = vec![0; memory_size];
         // Copy bytecode
-        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address);
+        let mut v_init_index = memory_address_to_witness_index(preprocessing.min_bytecode_address, memory_layout.ram_witness_offset);
         for byte in preprocessing.bytecode_bytes.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
         }
         // Copy input bytes
-        v_init_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
+        v_init_index = memory_address_to_witness_index(memory_layout.input_start, memory_layout.ram_witness_offset);
         for byte in preprocessing.program_io.as_ref().unwrap().inputs.iter() {
             v_init[v_init_index] = *byte as u64;
             v_init_index += 1;
@@ -1356,7 +1356,7 @@ where
         let io_witness_range: Vec<_> = (0..polynomials.memory_size as u64)
             .into_iter()
             .map(|i| {
-                if i >= INPUT_START_ADDRESS && i < RAM_WITNESS_OFFSET {
+                if i >= program_io.memory_layout.input_start && i < program_io.memory_layout.ram_witness_offset {
                     F::one()
                 } else {
                     F::zero()
@@ -1366,19 +1366,19 @@ where
 
         let mut v_io: Vec<u64> = vec![0; polynomials.memory_size];
         // Copy input bytes
-        let mut input_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
+        let mut input_index = memory_address_to_witness_index(program_io.memory_layout.input_start, program_io.memory_layout.ram_witness_offset);
         for byte in program_io.inputs.iter() {
             v_io[input_index] = *byte as u64;
             input_index += 1;
         }
         // Copy output bytes
-        let mut output_index = memory_address_to_witness_index(OUTPUT_START_ADDRESS);
+        let mut output_index = memory_address_to_witness_index(program_io.memory_layout.output_start, program_io.memory_layout.ram_witness_offset);
         for byte in program_io.outputs.iter() {
             v_io[output_index] = *byte as u64;
             output_index += 1;
         }
         // Copy panic bit
-        v_io[memory_address_to_witness_index(PANIC_ADDRESS)] = program_io.panic as u64;
+        v_io[memory_address_to_witness_index(program_io.memory_layout.panic, program_io.memory_layout.ram_witness_offset)] = program_io.panic as u64;
 
         let mut sumcheck_polys = vec![
             eq,
@@ -1433,12 +1433,14 @@ where
 
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_sumcheck);
 
+        let memory_layout = preprocessing.program_io.unwrap().memory_layout;
+
         // TODO(moodlezoup): Compute openings without instantiating io_witness_range polynomial itself
         let memory_size = proof.num_rounds.pow2();
         let io_witness_range: Vec<_> = (0..memory_size as u64)
             .into_iter()
             .map(|i| {
-                if i >= INPUT_START_ADDRESS && i < RAM_WITNESS_OFFSET {
+                if i >= memory_layout.input_start && i < memory_layout.ram_witness_offset {
                     F::one()
                 } else {
                     F::zero()
@@ -1450,19 +1452,19 @@ where
         // TODO(moodlezoup): Compute openings without instantiating v_io polynomial itself
         let mut v_io: Vec<u64> = vec![0; memory_size];
         // Copy input bytes
-        let mut input_index = memory_address_to_witness_index(INPUT_START_ADDRESS);
+        let mut input_index = memory_address_to_witness_index(memory_layout.input_start, memory_layout.ram_witness_offset);
         for byte in preprocessing.program_io.as_ref().unwrap().inputs.iter() {
             v_io[input_index] = *byte as u64;
             input_index += 1;
         }
         // Copy output bytes
-        let mut output_index = memory_address_to_witness_index(OUTPUT_START_ADDRESS);
+        let mut output_index = memory_address_to_witness_index(memory_layout.output_start, memory_layout.ram_witness_offset);
         for byte in preprocessing.program_io.as_ref().unwrap().outputs.iter() {
             v_io[output_index] = *byte as u64;
             output_index += 1;
         }
         // Copy panic bit
-        v_io[memory_address_to_witness_index(PANIC_ADDRESS)] =
+        v_io[memory_address_to_witness_index(memory_layout.panic, memory_layout.ram_witness_offset)] =
             preprocessing.program_io.as_ref().unwrap().panic as u64;
         let v_io_eval = DensePolynomial::from_u64(&v_io).evaluate(&r_sumcheck);
 

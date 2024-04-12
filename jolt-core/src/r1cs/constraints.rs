@@ -4,7 +4,7 @@
 /// and avoids the need for using the circom library.
 use ark_ff::PrimeField;
 use common::{
-    constants::{RAM_START_ADDRESS, RAM_WITNESS_OFFSET},
+    constants::RAM_START_ADDRESS,
     rv_trace::NUM_CIRCUIT_FLAGS,
 };
 use rayon::prelude::*;
@@ -25,7 +25,7 @@ use super::snark::R1CSStepInputs;
 const C: usize = 4;
 const N_FLAGS: usize = NUM_CIRCUIT_FLAGS + RV32I::COUNT;
 const LOG_M: usize = 16;
-const MEMORY_START_ADDRESS: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; // accounts for the 32 registers being considered a part of the RAM
+// const MEMORY_START_ADDRESS: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; // accounts for the 32 registers being considered a part of the RAM
 const PC_START_ADDRESS: u64 = RAM_START_ADDRESS;
 const MOPS: usize = 7; // "memory ops per step"
 const PC_NOOP_SHIFT: usize = 4;
@@ -321,7 +321,7 @@ impl R1CSBuilder {
 
     /* This is the main function that generates the Jolt R1CS constraint matrices.
      */
-    pub fn jolt_r1cs_matrices(instance: &mut R1CSBuilder) {
+    pub fn jolt_r1cs_matrices(instance: &mut R1CSBuilder, memory_start: u64) {
         // Obtain the indices of various inputs to the circuit.
         let PC_mapped = GET_INDEX(InputType::InputState, 0);
         let op_flags_packed = GET_INDEX(InputType::ProgVRW, 0);
@@ -454,7 +454,7 @@ impl R1CSBuilder {
                 (rs1_val, 1),
                 (immediate_signed, 1),
                 (GET_INDEX(InputType::MemregARW, 0), -1),
-                (0, -1 * MEMORY_START_ADDRESS as i64)
+                (0, -1 * memory_start as i64)
             ],
             smallvec![],
         );

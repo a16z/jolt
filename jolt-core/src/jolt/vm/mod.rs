@@ -23,7 +23,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use common::{
-    constants::{MAX_INPUT_SIZE, MAX_OUTPUT_SIZE, MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
+    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
 
@@ -477,8 +477,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         program_io: JoltDevice,
         transcript: &mut Transcript,
     ) -> Result<(), ProofVerifyError> {
-        assert!(program_io.inputs.len() <= MAX_INPUT_SIZE as usize);
-        assert!(program_io.outputs.len() <= MAX_OUTPUT_SIZE as usize);
+        assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
+        assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
         preprocessing.program_io = Some(program_io);
 
         ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
@@ -603,8 +603,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         transcript.append_u64(b"M", M as u64);
         transcript.append_u64(b"# instructions", Self::InstructionSet::COUNT as u64);
         transcript.append_u64(b"# subtables", Self::Subtables::COUNT as u64);
-        transcript.append_u64(b"Max input size", MAX_INPUT_SIZE);
-        transcript.append_u64(b"Max output size", MAX_OUTPUT_SIZE);
+        transcript.append_u64(b"Max input size", program_io.memory_layout.max_input_size);
+        transcript.append_u64(b"Max output size", program_io.memory_layout.max_output_size);
         transcript.append_message(b"Program inputs", &program_io.inputs);
         transcript.append_message(b"Program outputs", &program_io.outputs);
         transcript.append_u64(b"Program panic", program_io.panic as u64);

@@ -10,22 +10,12 @@ pub const DEFAULT_STACK_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 
-// pub const MAX_INPUT_SIZE: u64 = 4096;
-// pub const MAX_OUTPUT_SIZE: u64 = 4096;
-// pub const RAM_WITNESS_OFFSET: u64 =
-//     (REGISTER_COUNT + MAX_INPUT_SIZE + MAX_OUTPUT_SIZE + 1).next_power_of_two();
-// pub const INPUT_START_ADDRESS: u64 = RAM_START_ADDRESS - RAM_WITNESS_OFFSET + REGISTER_COUNT;
-// pub const INPUT_END_ADDRESS: u64 = INPUT_START_ADDRESS + MAX_INPUT_SIZE;
-// pub const OUTPUT_START_ADDRESS: u64 = INPUT_END_ADDRESS + 1;
-// pub const OUTPUT_END_ADDRESS: u64 = OUTPUT_START_ADDRESS + MAX_OUTPUT_SIZE;
-// pub const PANIC_ADDRESS: u64 = OUTPUT_END_ADDRESS + 1;
-
-// pub const fn memory_address_to_witness_index(address: u64) -> usize {
-//     (address + RAM_WITNESS_OFFSET - RAM_START_ADDRESS) as usize
-// }
-// pub const fn witness_index_to_memory_address(index: usize) -> u64 {
-//     index as u64 + RAM_START_ADDRESS - RAM_WITNESS_OFFSET
-// }
+pub const fn memory_address_to_witness_index(address: u64, ram_witness_offset: u64) -> usize {
+    (address + ram_witness_offset - RAM_START_ADDRESS) as usize
+}
+pub const fn witness_index_to_memory_address(index: usize, ram_witness_offset: u64) -> u64 {
+    index as u64 + RAM_START_ADDRESS - ram_witness_offset
+}
 
 // Layout of the witness (where || denotes concatenation):
 //     registers || inputs || outputs || panic || padding || RAM

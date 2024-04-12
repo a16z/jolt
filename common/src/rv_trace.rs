@@ -586,7 +586,7 @@ pub struct JoltDevice {
     pub inputs: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
-    memory_layout: MemoryLayout,
+    pub memory_layout: MemoryLayout,
 }
 
 impl JoltDevice {
@@ -652,6 +652,7 @@ impl JoltDevice {
     Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
 )]
 pub struct MemoryLayout {
+    pub ram_witness_offset: u64,
     pub max_input_size: u64,
     pub max_output_size: u64,
     pub input_start: u64,
@@ -664,6 +665,7 @@ pub struct MemoryLayout {
 impl MemoryLayout {
     pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
         Self {
+            ram_witness_offset: ram_witness_offset(max_input_size, max_output_size),
             max_input_size,
             max_output_size,
             input_start: input_start(max_input_size, max_output_size),
