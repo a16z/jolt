@@ -629,8 +629,20 @@ impl JoltDevice {
         self.inputs.len() + self.outputs.len()
     }
 
-    fn input_start(&self) -> u64 {
+    pub fn input_start(&self) -> u64 {
         JOLT_DEVICE_START_ADDRESS
+    }
+
+    pub fn is_input(&self, address: u64) -> bool {
+        address >= self.input_start() && address < self.output_start()
+    }
+
+    pub fn is_output(&self, address: u64) -> bool {
+        address >= self.output_start() && address < self.panic_address()
+    }
+
+    pub fn is_panic(&self, address: u64) -> bool {
+        address == self.panic_address()
     }
 
     fn output_start(&self) -> u64 {
@@ -644,9 +656,8 @@ impl JoltDevice {
     fn convert_read_address(&self, address: u64) -> usize {
         (address - self.input_start()) as usize
     }
-    
+
     fn convert_write_address(&self, address: u64) -> usize {
         (address - self.output_start()) as usize
     }
 }
-
