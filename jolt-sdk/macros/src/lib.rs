@@ -5,7 +5,7 @@ extern crate proc_macro;
 use core::panic;
 use std::collections::HashMap;
 
-use common::{constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS}, rv_trace::MemoryLayout};
+use common::{constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE}, rv_trace::MemoryLayout};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -251,12 +251,10 @@ impl MacroBuilder {
         let attributes = self.parse_attributes();
         let memory_layout = MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
         let input_start = memory_layout.input_start;
-        let input_end = memory_layout.input_end;
         let output_start = memory_layout.output_start;
-        let output_end = memory_layout.output_end;
         let panic_address = memory_layout.panic;
-        let max_input_len = attributes.max_input_size;
-        let max_output_len = attributes.max_output_size;
+        let max_input_len = attributes.max_input_size as usize;
+        let max_output_len = attributes.max_output_size as usize;
 
         let get_input_slice = quote! {
             let input_ptr = #input_start as *const u8;
