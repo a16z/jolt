@@ -11,8 +11,8 @@ use crate::utils::instruction_utils::chunk_operand_usize;
 pub struct LHInstruction(pub u64);
 
 impl JoltInstruction for LHInstruction {
-    fn operands(&self) -> [u64; 2] {
-        [0, self.0]
+    fn operands(&self) -> (u64, u64) {
+        (0, self.0)
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], _C: usize, M: usize) -> F {

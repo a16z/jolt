@@ -11,8 +11,8 @@ use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenat
 pub struct XORInstruction(pub u64, pub u64);
 
 impl JoltInstruction for XORInstruction {
-    fn operands(&self) -> [u64; 2] {
-        [self.0, self.1]
+    fn operands(&self) -> (u64, u64) {
+        (self.0, self.1)
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {

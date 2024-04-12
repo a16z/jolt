@@ -9,8 +9,8 @@ use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concate
 pub struct SRLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
-    fn operands(&self) -> [u64; 2] {
-        [self.0, self.1]
+    fn operands(&self) -> (u64, u64) {
+        (self.0, self.1)
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, _: usize) -> F {

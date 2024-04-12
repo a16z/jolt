@@ -516,7 +516,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         for (instruction_index, op) in instructions.iter().enumerate() {
             if let Some(op) = op {
-                let [chunks_x_op, chunks_y_op] = op.operand_chunks(C, log_M);
+                let (chunks_x_op, chunks_y_op) = op.operand_chunks(C, log_M);
                 for (chunk_index, (x, y)) in chunks_x_op
                     .into_iter()
                     .zip(chunks_y_op.into_iter())
