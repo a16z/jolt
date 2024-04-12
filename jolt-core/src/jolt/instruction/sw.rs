@@ -10,8 +10,8 @@ use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 pub struct SWInstruction(pub u64);
 
 impl JoltInstruction for SWInstruction {
-    fn operands(&self) -> [u64; 2] {
-        [0, self.0]
+    fn operands(&self) -> (u64, u64) {
+        (0, self.0)
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], _: usize, M: usize) -> F {
