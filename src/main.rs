@@ -41,10 +41,10 @@ fn create_project(name: String) {
 }
 
 fn install_toolchain() {
-   std::process::Command::new("rustup")
-       .args(["target", "add", "riscv32i-unknown-none-elf"])
-       .output()
-       .expect("could not install toolchain");
+    std::process::Command::new("rustup")
+        .args(["target", "add", "riscv32i-unknown-none-elf"])
+        .output()
+        .expect("could not install toolchain");
 
     display_welcome();
 }
@@ -127,11 +127,23 @@ fn display_sysinfo() {
 
     sys.refresh_all();
 
-    println!("OS:             {}", System::name().unwrap_or("UNKNOWN".to_string()));
-    println!("version:        {}", System::os_version().unwrap_or("UNKNOWN".to_string()));
-    println!("Host:           {}", System::host_name().unwrap_or("UNKNOWN".to_string()));
+    println!(
+        "OS:             {}",
+        System::name().unwrap_or("UNKNOWN".to_string())
+    );
+    println!(
+        "version:        {}",
+        System::os_version().unwrap_or("UNKNOWN".to_string())
+    );
+    println!(
+        "Host:           {}",
+        System::host_name().unwrap_or("UNKNOWN".to_string())
+    );
     println!("CPUs:           {}", sys.cpus().len());
-    println!("RAM:            {:.2} GB", sys.total_memory() as f64 / 1_000_000_000.0);
+    println!(
+        "RAM:            {:.2} GB",
+        sys.total_memory() as f64 / 1_000_000_000.0
+    );
 }
 
 const RUST_TOOLCHAIN: &str = r#"[toolchain]
