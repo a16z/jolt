@@ -56,7 +56,7 @@ This repository uses workspaces, and each workspace can be built individually, e
 
 For faster incremental builds, use the `build-fast` profile:
 
-```cargo build --profile build-fast jolt-core```
+```cargo build --profile build-fast -p jolt-core```
 
 ## Test
 
