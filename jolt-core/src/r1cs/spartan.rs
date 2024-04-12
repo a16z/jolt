@@ -194,7 +194,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
         circuit: &C,
         padded_num_steps: usize,
-        memory_start: u64
+        memory_start: u64,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
         let shape_single_step = circuit.single_step_shape(memory_start);
 

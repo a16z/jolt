@@ -14,11 +14,8 @@ use serde::Serialize;
 
 use common::{
     constants::{
-        DEFAULT_MAX_INPUT_SIZE,
-        DEFAULT_MAX_OUTPUT_SIZE,
-        DEFAULT_MEMORY_SIZE,
-        DEFAULT_STACK_SIZE,
-        MEMORY_OPS_PER_INSTRUCTION
+        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+        MEMORY_OPS_PER_INSTRUCTION,
     },
     rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
 };
@@ -144,7 +141,8 @@ impl Program {
     ) {
         self.build();
         let elf = self.elf.unwrap();
-        let (trace, io_device) = tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
+        let (trace, io_device) =
+            tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
 
         let bytecode_trace: Vec<BytecodeRow> = trace
             .par_iter()

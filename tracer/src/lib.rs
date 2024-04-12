@@ -22,7 +22,12 @@ pub use common::rv_trace::{
 use crate::decode::decode_raw;
 
 #[tracing::instrument(skip_all)]
-pub fn trace(elf: &PathBuf, inputs: Vec<u8>, input_size: u64, output_size: u64) -> (Vec<RVTraceRow>, JoltDevice) {
+pub fn trace(
+    elf: &PathBuf,
+    inputs: Vec<u8>,
+    input_size: u64,
+    output_size: u64,
+) -> (Vec<RVTraceRow>, JoltDevice) {
     let term = DefaultTerminal::new();
     let mut emulator = Emulator::new(Box::new(term));
     emulator.update_xlen(get_xlen());

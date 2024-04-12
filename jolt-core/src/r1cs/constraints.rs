@@ -3,10 +3,7 @@
 /// As the constraint system involved in Jolt is very simple, it's easy to generate the matrices directly
 /// and avoids the need for using the circom library.
 use ark_ff::PrimeField;
-use common::{
-    constants::RAM_START_ADDRESS,
-    rv_trace::NUM_CIRCUIT_FLAGS,
-};
+use common::{constants::RAM_START_ADDRESS, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use smallvec::{smallvec, SmallVec};
 use strum::EnumCount;

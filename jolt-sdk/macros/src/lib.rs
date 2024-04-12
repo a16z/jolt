@@ -5,12 +5,18 @@ extern crate proc_macro;
 use core::panic;
 use std::collections::HashMap;
 
-use common::{constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE}, rv_trace::MemoryLayout};
+use common::{
+    constants::{
+        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    },
+    rv_trace::MemoryLayout,
+};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, PatType, ReturnType, Type
+    parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, PatType,
+    ReturnType, Type,
 };
 
 #[proc_macro_attribute]
@@ -251,7 +257,8 @@ impl MacroBuilder {
 
     fn make_main_func(&self) -> TokenStream2 {
         let attributes = self.parse_attributes();
-        let memory_layout = MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
+        let memory_layout =
+            MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
         let panic_address = memory_layout.panic;
@@ -407,10 +414,16 @@ impl MacroBuilder {
             }
         }
 
-        let memory_size = *attributes.get("memory_size").unwrap_or(&DEFAULT_MEMORY_SIZE);
+        let memory_size = *attributes
+            .get("memory_size")
+            .unwrap_or(&DEFAULT_MEMORY_SIZE);
         let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
-        let max_input_size = *attributes.get("max_input_size").unwrap_or(&DEFAULT_MAX_INPUT_SIZE);
-        let max_output_size = *attributes.get("max_output_size").unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
+        let max_input_size = *attributes
+            .get("max_input_size")
+            .unwrap_or(&DEFAULT_MAX_INPUT_SIZE);
+        let max_output_size = *attributes
+            .get("max_output_size")
+            .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
 
         Attributes {
             memory_size,

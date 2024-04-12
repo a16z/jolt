@@ -682,9 +682,7 @@ pub fn ram_witness_offset(max_input: u64, max_output: u64) -> u64 {
 }
 
 fn input_start(max_input: u64, max_output: u64) -> u64 {
-    RAM_START_ADDRESS 
-        - ram_witness_offset(max_input, max_output)
-        + REGISTER_COUNT
+    RAM_START_ADDRESS - ram_witness_offset(max_input, max_output) + REGISTER_COUNT
 }
 
 fn input_end(max_input: u64, max_output: u64) -> u64 {
