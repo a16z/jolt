@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
+use common::constants::RAM_START_ADDRESS;
 use itertools::max;
 use merlin::Transcript;
 use rayon::prelude::*;
@@ -342,6 +343,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
         let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_setup(
             padded_trace_length,
+            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
             &instructions,
             &jolt_polynomials,
             circuit_flags,
@@ -497,6 +499,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn r1cs_setup(
         padded_trace_length: usize,
+        memory_start: u64,
         instructions: &Vec<Option<Self::InstructionSet>>,
         polynomials: &JoltPolynomials<F, G>,
         circuit_flags: Vec<F>,
@@ -585,6 +588,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
                 32,
                 C,
                 padded_trace_length,
+                memory_start,
                 &inputs,
                 generators,
             )

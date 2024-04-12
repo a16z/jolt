@@ -100,7 +100,7 @@ pub enum SpartanError {
 
 // Trait which will kick out a small and big R1CS shape
 pub trait UniformShapeBuilder<F: PrimeField> {
-    fn single_step_shape(&self) -> R1CSShape<F>;
+    fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F>;
 }
 
 // TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
@@ -194,8 +194,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
         circuit: &C,
         padded_num_steps: usize,
+        memory_start: u64
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
-        let shape_single_step = circuit.single_step_shape();
+        let shape_single_step = circuit.single_step_shape(memory_start);
 
         let num_constraints_total = shape_single_step.num_cons * padded_num_steps;
         let num_aux_total = shape_single_step.num_vars * padded_num_steps;
