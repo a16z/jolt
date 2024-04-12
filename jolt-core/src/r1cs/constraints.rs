@@ -25,7 +25,6 @@ use super::snark::R1CSStepInputs;
 const C: usize = 4;
 const N_FLAGS: usize = NUM_CIRCUIT_FLAGS + RV32I::COUNT;
 const LOG_M: usize = 16;
-// const MEMORY_START_ADDRESS: usize = (RAM_START_ADDRESS - RAM_WITNESS_OFFSET) as usize; // accounts for the 32 registers being considered a part of the RAM
 const PC_START_ADDRESS: u64 = RAM_START_ADDRESS;
 const MOPS: usize = 7; // "memory ops per step"
 const PC_NOOP_SHIFT: usize = 4;
