@@ -1,4 +1,4 @@
-use crate::constants::{JOLT_DEVICE_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION};
+use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
@@ -586,8 +586,7 @@ pub struct JoltDevice {
     pub inputs: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
-    max_input_size: u64,
-    max_output_size: u64,
+    memory_layout: MemoryLayout,
 }
 
 impl JoltDevice {
@@ -596,8 +595,7 @@ impl JoltDevice {
             inputs: Vec::new(),
             outputs: Vec::new(),
             panic: false,
-            max_input_size,
-            max_output_size,
+            memory_layout: MemoryLayout::new(max_input_size, max_output_size),
         }
     }
 
@@ -611,7 +609,7 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address == self.panic_address() {
+        if address == self.memory_layout.panic {
             println!("GUEST PANIC");
             self.panic = true;
             return;
@@ -629,35 +627,76 @@ impl JoltDevice {
         self.inputs.len() + self.outputs.len()
     }
 
-    pub fn input_start(&self) -> u64 {
-        JOLT_DEVICE_START_ADDRESS
-    }
-
     pub fn is_input(&self, address: u64) -> bool {
-        address >= self.input_start() && address < self.output_start()
+        address >= self.memory_layout.input_start && address < self.memory_layout.input_end
     }
 
     pub fn is_output(&self, address: u64) -> bool {
-        address >= self.output_start() && address < self.panic_address()
+        address >= self.memory_layout.output_start && address < self.memory_layout.panic
     }
 
     pub fn is_panic(&self, address: u64) -> bool {
-        address == self.panic_address()
-    }
-
-    fn output_start(&self) -> u64 {
-        JOLT_DEVICE_START_ADDRESS + self.max_input_size
-    }
-
-    fn panic_address(&self) -> u64 {
-        JOLT_DEVICE_START_ADDRESS + self.max_input_size + self.max_output_size
+        address == self.memory_layout.panic
     }
 
     fn convert_read_address(&self, address: u64) -> usize {
-        (address - self.input_start()) as usize
+        (address - self.memory_layout.input_start) as usize
     }
 
     fn convert_write_address(&self, address: u64) -> usize {
-        (address - self.output_start()) as usize
+        (address - self.memory_layout.output_start) as usize
     }
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+)]
+pub struct MemoryLayout {
+    pub max_input_size: u64,
+    pub max_output_size: u64,
+    pub input_start: u64,
+    pub input_end: u64,
+    pub output_start: u64,
+    pub output_end: u64,
+    pub panic: u64,
+}
+
+impl MemoryLayout {
+    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
+        Self {
+            max_input_size,
+            max_output_size,
+            input_start: input_start(max_input_size, max_output_size),
+            input_end: input_end(max_input_size, max_output_size),
+            output_start: output_start(max_input_size, max_output_size),
+            output_end: output_end(max_input_size, max_output_size),
+            panic: panic_address(max_input_size, max_output_size),
+        }
+    }
+}
+
+pub fn ram_witness_offset(max_input: u64, max_output: u64) -> u64 {
+    (REGISTER_COUNT + max_input + max_output + 1).next_power_of_two()
+}
+
+fn input_start(max_input: u64, max_output: u64) -> u64 {
+    RAM_START_ADDRESS 
+        - ram_witness_offset(max_input, max_output)
+        + REGISTER_COUNT
+}
+
+fn input_end(max_input: u64, max_output: u64) -> u64 {
+    input_start(max_input, max_output) + max_input
+}
+
+fn output_start(max_input: u64, max_output: u64) -> u64 {
+    input_end(max_input, max_output) + 1
+}
+
+fn output_end(max_input: u64, max_output: u64) -> u64 {
+    output_start(max_input, max_output) + max_output
+}
+
+fn panic_address(max_input: u64, max_output: u64) -> u64 {
+    output_end(max_input, max_output) + 1
 }

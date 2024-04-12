@@ -5,7 +5,10 @@ pub const MEMORY_OPS_PER_INSTRUCTION: usize = 7;
 pub const NUM_R1CS_POLYS: usize = 64;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
-pub const JOLT_DEVICE_START_ADDRESS: u64 = 0x20000000;
+pub const DEFAULT_MEMORY_SIZE: u64 = 10 * 1024 * 1024;
+pub const DEFAULT_STACK_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
+pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 
 // pub const MAX_INPUT_SIZE: u64 = 4096;
 // pub const MAX_OUTPUT_SIZE: u64 = 4096;

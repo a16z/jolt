@@ -13,7 +13,13 @@ use rayon::prelude::*;
 use serde::Serialize;
 
 use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION,
+    constants::{
+        DEFAULT_MAX_INPUT_SIZE,
+        DEFAULT_MAX_OUTPUT_SIZE,
+        DEFAULT_MEMORY_SIZE,
+        DEFAULT_STACK_SIZE,
+        MEMORY_OPS_PER_INSTRUCTION
+    },
     rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
 };
 use tracer::ELFInstruction;
@@ -23,16 +29,15 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
-const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
-const DEFAULT_STACK_SIZE: usize = 4096;
-
 #[derive(Clone)]
 pub struct Program {
     guest: String,
     func: Option<String>,
     input: Vec<u8>,
-    memory_size: usize,
-    stack_size: usize,
+    memory_size: u64,
+    stack_size: u64,
+    max_input_size: u64,
+    max_output_size: u64,
     pub elf: Option<PathBuf>,
 }
 
@@ -44,6 +49,8 @@ impl Program {
             input: Vec::new(),
             memory_size: DEFAULT_MEMORY_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
+            max_input_size: DEFAULT_MAX_INPUT_SIZE,
+            max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             elf: None,
         }
     }
@@ -57,12 +64,20 @@ impl Program {
         self.input.append(&mut serialized);
     }
 
-    pub fn set_memory_size(&mut self, len: usize) {
+    pub fn set_memory_size(&mut self, len: u64) {
         self.memory_size = len;
     }
 
-    pub fn set_stack_size(&mut self, len: usize) {
+    pub fn set_stack_size(&mut self, len: u64) {
         self.stack_size = len;
+    }
+
+    pub fn set_max_input_size(&mut self, size: u64) {
+        self.max_input_size = size;
+    }
+
+    pub fn set_max_output_size(&mut self, size: u64) {
+        self.max_output_size = size;
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
@@ -129,7 +144,7 @@ impl Program {
     ) {
         self.build();
         let elf = self.elf.unwrap();
-        let (trace, io_device) = tracer::trace(&elf, self.input);
+        let (trace, io_device) = tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
 
         let bytecode_trace: Vec<BytecodeRow> = trace
             .par_iter()
@@ -176,7 +191,7 @@ impl Program {
     pub fn trace_analyze(mut self) -> (usize, Vec<(RV32IM, usize)>) {
         self.build();
         let elf = self.elf.unwrap();
-        let (rows, _) = tracer::trace(&elf, self.input);
+        let (rows, _) = tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
         let trace_len = rows.len();
 
         let mut counts = HashMap::<RV32IM, usize>::new();

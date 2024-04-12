@@ -2,16 +2,15 @@
 
 extern crate proc_macro;
 
+use core::panic;
+use std::collections::HashMap;
+
+use common::{constants::{DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, RAM_START_ADDRESS}, rv_trace::MemoryLayout};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, AttributeArgs, Ident, ItemFn, Meta, MetaNameValue, NestedMeta, PatType,
-    ReturnType, Type,
-};
-
-use common::constants::{
-    INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
+    parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, PatType, ReturnType, Type
 };
 
 #[proc_macro_attribute]
@@ -249,10 +248,18 @@ impl MacroBuilder {
     }
 
     fn make_main_func(&self) -> TokenStream2 {
-        let max_input_len = (INPUT_END_ADDRESS - INPUT_START_ADDRESS) as usize;
+        let attributes = self.parse_attributes();
+        let memory_layout = MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
+        let input_start = memory_layout.input_start;
+        let input_end = memory_layout.input_end;
+        let output_start = memory_layout.output_start;
+        let output_end = memory_layout.output_end;
+        let panic_address = memory_layout.panic;
+        let max_input_len = attributes.max_input_size;
+        let max_output_len = attributes.max_output_size;
 
         let get_input_slice = quote! {
-            let input_ptr = #INPUT_START_ADDRESS as *const u8;
+            let input_ptr = #input_start as *const u8;
             let input_slice = unsafe {
                 core::slice::from_raw_parts(input_ptr, #max_input_len)
             };
@@ -272,11 +279,10 @@ impl MacroBuilder {
         let block = &self.func.block;
         let block = quote! {let to_return = (|| -> _ { #block })();};
 
-        let max_output_len = (OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS) as usize;
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {},
             ReturnType::Type(_, ty) => quote! {
-                let output_ptr = #OUTPUT_START_ADDRESS as *mut u8;
+                let output_ptr = #output_start as *mut u8;
                 let output_slice = unsafe {
                     core::slice::from_raw_parts_mut(output_ptr, #max_output_len)
                 };
@@ -320,7 +326,7 @@ impl MacroBuilder {
             #[panic_handler]
             fn panic(_info: &PanicInfo) -> ! {
                 unsafe {
-                    core::ptr::write_volatile(#PANIC_ADDRESS as *mut u8, 1);
+                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
                 }
 
                 loop {}
@@ -366,7 +372,7 @@ impl MacroBuilder {
                             code.push(quote! {
                                program.set_stack_size(#lit);
                             });
-                        }
+                        },
                         _ => panic!("invalid attribute"),
                     }
                 }
@@ -376,6 +382,41 @@ impl MacroBuilder {
 
         quote! {
             #(#code;)*
+        }
+    }
+
+    fn parse_attributes(&self) -> Attributes {
+        let mut attributes = HashMap::<_, u64>::new();
+        for attr in &self.attr {
+            match attr {
+                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+                    let value: u64 = match lit {
+                        Lit::Int(lit) => lit.base10_parse().unwrap(),
+                        _ => panic!("expected integer literal"),
+                    };
+                    let ident = &path.get_ident().expect("Expected identifier");
+                    match ident.to_string().as_str() {
+                        "memory_size" => attributes.insert("memory_size", value),
+                        "stack_size" => attributes.insert("stack_size", value),
+                        "max_input_size" => attributes.insert("max_input_size", value),
+                        "max_output_size" => attributes.insert("max_output_size", value),
+                        _ => panic!("invalid attribute"),
+                    };
+                }
+                _ => panic!("expected integer literal"),
+            }
+        }
+
+        let memory_size = *attributes.get("memory_size").unwrap_or(&DEFAULT_MEMORY_SIZE);
+        let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
+        let max_input_size = *attributes.get("max_input_size").unwrap_or(&DEFAULT_MAX_INPUT_SIZE);
+        let max_output_size = *attributes.get("max_output_size").unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
+
+        Attributes {
+            memory_size,
+            stack_size,
+            max_input_size,
+            max_output_size,
         }
     }
 
@@ -418,4 +459,11 @@ impl MacroBuilder {
     fn get_func_selector(&self) -> Option<String> {
         proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
     }
+}
+
+struct Attributes {
+    memory_size: u64,
+    stack_size: u64,
+    max_input_size: u64,
+    max_output_size: u64,
 }
