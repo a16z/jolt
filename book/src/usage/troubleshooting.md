@@ -24,3 +24,14 @@ Jolt restricts the size of the inputs and outputs to 4096 bytes. This value is c
 
 ## Guest Attempts to Compile Standard Library
 Sometimes after installing the toolchain the guest does still tries to compile with the standard library which will fail with a large number of errors that certain items such as `Result` are referenced and not available. This generally happens when one tries to run jolt before installing the toolchain. To address, try rerunning `jolt install-toolchain`, restarting your terminal, and delete both your rust target directory and any files under `/tmp` that begin with jolt.
+
+
+## Getting Help
+If none of the above help, please serialize your program and send it along with a detailed bug report.
+
+Serializing a call to the "fib" function in the Jolt guest:
+```rust
+// let (prove_fib, verify_fib) = guest::build_fib();
+let program_summary = guest::analyze_fib(10);
+program_summary.write_to_file("fib_10.txt".into()).expect("should write");
+```

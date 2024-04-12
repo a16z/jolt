@@ -49,9 +49,10 @@ impl ProgramSummary {
         counts
     }
 
-    pub fn write_to_file(&self, path: PathBuf, data: &[u8]) -> io::Result<()> {
+    pub fn write_to_file(self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         let mut file = File::create(path)?;
-        io::Write::write_all(&mut file, data)?;
+        let data = bincode::serialize(&self)?;
+        io::Write::write_all(&mut file, &data)?;
         Ok(())
     }
 }
