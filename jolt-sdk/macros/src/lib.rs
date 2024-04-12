@@ -129,6 +129,7 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
         let analyze_fn_name = Ident::new(&format!("analyze_{}", fn_name), fn_name.span());
         let inputs = &self.func.sig.inputs;
         let set_program_args = self.func_args.iter().map(|(name, _)| {
@@ -143,6 +144,7 @@ impl MacroBuilder {
                 #imports
 
                 let mut program = Program::new(#guest_name);
+                program.set_func(#fn_name_str);
                 #set_mem_size
                 #(#set_program_args;)*
 
@@ -355,28 +357,28 @@ impl MacroBuilder {
     }
 
     fn make_set_linker_parameters(&self) -> TokenStream2 {
+        let attributes = self.parse_attributes();
         let mut code: Vec<TokenStream2> = Vec::new();
-        for attr in &self.attr {
-            match attr {
-                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
-                    let ident = &path.get_ident().expect("Expected identifier");
-                    match ident.to_string().as_str() {
-                        "memory_size" => {
-                            code.push(quote! {
-                               program.set_memory_size(#lit);
-                            });
-                        }
-                        "stack_size" => {
-                            code.push(quote! {
-                               program.set_stack_size(#lit);
-                            });
-                        },
-                        _ => panic!("invalid attribute"),
-                    }
-                }
-                _ => panic!("expected integer literal"),
-            }
-        }
+
+        let value = attributes.memory_size;
+        code.push(quote! {
+            program.set_memory_size(#value);
+        });
+
+        let value = attributes.stack_size;
+        code.push(quote! {
+            program.set_stack_size(#value);
+        });
+
+        let value = attributes.max_input_size;
+        code.push(quote! {
+            program.set_max_input_size(#value);
+        });
+
+        let value = attributes.max_output_size;
+        code.push(quote! {
+            program.set_max_output_size(#value);
+        });
 
         quote! {
             #(#code;)*
