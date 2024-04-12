@@ -2,6 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
+use serde::{Serialize, Deserialize};
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -29,7 +30,7 @@ macro_rules! instruction_set {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
         #[repr(u8)]
-        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro)]
+        #[derive(Copy, Clone, Debug, EnumIter, EnumCountMacro, Serialize, Deserialize)]
         #[enum_dispatch(JoltInstruction)]
         pub enum $enum_name { $($alias($struct)),+ }
         impl JoltInstructionSet for $enum_name {}

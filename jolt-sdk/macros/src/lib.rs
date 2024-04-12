@@ -138,14 +138,14 @@ impl MacroBuilder {
 
         quote! {
              #[cfg(not(feature = "guest"))]
-             pub fn #analyze_fn_name(#inputs) -> (usize, Vec<(jolt::RV32IM, usize)>) {
+             pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
                 #imports
 
                 let mut program = Program::new(#guest_name);
                 #set_mem_size
                 #(#set_program_args;)*
 
-                program.trace_analyze()
+                program.trace_analyze::<jolt::F>()
              }
         }
     }

@@ -5,14 +5,14 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RVTraceRow {
     pub instruction: ELFInstruction,
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum MemoryOp {
     Read(u64, u64),  // (address, value)
     Write(u64, u64), // (address, new_value)
@@ -366,7 +366,7 @@ pub struct RegisterState {
     pub rd_post_val: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
     Read {
         address: u64,

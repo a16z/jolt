@@ -1,5 +1,6 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
+use serde::{Deserialize, Serialize};
 
 use super::JoltInstruction;
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct BNEInstruction(pub u64, pub u64);
 
 impl JoltInstruction for BNEInstruction {
