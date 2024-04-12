@@ -182,8 +182,12 @@ impl Program {
         let (raw_trace, _) = tracer::trace(&elf, self.input.clone());
 
         let (bytecode, memory_init) = self.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) = self.trace();
-        let circuit_flags: Vec<bool> = circuit_flags.into_iter().map(|flag: F| flag.is_one()).collect();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            self.trace();
+        let circuit_flags: Vec<bool> = circuit_flags
+            .into_iter()
+            .map(|flag: F| flag.is_one())
+            .collect();
 
         let program_summary = ProgramSummary {
             raw_trace,
@@ -193,7 +197,7 @@ impl Program {
             bytecode_trace,
             instruction_trace,
             memory_trace,
-            circuit_flags
+            circuit_flags,
         };
 
         program_summary

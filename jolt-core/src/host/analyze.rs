@@ -6,11 +6,7 @@ use tracer::{ELFInstruction, JoltDevice, RVTraceRow, RV32IM};
 
 use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
 
-use common::{
-    constants::MEMORY_OPS_PER_INSTRUCTION,
-    rv_trace::MemoryOp,
-};
-
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProgramSummary {
@@ -23,7 +19,7 @@ pub struct ProgramSummary {
     pub bytecode_trace: Vec<BytecodeRow>,
     pub instruction_trace: Vec<Option<RV32I>>,
     pub memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
-    pub circuit_flags: Vec<bool>
+    pub circuit_flags: Vec<bool>,
 }
 
 impl ProgramSummary {

@@ -2,7 +2,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
