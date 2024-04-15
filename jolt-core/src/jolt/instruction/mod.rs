@@ -2,6 +2,7 @@ use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
 use rand::prelude::StdRng;
+use serde::Serialize;
 use std::marker::Sync;
 use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
@@ -12,7 +13,7 @@ use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;
 
 #[enum_dispatch]
-pub trait JoltInstruction: Clone + Debug + Send + Sync {
+pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     fn operands(&self) -> (u64, u64);
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the

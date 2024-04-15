@@ -1,12 +1,13 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
+use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct SWInstruction(pub u64);
 
 impl JoltInstruction for SWInstruction {

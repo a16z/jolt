@@ -1,11 +1,12 @@
 use ark_ff::PrimeField;
 use rand::prelude::StdRng;
+use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{sra_sign::SraSignSubtable, srl::SrlSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{assert_valid_parameters, chunk_and_concatenate_for_shift};
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct SRAInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
