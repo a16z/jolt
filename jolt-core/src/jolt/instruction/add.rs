@@ -1,6 +1,7 @@
 use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
+use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
@@ -10,12 +11,12 @@ use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
 };
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ADDInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
-    fn operands(&self) -> [u64; 2] {
-        [self.0, self.1]
+    fn operands(&self) -> (u64, u64) {
+        (self.0, self.1)
     }
 
     fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {

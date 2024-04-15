@@ -116,14 +116,12 @@ impl MacroBuilder {
 
     fn make_execute_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let execute_fn_name = Ident::new(&format!("execute_{}", fn_name), fn_name.span());
         let inputs = &self.func.sig.inputs;
         let output = &self.func.sig.output;
         let body = &self.func.block;
 
         quote! {
-             #[cfg(not(feature = "guest"))]
-             pub fn #execute_fn_name(#inputs) #output {
+             pub fn #fn_name(#inputs) #output {
                  #body
              }
         }
@@ -146,7 +144,7 @@ impl MacroBuilder {
 
         quote! {
              #[cfg(not(feature = "guest"))]
-             pub fn #analyze_fn_name(#inputs) -> (usize, Vec<(jolt::RV32IM, usize)>) {
+             pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
                 #imports
 
                 let mut program = Program::new(#guest_name);
@@ -154,7 +152,7 @@ impl MacroBuilder {
                 #set_mem_size
                 #(#set_program_args;)*
 
-                program.trace_analyze()
+                program.trace_analyze::<jolt::F>()
              }
         }
     }

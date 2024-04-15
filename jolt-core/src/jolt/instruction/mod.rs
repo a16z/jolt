@@ -2,6 +2,7 @@ use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
 use rand::prelude::StdRng;
+use serde::Serialize;
 use std::marker::Sync;
 use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
@@ -12,8 +13,8 @@ use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;
 
 #[enum_dispatch]
-pub trait JoltInstruction: Clone + Debug + Send + Sync {
-    fn operands(&self) -> [u64; 2];
+pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
+    fn operands(&self) -> (u64, u64);
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the
     /// output of the instruction. This function can also be thought of as the low-degree extension
@@ -43,17 +44,16 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync {
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize>;
     /// Computes the output lookup entry for this instruction as a u64.
     fn lookup_entry(&self) -> u64;
-    fn operand_chunks(&self, C: usize, log_M: usize) -> [Vec<u64>; 2] {
+    fn operand_chunks(&self, C: usize, log_M: usize) -> (Vec<u64>, Vec<u64>) {
         assert!(
             log_M % 2 == 0,
             "log_M must be even for operand_chunks to work"
         );
-        self.operands()
-            .iter()
-            .map(|&operand| chunk_operand(operand, C, log_M / 2))
-            .collect::<Vec<Vec<u64>>>()
-            .try_into()
-            .unwrap()
+        let (left_operand, right_operand) = self.operands();
+        (
+            chunk_operand(left_operand, C, log_M / 2),
+            chunk_operand(right_operand, C, log_M / 2),
+        )
     }
     fn random(&self, rng: &mut StdRng) -> Self;
 

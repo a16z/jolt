@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
@@ -36,7 +37,7 @@ pub type BytecodeProof<F, G> = MemoryCheckingProof<
     BytecodeInitFinalOpenings<F>,
 >;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BytecodeRow {
     /// Memory address as read from the ELF.
     address: usize,
@@ -183,9 +184,7 @@ impl<F: PrimeField> BytecodePreprocessing<F> {
         bytecode.insert(0, BytecodeRow::no_op(0));
 
         // Bytecode: Pad to nearest power of 2
-        for _ in bytecode.len()..bytecode.len().next_power_of_two() {
-            bytecode.push(BytecodeRow::no_op(0));
-        }
+        bytecode.resize(bytecode.len().next_power_of_two(), BytecodeRow::no_op(0));
 
         let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
         // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
@@ -246,10 +245,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
         }
 
         // Pad trace to nearest power of 2
-        for _ in trace.len()..trace.len().next_power_of_two() {
-            // All padded elements of the trace point at the no_op row of the bytecode
-            trace.push(BytecodeRow::no_op(0));
-        }
+        trace.resize(trace.len().next_power_of_two(), BytecodeRow::no_op(0));
 
         let num_ops = trace.len();
 

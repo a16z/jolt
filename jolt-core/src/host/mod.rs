@@ -1,6 +1,5 @@
 use core::{str::FromStr, u8};
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::{self, Write},
     path::PathBuf,
@@ -17,7 +16,7 @@ use common::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
         MEMORY_OPS_PER_INSTRUCTION,
     },
-    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS, RV32IM},
+    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS},
 };
 use tracer::ELFInstruction;
 
@@ -25,6 +24,13 @@ use crate::{
     jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
     utils::thread::unsafe_allocate_zero_vec,
 };
+
+use self::analyze::ProgramSummary;
+
+pub mod analyze;
+
+const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
+const DEFAULT_STACK_SIZE: usize = 4096;
 
 #[derive(Clone)]
 pub struct Program {
@@ -186,27 +192,31 @@ impl Program {
         )
     }
 
-    pub fn trace_analyze(mut self) -> (usize, Vec<(RV32IM, usize)>) {
+    pub fn trace_analyze<F: PrimeField>(mut self) -> ProgramSummary {
         self.build();
-        let elf = self.elf.unwrap();
-        let (rows, _) = tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
-        let trace_len = rows.len();
+        let elf = self.elf.as_ref().unwrap();
+        let (raw_trace, _) = tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
 
-        let mut counts = HashMap::<RV32IM, usize>::new();
-        for row in rows {
-            let op = row.instruction.opcode;
-            if let Some(count) = counts.get(&op) {
-                counts.insert(op, count + 1);
-            } else {
-                counts.insert(op, 1);
-            }
-        }
+        let (bytecode, memory_init) = self.decode();
+        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+            self.trace();
+        let circuit_flags: Vec<bool> = circuit_flags
+            .into_iter()
+            .map(|flag: F| flag.is_one())
+            .collect();
 
-        let mut counts: Vec<_> = counts.into_iter().collect();
-        counts.sort_by_key(|v| v.1);
-        counts.reverse();
+        let program_summary = ProgramSummary {
+            raw_trace,
+            bytecode,
+            memory_init,
+            io_device,
+            bytecode_trace,
+            instruction_trace,
+            memory_trace,
+            circuit_flags,
+        };
 
-        (trace_len, counts)
+        program_summary
     }
 
     fn save_linker(&self) {

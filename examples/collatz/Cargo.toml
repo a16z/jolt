@@ -1,0 +1,8 @@
+[package]
+name = "collatz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["std"] }
+guest = { package = "collatz-guest", path = "./guest" }
