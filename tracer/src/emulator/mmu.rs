@@ -9,9 +9,6 @@ extern crate fnv;
 use std::rc::Rc;
 
 use crate::trace::Tracer;
-use common::constants::{
-    INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
-};
 use common::rv_trace::{JoltDevice, MemoryState};
 
 use self::fnv::FnvHashMap;
@@ -117,7 +114,7 @@ impl Mmu {
             plic: Plic::new(),
             clint: Clint::new(),
             uart: Uart::new(terminal),
-            jolt_device: JoltDevice::new(),
+            jolt_device: JoltDevice::new(0, 0),
             tracer,
             mstatus: 0,
             page_cache_enabled: false,
@@ -509,27 +506,31 @@ impl Mmu {
                 0x0C000000..=0x0fffffff => self.plic.load(effective_address),
                 0x10000000..=0x100000ff => self.uart.load(effective_address),
                 0x10001000..=0x10001FFF => self.disk.load(effective_address),
-                INPUT_START_ADDRESS..=INPUT_END_ADDRESS => self.jolt_device.load(effective_address),
-                _ => panic!("Unknown memory mapping {:X}.", effective_address),
+                _ => {
+                    if self.jolt_device.is_input(effective_address) {
+                        self.jolt_device.load(effective_address)
+                    } else {
+                        panic!("Unknown memory mapping {:X}.", effective_address);
+                    }
+                }
             },
         }
     }
 
     fn trace_load(&mut self, effective_address: u64, bytes: u64) {
         if effective_address < DRAM_BASE {
-            match effective_address {
-                INPUT_START_ADDRESS..=INPUT_END_ADDRESS => {
-                    let mut value_bytes = [0u8; 8];
-                    for i in 0..bytes {
-                        value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
-                    }
-                    let value = u64::from_le_bytes(value_bytes);
-                    self.tracer.push_memory(MemoryState::Read {
-                        address: effective_address,
-                        value: value.into(),
-                    });
+            if self.jolt_device.is_input(effective_address) {
+                let mut value_bytes = [0u8; 8];
+                for i in 0..bytes {
+                    value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
                 }
-                _ => panic!("Unknown memory mapping {:X}.", effective_address),
+                let value = u64::from_le_bytes(value_bytes);
+                self.tracer.push_memory(MemoryState::Read {
+                    address: effective_address,
+                    value: value.into(),
+                });
+            } else {
+                panic!("Unknown memory mapping {:X}.", effective_address);
             }
         } else {
             let mut value_bytes = [0u8; 8];
@@ -546,29 +547,27 @@ impl Mmu {
 
     fn trace_store(&mut self, effective_address: u64, bytes: u64, value: u64) {
         if effective_address < DRAM_BASE {
-            match effective_address {
-                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
-                    let mut pre_value_bytes = [0u8; 8];
-                    for i in 0..bytes {
-                        pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
-                    }
-                    let pre_value = u64::from_le_bytes(pre_value_bytes);
+            if self.jolt_device.is_output(effective_address) {
+                let mut pre_value_bytes = [0u8; 8];
+                for i in 0..bytes {
+                    pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
+                }
+                let pre_value = u64::from_le_bytes(pre_value_bytes);
 
-                    self.tracer.push_memory(MemoryState::Write {
-                        address: effective_address,
-                        pre_value,
-                        post_value: value,
-                    });
-                }
-                PANIC_ADDRESS => {
-                    let pre_value = self.jolt_device.load(effective_address) as u64;
-                    self.tracer.push_memory(MemoryState::Write {
-                        address: effective_address,
-                        pre_value,
-                        post_value: value,
-                    });
-                }
-                _ => panic!("Unknown memory mapping {:X}.", effective_address),
+                self.tracer.push_memory(MemoryState::Write {
+                    address: effective_address,
+                    pre_value,
+                    post_value: value,
+                });
+            } else if self.jolt_device.is_panic(effective_address) {
+                let pre_value = self.jolt_device.load(effective_address) as u64;
+                self.tracer.push_memory(MemoryState::Write {
+                    address: effective_address,
+                    pre_value,
+                    post_value: value,
+                });
+            } else {
+                panic!("Unknown memory mapping {:X}.", effective_address);
             }
         } else {
             let mut pre_value_bytes = [0u8; 8];
@@ -666,11 +665,15 @@ impl Mmu {
                 0x0c000000..=0x0fffffff => self.plic.store(effective_address, value),
                 0x10000000..=0x100000ff => self.uart.store(effective_address, value),
                 0x10001000..=0x10001FFF => self.disk.store(effective_address, value),
-                OUTPUT_START_ADDRESS..=OUTPUT_END_ADDRESS => {
-                    self.jolt_device.store(effective_address, value)
+                _ => {
+                    if self.jolt_device.is_output(effective_address) {
+                        self.jolt_device.store(effective_address, value);
+                    } else if self.jolt_device.is_panic(effective_address) {
+                        self.jolt_device.store(effective_address, value);
+                    } else {
+                        panic!("Unknown memory mapping {:X}.", effective_address);
+                    }
                 }
-                PANIC_ADDRESS => self.jolt_device.store(effective_address, value),
-                _ => panic!("Unknown memory mapping {:X}.", effective_address),
             },
         };
     }

@@ -329,14 +329,19 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         _W: usize,
         _C: usize,
         padded_trace_len: usize,
+        memory_start: u64,
         inputs: &R1CSInputs<F>,
         generators: &PedersenGenerators<G>,
     ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>), SpartanError> {
         let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
         let _enter = span.enter();
         let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape);
-        let key = UniformSpartanProof::<F, G>::setup_precommitted(&jolt_shape, padded_trace_len)?;
+        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);
+        let key = UniformSpartanProof::<F, G>::setup_precommitted(
+            &jolt_shape,
+            padded_trace_len,
+            memory_start,
+        )?;
         drop(_enter);
         drop(span);
 
@@ -465,9 +470,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 }
 
 impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
-    fn single_step_shape(&self) -> R1CSShape<F> {
+    fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F> {
         let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape);
+        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);
         let constraints_F = jolt_shape.convert_to_field();
         let shape_single = R1CSShape::<F> {
             A: constraints_F.0,

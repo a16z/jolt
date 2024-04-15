@@ -20,11 +20,25 @@ fn waste_memory(size: u32, n: u32) {
 ```
 
 ## Maximum Input or Output Size Exceeded
-Jolt restricts the size of the inputs and outputs to 4096 bytes. This value is currently not configurable, but we will be adding support for this soon.
+Jolt restricts the size of the inputs and outputs to 4096 bytes by default. Using inputs and outputs that exceed this size will lead to errors. These values can be configured via the macro.
+
+```rust
+#![cfg_attr(feature = "guest", no_std)]
+#![no_main]
+
+#[jolt::provable(max_input_size = 10000, max_output_size = 10000)]
+fn sum(input: &[u8]) -> u32 {
+    let mut sum = 0;
+    for value in input {
+        sum += value;
+    }
+
+    sum
+}
+```
 
 ## Guest Attempts to Compile Standard Library
-Sometimes after installing the toolchain the guest does still tries to compile with the standard library which will fail with a large number of errors that certain items such as `Result` are referenced and not available. This generally happens when one tries to run jolt before installing the toolchain. To address, try rerunning `jolt install-toolchain`, restarting your terminal, and delete both your rust target directory and any files under `/tmp` that begin with jolt.
-
+Sometimes after installing the toolchain the guest still tries to compile with the standard library which will fail with a large number of errors that certain items such as `Result` are referenced and not available. This generally happens when one tries to run jolt before installing the toolchain. To address, try rerunning `jolt install-toolchain`, restarting your terminal, and delete both your rust target directory and any files under `/tmp` that begin with jolt.
 
 ## Getting Help
 If none of the above help, please serialize your program and send it along with a detailed bug report.

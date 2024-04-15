@@ -2,16 +2,21 @@
 
 extern crate proc_macro;
 
+use core::panic;
+use std::collections::HashMap;
+
+use common::{
+    constants::{
+        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
+    },
+    rv_trace::MemoryLayout,
+};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, AttributeArgs, Ident, ItemFn, Meta, MetaNameValue, NestedMeta, PatType,
+    parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, PatType,
     ReturnType, Type,
-};
-
-use common::constants::{
-    INPUT_END_ADDRESS, INPUT_START_ADDRESS, OUTPUT_END_ADDRESS, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
 };
 
 #[proc_macro_attribute]
@@ -128,6 +133,7 @@ impl MacroBuilder {
         let imports = self.make_imports();
 
         let fn_name = self.get_func_name();
+        let fn_name_str = fn_name.to_string();
         let analyze_fn_name = Ident::new(&format!("analyze_{}", fn_name), fn_name.span());
         let inputs = &self.func.sig.inputs;
         let set_program_args = self.func_args.iter().map(|(name, _)| {
@@ -142,6 +148,7 @@ impl MacroBuilder {
                 #imports
 
                 let mut program = Program::new(#guest_name);
+                program.set_func(#fn_name_str);
                 #set_mem_size
                 #(#set_program_args;)*
 
@@ -247,10 +254,17 @@ impl MacroBuilder {
     }
 
     fn make_main_func(&self) -> TokenStream2 {
-        let max_input_len = (INPUT_END_ADDRESS - INPUT_START_ADDRESS) as usize;
+        let attributes = self.parse_attributes();
+        let memory_layout =
+            MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
+        let input_start = memory_layout.input_start;
+        let output_start = memory_layout.output_start;
+        let panic_address = memory_layout.panic;
+        let max_input_len = attributes.max_input_size as usize;
+        let max_output_len = attributes.max_output_size as usize;
 
         let get_input_slice = quote! {
-            let input_ptr = #INPUT_START_ADDRESS as *const u8;
+            let input_ptr = #input_start as *const u8;
             let input_slice = unsafe {
                 core::slice::from_raw_parts(input_ptr, #max_input_len)
             };
@@ -270,11 +284,10 @@ impl MacroBuilder {
         let block = &self.func.block;
         let block = quote! {let to_return = (|| -> _ { #block })();};
 
-        let max_output_len = (OUTPUT_END_ADDRESS - OUTPUT_START_ADDRESS) as usize;
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {},
             ReturnType::Type(_, ty) => quote! {
-                let output_ptr = #OUTPUT_START_ADDRESS as *mut u8;
+                let output_ptr = #output_start as *mut u8;
                 let output_slice = unsafe {
                     core::slice::from_raw_parts_mut(output_ptr, #max_output_len)
                 };
@@ -318,7 +331,7 @@ impl MacroBuilder {
             #[panic_handler]
             fn panic(_info: &PanicInfo) -> ! {
                 unsafe {
-                    core::ptr::write_volatile(#PANIC_ADDRESS as *mut u8, 1);
+                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
                 }
 
                 loop {}
@@ -349,31 +362,72 @@ impl MacroBuilder {
     }
 
     fn make_set_linker_parameters(&self) -> TokenStream2 {
+        let attributes = self.parse_attributes();
         let mut code: Vec<TokenStream2> = Vec::new();
+
+        let value = attributes.memory_size;
+        code.push(quote! {
+            program.set_memory_size(#value);
+        });
+
+        let value = attributes.stack_size;
+        code.push(quote! {
+            program.set_stack_size(#value);
+        });
+
+        let value = attributes.max_input_size;
+        code.push(quote! {
+            program.set_max_input_size(#value);
+        });
+
+        let value = attributes.max_output_size;
+        code.push(quote! {
+            program.set_max_output_size(#value);
+        });
+
+        quote! {
+            #(#code;)*
+        }
+    }
+
+    fn parse_attributes(&self) -> Attributes {
+        let mut attributes = HashMap::<_, u64>::new();
         for attr in &self.attr {
             match attr {
                 NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+                    let value: u64 = match lit {
+                        Lit::Int(lit) => lit.base10_parse().unwrap(),
+                        _ => panic!("expected integer literal"),
+                    };
                     let ident = &path.get_ident().expect("Expected identifier");
                     match ident.to_string().as_str() {
-                        "memory_size" => {
-                            code.push(quote! {
-                               program.set_memory_size(#lit);
-                            });
-                        }
-                        "stack_size" => {
-                            code.push(quote! {
-                               program.set_stack_size(#lit);
-                            });
-                        }
+                        "memory_size" => attributes.insert("memory_size", value),
+                        "stack_size" => attributes.insert("stack_size", value),
+                        "max_input_size" => attributes.insert("max_input_size", value),
+                        "max_output_size" => attributes.insert("max_output_size", value),
                         _ => panic!("invalid attribute"),
-                    }
+                    };
                 }
                 _ => panic!("expected integer literal"),
             }
         }
 
-        quote! {
-            #(#code;)*
+        let memory_size = *attributes
+            .get("memory_size")
+            .unwrap_or(&DEFAULT_MEMORY_SIZE);
+        let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
+        let max_input_size = *attributes
+            .get("max_input_size")
+            .unwrap_or(&DEFAULT_MAX_INPUT_SIZE);
+        let max_output_size = *attributes
+            .get("max_output_size")
+            .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
+
+        Attributes {
+            memory_size,
+            stack_size,
+            max_input_size,
+            max_output_size,
         }
     }
 
@@ -416,4 +470,11 @@ impl MacroBuilder {
     fn get_func_selector(&self) -> Option<String> {
         proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
     }
+}
+
+struct Attributes {
+    memory_size: u64,
+    stack_size: u64,
+    max_input_size: u64,
+    max_output_size: u64,
 }

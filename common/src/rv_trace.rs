@@ -1,6 +1,4 @@
-use crate::constants::{
-    INPUT_START_ADDRESS, MEMORY_OPS_PER_INSTRUCTION, OUTPUT_START_ADDRESS, PANIC_ADDRESS,
-};
+use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
@@ -600,19 +598,21 @@ pub struct JoltDevice {
     pub inputs: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
+    pub memory_layout: MemoryLayout,
 }
 
 impl JoltDevice {
-    pub fn new() -> Self {
+    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
         Self {
             inputs: Vec::new(),
             outputs: Vec::new(),
             panic: false,
+            memory_layout: MemoryLayout::new(max_input_size, max_output_size),
         }
     }
 
     pub fn load(&self, address: u64) -> u8 {
-        let internal_address = convert_read_address(address);
+        let internal_address = self.convert_read_address(address);
         if self.inputs.len() <= internal_address {
             0
         } else {
@@ -621,13 +621,13 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address == PANIC_ADDRESS {
+        if address == self.memory_layout.panic {
             println!("GUEST PANIC");
             self.panic = true;
             return;
         }
 
-        let internal_address = convert_write_address(address);
+        let internal_address = self.convert_write_address(address);
         if self.outputs.len() <= internal_address {
             self.outputs.resize(internal_address + 1, 0);
         }
@@ -638,12 +638,77 @@ impl JoltDevice {
     pub fn size(&self) -> usize {
         self.inputs.len() + self.outputs.len()
     }
+
+    pub fn is_input(&self, address: u64) -> bool {
+        address >= self.memory_layout.input_start && address < self.memory_layout.input_end
+    }
+
+    pub fn is_output(&self, address: u64) -> bool {
+        address >= self.memory_layout.output_start && address < self.memory_layout.panic
+    }
+
+    pub fn is_panic(&self, address: u64) -> bool {
+        address == self.memory_layout.panic
+    }
+
+    fn convert_read_address(&self, address: u64) -> usize {
+        (address - self.memory_layout.input_start) as usize
+    }
+
+    fn convert_write_address(&self, address: u64) -> usize {
+        (address - self.memory_layout.output_start) as usize
+    }
 }
 
-fn convert_read_address(address: u64) -> usize {
-    (address - INPUT_START_ADDRESS) as usize
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+)]
+pub struct MemoryLayout {
+    pub ram_witness_offset: u64,
+    pub max_input_size: u64,
+    pub max_output_size: u64,
+    pub input_start: u64,
+    pub input_end: u64,
+    pub output_start: u64,
+    pub output_end: u64,
+    pub panic: u64,
 }
 
-fn convert_write_address(address: u64) -> usize {
-    (address - OUTPUT_START_ADDRESS) as usize
+impl MemoryLayout {
+    pub fn new(max_input_size: u64, max_output_size: u64) -> Self {
+        Self {
+            ram_witness_offset: ram_witness_offset(max_input_size, max_output_size),
+            max_input_size,
+            max_output_size,
+            input_start: input_start(max_input_size, max_output_size),
+            input_end: input_end(max_input_size, max_output_size),
+            output_start: output_start(max_input_size, max_output_size),
+            output_end: output_end(max_input_size, max_output_size),
+            panic: panic_address(max_input_size, max_output_size),
+        }
+    }
+}
+
+pub fn ram_witness_offset(max_input: u64, max_output: u64) -> u64 {
+    (REGISTER_COUNT + max_input + max_output + 1).next_power_of_two()
+}
+
+fn input_start(max_input: u64, max_output: u64) -> u64 {
+    RAM_START_ADDRESS - ram_witness_offset(max_input, max_output) + REGISTER_COUNT
+}
+
+fn input_end(max_input: u64, max_output: u64) -> u64 {
+    input_start(max_input, max_output) + max_input
+}
+
+fn output_start(max_input: u64, max_output: u64) -> u64 {
+    input_end(max_input, max_output) + 1
+}
+
+fn output_end(max_input: u64, max_output: u64) -> u64 {
+    output_start(max_input, max_output) + max_output
+}
+
+fn panic_address(max_input: u64, max_output: u64) -> u64 {
+    output_end(max_input, max_output) + 1
 }
