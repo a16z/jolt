@@ -192,7 +192,8 @@ impl Program {
     pub fn trace_analyze<F: PrimeField>(mut self) -> ProgramSummary {
         self.build();
         let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) = tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
+        let (raw_trace, _) =
+            tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
