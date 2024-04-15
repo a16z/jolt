@@ -29,9 +29,6 @@ use self::analyze::ProgramSummary;
 
 pub mod analyze;
 
-const DEFAULT_MEMORY_SIZE: usize = 10 * 1024 * 1024;
-const DEFAULT_STACK_SIZE: usize = 4096;
-
 #[derive(Clone)]
 pub struct Program {
     guest: String,
@@ -148,7 +145,7 @@ impl Program {
         self.build();
         let elf = self.elf.unwrap();
         let (trace, io_device) =
-            tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
+            tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
 
         let bytecode_trace: Vec<BytecodeRow> = trace
             .par_iter()
@@ -195,7 +192,7 @@ impl Program {
     pub fn trace_analyze<F: PrimeField>(mut self) -> ProgramSummary {
         self.build();
         let elf = self.elf.as_ref().unwrap();
-        let (raw_trace, _) = tracer::trace(&elf, self.input, self.max_input_size, self.max_output_size);
+        let (raw_trace, _) = tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =

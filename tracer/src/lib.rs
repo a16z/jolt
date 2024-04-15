@@ -24,7 +24,7 @@ use crate::decode::decode_raw;
 #[tracing::instrument(skip_all)]
 pub fn trace(
     elf: &PathBuf,
-    inputs: Vec<u8>,
+    inputs: &[u8],
     input_size: u64,
     output_size: u64,
 ) -> (Vec<RVTraceRow>, JoltDevice) {
@@ -33,7 +33,7 @@ pub fn trace(
     emulator.update_xlen(get_xlen());
 
     let mut jolt_device = JoltDevice::new(input_size, output_size);
-    jolt_device.inputs = inputs;
+    jolt_device.inputs = inputs.to_vec();
     emulator.get_mut_cpu().get_mut_mmu().jolt_device = jolt_device;
 
     let mut elf_file = File::open(elf).unwrap();
