@@ -26,9 +26,6 @@ Jolt restricts the size of the inputs and outputs to 4096 bytes by default. Usin
 #![cfg_attr(feature = "guest", no_std)]
 #![no_main]
 
-extern crate alloc;
-use alloc::vec::Vec;
-
 #[jolt::provable(max_input_size = 10000, max_output_size = 10000)]
 fn sum(input: &[u8]) -> u32 {
     let mut sum = 0;
