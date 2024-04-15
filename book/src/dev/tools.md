@@ -1,11 +1,13 @@
 # Development Tools
 ## Tracing
 Jolt is instrumented using [tokio-rs/tracing](https://github.com/tokio-rs/tracing). These traces can be displayed using the `--format chrome` flag, for example:
-`cargo run -p jolt-core --release -- trace --name sha3 --format chrome`
+`cargo run -p jolt-core --release -- trace --name sha2-chain --format chrome`
 
-After tracing, files can be found in the workspace root with a name `trace-<timestamp>.json`. Load these traces into `chrome://tracing` or `https://ui.perfetto.dev/`.
+After tracing, files can be found in the workspace root with a name `trace-<timestamp>.json`. Load these traces into [chrome://tracing](chrome://tracing) or [perfetto](https://ui.perfetto.dev/).
 
 ![Tracing in Jolt](../imgs/tracing.png)
+
+Often it's easiest to debug performance for a particular segment by adding granular tracing, adjusting code, rerunning the `sha2-chain` end-to-end benchmark and looking through the Chrome traces.
 
 
 ## Objdump
