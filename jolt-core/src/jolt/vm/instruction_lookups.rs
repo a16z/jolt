@@ -990,10 +990,13 @@ where
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
 
-        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
+        //TODO:
+        // - Parellelize inner operation
+        let (read_cts, final_cts, E_polys): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = (0
             ..preprocessing.num_memories)
             .into_par_iter()
-            .map(|memory_index| {
+            .fold(|| (Vec::new(), Vec::new(), Vec::new()),
+            |(mut read_acc, mut final_acc, mut E_acc), memory_index| {
                 let dim_index = preprocessing.memory_to_dimension_index[memory_index];
                 let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
                 let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
@@ -1019,29 +1022,19 @@ where
                     }
                 }
 
-                (
-                    DensePolynomial::from_usize(&read_cts_i),
-                    DensePolynomial::from_usize(&final_cts_i),
-                    DensePolynomial::new(subtable_lookups),
-                )
-            })
-            .collect();
-
-        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
-        let (read_cts, final_cts, E_polys): (
-            Vec<DensePolynomial<F>>,
-            Vec<DensePolynomial<F>>,
-            Vec<DensePolynomial<F>>,
-        ) = polys.into_iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
-                read_acc.push(read);
-                final_acc.push(f);
-                E_acc.push(E);
+                read_acc.push(DensePolynomial::from_usize(&read_cts_i));
+                final_acc.push(DensePolynomial::from_usize(&final_cts_i));
+                E_acc.push(DensePolynomial::new(subtable_lookups));
                 (read_acc, final_acc, E_acc)
-            },
-        );
+            }).reduce(||(Vec::new(), Vec::new(), Vec::new()), |(mut a, mut b, mut c), (read_acc, final_acc, E_acc)| {
+                //TODO: check allocations
+                a.extend_from_slice(&read_acc);
+                b.extend_from_slice(&final_acc);
+                c.extend_from_slice(&E_acc);
+                (a, b, c)
+            });
 
+        //Condense with subtable_lookup_indices as it iterates over C
         let dim: Vec<DensePolynomial<F>> = (0..C)
             .into_par_iter()
             .map(|i| {
