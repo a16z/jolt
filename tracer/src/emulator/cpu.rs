@@ -331,6 +331,7 @@ impl Cpu {
         match self.decode(word).cloned() {
             Ok(inst) => {
                 // setup trace
+                println!("{}", inst.name);
                 let trace_inst = inst.trace.unwrap()(&inst, &self.xlen, word, instruction_address);
                 self.tracer.start_instruction(trace_inst);
                 self.tracer.capture_pre_state(self.x.clone(), &self.xlen);

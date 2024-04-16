@@ -42,6 +42,8 @@ members = [
     "examples/multi-function/guest",
     "examples/alloc",
     "examples/alloc/guest",
+    "examples/stdlib",
+    "examples/stdlib/guest",
 ]
 
 [features]

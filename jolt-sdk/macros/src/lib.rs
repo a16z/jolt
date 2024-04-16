@@ -327,15 +327,15 @@ impl MacroBuilder {
                 #handle_return
             }
 
-            #[cfg(feature = "guest")]
-            #[panic_handler]
-            fn panic(_info: &PanicInfo) -> ! {
-                unsafe {
-                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                }
+            // #[cfg(feature = "guest")]
+            // #[panic_handler]
+            // fn panic(_info: &PanicInfo) -> ! {
+            //     unsafe {
+            //         core::ptr::write_volatile(#panic_address as *mut u8, 1);
+            //     }
 
-                loop {}
-            }
+            //     loop {}
+            // }
         }
     }
 

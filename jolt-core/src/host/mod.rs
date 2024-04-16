@@ -85,7 +85,11 @@ impl Program {
         if self.elf.is_none() {
             self.save_linker();
 
-            let mut envs = vec![("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))];
+            let mut envs = vec![
+                ("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path())),
+                ("RUSTUP_TOOLCHAIN", "riscv32i-jolt-zkvm-elf".to_string()),
+            ];
+
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
             }
@@ -108,7 +112,7 @@ impl Program {
                     "--target-dir",
                     &target,
                     "--target",
-                    "riscv32i-unknown-none-elf",
+                    "riscv32i-jolt-zkvm-elf",
                     "--bin",
                     "guest",
                 ])
@@ -120,7 +124,7 @@ impl Program {
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/riscv32i-unknown-none-elf/release/guest", target,);
+            let elf = format!("{}/riscv32i-jolt-zkvm-elf/release/guest", target,);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }
