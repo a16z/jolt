@@ -20,6 +20,6 @@ syn = { version = "1.0", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
 
-postcard = "1.0.8"
-serde = "1.0.196"
+# postcard = "1.0.8"
+# serde = "1.0.196"
 common = { path = "../../common" }

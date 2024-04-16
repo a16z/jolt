@@ -1,10 +1,10 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "host"), no_std)]
 
 extern crate jolt_sdk_macros;
 
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 use std::fs::File;
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 use std::path::PathBuf;
 
 use core::{
@@ -12,46 +12,46 @@ use core::{
     cell::UnsafeCell,
 };
 
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 use eyre::Result;
 
 pub use jolt_sdk_macros::provable;
 pub use postcard;
 
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use ark_bn254::{Fr as F, G1Projective as G};
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use ark_ec::CurveGroup;
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use ark_ff::PrimeField;
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{MemoryOp, RV32IM},
 };
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use jolt_core::host;
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use jolt_core::jolt::instruction;
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use jolt_core::jolt::vm::{
     bytecode::BytecodeRow,
     rv32i_vm::{RV32IJoltProof, RV32IJoltVM, RV32I},
     Jolt, JoltCommitments, JoltPreprocessing, JoltProof,
 };
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 pub use tracer;
 
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct Proof {
     pub proof: RV32IJoltProof<F, G>,
     pub commitments: JoltCommitments<G>,
 }
 
-#[cfg(feature = "std")]
+#[cfg(feature = "host")]
 impl Proof {
     /// Gets the byte size of the full proof
     pub fn size(&self) -> Result<usize> {

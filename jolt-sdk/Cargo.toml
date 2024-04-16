@@ -13,7 +13,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-std = [
+host = [
     "dep:tracer",
     "dep:common",
     "dep:jolt-core",
@@ -22,10 +22,11 @@ std = [
     "dep:ark-bn254",
     "dep:ark-serialize",
     "dep:eyre",
+    "postcard/use-std",
 ]
 
 [dependencies]
-postcard = "1.0.8"
+postcard = { version = "1.0.8", features = ["use-std"] }
 serde = "1.0.196"
 eyre = { version = "0.6.12", optional = true }
 ark-ec = { version = "0.4.2", default-features = false, optional = true }
