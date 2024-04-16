@@ -64,6 +64,9 @@ bincode = "1.3.3"
 [build-dependencies]
 common = { path = "../common" }
 
+[dev-dependencies]
+iai-callgrind = "0.10.2"
+
 [lib]
 name = "jolt_core"
 path = "src/lib.rs"
@@ -77,3 +80,7 @@ default = [
     "multicore",
 ]
 multicore = ["rayon"]
+
+[[bench]]
+name = "iai"
+harness = false
