@@ -25,9 +25,14 @@ host = [
     "postcard/use-std",
 ]
 
+std = [
+    "postcard/use-std",
+    "serde/std",
+]
+
 [dependencies]
-postcard = { version = "1.0.8", features = ["use-std"] }
-serde = "1.0.196"
+postcard = { version = "1.0.8", default-features = false }
+serde = { version = "1.0.196", default-features = false }
 eyre = { version = "0.6.12", optional = true }
 ark-ec = { version = "0.4.2", default-features = false, optional = true }
 ark-ff = { version = "0.4.2", default-features = false, optional = true }

@@ -48,7 +48,6 @@ impl MacroBuilder {
         let analyze_fn = self.make_analyze_function();
         let preprocess_fn = self.make_preprocess_func();
         let prove_fn = self.make_prove_func();
-        let panic_fn = self.make_panic();
 
         let main_fn = if let Some(func) = self.get_func_selector() {
             if self.get_func_name().to_string() == func {
@@ -67,7 +66,6 @@ impl MacroBuilder {
             #preprocess_fn
             #prove_fn
             #main_fn
-            #panic_fn
         }
         .into()
     }
@@ -160,9 +158,20 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_func(&self) -> TokenStream2 {
+        let attr = self.parse_attributes();
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
+
+        let set_std = if attr.std {
+            quote! {
+                program.set_std(true);
+            }
+        } else {
+            quote! {
+                program.set_std(false);
+            }
+        };
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -177,6 +186,7 @@ impl MacroBuilder {
 
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
+                #set_std
                 #set_mem_size
                 let (bytecode, memory_init) = program.decode();
 
@@ -261,7 +271,6 @@ impl MacroBuilder {
             MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
-        let panic_address = memory_layout.panic;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
 
@@ -298,11 +307,12 @@ impl MacroBuilder {
             },
         };
 
+        let panic_fn = self.make_panic(attributes.std, memory_layout.panic);
+        let declare_alloc = self.make_allocator(attributes.std);
+
         quote! {
             #[cfg(feature = "guest")]
             use core::arch::global_asm;
-            #[cfg(feature = "guest")]
-            use core::panic::PanicInfo;
 
             #[cfg(feature = "guest")]
             global_asm!("\
@@ -314,9 +324,7 @@ impl MacroBuilder {
                     j .\n\
             ");
 
-            // #[cfg(feature = "guest")]
-            // #[global_allocator]
-            // static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
+            #declare_alloc
 
             #[cfg(feature = "guest")]
             #[no_mangle]
@@ -329,40 +337,48 @@ impl MacroBuilder {
                 #handle_return
             }
 
-            // pub extern "C" fn jolt_panic() {
-            //     unsafe {
-            //         core::ptr::write_volatile(#panic_address as *mut u8, 1);
-            //     }
-
-            //     loop {}
-            // }
-
-            // #[cfg(feature = "guest")]
-            // #[panic_handler]
-            // fn panic(_info: &PanicInfo) -> ! {
-            //     unsafe {
-            //         core::ptr::write_volatile(#panic_address as *mut u8, 1);
-            //     }
-
-            //     loop {}
-            // }
+            #panic_fn
         }
     }
 
-    fn make_panic(&self) -> TokenStream2 {
-        let attributes = self.parse_attributes();
-        let memory_layout =
-            MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
+    fn make_panic(&self, std: bool, panic_address: u64) -> TokenStream2 {
+        if std {
+            quote! {
+                #[no_mangle]
+                pub extern "C" fn jolt_panic() {
+                    unsafe {
+                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    }
 
-        let panic_address = memory_layout.panic;
-        quote! {
-            #[no_mangle]
-            pub extern "C" fn jolt_panic() {
-                unsafe {
-                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    loop {}
                 }
+            }
+        } else {
+            quote! {
+                #[cfg(feature = "guest")]
+                use core::panic::PanicInfo;
 
-                loop {}
+                #[cfg(feature = "guest")]
+                #[panic_handler]
+                fn panic(_info: &PanicInfo) -> ! {
+                    unsafe {
+                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    }
+
+                    loop {}
+                }
+            }
+        }
+    }
+
+    fn make_allocator(&self, std: bool) -> TokenStream2 {
+        if std {
+            quote! {}
+        } else {
+            quote! {
+                #[cfg(feature = "guest")]
+                #[global_allocator]
+                static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
             }
         }
     }
@@ -422,21 +438,29 @@ impl MacroBuilder {
         let mut attributes = HashMap::<_, u64>::new();
         for attr in &self.attr {
             match attr {
-                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
-                    let value: u64 = match lit {
-                        Lit::Int(lit) => lit.base10_parse().unwrap(),
-                        _ => panic!("expected integer literal"),
-                    };
-                    let ident = &path.get_ident().expect("Expected identifier");
-                    match ident.to_string().as_str() {
-                        "memory_size" => attributes.insert("memory_size", value),
-                        "stack_size" => attributes.insert("stack_size", value),
-                        "max_input_size" => attributes.insert("max_input_size", value),
-                        "max_output_size" => attributes.insert("max_output_size", value),
-                        _ => panic!("invalid attribute"),
-                    };
+                NestedMeta::Meta(meta) => match meta {
+                    Meta::NameValue(MetaNameValue { path, lit, .. }) => {
+                        let value: u64 = match lit {
+                            Lit::Int(lit) => lit.base10_parse().unwrap(),
+                            _ => panic!("expected integer literal"),
+                        };
+                        let ident = &path.get_ident().expect("Expected identifier");
+                        match ident.to_string().as_str() {
+                            "memory_size" => attributes.insert("memory_size", value),
+                            "stack_size" => attributes.insert("stack_size", value),
+                            "max_input_size" => attributes.insert("max_input_size", value),
+                            "max_output_size" => attributes.insert("max_output_size", value),
+                            _ => panic!("invalid attribute"),
+                        };
+                    }
+                    Meta::Path(path) => {
+                        if path.is_ident("std") {
+                            attributes.insert("std", 1);
+                        }
+                    },
+                    _ => panic!("expected integer literal"),
                 }
-                _ => panic!("expected integer literal"),
+                _ => (),
             }
         }
 
@@ -456,6 +480,7 @@ impl MacroBuilder {
             stack_size,
             max_input_size,
             max_output_size,
+            std: attributes.contains_key("std"),
         }
     }
 
@@ -505,4 +530,5 @@ struct Attributes {
     stack_size: u64,
     max_input_size: u64,
     max_output_size: u64,
+    std: bool,
 }
