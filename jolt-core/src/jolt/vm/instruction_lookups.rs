@@ -988,10 +988,39 @@ where
     ) -> InstructionPolynomials<F, G> {
         let m: usize = ops.len().next_power_of_two();
 
-        let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
+        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
+            vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
+        for (j, op) in ops.iter().enumerate() {
+            if let Some(op) = op {
+                instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
+            }
+        }
+        let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
+            .par_iter()
+            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
+            .collect();
 
-        //TODO:
-        // - Parellelize inner operation
+        let log_M = M.log_2();
+        let (chunked_indices, mut lookup_outputs): (Vec<Vec<usize>>, Vec<F>) = ops
+            .par_iter()
+            .map(|op| {
+                if let Some(op) = op {
+                    (op.to_indices(C, log_M), F::from_u64(op.lookup_entry()).unwrap())
+                } else {
+                    (vec![0; C], F::zero())
+                }
+        }).unzip();
+        lookup_outputs.resize(m, F::zero());
+        let lookup_outputs = DensePolynomial::new(lookup_outputs);
+
+        let (subtable_lookup_indices, dim): (Vec<Vec<usize>>, Vec<DensePolynomial<F>>) = (0..C).into_par_iter().map(|i| {
+            let mut access_sequence: Vec<usize> =
+                chunked_indices.par_iter().map(|chunks| chunks[i]).collect();
+            access_sequence.resize(m, 0);
+            //TODO: remove clone
+            (access_sequence.clone(), DensePolynomial::from_usize(&access_sequence))
+        }).collect();
+
         let (read_cts, final_cts, E_polys): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = (0
             ..preprocessing.num_memories)
             .into_par_iter()
@@ -1021,44 +1050,17 @@ where
                         }
                     }
                 }
-
                 read_acc.push(DensePolynomial::from_usize(&read_cts_i));
                 final_acc.push(DensePolynomial::from_usize(&final_cts_i));
                 E_acc.push(DensePolynomial::new(subtable_lookups));
                 (read_acc, final_acc, E_acc)
-            }).reduce(||(Vec::new(), Vec::new(), Vec::new()), |(mut a, mut b, mut c), (read_acc, final_acc, E_acc)| {
+            }).reduce(||(Vec::new(), Vec::new(), Vec::new()), |(mut a, mut b, mut c), (mut read_acc, mut final_acc, mut E_acc)| {
                 //TODO: check allocations
-                a.extend_from_slice(&read_acc);
-                b.extend_from_slice(&final_acc);
-                c.extend_from_slice(&E_acc);
+                a.append(&mut read_acc);
+                b.append(&mut final_acc);
+                c.append(&mut E_acc);
                 (a, b, c)
             });
-
-        //Condense with subtable_lookup_indices as it iterates over C
-        let dim: Vec<DensePolynomial<F>> = (0..C)
-            .into_par_iter()
-            .map(|i| {
-                let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
-                DensePolynomial::from_usize(access_sequence)
-            })
-            .collect();
-
-        let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
-            vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
-        for (j, op) in ops.iter().enumerate() {
-            if let Some(op) = op {
-                instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
-            }
-        }
-
-        let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
-            .par_iter()
-            .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
-            .collect();
-
-        let mut lookup_outputs = Self::compute_lookup_outputs(&ops);
-        lookup_outputs.resize(m, F::zero());
-        let lookup_outputs = DensePolynomial::new(lookup_outputs);
 
         InstructionPolynomials {
             _group: PhantomData,
