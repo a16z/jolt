@@ -85,8 +85,17 @@ impl Program {
         if self.elf.is_none() {
             self.save_linker();
 
+            let rust_flags = [
+                "-C",
+                &format!("link-arg=-T{}" ,self.linker_path()),
+                "-C",
+                "passes=loweratomic",
+                "-C",
+                "panic=abort",
+            ];
+
             let mut envs = vec![
-                ("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path())),
+                ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
                 ("RUSTUP_TOOLCHAIN", "riscv32i-jolt-zkvm-elf".to_string()),
             ];
 
