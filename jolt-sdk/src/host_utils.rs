@@ -1,10 +1,13 @@
-use eyre::Result;
 use std::fs::File;
 use std::path::PathBuf;
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use eyre::Result;
+
 pub use ark_bn254::{Fr as F, G1Projective as G};
 pub use ark_ec::CurveGroup;
 pub use ark_ff::PrimeField;
+
 pub use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{MemoryOp, RV32IM},

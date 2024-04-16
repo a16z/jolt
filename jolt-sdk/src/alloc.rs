@@ -1,4 +1,7 @@
-use core::{alloc::{GlobalAlloc, Layout}, cell::UnsafeCell};
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    cell::UnsafeCell,
+};
 
 pub struct BumpAllocator {
     offset: UnsafeCell<usize>,
