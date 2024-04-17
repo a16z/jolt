@@ -28,6 +28,7 @@ host = [
 std = [
     "postcard/use-std",
     "serde/std",
+    "jolt-sdk-macros/std",
 ]
 
 [dependencies]

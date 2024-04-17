@@ -29,15 +29,22 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 struct MacroBuilder {
     attr: AttributeArgs,
     func: ItemFn,
+    std: bool,
     func_args: Vec<(Ident, Box<Type>)>,
 }
 
 impl MacroBuilder {
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let func_args = Self::get_func_args(&func);
+        #[cfg(feature = "std")]
+        let std = true;
+        #[cfg(not(feature = "std"))]
+        let std = false;
+
         Self {
             attr,
             func,
+            std,
             func_args,
         }
     }
@@ -158,12 +165,11 @@ impl MacroBuilder {
     }
 
     fn make_preprocess_func(&self) -> TokenStream2 {
-        let attr = self.parse_attributes();
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
 
-        let set_std = if attr.std {
+        let set_std = if self.std {
             quote! {
                 program.set_std(true);
             }
@@ -307,8 +313,8 @@ impl MacroBuilder {
             },
         };
 
-        let panic_fn = self.make_panic(attributes.std, memory_layout.panic);
-        let declare_alloc = self.make_allocator(attributes.std);
+        let panic_fn = self.make_panic(memory_layout.panic);
+        let declare_alloc = self.make_allocator();
 
         quote! {
             #[cfg(feature = "guest")]
@@ -341,8 +347,8 @@ impl MacroBuilder {
         }
     }
 
-    fn make_panic(&self, std: bool, panic_address: u64) -> TokenStream2 {
-        if std {
+    fn make_panic(&self, panic_address: u64) -> TokenStream2 {
+        if self.std {
             quote! {
                 #[no_mangle]
                 pub extern "C" fn jolt_panic() {
@@ -371,8 +377,8 @@ impl MacroBuilder {
         }
     }
 
-    fn make_allocator(&self, std: bool) -> TokenStream2 {
-        if std {
+    fn make_allocator(&self) -> TokenStream2 {
+        if self.std {
             quote! {}
         } else {
             quote! {
@@ -438,29 +444,21 @@ impl MacroBuilder {
         let mut attributes = HashMap::<_, u64>::new();
         for attr in &self.attr {
             match attr {
-                NestedMeta::Meta(meta) => match meta {
-                    Meta::NameValue(MetaNameValue { path, lit, .. }) => {
-                        let value: u64 = match lit {
-                            Lit::Int(lit) => lit.base10_parse().unwrap(),
-                            _ => panic!("expected integer literal"),
-                        };
-                        let ident = &path.get_ident().expect("Expected identifier");
-                        match ident.to_string().as_str() {
-                            "memory_size" => attributes.insert("memory_size", value),
-                            "stack_size" => attributes.insert("stack_size", value),
-                            "max_input_size" => attributes.insert("max_input_size", value),
-                            "max_output_size" => attributes.insert("max_output_size", value),
-                            _ => panic!("invalid attribute"),
-                        };
-                    }
-                    Meta::Path(path) => {
-                        if path.is_ident("std") {
-                            attributes.insert("std", 1);
-                        }
-                    },
-                    _ => panic!("expected integer literal"),
+                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+                    let value: u64 = match lit {
+                        Lit::Int(lit) => lit.base10_parse().unwrap(),
+                        _ => panic!("expected integer literal"),
+                    };
+                    let ident = &path.get_ident().expect("Expected identifier");
+                    match ident.to_string().as_str() {
+                        "memory_size" => attributes.insert("memory_size", value),
+                        "stack_size" => attributes.insert("stack_size", value),
+                        "max_input_size" => attributes.insert("max_input_size", value),
+                        "max_output_size" => attributes.insert("max_output_size", value),
+                        _ => panic!("invalid attribute"),
+                    };
                 }
-                _ => (),
+                _ => panic!("expected integer literal"),
             }
         }
 
@@ -480,7 +478,6 @@ impl MacroBuilder {
             stack_size,
             max_input_size,
             max_output_size,
-            std: attributes.contains_key("std"),
         }
     }
 
@@ -530,5 +527,4 @@ struct Attributes {
     stack_size: u64,
     max_input_size: u64,
     max_output_size: u64,
-    std: bool,
 }

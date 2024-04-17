@@ -106,9 +106,7 @@ impl Program {
                 "riscv32i-unknown-none-elf"
             };
 
-            let mut envs = vec![
-                ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
-            ];
+            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
 
             if self.std {
                 envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));

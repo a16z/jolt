@@ -1,6 +1,6 @@
 #![no_main]
 
-#[jolt::provable(std)]
+#[jolt::provable]
 fn int_to_string(n: i32) -> String {
     n.to_string()
 }
