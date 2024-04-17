@@ -15,6 +15,8 @@ The Jolt paper depicts these two tasks mapped to three components in the final J
 
 The Jolt codebase is similarly organized, but instead separates read-write memory (comprising registers and RAM) from program code (aka bytecode, which is read-only), for a total of four components:
 
+![fetch-decode-execute](../imgs/fetch_decode_execute.png)
+
 ### Read-write memory
 
 To handle reads/writes to RAM (and registers) Jolt uses a memory checking argument from Spice, which is closely related to Lasso itself. They are both based on "offline memory checking" techniques, the main difference being that Lasso supports read-only memory while [Spice](https://eprint.iacr.org/2018/907.pdf) supports read-write memory, making it slightly more expensive. This is implemented in [`read_write_memory.rs`](../../../jolt-core/src/jolt/vm/read_write_memory.rs).
