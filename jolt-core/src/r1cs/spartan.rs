@@ -8,7 +8,6 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
-use merlin::Transcript;
 use rayon::prelude::*;
 use sha3::Digest;
 use sha3::Sha3_256;
@@ -222,7 +221,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     pub fn prove_precommitted(
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         let poly_ABC_len = 2 * key.num_vars_total;
 
@@ -234,7 +233,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
+            .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Vec<F>>();
 
         let combined_witness_size =
@@ -296,15 +295,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             outer_sumcheck_claims[2],
             outer_sumcheck_claims[3],
         );
-        <Transcript as ProofTranscript<G>>::append_scalars(
+        ProofTranscript::append_scalars(
             transcript,
             b"claims_outer",
             &[claim_Az, claim_Bz, claim_Cz].as_slice(),
         );
 
         // inner sum-check
-        let r_inner_sumcheck_RLC: F =
-            <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"r");
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
         let claim_inner_joint = claim_Az
             + r_inner_sumcheck_RLC * claim_Bz
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
@@ -461,7 +459,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         key: &UniformSpartanKey<F>,
         io: &[F],
         generators: &PedersenGenerators<G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         assert_eq!(io.len(), 0); // Currently not using io
 
@@ -474,12 +472,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"t"))
+            .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Vec<F>>();
 
         let (claim_outer_final, r_x) = self
             .outer_sumcheck_proof
-            .verify::<G, Transcript>(F::zero(), num_rounds_x, 3, transcript)
+            .verify::<G>(F::zero(), num_rounds_x, 3, transcript)
             .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
 
         // verify claim_outer_final
@@ -490,8 +488,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             return Err(SpartanError::InvalidOuterSumcheckClaim);
         }
 
-        <Transcript as ProofTranscript<G>>::append_scalars(
-            transcript,
+        transcript.append_scalars(
             b"claims_outer",
             &[
                 self.outer_sumcheck_claims.0,
@@ -502,15 +499,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         );
 
         // inner sum-check
-        let r_inner_sumcheck_RLC: F =
-            <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"r");
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r_inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
 
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
-            .verify::<G, Transcript>(claim_inner_joint, num_rounds_y, 2, transcript)
+            .verify::<G>(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // n_prefix = n_segments + 1

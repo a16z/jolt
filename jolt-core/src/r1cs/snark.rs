@@ -21,7 +21,6 @@ use common::{
     constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
     rv_trace::NUM_CIRCUIT_FLAGS,
 };
-use merlin::Transcript;
 use rayon::prelude::*;
 use strum::EnumCount;
 
@@ -290,12 +289,8 @@ pub struct R1CSCommitment<G: CurveGroup> {
     circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for R1CSCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
+impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"R1CSCommitment_begin");
         for commitment in &self.io {
             commitment.append_to_transcript(b"io", transcript);
@@ -395,7 +390,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
     pub fn prove(
         key: UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         // TODO(sragss): Fiat shamir (relevant) commitments
         let proof = UniformSpartanProof::prove_precommitted(&key, witness_segments, transcript)?;
@@ -455,7 +450,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         generators: &PedersenGenerators<G>,
         jolt_commitments: JoltCommitments<G>,
         C: usize,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         // TODO(sragss): Fiat shamir (relevant) commitments
         let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);

@@ -1,6 +1,5 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -326,13 +325,9 @@ pub struct BytecodeCommitment<G: CurveGroup> {
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for BytecodeCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
-        <T as ProofTranscript<G>>::append_protocol_name(transcript, label);
+impl<G: CurveGroup> AppendToTranscript for BytecodeCommitment<G> {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
+        transcript.append_protocol_name(label);
 
         for commitment in &self.trace_commitments {
             commitment.append_to_transcript(b"trace", transcript);
@@ -601,7 +596,7 @@ where
         polynomials: &BytecodePolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let mut combined_openings: Vec<F> = vec![
             openings.a_read_write_opening.clone(),
@@ -631,7 +626,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let mut combined_openings: Vec<F> = vec![
             self.a_read_write_opening.clone(),
@@ -684,7 +679,7 @@ where
         polynomials: &BytecodePolynomials<F, G>,
         opening_point: &Vec<F>,
         _openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         HyraxOpeningProof::prove(&polynomials.t_final, &opening_point, transcript)
     }
@@ -715,7 +710,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
             generators,
@@ -789,13 +784,13 @@ mod tests {
         let polys: BytecodePolynomials<Fr, G1Projective> =
             BytecodePolynomials::new(&preprocessing, trace);
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
 
         let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&generators);
         let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(
             &preprocessing,
             &generators,
@@ -829,11 +824,11 @@ mod tests {
         let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&generators);
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
 
         let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(
             &preprocessing,
             &generators,

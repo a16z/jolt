@@ -16,7 +16,6 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
-use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::iter::zip;
 use std::marker::PhantomData;
@@ -36,28 +35,12 @@ pub struct MultisetHashes<F: PrimeField> {
 impl<F: PrimeField> MultisetHashes<F> {
     pub fn append_to_transcript<G: CurveGroup<ScalarField = F>>(
         &self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) {
-        <Transcript as ProofTranscript<G>>::append_scalars(
-            transcript,
-            b"Read multiset hashes",
-            &self.read_hashes,
-        );
-        <Transcript as ProofTranscript<G>>::append_scalars(
-            transcript,
-            b"Write multiset hashes",
-            &self.write_hashes,
-        );
-        <Transcript as ProofTranscript<G>>::append_scalars(
-            transcript,
-            b"Init multiset hashes",
-            &self.init_hashes,
-        );
-        <Transcript as ProofTranscript<G>>::append_scalars(
-            transcript,
-            b"Final multiset hashes",
-            &self.final_hashes,
-        );
+        transcript.append_scalars(b"Read multiset hashes", &self.read_hashes);
+        transcript.append_scalars(b"Write multiset hashes", &self.write_hashes);
+        transcript.append_scalars(b"Init multiset hashes", &self.init_hashes);
+        transcript.append_scalars(b"Final multiset hashes", &self.final_hashes);
     }
 }
 
@@ -117,7 +100,7 @@ where
     fn prove_memory_checking(
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
         // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
 
@@ -162,7 +145,7 @@ where
     fn prove_grand_products(
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (
         BatchedGrandProductArgument<F>,
         BatchedGrandProductArgument<F>,
@@ -171,16 +154,10 @@ where
         Vec<F>,
     ) {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking gamma",
-        );
-        let tau: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking tau",
-        );
+        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
+        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
 
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         // fka "ProductLayerProof"
         let (read_write_leaves, init_final_leaves) =
@@ -360,19 +337,13 @@ where
             Self::InitFinalOpenings,
         >,
         commitments: &Polynomials::Commitment,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking gamma",
-        );
-        let tau: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking tau",
-        );
+        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
+        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
 
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);
         proof.multiset_hashes.append_to_transcript::<G>(transcript);
@@ -382,10 +353,10 @@ where
 
         let (claims_read_write, r_read_write) = proof
             .read_write_grand_product
-            .verify::<G, Transcript>(&read_write_hashes, transcript);
+            .verify::<G>(&read_write_hashes, transcript);
         let (claims_init_final, r_init_final) = proof
             .init_final_grand_product
-            .verify::<G, Transcript>(&init_final_hashes, transcript);
+            .verify::<G>(&init_final_hashes, transcript);
 
         proof.read_write_openings.verify_openings(
             generators,

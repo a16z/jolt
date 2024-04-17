@@ -12,7 +12,6 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use itertools::multizip;
-use merlin::Transcript;
 use rayon::prelude::*;
 use tracing::trace_span;
 
@@ -154,13 +153,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     /// - `r_eval_point`: Final random point of evaluation
     /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
     #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
-    pub fn prove_arbitrary<Func, G, T: ProofTranscript<G>>(
+    pub fn prove_arbitrary<Func, G>(
         _claim: &F,
         num_rounds: usize,
         polys: &mut Vec<DensePolynomial<F>>,
         comb_func: Func,
         combined_degree: usize,
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&[F]) -> F + std::marker::Sync,
@@ -236,11 +235,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let round_uni_poly = UniPoly::from_evals(&eval_points);
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
-                &round_uni_poly,
-                b"poly",
-                transcript,
-            );
+            round_uni_poly.append_to_transcript(b"poly", transcript);
             let r_j = transcript.challenge_scalar(b"challenge_nextround");
             r.push(r_j);
 
@@ -261,7 +256,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
     where
         G: CurveGroup<ScalarField = F>,
@@ -284,7 +279,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
     where
         G: CurveGroup<ScalarField = F>,
@@ -361,13 +356,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let poly = UniPoly::from_evals(&evals);
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
+            let r_j = transcript.challenge_scalar(b"challenge_nextround");
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
@@ -403,7 +395,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
     where
         G: CurveGroup<ScalarField = F>,
@@ -537,13 +529,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let poly = UniPoly::from_evals(&evals);
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
+            let r_j = transcript.challenge_scalar(b"challenge_nextround");
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
@@ -653,7 +642,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
     where
         G: CurveGroup<ScalarField = F>,
@@ -736,13 +725,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             let poly = UniPoly::from_evals(&cubic_evals);
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
+            let r_j = transcript.challenge_scalar(b"challenge_nextround");
             r.push(r_j);
 
             let poly_As_span = trace_span!("Bind leaves");
@@ -856,7 +842,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         poly_C: &mut DensePolynomial<F>,
         poly_D: &mut DensePolynomial<F>,
         comb_func: Func,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&F, &F, &F, &F) -> F + Sync,
@@ -884,13 +870,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             };
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
+            let r_i = transcript.challenge_scalar(b"challenge_nextround");
             r.push(r_i);
             polys.push(poly.compress());
 
@@ -932,7 +915,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
         W: &P,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>, Vec<F>)
     where
         G: CurveGroup<ScalarField = F>,
@@ -983,13 +966,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
         };
 
         // append the prover's message to the transcript
-        <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+        poly.append_to_transcript(b"poly", transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"challenge_nextround",
-        );
+        let r_i: F = transcript.challenge_scalar(b"challenge_nextround");
         r.push(r_i);
         polys.push(poly.compress());
 
@@ -1033,13 +1013,10 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             };
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F = <merlin::Transcript as ProofTranscript<G>>::challenge_scalar(
-                transcript,
-                b"challenge_nextround",
-            );
+            let r_i: F = transcript.challenge_scalar(b"challenge_nextround");
 
             r.push(r_i);
             polys.push(poly.compress());
@@ -1115,12 +1092,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     /// Returns (e, r)
     /// - `e`: Claimed evaluation at random point
     /// - `r`: Evaluation point
-    pub fn verify<G, T: ProofTranscript<G>>(
+    pub fn verify<G>(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) -> Result<(F, Vec<F>), ProofVerifyError>
     where
         G: CurveGroup<ScalarField = F>,
@@ -1145,7 +1122,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
             // append the prover's message to the transcript
-            <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+            poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar(b"challenge_nextround");
@@ -1203,7 +1180,7 @@ pub mod bench {
 
         group.bench_function("sumcheck unbatched 2^16", |b| {
             b.iter(|| {
-                let mut transcript = Transcript::new(b"test_transcript");
+                let mut transcript = ProofTranscript::new(b"test_transcript");
                 let params = black_box(params.clone());
                 let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                     &claim,
@@ -1248,7 +1225,7 @@ pub mod bench {
 
         group.bench_function("sumcheck unbatched (ones) 2^16", |b| {
             b.iter(|| {
-                let mut transcript = Transcript::new(b"test_transcript");
+                let mut transcript = ProofTranscript::new(b"test_transcript");
                 let params = black_box(params.clone());
                 let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                     &claim,
@@ -1295,7 +1272,7 @@ pub mod bench {
 
         group.bench_function("sumcheck 10xbatched 2^14", |b| {
             b.iter(|| {
-                let mut transcript = Transcript::new(b"test_transcript");
+                let mut transcript = ProofTranscript::new(b"test_transcript");
                 let params = black_box(params.clone());
                 let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                     &joint_claim,
@@ -1311,68 +1288,10 @@ pub mod bench {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::utils::test::TestTranscript;
-    use crate::{poly::eq_poly::EqPolynomial, utils::math::Math};
+    use crate::poly::eq_poly::EqPolynomial;
     use ark_bn254::{Fr, G1Projective};
     use ark_ff::Zero;
     use ark_std::One;
-
-    #[test]
-    fn sumcheck_arbitrary_cubic() {
-        // Create three dense polynomials (all the same)
-        let num_vars = 3;
-        let num_evals = num_vars.pow2();
-        let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
-        for i in 0..num_evals {
-            evals.push(Fr::from(8 + i as u64));
-        }
-
-        let A: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-        let B: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-        let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
-
-        let mut claim = Fr::zero();
-        for i in 0..num_evals {
-            use crate::utils::index_to_field_bitvector;
-
-            claim += A.evaluate(&index_to_field_bitvector(i, num_vars))
-                * B.evaluate(&index_to_field_bitvector(i, num_vars))
-                * C.evaluate(&index_to_field_bitvector(i, num_vars));
-        }
-        let mut polys = vec![A.clone(), B.clone(), C.clone()];
-
-        let comb_func_prod =
-            |polys: &[Fr]| -> Fr { polys.iter().fold(Fr::one(), |acc, poly| acc * *poly) };
-
-        let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
-
-        let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
-        let (proof, prove_randomness, _final_poly_evals) =
-            SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _>(
-                &claim,
-                num_vars,
-                &mut polys,
-                comb_func_prod,
-                3,
-                &mut transcript,
-            );
-
-        let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
-        let verify_result = proof.verify::<G1Projective, _>(claim, num_vars, 3, &mut transcript);
-        assert!(verify_result.is_ok());
-
-        let (verify_evaluation, verify_randomness) = verify_result.unwrap();
-        assert_eq!(prove_randomness, verify_randomness);
-        assert_eq!(prove_randomness, r);
-
-        // Consider this the opening proof to a(r) * b(r) * c(r)
-        let a = A.evaluate(prove_randomness.as_slice());
-        let b = B.evaluate(prove_randomness.as_slice());
-        let c = C.evaluate(prove_randomness.as_slice());
-
-        let oracle_query = a * b * c;
-        assert_eq!(verify_evaluation, oracle_query);
-    }
 
     #[test]
     fn flags_special_trivial() {
@@ -1395,7 +1314,7 @@ mod test {
             num_rounds,
         );
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let (proof, prove_randomness, _evals) =
             SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                 &claim,
@@ -1404,8 +1323,8 @@ mod test {
                 &mut transcript,
             );
 
-        let mut transcript = Transcript::new(b"test_transcript");
-        let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
+        let mut transcript = ProofTranscript::new(b"test_transcript");
+        let verify_result = proof.verify::<G1Projective>(claim, 2, 3, &mut transcript);
         assert!(verify_result.is_ok());
 
         let (verify_evaluation, verify_randomness) = verify_result.unwrap();
@@ -1458,7 +1377,7 @@ mod test {
             num_rounds,
         );
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let (proof, prove_randomness, prove_evals) =
             SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
                 &claim,
@@ -1476,8 +1395,8 @@ mod test {
         let prove_fingerprint_eval = flag_eval * leaf_eval + Fr::one() - flag_eval;
         let prove_eval = eq_eval * (flag_eval * leaf_eval + Fr::one() - flag_eval);
 
-        let mut transcript = Transcript::new(b"test_transcript");
-        let verify_result = proof.verify::<G1Projective, _>(claim, 2, 3, &mut transcript);
+        let mut transcript = ProofTranscript::new(b"test_transcript");
+        let verify_result = proof.verify::<G1Projective>(claim, 2, 3, &mut transcript);
         assert!(verify_result.is_ok());
 
         let (verify_evaluation, verify_randomness) = verify_result.unwrap();

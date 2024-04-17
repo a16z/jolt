@@ -1,6 +1,5 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use merlin::Transcript;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -812,12 +811,8 @@ pub struct MemoryCommitment<G: CurveGroup> {
     pub t_final_commitment: HyraxCommitment<1, G>,
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for MemoryCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
+impl<G: CurveGroup> AppendToTranscript for MemoryCommitment<G> {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"MemoryCommitment_begin");
         for commitment in &self.trace_commitments {
             commitment.append_to_transcript(b"trace_commit", transcript);
@@ -896,7 +891,7 @@ where
         polynomials: &JoltPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let read_write_polys = [
             &polynomials.bytecode.v_read_write[1],
@@ -938,7 +933,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &JoltCommitments<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let openings = self
             .a_read_write_opening
@@ -1014,7 +1009,7 @@ where
         polynomials: &JoltPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let v_t_opening_proof = BatchedHyraxOpeningProof::prove(
             &[
@@ -1070,7 +1065,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &JoltCommitments<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.v_t_opening_proof.verify(
             generators,
@@ -1357,14 +1352,10 @@ where
     fn prove_outputs(
         polynomials: &ReadWriteMemory<F, G>,
         program_io: &JoltDevice,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let num_rounds = polynomials.memory_size.log_2();
-        let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
-            b"output_sumcheck",
-            num_rounds,
-        );
+        let r_eq = transcript.challenge_vector(b"output_sumcheck", num_rounds);
         let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::new(r_eq.to_vec()).evals());
 
         let io_witness_range: Vec<_> = (0..polynomials.memory_size as u64)
@@ -1416,7 +1407,7 @@ where
         let output_check_fn = |vals: &[F]| -> F { vals[0] * vals[1] * (vals[2] - vals[3]) };
 
         let (sumcheck_proof, r_sumcheck, sumcheck_openings) =
-            SumcheckInstanceProof::<F>::prove_arbitrary::<_, G, Transcript>(
+            SumcheckInstanceProof::<F>::prove_arbitrary::<_, G>(
                 &F::zero(),
                 num_rounds,
                 &mut sumcheck_polys,
@@ -1441,20 +1432,14 @@ where
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PedersenGenerators<G>,
         commitment: &MemoryCommitment<G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
-            b"output_sumcheck",
-            proof.num_rounds,
-        );
+        let r_eq = transcript.challenge_vector(b"output_sumcheck", proof.num_rounds);
 
-        let (sumcheck_claim, r_sumcheck) = proof.sumcheck_proof.verify::<G, Transcript>(
-            F::zero(),
-            proof.num_rounds,
-            3,
-            transcript,
-        )?;
+        let (sumcheck_claim, r_sumcheck) =
+            proof
+                .sumcheck_proof
+                .verify::<G>(F::zero(), proof.num_rounds, 3, transcript)?;
 
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_sumcheck);
 
@@ -1543,7 +1528,7 @@ where
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &JoltPolynomials<F, G>,
         program_io: &JoltDevice,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof =
             ReadWriteMemoryProof::prove_memory_checking(preprocessing, &polynomials, transcript);
@@ -1572,7 +1557,7 @@ where
         generators: &PedersenGenerators<G>,
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         commitment: &JoltCommitments<G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(
             preprocessing,

@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 
@@ -103,12 +102,8 @@ impl<F: PrimeField> CompressedUniPoly<F> {
     }
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for UniPoly<G::ScalarField> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
-        &self,
-        label: &'static [u8],
-        transcript: &mut T,
-    ) {
+impl<F: PrimeField> AppendToTranscript for UniPoly<F> {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"UniPoly_begin");
         for i in 0..self.coeffs.len() {
             transcript.append_scalar(b"coeff", &self.coeffs[i]);

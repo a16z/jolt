@@ -8,7 +8,6 @@ use crate::utils::transcript::ProofTranscript;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
-use merlin::Transcript;
 
 #[derive(Debug, Clone)]
 pub struct GrandProductCircuit<F> {
@@ -115,18 +114,18 @@ pub struct LayerProofBatched<F: PrimeField> {
 
 #[allow(dead_code)]
 impl<F: PrimeField> LayerProofBatched<F> {
-    pub fn verify<G, T: ProofTranscript<G>>(
+    pub fn verify<G>(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) -> (F, Vec<F>)
     where
         G: CurveGroup<ScalarField = F>,
     {
         self.proof
-            .verify::<G, T>(claim, num_rounds, degree_bound, transcript)
+            .verify::<G>(claim, num_rounds, degree_bound, transcript)
             .unwrap()
     }
 }
@@ -223,7 +222,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
     pub fn prove<G>(
         mut batch: BatchedGrandProductCircuit<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>)
     where
         G: CurveGroup<ScalarField = F>,
@@ -239,11 +238,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let _enter = span.enter();
 
             // produce a fresh set of coeffs and a joint claim
-            let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(
-                transcript,
-                b"rand_coeffs_next_layer",
-                claims_to_verify.len(),
-            );
+            let coeff_vec: Vec<F> =
+                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
             let claim = (0..claims_to_verify.len())
                 .map(|i| claims_to_verify[i] * coeff_vec[i])
                 .sum();
@@ -257,17 +253,9 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 
             let (claims_poly_A, claims_poly_B, _claim_eq) = claims_prod;
             for i in 0..batch.circuits.len() {
-                <Transcript as ProofTranscript<G>>::append_scalar(
-                    transcript,
-                    b"claim_prod_left",
-                    &claims_poly_A[i],
-                );
+                transcript.append_scalar(b"claim_prod_left", &claims_poly_A[i]);
 
-                <Transcript as ProofTranscript<G>>::append_scalar(
-                    transcript,
-                    b"claim_prod_right",
-                    &claims_poly_B[i],
-                );
+                transcript.append_scalar(b"claim_prod_right", &claims_poly_B[i]);
             }
 
             if sumcheck_type == CubicSumcheckType::Prod
@@ -278,10 +266,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 // in the MSB. We use the evaluations V_i(r,0), V_i(r,1) to compute V_i(r, r').
 
                 // produce a random challenge to condense two claims into a single claim
-                let r_layer = <Transcript as ProofTranscript<G>>::challenge_scalar(
-                    transcript,
-                    b"challenge_r_layer",
-                );
+                let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
 
                 claims_to_verify = (0..batch.circuits.len())
                     .map(|i| claims_poly_A[i] + r_layer * (claims_poly_B[i] - claims_poly_A[i]))
@@ -321,10 +306,10 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         )
     }
 
-    pub fn verify<G, T: ProofTranscript<G>>(
+    pub fn verify<G>(
         &self,
         claims_prod_vec: &Vec<F>,
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) -> (Vec<F>, Vec<F>)
     where
         G: CurveGroup<ScalarField = F>,
@@ -336,7 +321,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         for (num_rounds, i) in (0..num_layers).enumerate() {
             // produce random coefficients, one for each instance
             let coeff_vec =
-                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+                transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", claims_to_verify.len());
 
             // produce a joint claim
             let claim = (0..claims_to_verify.len())
@@ -344,7 +329,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 .sum();
 
             let (claim_last, rand_prod) =
-                self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
+                self.proof[i].verify::<G>(claim, num_rounds, 3, transcript);
 
             let claims_prod_left = &self.proof[i].claims_poly_A;
             let claims_prod_right = &self.proof[i].claims_poly_B;
@@ -435,13 +420,13 @@ mod grand_product_circuit_tests {
         let expected_eval = vec![Fr::from(24)];
         assert_eq!(factorial_circuit.evaluate(), Fr::from(24));
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let circuits_vec = vec![factorial_circuit];
         let batch = BatchedGrandProductCircuit::new_batch(circuits_vec);
         let (proof, _) = BatchedGrandProductArgument::prove::<G1Projective>(batch, &mut transcript);
 
-        let mut transcript = Transcript::new(b"test_transcript");
-        proof.verify::<G1Projective, _>(&expected_eval, &mut transcript);
+        let mut transcript = ProofTranscript::new(b"test_transcript");
+        proof.verify::<G1Projective>(&expected_eval, &mut transcript);
     }
 
     #[test]
@@ -459,14 +444,14 @@ mod grand_product_circuit_tests {
         );
         let batch = BatchedGrandProductCircuit::new_batch(vec![read_gpc, write_gpc]);
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let (proof, prove_rand) =
             BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(batch, &mut transcript);
 
         let expected_eval_read = Fr::from(10) * Fr::from(20);
         let expected_eval_write = Fr::from(100) * Fr::from(200);
-        let mut transcript = Transcript::new(b"test_transcript");
-        let (verify_claims, verify_rand) = proof.verify::<G1Projective, _>(
+        let mut transcript = ProofTranscript::new(b"test_transcript");
+        let (verify_claims, verify_rand) = proof.verify::<G1Projective>(
             &vec![expected_eval_read, expected_eval_write],
             &mut transcript,
         );
@@ -512,7 +497,7 @@ mod grand_product_circuit_tests {
             fingerprint_polys.clone(),
         );
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let (proof, prove_rand) =
             BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(batch, &mut transcript);
 
@@ -520,9 +505,9 @@ mod grand_product_circuit_tests {
         let expected_eval_write: Fr = Fr::from(100) * Fr::from(200) * Fr::from(400);
         let expected_evals = vec![expected_eval_read, expected_eval_write];
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let (verify_claims, verify_rand) =
-            proof.verify::<G1Projective, _>(&expected_evals, &mut transcript);
+            proof.verify::<G1Projective>(&expected_evals, &mut transcript);
 
         assert_eq!(prove_rand, verify_rand);
         assert_eq!(verify_claims.len(), 2);
