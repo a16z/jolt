@@ -171,11 +171,7 @@ pub struct RangeCheckCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for RangeCheckCommitment<G> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"RangeCheckCommitment_begin");
         for commitment in &self.commitments {
             commitment.append_to_transcript(b"range", transcript);

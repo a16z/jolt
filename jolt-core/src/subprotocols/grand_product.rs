@@ -238,7 +238,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let _enter = span.enter();
 
             // produce a fresh set of coeffs and a joint claim
-            let coeff_vec: Vec<F> = transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+            let coeff_vec: Vec<F> =
+                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
             let claim = (0..claims_to_verify.len())
                 .map(|i| claims_to_verify[i] * coeff_vec[i])
                 .sum();
@@ -254,10 +255,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             for i in 0..batch.circuits.len() {
                 transcript.append_scalar(b"claim_prod_left", &claims_poly_A[i]);
 
-                transcript.append_scalar(
-                    b"claim_prod_right",
-                    &claims_poly_B[i],
-                );
+                transcript.append_scalar(b"claim_prod_right", &claims_poly_B[i]);
             }
 
             if sumcheck_type == CubicSumcheckType::Prod
@@ -322,7 +320,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         let mut claims_to_verify = claims_prod_vec.to_owned();
         for (num_rounds, i) in (0..num_layers).enumerate() {
             // produce random coefficients, one for each instance
-            let coeff_vec = transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", claims_to_verify.len());
+            let coeff_vec =
+                transcript.challenge_vector::<F>(b"rand_coeffs_next_layer", claims_to_verify.len());
 
             // produce a joint claim
             let claim = (0..claims_to_verify.len())

@@ -3,7 +3,10 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::pedersen::PedersenGenerators;
-use crate::{lasso::memory_checking::NoPreprocessing, utils::{errors::ProofVerifyError, transcript::ProofTranscript}};
+use crate::{
+    lasso::memory_checking::NoPreprocessing,
+    utils::{errors::ProofVerifyError, transcript::ProofTranscript},
+};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient

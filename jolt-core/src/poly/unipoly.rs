@@ -103,11 +103,7 @@ impl<F: PrimeField> CompressedUniPoly<F> {
 }
 
 impl<F: PrimeField> AppendToTranscript for UniPoly<F> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"UniPoly_begin");
         for i in 0..self.coeffs.len() {
             transcript.append_scalar(b"coeff", &self.coeffs[i]);

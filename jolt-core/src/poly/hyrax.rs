@@ -125,11 +125,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
 }
 
 impl<const RATIO: usize, G: CurveGroup> AppendToTranscript for HyraxCommitment<RATIO, G> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
             transcript.append_point(b"poly_commitment_share", &self.row_commitments[i]);
@@ -252,7 +248,8 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         // append the claimed evaluations to transcript
         transcript.append_scalars(b"evals_ops_val", &openings);
 
-        let rlc_coefficients: Vec<_> = transcript.challenge_vector(b"challenge_combine_n_to_one", polynomials.len());
+        let rlc_coefficients: Vec<_> =
+            transcript.challenge_vector(b"challenge_combine_n_to_one", polynomials.len());
 
         let _span = trace_span!("Compute RLC of polynomials");
         let _enter = _span.enter();
@@ -319,10 +316,8 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         // append the claimed evaluations to transcript
         transcript.append_scalars(b"evals_ops_val", &openings);
 
-        let rlc_coefficients: Vec<_> = transcript.challenge_vector(
-            b"challenge_combine_n_to_one",
-            openings.len(),
-        );
+        let rlc_coefficients: Vec<_> =
+            transcript.challenge_vector(b"challenge_combine_n_to_one", openings.len());
 
         let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
 

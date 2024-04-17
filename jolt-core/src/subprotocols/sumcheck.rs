@@ -728,7 +728,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
             poly.append_to_transcript(b"poly", transcript);
 
             //derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar(b"challenge_nextround",);
+            let r_j = transcript.challenge_scalar(b"challenge_nextround");
             r.push(r_j);
 
             let poly_As_span = trace_span!("Bind leaves");

@@ -290,11 +290,7 @@ pub struct R1CSCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"R1CSCommitment_begin");
         for commitment in &self.io {
             commitment.append_to_transcript(b"io", transcript);

@@ -590,15 +590,14 @@ where
             instruction.combine_lookups(vals_no_eq, C, M) * eq
         };
 
-        let (primary_sumcheck_proof, r_z, _) =
-            SumcheckInstanceProof::<F>::prove_arbitrary::<_, G>(
-                &sumcheck_claim,
-                num_rounds,
-                &mut combined_sumcheck_polys,
-                combine_lookups_eq,
-                instruction.g_poly_degree(C) + 1, // combined degree + eq term
-                transcript,
-            );
+        let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<F>::prove_arbitrary::<_, G>(
+            &sumcheck_claim,
+            num_rounds,
+            &mut combined_sumcheck_polys,
+            combine_lookups_eq,
+            instruction.g_poly_degree(C) + 1, // combined degree + eq term
+            transcript,
+        );
 
         let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
@@ -635,25 +634,20 @@ where
         transcript.append_protocol_name(Self::protocol_name());
         let instruction = Instruction::default();
 
-        let r_primary_sumcheck = transcript.challenge_vector(
-            b"primary_sumcheck",
-            proof.primary_sumcheck.num_rounds,
-        );
+        let r_primary_sumcheck =
+            transcript.challenge_vector(b"primary_sumcheck", proof.primary_sumcheck.num_rounds);
 
         transcript.append_scalar(
             b"sumcheck_claim",
             &proof.primary_sumcheck.claimed_evaluation,
         );
         let primary_sumcheck_poly_degree = instruction.g_poly_degree(C) + 1;
-        let (claim_last, r_z) = proof
-            .primary_sumcheck
-            .sumcheck_proof
-            .verify::<G>(
-                proof.primary_sumcheck.claimed_evaluation,
-                proof.primary_sumcheck.num_rounds,
-                primary_sumcheck_poly_degree,
-                transcript,
-            )?;
+        let (claim_last, r_z) = proof.primary_sumcheck.sumcheck_proof.verify::<G>(
+            proof.primary_sumcheck.claimed_evaluation,
+            proof.primary_sumcheck.num_rounds,
+            primary_sumcheck_poly_degree,
+            transcript,
+        )?;
 
         let eq_eval = EqPolynomial::new(r_primary_sumcheck.to_vec()).evaluate(&r_z);
         assert_eq!(

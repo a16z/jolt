@@ -812,11 +812,7 @@ pub struct MemoryCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for MemoryCommitment<G> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"MemoryCommitment_begin");
         for commitment in &self.trace_commitments {
             commitment.append_to_transcript(b"trace_commit", transcript);
@@ -1359,10 +1355,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self {
         let num_rounds = polynomials.memory_size.log_2();
-        let r_eq = transcript.challenge_vector(
-            b"output_sumcheck",
-            num_rounds,
-        );
+        let r_eq = transcript.challenge_vector(b"output_sumcheck", num_rounds);
         let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::new(r_eq.to_vec()).evals());
 
         let io_witness_range: Vec<_> = (0..polynomials.memory_size as u64)
@@ -1441,17 +1434,12 @@ where
         commitment: &MemoryCommitment<G>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let r_eq = transcript.challenge_vector(
-            b"output_sumcheck",
-            proof.num_rounds,
-        );
+        let r_eq = transcript.challenge_vector(b"output_sumcheck", proof.num_rounds);
 
-        let (sumcheck_claim, r_sumcheck) = proof.sumcheck_proof.verify::<G>(
-            F::zero(),
-            proof.num_rounds,
-            3,
-            transcript,
-        )?;
+        let (sumcheck_claim, r_sumcheck) =
+            proof
+                .sumcheck_proof
+                .verify::<G>(F::zero(), proof.num_rounds, 3, transcript)?;
 
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_sumcheck);
 

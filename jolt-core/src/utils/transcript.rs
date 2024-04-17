@@ -3,13 +3,13 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 
 pub struct ProofTranscript {
-    inner: Transcript
+    inner: Transcript,
 }
 
 impl ProofTranscript {
     pub fn new(label: &'static [u8]) -> Self {
         Self {
-            inner: Transcript::new(label)
+            inner: Transcript::new(label),
         }
     }
 

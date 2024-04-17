@@ -82,11 +82,7 @@ pub struct InstructionCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for InstructionCommitment<G> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"InstructionCommitment_begin");
         for commitment in &self.trace_commitment {
             commitment.append_to_transcript(b"trace_commitment", transcript);
@@ -868,10 +864,7 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         let trace_length = polynomials.dim[0].len();
-        let r_eq = transcript.challenge_vector(
-            b"Jolt instruction lookups",
-            trace_length.log_2(),
-        );
+        let r_eq = transcript.challenge_vector(b"Jolt instruction lookups", trace_length.log_2());
 
         let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
         let mut eq_poly = DensePolynomial::new(eq_evals);
@@ -935,15 +928,12 @@ where
         );
 
         // TODO: compartmentalize all primary sumcheck logic
-        let (claim_last, r_primary_sumcheck) = proof
-            .primary_sumcheck
-            .sumcheck_proof
-            .verify::<G>(
-                F::zero(),
-                proof.primary_sumcheck.num_rounds,
-                Self::sumcheck_poly_degree(),
-                transcript,
-            )?;
+        let (claim_last, r_primary_sumcheck) = proof.primary_sumcheck.sumcheck_proof.verify::<G>(
+            F::zero(),
+            proof.primary_sumcheck.num_rounds,
+            Self::sumcheck_poly_degree(),
+            transcript,
+        )?;
 
         // Verify that eq(r, r_z) * [f_1(r_z) * g(E_1(r_z)) + ... + f_F(r_z) * E_F(r_z))] = claim_last
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_primary_sumcheck);

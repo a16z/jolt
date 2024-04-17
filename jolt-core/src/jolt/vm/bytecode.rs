@@ -326,11 +326,7 @@ pub struct BytecodeCommitment<G: CurveGroup> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for BytecodeCommitment<G> {
-    fn append_to_transcript(
-        &self,
-        label: &'static [u8],
-        transcript: &mut ProofTranscript,
-    ) {
+    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_protocol_name(label);
 
         for commitment in &self.trace_commitments {
