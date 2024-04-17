@@ -1,6 +1,7 @@
 # Read-write memory (registers and RAM)
 
 Jolt proves the validity of registers and RAM using offline memory checking.
+In contrast to our usage of offline memory checking in other modules, registers and RAM are *writable* memory. 
 
 ## Memory layout
 
@@ -40,8 +41,7 @@ This also motivates the zero-padding between the "Program I/O" and "RAM" section
 
 ## Timestamp range check
 
-In contrast to our usage of offline memory checking in other modules, registers and RAM are *writable* memory. 
-This distinction introduces additional requirements.
+Registers and RAM are *writable* memory, which introduces additional requirements compared to offline memory checking in a read-only context.
 
 The multiset equality check, typically expressed as $I \cdot W = R \cdot F$, is not adequate for ensuring the accuracy of read values. 
 It is essential to also verify that each read operation retrieves a value that was written in a *previous* step (not a future step).
