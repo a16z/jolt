@@ -138,6 +138,7 @@ impl MacroBuilder {
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
+        let set_std = self.make_set_std();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -156,6 +157,7 @@ impl MacroBuilder {
 
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
+                #set_std
                 #set_mem_size
                 #(#set_program_args;)*
 
@@ -168,16 +170,7 @@ impl MacroBuilder {
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
-
-        let set_std = if self.std {
-            quote! {
-                program.set_std(true);
-            }
-        } else {
-            quote! {
-                program.set_std(false);
-            }
-        };
+        let set_std = self.make_set_std();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -437,6 +430,18 @@ impl MacroBuilder {
 
         quote! {
             #(#code;)*
+        }
+    }
+
+    fn make_set_std(&self) -> TokenStream2 {
+        if self.std {
+            quote! {
+                program.set_std(true);
+            }
+        } else {
+            quote! {
+                program.set_std(false);
+            }
         }
     }
 
