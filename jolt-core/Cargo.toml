@@ -65,12 +65,8 @@ bincode = "1.3.3"
 [build-dependencies]
 common = { path = "../common" }
 
-[dev-dependencies]
-iai-callgrind = "0.10.2"
-
 [[bench]]
 name = "iai"
-path = "./src/benches/iai.rs"
 harness = false
 
 [lib]
