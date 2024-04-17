@@ -1,5 +1,5 @@
 # Guests
-Guests contain functions for Jolt to prove. Currently these functions mst be written using `no_std` Rust. If you have a function that does not require the standard library, making it provable is as easy as ensuring it is inside the `guest` package and adding the `jolt::provable` macro above it.
+Guests contain functions for Jolt to prove. Currently, these functions must be written using `no_std` Rust. If you have a function that does not require the standard library, making it provable is as easy as ensuring it is inside the `guest` package and adding the `jolt::provable` macro above it.
 
 Let's take a look at a simple guest program to better understand it.
 ```rust
