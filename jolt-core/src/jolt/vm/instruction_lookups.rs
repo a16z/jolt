@@ -3,7 +3,6 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::NUM_R1CS_POLYS;
 use itertools::{interleave, Itertools};
-use merlin::Transcript;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
 use std::marker::PhantomData;
@@ -82,11 +81,11 @@ pub struct InstructionCommitment<G: CurveGroup> {
     pub final_commitment: Vec<HyraxCommitment<64, G>>,
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for InstructionCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
+impl<G: CurveGroup> AppendToTranscript for InstructionCommitment<G> {
+    fn append_to_transcript(
         &self,
         label: &'static [u8],
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) {
         transcript.append_message(label, b"InstructionCommitment_begin");
         for commitment in &self.trace_commitment {
@@ -158,7 +157,7 @@ where
         polynomials: &InstructionPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let primary_sumcheck_polys = polynomials
             .E_polys
@@ -187,7 +186,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let mut primary_sumcheck_openings: Vec<F> = [
             self.E_poly_openings.as_slice(),
@@ -272,7 +271,7 @@ where
         polynomials: &InstructionPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let read_write_polys = polynomials
             .dim
@@ -304,7 +303,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let read_write_openings: Vec<F> = [
             self.dim_openings.as_slice(),
@@ -372,7 +371,7 @@ where
         polynomials: &InstructionPolynomials<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         BatchedHyraxOpeningProof::prove(
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
@@ -402,7 +401,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
             generators,
@@ -864,13 +863,12 @@ where
     pub fn prove(
         polynomials: &InstructionPolynomials<F, G>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         let trace_length = polynomials.dim[0].len();
-        let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
+        let r_eq = transcript.challenge_vector(
             b"Jolt instruction lookups",
             trace_length.log_2(),
         );
@@ -927,12 +925,11 @@ where
         generators: &PedersenGenerators<G>,
         proof: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
         commitment: &InstructionCommitment<G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
-        let r_eq = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
+        let r_eq = transcript.challenge_vector(
             b"Jolt instruction lookups",
             proof.primary_sumcheck.num_rounds,
         );
@@ -941,7 +938,7 @@ where
         let (claim_last, r_primary_sumcheck) = proof
             .primary_sumcheck
             .sumcheck_proof
-            .verify::<G, Transcript>(
+            .verify::<G>(
                 F::zero(),
                 proof.primary_sumcheck.num_rounds,
                 Self::sumcheck_poly_degree(),
@@ -1104,7 +1101,7 @@ where
         flag_polys: &Vec<DensePolynomial<F>>,
         lookup_outputs_poly: &mut DensePolynomial<F>,
         degree: usize,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, Vec<F>, Vec<F>, F) {
         // Check all polys are the same size
         let poly_len = eq_poly.len();
@@ -1322,17 +1319,10 @@ where
 
     fn update_primary_sumcheck_transcript(
         round_uni_poly: UniPoly<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> F {
-        <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
-            &round_uni_poly,
-            b"poly",
-            transcript,
-        );
-        let r_j = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"challenge_nextround",
-        );
+        round_uni_poly.append_to_transcript(b"poly", transcript);
+        let r_j = transcript.challenge_scalar::<F>(b"challenge_nextround");
         r_j
     }
 

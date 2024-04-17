@@ -8,7 +8,6 @@ use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::Zero;
-use merlin::Transcript;
 use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
@@ -125,11 +124,11 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
     }
 }
 
-impl<const RATIO: usize, G: CurveGroup> AppendToTranscript<G> for HyraxCommitment<RATIO, G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
+impl<const RATIO: usize, G: CurveGroup> AppendToTranscript for HyraxCommitment<RATIO, G> {
+    fn append_to_transcript(
         &self,
         label: &'static [u8],
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) {
         transcript.append_message(label, b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
@@ -154,9 +153,9 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
     pub fn prove(
         poly: &DensePolynomial<G::ScalarField>,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> HyraxOpeningProof<RATIO, G> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         // assert vectors are of the right size
         assert_eq!(poly.get_num_vars(), opening_point.len());
@@ -177,12 +176,12 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
     pub fn verify(
         &self,
         pedersen_generators: &PedersenGenerators<G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
         opening_point: &[G::ScalarField], // point at which the polynomial is evaluated
         opening: &G::ScalarField,         // evaluation \widetilde{Z}(r)
         commitment: &HyraxCommitment<RATIO, G>,
     ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         // compute L and R
         let (L_size, R_size) = matrix_dimensions(opening_point.len(), RATIO);
@@ -246,18 +245,14 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         polynomials: &[&DensePolynomial<G::ScalarField>],
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         // append the claimed evaluations to transcript
-        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &openings);
+        transcript.append_scalars(b"evals_ops_val", &openings);
 
-        let rlc_coefficients: Vec<_> = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
-            b"challenge_combine_n_to_one",
-            polynomials.len(),
-        );
+        let rlc_coefficients: Vec<_> = transcript.challenge_vector(b"challenge_combine_n_to_one", polynomials.len());
 
         let _span = trace_span!("Compute RLC of polynomials");
         let _enter = _span.enter();
@@ -315,17 +310,16 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
         commitments: &[&HyraxCommitment<RATIO, G>],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let (L_size, _R_size) = matrix_dimensions(opening_point.len(), RATIO);
 
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         // append the claimed evaluations to transcript
-        <Transcript as ProofTranscript<G>>::append_scalars(transcript, b"evals_ops_val", &openings);
+        transcript.append_scalars(b"evals_ops_val", &openings);
 
-        let rlc_coefficients: Vec<_> = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
+        let rlc_coefficients: Vec<_> = transcript.challenge_vector(
             b"challenge_combine_n_to_one",
             openings.len(),
         );
@@ -398,10 +392,10 @@ mod tests {
         let generators: PedersenGenerators<G> = PedersenGenerators::new(1 << 8, b"test-two");
         let poly_commitment: HyraxCommitment<1, G> = HyraxCommitment::commit(&poly, &generators);
 
-        let mut prover_transcript = Transcript::new(b"example");
+        let mut prover_transcript = ProofTranscript::new(b"example");
         let proof = HyraxOpeningProof::prove(&poly, &r, &mut prover_transcript);
 
-        let mut verifier_transcript = Transcript::new(b"example");
+        let mut verifier_transcript = ProofTranscript::new(b"example");
 
         assert!(proof
             .verify(

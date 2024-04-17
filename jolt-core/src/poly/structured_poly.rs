@@ -1,10 +1,9 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use merlin::Transcript;
 
 use super::pedersen::PedersenGenerators;
-use crate::{lasso::memory_checking::NoPreprocessing, utils::errors::ProofVerifyError};
+use crate::{lasso::memory_checking::NoPreprocessing, utils::{errors::ProofVerifyError, transcript::ProofTranscript}};
 
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
@@ -40,7 +39,7 @@ where
         polynomials: &Polynomials,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof;
 
     /// Often some of the openings do not require an opening proof provided by the prover, and
@@ -60,6 +59,6 @@ where
         opening_proof: &Self::Proof,
         commitment: &Polynomials::Commitment,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError>;
 }

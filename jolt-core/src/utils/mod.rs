@@ -8,9 +8,6 @@ use rayon::prelude::*;
 
 use crate::poly::dense_mlpoly::DensePolynomial;
 
-#[cfg(test)]
-pub mod test;
-
 pub mod errors;
 pub mod gaussian_elimination;
 pub mod instruction_utils;

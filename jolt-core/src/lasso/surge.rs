@@ -1,7 +1,6 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
 
@@ -98,7 +97,7 @@ where
         polynomials: &SurgePolys<F, G>,
         opening_point: &Vec<F>,
         E_poly_openings: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         BatchedHyraxOpeningProof::prove(
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
@@ -114,7 +113,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
             generators,
@@ -159,7 +158,7 @@ where
         polynomials: &SurgePolys<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let read_write_polys = polynomials
             .dim
@@ -188,7 +187,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let read_write_openings: Vec<F> = [
             self.dim_openings.as_slice(),
@@ -253,7 +252,7 @@ where
         polynomials: &SurgePolys<F, G>,
         opening_point: &Vec<F>,
         openings: &Self,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         BatchedHyraxOpeningProof::prove(
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
@@ -281,7 +280,7 @@ where
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
         opening_point: &Vec<F>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
             generators,
@@ -562,9 +561,9 @@ where
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         generators: &PedersenGenerators<G>,
         ops: Vec<Instruction>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         let num_lookups = ops.len().next_power_of_two();
         let polynomials = Self::construct_polys(preprocessing, &ops);
@@ -576,20 +575,12 @@ where
         // TODO(sragss): Commit some of this stuff to transcript?
 
         // Primary sumcheck
-        let r_primary_sumcheck = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
-            b"primary_sumcheck",
-            num_rounds,
-        );
+        let r_primary_sumcheck = transcript.challenge_vector(b"primary_sumcheck", num_rounds);
         let eq: DensePolynomial<F> =
             DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
         let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
 
-        <Transcript as ProofTranscript<G>>::append_scalar(
-            transcript,
-            b"sumcheck_claim",
-            &sumcheck_claim,
-        );
+        transcript.append_scalar(b"sumcheck_claim", &sumcheck_claim);
         let mut combined_sumcheck_polys = polynomials.E_polys.clone();
         combined_sumcheck_polys.push(eq);
 
@@ -600,7 +591,7 @@ where
         };
 
         let (primary_sumcheck_proof, r_z, _) =
-            SumcheckInstanceProof::<F>::prove_arbitrary::<_, G, Transcript>(
+            SumcheckInstanceProof::<F>::prove_arbitrary::<_, G>(
                 &sumcheck_claim,
                 num_rounds,
                 &mut combined_sumcheck_polys,
@@ -639,19 +630,17 @@ where
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         generators: &PedersenGenerators<G>,
         proof: SurgeProof<F, G, Instruction, C, M>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
         let instruction = Instruction::default();
 
-        let r_primary_sumcheck = <Transcript as ProofTranscript<G>>::challenge_vector(
-            transcript,
+        let r_primary_sumcheck = transcript.challenge_vector(
             b"primary_sumcheck",
             proof.primary_sumcheck.num_rounds,
         );
 
-        <Transcript as ProofTranscript<G>>::append_scalar(
-            transcript,
+        transcript.append_scalar(
             b"sumcheck_claim",
             &proof.primary_sumcheck.claimed_evaluation,
         );
@@ -659,7 +648,7 @@ where
         let (claim_last, r_z) = proof
             .primary_sumcheck
             .sumcheck_proof
-            .verify::<G, Transcript>(
+            .verify::<G>(
                 proof.primary_sumcheck.claimed_evaluation,
                 proof.primary_sumcheck.num_rounds,
                 primary_sumcheck_poly_degree,
@@ -798,12 +787,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use merlin::Transcript;
-
     use super::SurgePreprocessing;
     use crate::{
         jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof,
-        poly::pedersen::PedersenGenerators,
+        poly::pedersen::PedersenGenerators, utils::transcript::ProofTranscript,
     };
     use ark_bn254::{Fr, G1Projective};
 
@@ -818,7 +805,7 @@ mod tests {
         const C: usize = 8;
         const M: usize = 1 << 8;
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
             SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::num_generators(16),
@@ -831,7 +818,7 @@ mod tests {
             &mut transcript,
         );
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
             .expect("should work");
     }
@@ -848,7 +835,7 @@ mod tests {
         const C: usize = 2;
         const M: usize = 1 << 8;
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
             SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::num_generators(16),
@@ -861,7 +848,7 @@ mod tests {
             &mut transcript,
         );
 
-        let mut transcript = Transcript::new(b"test_transcript");
+        let mut transcript = ProofTranscript::new(b"test_transcript");
         SurgeProof::verify(&preprocessing, &generators, proof, &mut transcript)
             .expect("should work");
     }

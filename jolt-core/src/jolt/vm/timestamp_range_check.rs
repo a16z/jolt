@@ -3,7 +3,6 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS};
 use itertools::interleave;
-use merlin::Transcript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(test)]
 use std::collections::HashSet;
@@ -171,11 +170,11 @@ pub struct RangeCheckCommitment<G: CurveGroup> {
     pub(super) commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
 }
 
-impl<G: CurveGroup> AppendToTranscript<G> for RangeCheckCommitment<G> {
-    fn append_to_transcript<T: ProofTranscript<G>>(
+impl<G: CurveGroup> AppendToTranscript for RangeCheckCommitment<G> {
+    fn append_to_transcript(
         &self,
         label: &'static [u8],
-        transcript: &mut T,
+        transcript: &mut ProofTranscript,
     ) {
         transcript.append_message(label, b"RangeCheckCommitment_begin");
         for commitment in &self.commitments {
@@ -236,7 +235,7 @@ where
         _polynomials: &RangeCheckPolynomials<F, G>,
         _opening_point: &Vec<F>,
         _openings: &RangeCheckOpenings<F, G>,
-        _transcript: &mut Transcript,
+        _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         unimplemented!("Openings are proved in TimestampValidityProof::prove")
     }
@@ -252,7 +251,7 @@ where
         _opening_proof: &Self::Proof,
         _commitment: &RangeCheckCommitment<G>,
         _opening_point: &Vec<F>,
-        _transcript: &mut Transcript,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Openings are verified in TimestampValidityProof::verify");
     }
@@ -269,7 +268,7 @@ where
     fn prove_memory_checking(
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, G>,
-        _transcript: &mut Transcript,
+        _transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<
         G,
         RangeCheckPolynomials<F, G>,
@@ -467,7 +466,7 @@ where
             Self::InitFinalOpenings,
         >,
         _commitments: &RangeCheckCommitment<G>,
-        _transcript: &mut Transcript,
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Use TimestampValidityProof::verify instead");
     }
@@ -578,7 +577,7 @@ where
     pub fn prove(
         range_check_polys: &RangeCheckPolynomials<F, G>,
         t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
             TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
@@ -629,19 +628,13 @@ where
 
     fn prove_grand_products(
         polynomials: &RangeCheckPolynomials<F, G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> (BatchedGrandProductArgument<F>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking gamma",
-        );
-        let tau: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking tau",
-        );
+        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
+        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
 
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         let (read_write_leaves, init_final_leaves) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
@@ -689,19 +682,13 @@ where
         generators: &PedersenGenerators<G>,
         range_check_commitment: &RangeCheckCommitment<G>,
         memory_commitment: &MemoryCommitment<G>,
-        transcript: &mut Transcript,
+        transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking gamma",
-        );
-        let tau: F = <Transcript as ProofTranscript<G>>::challenge_scalar(
-            transcript,
-            b"Memory checking tau",
-        );
+        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
+        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
 
-        <Transcript as ProofTranscript<G>>::append_protocol_name(transcript, Self::protocol_name());
+        transcript.append_protocol_name(Self::protocol_name());
 
         // Multiset equality checks
         TimestampValidityProof::<F, G>::check_multiset_equality(
@@ -718,7 +705,7 @@ where
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let (grand_product_claims, r_grand_product) = self
             .batched_grand_product
-            .verify::<G, Transcript>(&concatenated_hashes, transcript);
+            .verify::<G>(&concatenated_hashes, transcript);
 
         let openings: Vec<_> = self
             .openings
