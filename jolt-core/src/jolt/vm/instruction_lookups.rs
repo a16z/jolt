@@ -1005,62 +1005,80 @@ where
             .par_iter()
             .map(|op| {
                 if let Some(op) = op {
-                    (op.to_indices(C, log_M), F::from_u64(op.lookup_entry()).unwrap())
+                    (
+                        op.to_indices(C, log_M),
+                        F::from_u64(op.lookup_entry()).unwrap(),
+                    )
                 } else {
                     (vec![0; C], F::zero())
                 }
-        }).unzip();
+            })
+            .unzip();
         lookup_outputs.resize(m, F::zero());
         let lookup_outputs = DensePolynomial::new(lookup_outputs);
 
-        let (subtable_lookup_indices, dim): (Vec<Vec<usize>>, Vec<DensePolynomial<F>>) = (0..C).into_par_iter().map(|i| {
-            let mut access_sequence: Vec<usize> =
-                chunked_indices.par_iter().map(|chunks| chunks[i]).collect();
-            access_sequence.resize(m, 0);
-            //TODO: remove clone
-            (access_sequence.clone(), DensePolynomial::from_usize(&access_sequence))
-        }).collect();
-
-        let (read_cts, final_cts, E_polys): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = (0
-            ..preprocessing.num_memories)
+        let (subtable_lookup_indices, dim): (Vec<Vec<usize>>, Vec<DensePolynomial<F>>) = (0..C)
             .into_par_iter()
-            .fold(|| (Vec::new(), Vec::new(), Vec::new()),
-            |(mut read_acc, mut final_acc, mut E_acc), memory_index| {
-                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
-                let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
-                let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
+            .map(|i| {
+                let mut access_sequence: Vec<usize> =
+                    chunked_indices.par_iter().map(|chunks| chunks[i]).collect();
+                access_sequence.resize(m, 0);
+                //TODO: remove clone
+                (
+                    access_sequence.clone(),
+                    DensePolynomial::from_usize(&access_sequence),
+                )
+            })
+            .collect();
 
-                let mut final_cts_i = vec![0usize; M];
-                let mut read_cts_i = vec![0usize; m];
-                let mut subtable_lookups = vec![F::zero(); m];
+        let (read_cts, final_cts, E_polys): (
+            Vec<DensePolynomial<F>>,
+            Vec<DensePolynomial<F>>,
+            Vec<DensePolynomial<F>>,
+        ) = (0..preprocessing.num_memories)
+            .into_par_iter()
+            .fold(
+                || (Vec::new(), Vec::new(), Vec::new()),
+                |(mut read_acc, mut final_acc, mut E_acc), memory_index| {
+                    let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                    let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+                    let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
 
-                for (j, op) in ops.iter().enumerate() {
-                    if let Some(op) = op {
-                        let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(&op)];
-                        if memories_used.contains(&memory_index) {
-                            let memory_address = access_sequence[j];
-                            debug_assert!(memory_address < M);
+                    let mut final_cts_i = vec![0usize; M];
+                    let mut read_cts_i = vec![0usize; m];
+                    let mut subtable_lookups = vec![F::zero(); m];
 
-                            let counter = final_cts_i[memory_address];
-                            read_cts_i[j] = counter;
-                            final_cts_i[memory_address] = counter + 1;
-                            subtable_lookups[j] = preprocessing.materialized_subtables
-                                [subtable_index][memory_address];
+                    for (j, op) in ops.iter().enumerate() {
+                        if let Some(op) = op {
+                            let memories_used = &preprocessing.instruction_to_memory_indices
+                                [InstructionSet::enum_index(&op)];
+                            if memories_used.contains(&memory_index) {
+                                let memory_address = access_sequence[j];
+                                debug_assert!(memory_address < M);
+
+                                let counter = final_cts_i[memory_address];
+                                read_cts_i[j] = counter;
+                                final_cts_i[memory_address] = counter + 1;
+                                subtable_lookups[j] = preprocessing.materialized_subtables
+                                    [subtable_index][memory_address];
+                            }
                         }
                     }
-                }
-                read_acc.push(DensePolynomial::from_usize(&read_cts_i));
-                final_acc.push(DensePolynomial::from_usize(&final_cts_i));
-                E_acc.push(DensePolynomial::new(subtable_lookups));
-                (read_acc, final_acc, E_acc)
-            }).reduce(||(Vec::new(), Vec::new(), Vec::new()), |(mut a, mut b, mut c), (mut read_acc, mut final_acc, mut E_acc)| {
-                //TODO: check allocations
-                a.append(&mut read_acc);
-                b.append(&mut final_acc);
-                c.append(&mut E_acc);
-                (a, b, c)
-            });
+                    read_acc.push(DensePolynomial::from_usize(&read_cts_i));
+                    final_acc.push(DensePolynomial::from_usize(&final_cts_i));
+                    E_acc.push(DensePolynomial::new(subtable_lookups));
+                    (read_acc, final_acc, E_acc)
+                },
+            )
+            .reduce(
+                || (Vec::new(), Vec::new(), Vec::new()),
+                |(mut a, mut b, mut c), (mut read_acc, mut final_acc, mut E_acc)| {
+                    a.append(&mut read_acc);
+                    b.append(&mut final_acc);
+                    c.append(&mut E_acc);
+                    (a, b, c)
+                },
+            );
 
         InstructionPolynomials {
             _group: PhantomData,
