@@ -29,4 +29,4 @@ for i in 0..half {
 ```
 
 ### Multi Variable Binding
-Another common algorithm is to take the MLE $\tilde{f}(x_1, ... x_v)$ and compute its evaluation at a single $v$-variate point outside the boolean hypercube $x \in \mathbb{F}^v$. This algorithm can be performed in $O(n log(n))$ time by preforming the single variable binding algorithm $log(n)$ times.
+Another common algorithm is to take the MLE $\tilde{f}(x_1, ... x_v)$ and compute its evaluation at a single $v$-variate point outside the boolean hypercube $x \in \mathbb{F}^v$. This algorithm can be performed in $O(n \log(n))$ time by preforming the single variable binding algorithm $\log(n)$ times.
