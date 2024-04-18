@@ -16,7 +16,7 @@ edition="2021"
 proc-macro = true
 
 [features]
-std = []
+guest-std = []
 
 [dependencies]
 syn = { version = "1.0", features = ["full"] }

@@ -36,9 +36,9 @@ struct MacroBuilder {
 impl MacroBuilder {
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let func_args = Self::get_func_args(&func);
-        #[cfg(feature = "std")]
+        #[cfg(feature = "guest-std")]
         let std = true;
-        #[cfg(not(feature = "std"))]
+        #[cfg(not(feature = "guest-std"))]
         let std = false;
 
         Self {

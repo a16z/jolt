@@ -25,10 +25,10 @@ host = [
     "postcard/use-std",
 ]
 
-std = [
+guest-std = [
     "postcard/use-std",
     "serde/std",
-    "jolt-sdk-macros/std",
+    "jolt-sdk-macros/guest-std",
 ]
 
 [dependencies]
