@@ -29,15 +29,22 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 struct MacroBuilder {
     attr: AttributeArgs,
     func: ItemFn,
+    std: bool,
     func_args: Vec<(Ident, Box<Type>)>,
 }
 
 impl MacroBuilder {
     fn new(attr: AttributeArgs, func: ItemFn) -> Self {
         let func_args = Self::get_func_args(&func);
+        #[cfg(feature = "guest-std")]
+        let std = true;
+        #[cfg(not(feature = "guest-std"))]
+        let std = false;
+
         Self {
             attr,
             func,
+            std,
             func_args,
         }
     }
@@ -131,6 +138,7 @@ impl MacroBuilder {
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
+        let set_std = self.make_set_std();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -149,6 +157,7 @@ impl MacroBuilder {
 
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
+                #set_std
                 #set_mem_size
                 #(#set_program_args;)*
 
@@ -161,6 +170,7 @@ impl MacroBuilder {
         let set_mem_size = self.make_set_linker_parameters();
         let guest_name = self.get_guest_name();
         let imports = self.make_imports();
+        let set_std = self.make_set_std();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -175,6 +185,7 @@ impl MacroBuilder {
 
                 let mut program = Program::new(#guest_name);
                 program.set_func(#fn_name_str);
+                #set_std
                 #set_mem_size
                 let (bytecode, memory_init) = program.decode();
 
@@ -259,7 +270,6 @@ impl MacroBuilder {
             MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;
-        let panic_address = memory_layout.panic;
         let max_input_len = attributes.max_input_size as usize;
         let max_output_len = attributes.max_output_size as usize;
 
@@ -296,11 +306,12 @@ impl MacroBuilder {
             },
         };
 
+        let panic_fn = self.make_panic(memory_layout.panic);
+        let declare_alloc = self.make_allocator();
+
         quote! {
             #[cfg(feature = "guest")]
             use core::arch::global_asm;
-            #[cfg(feature = "guest")]
-            use core::panic::PanicInfo;
 
             #[cfg(feature = "guest")]
             global_asm!("\
@@ -312,9 +323,7 @@ impl MacroBuilder {
                     j .\n\
             ");
 
-            #[cfg(feature = "guest")]
-            #[global_allocator]
-            static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
+            #declare_alloc
 
             #[cfg(feature = "guest")]
             #[no_mangle]
@@ -327,14 +336,49 @@ impl MacroBuilder {
                 #handle_return
             }
 
-            #[cfg(feature = "guest")]
-            #[panic_handler]
-            fn panic(_info: &PanicInfo) -> ! {
-                unsafe {
-                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
-                }
+            #panic_fn
+        }
+    }
 
-                loop {}
+    fn make_panic(&self, panic_address: u64) -> TokenStream2 {
+        if self.std {
+            quote! {
+                #[cfg(feature = "guest")]
+                #[no_mangle]
+                pub extern "C" fn jolt_panic() {
+                    unsafe {
+                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    }
+
+                    loop {}
+                }
+            }
+        } else {
+            quote! {
+                #[cfg(feature = "guest")]
+                use core::panic::PanicInfo;
+
+                #[cfg(feature = "guest")]
+                #[panic_handler]
+                fn panic(_info: &PanicInfo) -> ! {
+                    unsafe {
+                        core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    }
+
+                    loop {}
+                }
+            }
+        }
+    }
+
+    fn make_allocator(&self) -> TokenStream2 {
+        if self.std {
+            quote! {}
+        } else {
+            quote! {
+                #[cfg(feature = "guest")]
+                #[global_allocator]
+                static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
             }
         }
     }
@@ -387,6 +431,18 @@ impl MacroBuilder {
 
         quote! {
             #(#code;)*
+        }
+    }
+
+    fn make_set_std(&self) -> TokenStream2 {
+        if self.std {
+            quote! {
+                program.set_std(true);
+            }
+        } else {
+            quote! {
+                program.set_std(false);
+            }
         }
     }
 

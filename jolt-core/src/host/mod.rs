@@ -40,6 +40,7 @@ pub struct Program {
     stack_size: u64,
     max_input_size: u64,
     max_output_size: u64,
+    std: bool,
     pub elf: Option<PathBuf>,
 }
 
@@ -53,8 +54,13 @@ impl Program {
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
+            std: false,
             elf: None,
         }
+    }
+
+    pub fn set_std(&mut self, std: bool) {
+        self.std = std;
     }
 
     pub fn set_func(&mut self, func: &str) {
@@ -87,7 +93,27 @@ impl Program {
         if self.elf.is_none() {
             self.save_linker();
 
-            let mut envs = vec![("RUSTFLAGS", format!("-C link-arg=-T{}", self.linker_path()))];
+            let rust_flags = [
+                "-C",
+                &format!("link-arg=-T{}", self.linker_path()),
+                "-C",
+                "passes=loweratomic",
+                "-C",
+                "panic=abort",
+            ];
+
+            let toolchain = if self.std {
+                "riscv32i-jolt-zkvm-elf"
+            } else {
+                "riscv32i-unknown-none-elf"
+            };
+
+            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
+
+            if self.std {
+                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
+            }
+
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
             }
@@ -110,7 +136,7 @@ impl Program {
                     "--target-dir",
                     &target,
                     "--target",
-                    "riscv32i-unknown-none-elf",
+                    toolchain,
                     "--bin",
                     "guest",
                 ])
@@ -122,7 +148,7 @@ impl Program {
                 panic!("failed to compile guest");
             }
 
-            let elf = format!("{}/riscv32i-unknown-none-elf/release/guest", target,);
+            let elf = format!("{}/{}/release/guest", target, toolchain);
             self.elf = Some(PathBuf::from_str(&elf).unwrap());
         }
     }

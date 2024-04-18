@@ -13,7 +13,7 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
-std = [
+host = [
     "dep:tracer",
     "dep:common",
     "dep:jolt-core",
@@ -25,9 +25,15 @@ std = [
     "postcard/use-std",
 ]
 
+guest-std = [
+    "postcard/use-std",
+    "serde/std",
+    "jolt-sdk-macros/guest-std",
+]
+
 [dependencies]
 postcard = { version = "1.0.8", default-features = false }
-serde = { version = "1.0.*", default-features = false }
+serde = { version = "1.0.196", default-features = false }
 eyre = { version = "0.6.12", optional = true }
 ark-ec = { version = "0.4.2", default-features = false, optional = true }
 ark-ff = { version = "0.4.2", default-features = false, optional = true }
