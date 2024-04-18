@@ -28,6 +28,7 @@ use common::{
     rv_trace::NUM_CIRCUIT_FLAGS,
 };
 use rayon::prelude::*;
+use std::borrow::Borrow;
 use strum::EnumCount;
 
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
@@ -89,13 +90,13 @@ fn synthesize_witnesses<F: PrimeField>(
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct R1CSInputs<F: PrimeField> {
+pub struct R1CSInputs<'a, F: PrimeField> {
     padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
-    memreg_a_rw: Vec<F>,
-    memreg_v_reads: Vec<F>,
-    memreg_v_writes: Vec<F>,
+    memreg_a_rw: &'a [F],
+    memreg_v_reads: Vec<&'a F>,
+    memreg_v_writes: Vec<&'a F>,
     chunks_x: Vec<F>,
     chunks_y: Vec<F>,
     chunks_query: Vec<F>,
@@ -118,15 +119,15 @@ pub struct R1CSStepInputs<F: PrimeField> {
     pub instruction_flags_bits: Vec<F>,
 }
 
-impl<F: PrimeField> R1CSInputs<F> {
+impl<'a, F: PrimeField> R1CSInputs<'a, F> {
     #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
     pub fn new(
         padded_trace_len: usize,
         bytecode_a: Vec<F>,
         bytecode_v: Vec<F>,
-        memreg_a_rw: Vec<F>,
-        memreg_v_reads: Vec<F>,
-        memreg_v_writes: Vec<F>,
+        memreg_a_rw: &'a [F],
+        memreg_v_reads: Vec<&'a F>,
+        memreg_v_writes: Vec<&'a F>,
         chunks_x: Vec<F>,
         chunks_y: Vec<F>,
         chunks_query: Vec<F>,
@@ -162,18 +163,18 @@ impl<F: PrimeField> R1CSInputs<F> {
         }
     }
 
+    fn push_to_step<T: Borrow<F>>(&self, data: &Vec<T>, step: &mut Vec<F>, step_index: usize) {
+        let num_vals = data.len() / self.padded_trace_len;
+        for var_index in 0..num_vals {
+            step.push(*data[var_index * self.padded_trace_len + step_index].borrow());
+        }
+    }
+
     pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
         let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
             F::ZERO
         } else {
             self.bytecode_a[step_index]
-        };
-
-        let push_to_step = |data: &Vec<F>, step: &mut Vec<F>| {
-            let num_vals = data.len() / self.padded_trace_len;
-            for var_index in 0..num_vals {
-                step.push(data[var_index * self.padded_trace_len + step_index]);
-            }
         };
 
         let mut output = R1CSStepInputs {
@@ -188,16 +189,25 @@ impl<F: PrimeField> R1CSInputs<F> {
             circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
             instruction_flags_bits: Vec::with_capacity(RV32I::COUNT),
         };
-        push_to_step(&self.bytecode_v, &mut output.bytecode_v);
-        push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads);
-        push_to_step(&self.memreg_v_writes, &mut output.memreg_v_writes);
-        push_to_step(&self.chunks_y, &mut output.chunks_y);
-        push_to_step(&self.chunks_query, &mut output.chunks_query);
-        push_to_step(&self.lookup_outputs, &mut output.lookup_outputs);
-        push_to_step(&self.circuit_flags_bits, &mut output.circuit_flags_bits);
-        push_to_step(
+        self.push_to_step(&self.bytecode_v, &mut output.bytecode_v, step_index);
+        self.push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads, step_index);
+        self.push_to_step(
+            &self.memreg_v_writes,
+            &mut output.memreg_v_writes,
+            step_index,
+        );
+        self.push_to_step(&self.chunks_y, &mut output.chunks_y, step_index);
+        self.push_to_step(&self.chunks_query, &mut output.chunks_query, step_index);
+        self.push_to_step(&self.lookup_outputs, &mut output.lookup_outputs, step_index);
+        self.push_to_step(
+            &self.circuit_flags_bits,
+            &mut output.circuit_flags_bits,
+            step_index,
+        );
+        self.push_to_step(
             &self.instruction_flags_bits,
             &mut output.instruction_flags_bits,
+            step_index,
         );
 
         output
@@ -244,12 +254,22 @@ impl<F: PrimeField> R1CSInputs<F> {
         chunks.par_extend(
             self.memreg_v_reads
                 .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
+                .map(|chunk| {
+                    chunk
+                        .par_iter()
+                        .map(|&elem| elem.clone())
+                        .collect::<Vec<F>>()
+                }),
         );
         chunks.par_extend(
             self.memreg_v_writes
                 .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
+                .map(|chunk| {
+                    chunk
+                        .par_iter()
+                        .map(|&elem| elem.clone())
+                        .collect::<Vec<F>>()
+                }),
         );
         chunks.par_extend(
             self.chunks_x

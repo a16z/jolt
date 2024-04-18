@@ -757,22 +757,22 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
-    pub fn get_polys_r1cs(&self) -> (Vec<F>, Vec<F>, Vec<F>) {
+    pub fn get_polys_r1cs<'a>(&'a self) -> (&'a [F], Vec<&'a F>, Vec<&'a F>) {
         let (a_polys, (v_read_polys, v_write_polys)) = rayon::join(
-            || self.a_ram.evals(),
+            || self.a_ram.evals_ref(),
             || {
                 rayon::join(
                     || {
                         self.v_read
                             .par_iter()
-                            .flat_map(|poly| poly.evals())
+                            .flat_map(|poly| poly.evals_ref().par_iter())
                             .collect::<Vec<_>>()
                     },
                     || {
                         [&self.v_write_rd]
                             .into_par_iter()
                             .chain(self.v_write_ram.par_iter())
-                            .flat_map(|poly| poly.evals())
+                            .flat_map(|poly| poly.evals_ref().par_iter())
                             .collect::<Vec<_>>()
                     },
                 )
