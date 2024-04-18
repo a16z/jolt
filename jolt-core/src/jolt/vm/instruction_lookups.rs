@@ -975,68 +975,6 @@ where
     ) -> InstructionPolynomials<F, G> {
         let m: usize = ops.len().next_power_of_two();
 
-        let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
-
-        let polys: Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> = (0
-            ..preprocessing.num_memories)
-            .into_par_iter()
-            .map(|memory_index| {
-                let dim_index = preprocessing.memory_to_dimension_index[memory_index];
-                let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
-                let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
-
-                let mut final_cts_i = vec![0usize; M];
-                let mut read_cts_i = vec![0usize; m];
-                let mut subtable_lookups = vec![F::zero(); m];
-
-                for (j, op) in ops.iter().enumerate() {
-                    if let Some(op) = op {
-                        let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(&op)];
-                        if memories_used.contains(&memory_index) {
-                            let memory_address = access_sequence[j];
-                            debug_assert!(memory_address < M);
-
-                            let counter = final_cts_i[memory_address];
-                            read_cts_i[j] = counter;
-                            final_cts_i[memory_address] = counter + 1;
-                            subtable_lookups[j] = preprocessing.materialized_subtables
-                                [subtable_index][memory_address];
-                        }
-                    }
-                }
-
-                (
-                    DensePolynomial::from_usize(&read_cts_i),
-                    DensePolynomial::from_usize(&final_cts_i),
-                    DensePolynomial::new(subtable_lookups),
-                )
-            })
-            .collect();
-
-        // Vec<(DensePolynomial<F>, DensePolynomial<F>, DensePolynomial<F>)> -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>)
-        let (read_cts, final_cts, E_polys): (
-            Vec<DensePolynomial<F>>,
-            Vec<DensePolynomial<F>>,
-            Vec<DensePolynomial<F>>,
-        ) = polys.into_iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut read_acc, mut final_acc, mut E_acc), (read, f, E)| {
-                read_acc.push(read);
-                final_acc.push(f);
-                E_acc.push(E);
-                (read_acc, final_acc, E_acc)
-            },
-        );
-
-        let dim: Vec<DensePolynomial<F>> = (0..C)
-            .into_par_iter()
-            .map(|i| {
-                let access_sequence: &Vec<usize> = &subtable_lookup_indices[i];
-                DensePolynomial::from_usize(access_sequence)
-            })
-            .collect();
-
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
@@ -1044,15 +982,90 @@ where
                 instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
             }
         }
-
         let instruction_flag_polys: Vec<DensePolynomial<F>> = instruction_flag_bitvectors
             .par_iter()
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let mut lookup_outputs = Self::compute_lookup_outputs(&ops);
+        let log_M = M.log_2();
+        let (chunked_indices, mut lookup_outputs): (Vec<Vec<usize>>, Vec<F>) = ops
+            .par_iter()
+            .map(|op| {
+                if let Some(op) = op {
+                    (
+                        op.to_indices(C, log_M),
+                        F::from_u64(op.lookup_entry()).unwrap(),
+                    )
+                } else {
+                    (vec![0; C], F::zero())
+                }
+            })
+            .unzip();
         lookup_outputs.resize(m, F::zero());
         let lookup_outputs = DensePolynomial::new(lookup_outputs);
+
+        let (subtable_lookup_indices, dim): (Vec<Vec<usize>>, Vec<DensePolynomial<F>>) = (0..C)
+            .into_par_iter()
+            .map(|i| {
+                let mut access_sequence: Vec<usize> =
+                    chunked_indices.par_iter().map(|chunks| chunks[i]).collect();
+                access_sequence.resize(m, 0);
+                //TODO: remove clone
+                (
+                    access_sequence.clone(),
+                    DensePolynomial::from_usize(&access_sequence),
+                )
+            })
+            .collect();
+
+        let (read_cts, final_cts, E_polys): (
+            Vec<DensePolynomial<F>>,
+            Vec<DensePolynomial<F>>,
+            Vec<DensePolynomial<F>>,
+        ) = (0..preprocessing.num_memories)
+            .into_par_iter()
+            .fold(
+                || (Vec::new(), Vec::new(), Vec::new()),
+                |(mut read_acc, mut final_acc, mut E_acc), memory_index| {
+                    let dim_index = preprocessing.memory_to_dimension_index[memory_index];
+                    let subtable_index = preprocessing.memory_to_subtable_index[memory_index];
+                    let access_sequence: &Vec<usize> = &subtable_lookup_indices[dim_index];
+
+                    let mut final_cts_i = vec![0usize; M];
+                    let mut read_cts_i = vec![0usize; m];
+                    let mut subtable_lookups = vec![F::zero(); m];
+
+                    for (j, op) in ops.iter().enumerate() {
+                        if let Some(op) = op {
+                            let memories_used = &preprocessing.instruction_to_memory_indices
+                                [InstructionSet::enum_index(&op)];
+                            if memories_used.contains(&memory_index) {
+                                let memory_address = access_sequence[j];
+                                debug_assert!(memory_address < M);
+
+                                let counter = final_cts_i[memory_address];
+                                read_cts_i[j] = counter;
+                                final_cts_i[memory_address] = counter + 1;
+                                subtable_lookups[j] = preprocessing.materialized_subtables
+                                    [subtable_index][memory_address];
+                            }
+                        }
+                    }
+                    read_acc.push(DensePolynomial::from_usize(&read_cts_i));
+                    final_acc.push(DensePolynomial::from_usize(&final_cts_i));
+                    E_acc.push(DensePolynomial::new(subtable_lookups));
+                    (read_acc, final_acc, E_acc)
+                },
+            )
+            .reduce(
+                || (Vec::new(), Vec::new(), Vec::new()),
+                |(mut a, mut b, mut c), (mut read_acc, mut final_acc, mut E_acc)| {
+                    a.append(&mut read_acc);
+                    b.append(&mut final_acc);
+                    c.append(&mut E_acc);
+                    (a, b, c)
+                },
+            );
 
         InstructionPolynomials {
             _group: PhantomData,
