@@ -254,22 +254,12 @@ impl<'a, F: PrimeField> R1CSInputs<'a, F> {
         chunks.par_extend(
             self.memreg_v_reads
                 .par_chunks(padded_trace_len)
-                .map(|chunk| {
-                    chunk
-                        .par_iter()
-                        .map(|&elem| elem.clone())
-                        .collect::<Vec<F>>()
-                }),
+                .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>()),
         );
         chunks.par_extend(
             self.memreg_v_writes
                 .par_chunks(padded_trace_len)
-                .map(|chunk| {
-                    chunk
-                        .par_iter()
-                        .map(|&elem| elem.clone())
-                        .collect::<Vec<F>>()
-                }),
+                .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>()),
         );
         chunks.par_extend(
             self.chunks_x
