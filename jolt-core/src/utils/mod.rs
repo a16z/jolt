@@ -144,12 +144,10 @@ pub fn split_poly_flagged<F: PrimeField>(
             } else {
                 right.push(F::one());
             }
+        } else if i < half {
+            left.push(poly_evals[i]);
         } else {
-            if i < half {
-                left.push(poly_evals[i]);
-            } else {
-                right.push(poly_evals[i]);
-            }
+            right.push(poly_evals[i]);
         }
     }
     (left, right)

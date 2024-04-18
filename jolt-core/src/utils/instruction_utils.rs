@@ -83,8 +83,8 @@ pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<u
     (0..C)
         .map(|i| {
             let shift = ((C - i - 1) * sum_chunk_bits) as u32;
-            let chunk = z.checked_shr(shift).unwrap_or(0) as usize & sum_chunk_bit_mask;
-            chunk
+
+            z.checked_shr(shift).unwrap_or(0) as usize & sum_chunk_bit_mask
         })
         .collect()
 }

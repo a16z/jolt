@@ -1092,16 +1092,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     /// Returns (e, r)
     /// - `e`: Claimed evaluation at random point
     /// - `r`: Evaluation point
-    pub fn verify<G>(
+    pub fn verify(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
         transcript: &mut ProofTranscript,
-    ) -> Result<(F, Vec<F>), ProofVerifyError>
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> Result<(F, Vec<F>), ProofVerifyError> {
         let mut e = claim;
         let mut r: Vec<F> = Vec::new();
 
@@ -1324,7 +1321,7 @@ mod test {
             );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let verify_result = proof.verify::<G1Projective>(claim, 2, 3, &mut transcript);
+        let verify_result = proof.verify(claim, 2, 3, &mut transcript);
         assert!(verify_result.is_ok());
 
         let (verify_evaluation, verify_randomness) = verify_result.unwrap();
@@ -1396,7 +1393,7 @@ mod test {
         let prove_eval = eq_eval * (flag_eval * leaf_eval + Fr::one() - flag_eval);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let verify_result = proof.verify::<G1Projective>(claim, 2, 3, &mut transcript);
+        let verify_result = proof.verify(claim, 2, 3, &mut transcript);
         assert!(verify_result.is_ok());
 
         let (verify_evaluation, verify_randomness) = verify_result.unwrap();

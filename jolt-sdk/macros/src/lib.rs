@@ -50,7 +50,7 @@ impl MacroBuilder {
         let prove_fn = self.make_prove_func();
 
         let main_fn = if let Some(func) = self.get_func_selector() {
-            if self.get_func_name().to_string() == func {
+            if *self.get_func_name() == func {
                 self.make_main_func()
             } else {
                 quote! {}

@@ -9,7 +9,7 @@ use core::ops::Index;
 use rayon::prelude::*;
 use std::ops::AddAssign;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct DensePolynomial<F> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,
@@ -53,8 +53,8 @@ impl<F: PrimeField> DensePolynomial<F> {
         self.len
     }
 
-    pub fn clone(&self) -> Self {
-        Self::new(self.Z[0..self.len].to_vec())
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     pub fn split(&self, idx: usize) -> (Self, Self) {
@@ -217,13 +217,13 @@ impl<F: PrimeField> DensePolynomial<F> {
         compute_dotproduct(&self.Z, &chis)
     }
 
-    pub fn evaluate_at_chi(&self, chis: &Vec<F>) -> F {
-        compute_dotproduct(&self.Z, &chis)
+    pub fn evaluate_at_chi(&self, chis: &[F]) -> F {
+        compute_dotproduct(&self.Z, chis)
     }
 
-    pub fn evaluate_at_chi_low_optimized(&self, chis: &Vec<F>) -> F {
+    pub fn evaluate_at_chi_low_optimized(&self, chis: &[F]) -> F {
         assert_eq!(self.Z.len(), chis.len());
-        compute_dotproduct_low_optimized(&self.Z, &chis)
+        compute_dotproduct_low_optimized(&self.Z, chis)
     }
 
     pub fn evals(&self) -> Vec<F> {
@@ -271,6 +271,12 @@ impl<F: PrimeField> DensePolynomial<F> {
                 .map(|i| F::from_u64(Z[i]).unwrap())
                 .collect::<Vec<F>>(),
         )
+    }
+}
+
+impl<F: PrimeField> Clone for DensePolynomial<F> {
+    fn clone(&self) -> Self {
+        Self::new(self.Z[0..self.len].to_vec())
     }
 }
 

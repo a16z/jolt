@@ -69,10 +69,10 @@ macro_rules! subtable_enum {
           }
         }
 
-        impl<F: PrimeField> Into<usize> for $enum_name<F> {
-          fn into(self) -> usize {
-            unsafe { *<*const _>::from(&self).cast::<usize>() }
-          }
+        impl<F: PrimeField> From<$enum_name<F>> for usize {
+            fn from(subtable: $enum_name<F>) -> usize {
+                unsafe { *<*const _>::from(&subtable).cast::<usize>() }
+            }
         }
         impl<F: PrimeField> JoltSubtableSet<F> for $enum_name<F> {}
     };

@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use core::{str::FromStr, u8};
 use std::{
     fs::{self, File},
@@ -98,7 +100,7 @@ impl Program {
 
             let output = Command::new("cargo")
                 .envs(envs)
-                .args(&[
+                .args([
                     "build",
                     "--release",
                     "--features",
@@ -116,7 +118,7 @@ impl Program {
                 .expect("failed to build guest");
 
             if !output.status.success() {
-                io::stderr().write(&output.stderr).unwrap();
+                io::stderr().write_all(&output.stderr).unwrap();
                 panic!("failed to compile guest");
             }
 
@@ -193,7 +195,7 @@ impl Program {
         self.build();
         let elf = self.elf.as_ref().unwrap();
         let (raw_trace, _) =
-            tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
+            tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
         let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
@@ -203,7 +205,7 @@ impl Program {
             .map(|flag: F| flag.is_one())
             .collect();
 
-        let program_summary = ProgramSummary {
+        ProgramSummary {
             raw_trace,
             bytecode,
             memory_init,
@@ -212,9 +214,7 @@ impl Program {
             instruction_trace,
             memory_trace,
             circuit_flags,
-        };
-
-        program_summary
+        }
     }
 
     fn save_linker(&self) {
@@ -228,7 +228,7 @@ impl Program {
             .replace("{STACK_SIZE}", &self.stack_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
-        file.write(linker_script.as_bytes())
+        file.write_all(linker_script.as_bytes())
             .expect("could not save linker");
     }
 

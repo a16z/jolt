@@ -158,8 +158,8 @@ fn i64_to_f<F: PrimeField>(num: i64) -> F {
     }
 }
 
-impl R1CSBuilder {
-    pub fn default() -> Self {
+impl Default for R1CSBuilder {
+    fn default() -> Self {
         R1CSBuilder {
             A: Vec::with_capacity(100),
             B: Vec::with_capacity(100),
@@ -171,7 +171,9 @@ impl R1CSBuilder {
             num_internal: 0,
         }
     }
+}
 
+impl R1CSBuilder {
     fn new_constraint(
         &mut self,
         a: SmallVec<[(usize, i64); SMALLVEC_SIZE]>,
@@ -424,7 +426,7 @@ impl R1CSBuilder {
             smallvec![(rs1_val, 1)],
             smallvec![
                 (PC_mapped, 4),
-                (0, PC_START_ADDRESS as i64 - 1 * PC_NOOP_SHIFT as i64)
+                (0, PC_START_ADDRESS as i64 - PC_NOOP_SHIFT as i64)
             ],
         );
         let y = R1CSBuilder::if_else_simple(
@@ -450,7 +452,7 @@ impl R1CSBuilder {
                 (rs1_val, 1),
                 (immediate_signed, 1),
                 (GET_INDEX(InputType::MemregARW, 0), -1),
-                (0, -1 * memory_start as i64)
+                (0, -(memory_start as i64))
             ],
             smallvec![],
         );
@@ -510,7 +512,7 @@ impl R1CSBuilder {
                 (combined_z_chunks, 1),
                 (x, -1),
                 (y, 1),
-                (0, -1 * (ALL_ONES + 1))
+                (0, -(ALL_ONES + 1))
             ],
             smallvec![],
         );
@@ -563,7 +565,7 @@ impl R1CSBuilder {
                 smallvec![
                     (GET_INDEX(InputType::ChunksQuery, i), 1),
                     (chunk_y_used_i, -1),
-                    (GET_INDEX(InputType::ChunksX, i), (1 << L_CHUNK) * -1)
+                    (GET_INDEX(InputType::ChunksX, i), -(1 << L_CHUNK))
                 ],
                 smallvec![(is_concat, 1)],
                 smallvec![],
@@ -743,9 +745,7 @@ impl R1CSBuilder {
         aux.push(if aux[is_branch_times_lookup_output].is_zero() {
             aux[next_pc_j]
         } else {
-            inputs.input_pc * four
-                + F::from_u64(PC_START_ADDRESS as u64).unwrap()
-                + aux[imm_signed_index]
+            inputs.input_pc * four + F::from_u64(PC_START_ADDRESS).unwrap() + aux[imm_signed_index]
         });
 
         aux
@@ -773,6 +773,7 @@ impl R1CSBuilder {
     }
 
     /* Converts the i64 coefficients to field elements. */
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "Shape::convert_to_field")]
     pub fn convert_to_field<F: PrimeField>(
         &self,

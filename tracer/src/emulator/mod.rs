@@ -123,8 +123,8 @@ impl Emulator {
     /// # Arguments
     /// * `bytes`
     fn put_bytes_to_terminal(&mut self, bytes: &[u8]) {
-        for i in 0..bytes.len() {
-            self.cpu.get_mut_terminal().put_byte(bytes[i]);
+        for byte in bytes {
+            self.cpu.get_mut_terminal().put_byte(*byte);
         }
     }
 
@@ -156,29 +156,26 @@ impl Emulator {
         let mut symbol_table_section_headers = vec![];
         let mut string_table_section_headers = vec![];
 
-        for i in 0..section_headers.len() {
-            match section_headers[i].sh_type {
-                1 => program_data_section_headers.push(&section_headers[i]),
-                2 => symbol_table_section_headers.push(&section_headers[i]),
-                3 => string_table_section_headers.push(&section_headers[i]),
+        for header in &section_headers {
+            match header.sh_type {
+                1 => program_data_section_headers.push(header),
+                2 => symbol_table_section_headers.push(header),
+                3 => string_table_section_headers.push(header),
                 _ => {}
             };
         }
 
         // Find program data section named .tohost to detect if the elf file is riscv-tests
-        self.tohost_addr = match analyzer
+        self.tohost_addr = analyzer
             .find_tohost_addr(&program_data_section_headers, &string_table_section_headers)
-        {
-            Some(address) => address,
-            None => 0,
-        };
+            .unwrap_or(0);
 
         // Creates symbol - virtual address mapping
-        if string_table_section_headers.len() > 0 {
+        if !string_table_section_headers.is_empty() {
             let entries = analyzer.read_symbol_entries(&header, &symbol_table_section_headers);
             // Assuming symbols are in the first string table section.
             // @TODO: What if symbol can be in the second or later string table sections?
-            let map = analyzer.create_symbol_map(&entries, &string_table_section_headers[0]);
+            let map = analyzer.create_symbol_map(&entries, string_table_section_headers[0]);
             for key in map.keys() {
                 self.symbol_map
                     .insert(key.to_string(), *map.get(key).unwrap());
@@ -202,10 +199,10 @@ impl Emulator {
             self.cpu.get_mut_mmu().init_memory(PROGRAM_MEMORY_CAPACITY);
         }
 
-        for i in 0..program_data_section_headers.len() {
-            let sh_addr = program_data_section_headers[i].sh_addr;
-            let sh_offset = program_data_section_headers[i].sh_offset as usize;
-            let sh_size = program_data_section_headers[i].sh_size as usize;
+        for header in &program_data_section_headers {
+            let sh_addr = header.sh_addr;
+            let sh_offset = header.sh_offset as usize;
+            let sh_size = header.sh_size as usize;
             if sh_addr >= 0x80000000 && sh_offset > 0 && sh_size > 0 {
                 for j in 0..sh_size {
                     self.cpu
@@ -236,21 +233,21 @@ impl Emulator {
         let mut symbol_table_section_headers = vec![];
         let mut string_table_section_headers = vec![];
 
-        for i in 0..section_headers.len() {
-            match section_headers[i].sh_type {
-                1 => program_data_section_headers.push(&section_headers[i]),
-                2 => symbol_table_section_headers.push(&section_headers[i]),
-                3 => string_table_section_headers.push(&section_headers[i]),
+        for header in &section_headers {
+            match header.sh_type {
+                1 => program_data_section_headers.push(header),
+                2 => symbol_table_section_headers.push(header),
+                3 => string_table_section_headers.push(header),
                 _ => {}
             };
         }
 
         // Creates symbol - virtual address mapping
-        if string_table_section_headers.len() > 0 {
+        if !string_table_section_headers.is_empty() {
             let entries = analyzer.read_symbol_entries(&header, &symbol_table_section_headers);
             // Assuming symbols are in the first string table section.
             // @TODO: What if symbol can be in the second or later string table sections?
-            let map = analyzer.create_symbol_map(&entries, &string_table_section_headers[0]);
+            let map = analyzer.create_symbol_map(&entries, string_table_section_headers[0]);
             for key in map.keys() {
                 self.symbol_map
                     .insert(key.to_string(), *map.get(key).unwrap());
@@ -315,9 +312,6 @@ impl Emulator {
     /// # Arguments
     /// * `s` Symbol strings
     pub fn get_address_of_symbol(&self, s: &String) -> Option<u64> {
-        match self.symbol_map.get(s) {
-            Some(address) => Some(*address),
-            None => None,
-        }
+        self.symbol_map.get(s).copied()
     }
 }

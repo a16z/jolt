@@ -852,7 +852,7 @@ where
     type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
-    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let mut openings = [
             &polynomials.bytecode.v_read_write[1],
@@ -889,7 +889,7 @@ where
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &JoltPolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -922,7 +922,7 @@ where
         )
     }
 
-    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &Vec<F>) {
+    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &[F]) {
         self.identity_poly_opening =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
     }
@@ -932,16 +932,16 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &JoltCommitments<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let openings = self
             .a_read_write_opening
             .into_iter()
-            .chain(self.v_read_opening.into_iter())
-            .chain(self.v_write_opening.into_iter())
-            .chain(self.t_read_opening.into_iter())
-            .chain(self.t_write_ram_opening.into_iter())
+            .chain(self.v_read_opening)
+            .chain(self.v_write_opening)
+            .chain(self.t_read_opening)
+            .chain(self.t_write_ram_opening)
             .collect::<Vec<_>>();
         opening_proof.verify(
             generators,
@@ -989,7 +989,7 @@ where
     type Preprocessing = ReadWriteMemoryPreprocessing;
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
-    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let (v_final, t_final) = rayon::join(
             || polynomials.read_write_memory.v_final.evaluate_at_chi(&chis),
@@ -1007,7 +1007,7 @@ where
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &JoltPolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -1016,7 +1016,7 @@ where
                 &polynomials.read_write_memory.v_final,
                 &polynomials.read_write_memory.t_final,
             ],
-            &opening_point,
+            opening_point,
             &[openings.v_final, openings.t_final],
             transcript,
         );
@@ -1027,7 +1027,7 @@ where
     fn compute_verifier_openings(
         &mut self,
         preprocessing: &Self::Preprocessing,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
     ) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
@@ -1064,13 +1064,13 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &JoltCommitments<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.v_t_opening_proof.verify(
             generators,
             opening_point,
-            &vec![self.v_final, self.t_final],
+            &[self.v_final, self.t_final],
             &[
                 &commitment.read_write_memory.v_final_commitment,
                 &commitment.read_write_memory.t_final_commitment,
@@ -1359,7 +1359,6 @@ where
         let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::new(r_eq.to_vec()).evals());
 
         let io_witness_range: Vec<_> = (0..polynomials.memory_size as u64)
-            .into_iter()
             .map(|i| {
                 if i >= program_io.memory_layout.input_start
                     && i < program_io.memory_layout.ram_witness_offset
@@ -1429,7 +1428,7 @@ where
 
     fn verify(
         proof: &Self,
-        preprocessing: &mut ReadWriteMemoryPreprocessing,
+        preprocessing: &ReadWriteMemoryPreprocessing,
         generators: &PedersenGenerators<G>,
         commitment: &MemoryCommitment<G>,
         transcript: &mut ProofTranscript,
@@ -1439,7 +1438,7 @@ where
         let (sumcheck_claim, r_sumcheck) =
             proof
                 .sumcheck_proof
-                .verify::<G>(F::zero(), proof.num_rounds, 3, transcript)?;
+                .verify(F::zero(), proof.num_rounds, 3, transcript)?;
 
         let eq_eval = EqPolynomial::new(r_eq.to_vec()).evaluate(&r_sumcheck);
 
@@ -1448,7 +1447,6 @@ where
         // TODO(moodlezoup): Compute openings without instantiating io_witness_range polynomial itself
         let memory_size = proof.num_rounds.pow2();
         let io_witness_range: Vec<_> = (0..memory_size as u64)
-            .into_iter()
             .map(|i| {
                 if i >= memory_layout.input_start && i < memory_layout.ram_witness_offset {
                     F::one()
@@ -1531,7 +1529,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self {
         let memory_checking_proof =
-            ReadWriteMemoryProof::prove_memory_checking(preprocessing, &polynomials, transcript);
+            ReadWriteMemoryProof::prove_memory_checking(preprocessing, polynomials, transcript);
 
         let output_proof = OutputSumcheckProof::prove_outputs(
             &polynomials.read_write_memory,
@@ -1555,7 +1553,7 @@ where
     pub fn verify(
         mut self,
         generators: &PedersenGenerators<G>,
-        preprocessing: &mut ReadWriteMemoryPreprocessing,
+        preprocessing: &ReadWriteMemoryPreprocessing,
         commitment: &JoltCommitments<G>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {

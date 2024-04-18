@@ -1,3 +1,9 @@
+#![allow(
+    clippy::len_without_is_empty,
+    clippy::type_complexity,
+    clippy::too_many_arguments
+)]
+
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
@@ -341,10 +347,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         drop(span);
 
         // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
-        let (pc_out, pc, aux) = synthesize_witnesses(&inputs, jolt_shape.num_internal);
+        let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
         let io_segments = vec![pc_out, pc];
-        let io_comms = HyraxCommitment::batch_commit(&io_segments, &generators);
-        let aux_comms = HyraxCommitment::batch_commit(&aux, &generators);
+        let io_comms = HyraxCommitment::batch_commit(&io_segments, generators);
+        let aux_comms = HyraxCommitment::batch_commit(&aux, generators);
 
         // Commit to R1CS specific items
         let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
@@ -429,7 +435,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         combined_commitments.extend(instruction_lookup_indices_commitments.iter());
 
         combined_commitments.push(
-            &jolt_commitments
+            jolt_commitments
                 .instruction_lookups
                 .trace_commitment
                 .last()
@@ -458,7 +464,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
             witness_segment_commitments,
             &self.key,
             &[],
-            &generators,
+            generators,
             transcript,
         )
     }

@@ -10,7 +10,7 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 
 #[derive(Debug, Clone)]
-pub struct GrandProductCircuit<F> {
+pub struct GrandProductCircuit<F: PrimeField> {
     left_vec: Vec<DensePolynomial<F>>,
     right_vec: Vec<DensePolynomial<F>>,
 }
@@ -114,18 +114,15 @@ pub struct LayerProofBatched<F: PrimeField> {
 
 #[allow(dead_code)]
 impl<F: PrimeField> LayerProofBatched<F> {
-    pub fn verify<G>(
+    pub fn verify(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
         transcript: &mut ProofTranscript,
-    ) -> (F, Vec<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (F, Vec<F>) {
         self.proof
-            .verify::<G>(claim, num_rounds, degree_bound, transcript)
+            .verify(claim, num_rounds, degree_bound, transcript)
             .unwrap()
     }
 }
@@ -306,14 +303,11 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
         )
     }
 
-    pub fn verify<G>(
+    pub fn verify(
         &self,
         claims_prod_vec: &Vec<F>,
         transcript: &mut ProofTranscript,
-    ) -> (Vec<F>, Vec<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Vec<F>, Vec<F>) {
         let mut rand: Vec<F> = Vec::new();
         let num_layers = self.proof.len();
 
@@ -328,8 +322,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
                 .map(|i| claims_to_verify[i] * coeff_vec[i])
                 .sum();
 
-            let (claim_last, rand_prod) =
-                self.proof[i].verify::<G>(claim, num_rounds, 3, transcript);
+            let (claim_last, rand_prod) = self.proof[i].verify(claim, num_rounds, 3, transcript);
 
             let claims_prod_left = &self.proof[i].claims_poly_A;
             let claims_prod_right = &self.proof[i].claims_poly_B;
@@ -426,7 +419,7 @@ mod grand_product_circuit_tests {
         let (proof, _) = BatchedGrandProductArgument::prove::<G1Projective>(batch, &mut transcript);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        proof.verify::<G1Projective>(&expected_eval, &mut transcript);
+        proof.verify(&expected_eval, &mut transcript);
     }
 
     #[test]
@@ -451,7 +444,7 @@ mod grand_product_circuit_tests {
         let expected_eval_read = Fr::from(10) * Fr::from(20);
         let expected_eval_write = Fr::from(100) * Fr::from(200);
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (verify_claims, verify_rand) = proof.verify::<G1Projective>(
+        let (verify_claims, verify_rand) = proof.verify(
             &vec![expected_eval_read, expected_eval_write],
             &mut transcript,
         );
@@ -506,8 +499,7 @@ mod grand_product_circuit_tests {
         let expected_evals = vec![expected_eval_read, expected_eval_write];
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (verify_claims, verify_rand) =
-            proof.verify::<G1Projective>(&expected_evals, &mut transcript);
+        let (verify_claims, verify_rand) = proof.verify(&expected_evals, &mut transcript);
 
         assert_eq!(prove_rand, verify_rand);
         assert_eq!(verify_claims.len(), 2);

@@ -196,7 +196,7 @@ where
             .chain(self.final_cts_read_timestamp.iter())
             .chain(self.final_cts_global_minus_read.iter())
             .collect();
-        let commitments = HyraxCommitment::batch_commit_polys(polys, &generators);
+        let commitments = HyraxCommitment::batch_commit_polys(polys, generators);
 
         Self::Commitment { commitments }
     }
@@ -223,20 +223,20 @@ where
 {
     type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
-    fn open(_polynomials: &RangeCheckPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
+    fn open(_polynomials: &RangeCheckPolynomials<F, G>, _opening_point: &[F]) -> Self {
         unimplemented!("Openings are computed in TimestampValidityProof::prove");
     }
 
     fn prove_openings(
         _polynomials: &RangeCheckPolynomials<F, G>,
-        _opening_point: &Vec<F>,
+        _opening_point: &[F],
         _openings: &RangeCheckOpenings<F, G>,
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         unimplemented!("Openings are proved in TimestampValidityProof::prove")
     }
 
-    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &Vec<F>) {
+    fn compute_verifier_openings(&mut self, _: &NoPreprocessing, opening_point: &[F]) {
         self.identity_poly_opening =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
     }
@@ -246,7 +246,7 @@ where
         _generators: &PedersenGenerators<G>,
         _opening_proof: &Self::Proof,
         _commitment: &RangeCheckCommitment<G>,
-        _opening_point: &Vec<F>,
+        _opening_point: &[F],
         _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         unimplemented!("Openings are verified in TimestampValidityProof::verify");
@@ -474,7 +474,6 @@ where
         let t_read_openings = openings.memory_t_read;
 
         (0..MEMORY_OPS_PER_INSTRUCTION)
-            .into_iter()
             .flat_map(|i| {
                 [
                     (
@@ -499,7 +498,6 @@ where
         let t_read_openings = openings.memory_t_read;
 
         (0..MEMORY_OPS_PER_INSTRUCTION)
-            .into_iter()
             .flat_map(|i| {
                 [
                     (
@@ -533,7 +531,6 @@ where
         openings: &Self::InitFinalOpenings,
     ) -> Vec<Self::MemoryTuple> {
         (0..MEMORY_OPS_PER_INSTRUCTION)
-            .into_iter()
             .flat_map(|i| {
                 [
                     (
@@ -576,7 +573,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
-            TimestampValidityProof::prove_grand_products(&range_check_polys, transcript);
+            TimestampValidityProof::prove_grand_products(range_check_polys, transcript);
 
         let polys_iter = range_check_polys
             .read_cts_read_timestamp
@@ -701,16 +698,16 @@ where
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let (grand_product_claims, r_grand_product) = self
             .batched_grand_product
-            .verify::<G>(&concatenated_hashes, transcript);
+            .verify(&concatenated_hashes, transcript);
 
         let openings: Vec<_> = self
             .openings
             .read_cts_read_timestamp
             .into_iter()
-            .chain(self.openings.read_cts_global_minus_read.into_iter())
-            .chain(self.openings.final_cts_read_timestamp.into_iter())
-            .chain(self.openings.final_cts_global_minus_read.into_iter())
-            .chain(self.openings.memory_t_read.into_iter())
+            .chain(self.openings.read_cts_global_minus_read)
+            .chain(self.openings.final_cts_read_timestamp)
+            .chain(self.openings.final_cts_global_minus_read)
+            .chain(self.openings.memory_t_read)
             .collect();
 
         let t_read_commitments = &memory_commitment.trace_commitments

@@ -44,7 +44,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRLInstruction<WORD_SIZE> {
         subtables.truncate(C);
         subtables.reverse();
 
-        let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
+        let indices = (0..C).map(SubtableIndices::from);
         subtables.into_iter().zip(indices).collect()
     }
 

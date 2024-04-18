@@ -102,7 +102,7 @@ pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
                 // Unrecognized instruction, or from a ReadOnlyData section
                 instructions.push(ELFInstruction {
                     address,
-                    opcode: RV32IM::from_str("UNIMPL"),
+                    opcode: RV32IM::UNIMPL,
                     raw: word,
                     rs1: None,
                     rs2: None,

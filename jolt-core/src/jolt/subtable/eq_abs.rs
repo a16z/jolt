@@ -32,7 +32,7 @@ impl<F: PrimeField> LassoSubtable<F> for EqAbsSubtable<F> {
             let concat_index_1 = idx | (idx << bits_per_operand);
             // we also set the bit where x == y except for their leading bit
             // e.g. 11010011 | 01010011 = 0
-            let concat_index_2 = idx | ((idx ^ (1 << bits_per_operand - 1)) << bits_per_operand);
+            let concat_index_2 = idx | ((idx ^ (1 << (bits_per_operand - 1))) << bits_per_operand);
             entries[concat_index_1] = F::one();
             entries[concat_index_2] = F::one();
         }

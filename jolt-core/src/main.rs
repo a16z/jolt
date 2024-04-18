@@ -112,7 +112,7 @@ fn trace(args: TraceArgs) {
         }
     }
 
-    let _subscriber = tracing_subscriber::registry().with(layers).init();
+    tracing_subscriber::registry().with(layers).init();
     for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
         span.to_owned().in_scope(|| {
             bench();

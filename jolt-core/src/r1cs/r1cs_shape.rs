@@ -74,6 +74,7 @@ impl<F: PrimeField> R1CSShape<F> {
         Ok(shape.pad())
     }
 
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "R1CSShape::multiply_vec")]
     pub fn multiply_vec(&self, z: &[F]) -> Result<(Vec<F>, Vec<F>, Vec<F>), SpartanError> {
         if z.len() != self.num_io + self.num_vars + 1 {

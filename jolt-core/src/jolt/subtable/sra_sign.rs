@@ -33,11 +33,9 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
 
             let x_sign = F::from_u64(((x >> sign_bit_index) & 1) as u64).unwrap();
 
-            let row = (0..(y % WORD_SIZE) as u32)
-                .into_iter()
-                .fold(F::zero(), |acc, i: u32| {
-                    acc + F::from_u64(1_u64 << (WORD_SIZE as u32 - 1 - i)).unwrap() * x_sign
-                });
+            let row = (0..(y % WORD_SIZE) as u32).fold(F::zero(), |acc, i: u32| {
+                acc + F::from_u64(1_u64 << (WORD_SIZE as u32 - 1 - i)).unwrap() * x_sign
+            });
 
             entries.push(row);
         }
@@ -61,7 +59,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
 
         // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
         for k in 0..std::cmp::min(WORD_SIZE, 1 << b) {
-            let k_bits = (k as usize)
+            let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
                 .map(|bit| if *bit { F::one() } else { F::zero() })
@@ -74,7 +72,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable
                     + (F::one() - k_bits[log_WORD_SIZE - 1 - i]) * (F::one() - y[b - 1 - i]);
             }
 
-            let x_sign_upper = (0..k).into_iter().fold(F::zero(), |acc, i| {
+            let x_sign_upper = (0..k).fold(F::zero(), |acc, i| {
                 acc + F::from_u64(1_u64 << (WORD_SIZE - 1 - i)).unwrap() * x_sign
             });
 

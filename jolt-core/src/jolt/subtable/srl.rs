@@ -58,7 +58,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
 
         // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
         for k in 0..std::cmp::min(WORD_SIZE, 1 << b) {
-            let k_bits = (k as usize)
+            let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
                 .map(|bit| if *bit { F::one() } else { F::zero() })
