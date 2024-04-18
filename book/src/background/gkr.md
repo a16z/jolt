@@ -15,7 +15,7 @@ $$
 where
 
 $$
-f_i(z, p, \omega_1, \omega_2) = \widetilde{\text{eq}}_{s_i}(z, p) \cdot \widetilde{\text{add}}_i(p, \omega_1, \omega_2)(\widetilde{V}_{i+1}(\omega_1) + \widetilde{V}_{i+1}(\omega_2)) + \widetilde{\text{mult}}_i(p, \omega_1, \omega_2)\widetilde{V}_{i+1}(\omega_1) \cdot \widetilde{V}_{i+1}(\omega_2)
+f_i(z, p, \omega_1, \omega_2) = \widetilde{\text{eq}}_{s_i}(z, p) \cdot ( \widetilde{\text{add}}_i(p, \omega_1, \omega_2)(\widetilde{V}_{i+1}(\omega_1) + \widetilde{V}_{i+1}(\omega_2)) + \widetilde{\text{mult}}_i(p, \omega_1, \omega_2)\widetilde{V}_{i+1}(\omega_1) \cdot \widetilde{V}_{i+1}(\omega_2))
 $$
 $$
 \widetilde{\text{eq}}_{s_i}(z, p) = \prod_{j=1}^{s_i} ((1-z_j)(1-p_j) + z_j p_j).
