@@ -343,6 +343,7 @@ impl MacroBuilder {
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         if self.std {
             quote! {
+                #[cfg(feature = "guest")]
                 #[no_mangle]
                 pub extern "C" fn jolt_panic() {
                     unsafe {
