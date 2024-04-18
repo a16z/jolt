@@ -3,9 +3,9 @@ GKR is a SNARK protocol for small-depth circuits of multiplication and addition 
 
 Specifically, $\widetilde{V}_i(j)$ evaluates to the value of the circuit at the $i$-th layer in the $j$-th gate. For example $\widetilde{V}_1(0)$ corresponds to the output gate.
 
-$\widetilde{\text{add}}_i(j)$ evaluates to 1 if the $j$-th gate of the $i$-th layer is an addition gate.
+$\widetilde{\text{add}}_i(j, a, b)$ evaluates to 1 if the $j$-th gate of the $i$-th layer is an addition gate whose inputs are the $a$'th and $b$'th gates at the preceding layer. 
 
-$\widetilde{\text{mult}}_i(j)$ evaluates to 1 if the $j$-th gate of the $i$-th layer is a multiplication gate.
+$\widetilde{\text{mult}}_i(j, a, b)$ evaluates to 1 if the $j$-th gate of the $i$-th layer is a multiplication gate whose inputs are the $a$'th and $b$'th gates at the preceding layer. 
 
 The sumcheck protocol is applied to the following:
 $$
