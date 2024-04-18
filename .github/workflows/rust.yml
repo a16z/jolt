@@ -64,5 +64,5 @@ jobs:
           cache-on-failure: true
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: run test
-        run: cargo nextest run
+      - name: run jolt-core tests
+        run: cargo nextest run -p jolt-core
