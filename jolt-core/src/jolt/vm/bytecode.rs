@@ -286,7 +286,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::validate_bytecode")]
-    pub fn validate_bytecode(bytecode: &Vec<BytecodeRow>, trace: &Vec<BytecodeRow>) {
+    pub fn validate_bytecode(bytecode: &[BytecodeRow], trace: &[BytecodeRow]) {
         let mut bytecode_map: HashMap<usize, &BytecodeRow> = HashMap::new();
 
         for bytecode_row in bytecode.iter() {
@@ -356,9 +356,9 @@ where
             &self.v_read_write[3],
             &self.v_read_write[4],
         ];
-        let trace_commitments = HyraxCommitment::batch_commit_polys(trace_polys, &generators);
+        let trace_commitments = HyraxCommitment::batch_commit_polys(trace_polys, generators);
 
-        let t_final_commitment = HyraxCommitment::commit(&self.t_final, &generators);
+        let t_final_commitment = HyraxCommitment::commit(&self.t_final, generators);
 
         Self::Commitment {
             trace_commitments,
@@ -576,7 +576,7 @@ where
     type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
@@ -594,14 +594,12 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BytecodePolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let mut combined_openings: Vec<F> = vec![
-            openings.a_read_write_opening.clone(),
-            openings.t_read_opening.clone(),
-        ];
+        let mut combined_openings: Vec<F> =
+            vec![openings.a_read_write_opening, openings.t_read_opening];
         combined_openings.extend(openings.v_read_write_openings.iter());
 
         BatchedHyraxOpeningProof::prove(
@@ -614,7 +612,7 @@ where
                 &polynomials.v_read_write[3],
                 &polynomials.v_read_write[4],
             ],
-            &opening_point,
+            opening_point,
             &combined_openings,
             transcript,
         )
@@ -625,13 +623,10 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        let mut combined_openings: Vec<F> = vec![
-            self.a_read_write_opening.clone(),
-            self.t_read_opening.clone(),
-        ];
+        let mut combined_openings: Vec<F> = vec![self.a_read_write_opening, self.t_read_opening];
         combined_openings.extend(self.v_read_write_openings.iter());
 
         opening_proof.verify(
@@ -666,7 +661,7 @@ where
     type Proof = HyraxOpeningProof<1, G>;
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &[F]) -> Self {
         Self {
             a_init_final: None,
             v_init_final: None,
@@ -677,17 +672,17 @@ where
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &BytecodePolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         _openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        HyraxOpeningProof::prove(&polynomials.t_final, &opening_point, transcript)
+        HyraxOpeningProof::prove(&polynomials.t_final, opening_point, transcript)
     }
 
     fn compute_verifier_openings(
         &mut self,
         preprocessing: &BytecodePreprocessing<F>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
     ) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
@@ -709,7 +704,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(

@@ -57,13 +57,13 @@ where
         let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, &generators);
+        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, generators);
         let E_commitment =
-            HyraxCommitment::batch_commit_polys(self.E_polys.iter().collect(), &generators);
+            HyraxCommitment::batch_commit_polys(self.E_polys.iter().collect(), generators);
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
-            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
+            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), generators);
 
         Self::Commitment {
             dim_read_commitment,
@@ -83,7 +83,7 @@ where
     type Proof = BatchedHyraxOpeningProof<16, G>;
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &SurgePolys<F, G>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .E_polys
@@ -95,7 +95,7 @@ where
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &SurgePolys<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         E_poly_openings: &Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -112,13 +112,13 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
             generators,
             opening_point,
-            &self,
+            self,
             &commitment.E_commitment.iter().collect::<Vec<_>>(),
             transcript,
         )
@@ -143,7 +143,7 @@ where
     type Proof = BatchedHyraxOpeningProof<16, G>;
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &SurgePolys<F, G>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         Self {
@@ -156,7 +156,7 @@ where
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &SurgePolys<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -186,7 +186,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let read_write_openings: Vec<F> = [
@@ -232,7 +232,7 @@ where
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &SurgePolys<F, G>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let final_openings = polynomials
             .final_cts
@@ -250,7 +250,7 @@ where
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &SurgePolys<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -262,7 +262,7 @@ where
         )
     }
 
-    fn compute_verifier_openings(&mut self, _: &Self::Preprocessing, opening_point: &Vec<F>) {
+    fn compute_verifier_openings(&mut self, _: &Self::Preprocessing, opening_point: &[F]) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
         self.v_init_final = Some(
@@ -279,7 +279,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
@@ -567,7 +567,7 @@ where
 
         let num_lookups = ops.len().next_power_of_two();
         let polynomials = Self::construct_polys(preprocessing, &ops);
-        let commitment = polynomials.commit(&generators);
+        let commitment = polynomials.commit(generators);
 
         let num_rounds = num_lookups.log_2();
         let instruction = Instruction::default();
@@ -616,7 +616,7 @@ where
         };
 
         let memory_checking =
-            SurgeProof::prove_memory_checking(&preprocessing, &polynomials, transcript);
+            SurgeProof::prove_memory_checking(preprocessing, &polynomials, transcript);
 
         SurgeProof {
             commitment,
@@ -642,7 +642,7 @@ where
             &proof.primary_sumcheck.claimed_evaluation,
         );
         let primary_sumcheck_poly_degree = instruction.g_poly_degree(C) + 1;
-        let (claim_last, r_z) = proof.primary_sumcheck.sumcheck_proof.verify::<G>(
+        let (claim_last, r_z) = proof.primary_sumcheck.sumcheck_proof.verify(
             proof.primary_sumcheck.claimed_evaluation,
             proof.primary_sumcheck.num_rounds,
             primary_sumcheck_poly_degree,

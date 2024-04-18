@@ -61,7 +61,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
 
         // min with 1 << b is included for test cases with subtables of bit-length smaller than 6
         for k in 0..min(WORD_SIZE, 1 << b) {
-            let k_bits = (k as usize)
+            let k_bits = k
                 .get_bits(log_WORD_SIZE)
                 .iter()
                 .map(|bit| F::from_u64(*bit as u64).unwrap())
@@ -80,8 +80,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubta
                 0
             };
 
-            let m_prime = b - (m as usize);
-
+            let m_prime = b - m;
             let shift_x_by_k = (0..m_prime)
                 .enumerate()
                 .map(|(j, _)| F::from_u64(1_u64 << (j + k)).unwrap() * x[b - 1 - j])

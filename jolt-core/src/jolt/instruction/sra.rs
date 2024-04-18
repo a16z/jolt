@@ -43,7 +43,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SRAInstruction<WORD_SIZE> {
         ];
         subtables.truncate(C);
         subtables.reverse();
-        let indices = (0..C).into_iter().map(|i| SubtableIndices::from(i));
+        let indices = (0..C).map(SubtableIndices::from);
         let mut subtables_and_indices: Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> =
             subtables.into_iter().zip(indices).collect();
 

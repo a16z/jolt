@@ -199,7 +199,6 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
         if (homomorphically_derived_commitment == product_commitment) && (dot_product == *opening) {
             Ok(())
         } else {
-            assert!(false, "hyrax verify error");
             Err(ProofVerifyError::InternalError)
         }
     }
@@ -246,7 +245,7 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         transcript.append_protocol_name(Self::protocol_name());
 
         // append the claimed evaluations to transcript
-        transcript.append_scalars(b"evals_ops_val", &openings);
+        transcript.append_scalars(b"evals_ops_val", openings);
 
         let rlc_coefficients: Vec<_> =
             transcript.challenge_vector(b"challenge_combine_n_to_one", polynomials.len());
@@ -314,7 +313,7 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
         transcript.append_protocol_name(Self::protocol_name());
 
         // append the claimed evaluations to transcript
-        transcript.append_scalars(b"evals_ops_val", &openings);
+        transcript.append_scalars(b"evals_ops_val", openings);
 
         let rlc_coefficients: Vec<_> =
             transcript.challenge_vector(b"challenge_combine_n_to_one", openings.len());

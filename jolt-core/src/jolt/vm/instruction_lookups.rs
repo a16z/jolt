@@ -111,10 +111,10 @@ where
             .chain(self.instruction_flag_polys.iter())
             .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let trace_commitment = HyraxCommitment::batch_commit_polys(trace_polys, &generators);
+        let trace_commitment = HyraxCommitment::batch_commit_polys(trace_polys, generators);
 
         let final_commitment =
-            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), &generators);
+            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), generators);
 
         Self::Commitment {
             trace_commitment,
@@ -144,14 +144,14 @@ where
 {
     type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
-    fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &Vec<F>) -> Self {
+    fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &[F]) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -181,7 +181,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let mut primary_sumcheck_openings: Vec<F> = [
@@ -229,7 +229,7 @@ where
     type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
@@ -265,7 +265,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -298,7 +298,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let read_write_openings: Vec<F> = [
@@ -346,7 +346,7 @@ where
     type Proof = BatchedHyraxOpeningProof<64, G>;
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &Vec<F>) -> Self {
+    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let final_openings = polynomials
@@ -365,7 +365,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
         polynomials: &InstructionPolynomials<F, G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
@@ -380,7 +380,7 @@ where
     fn compute_verifier_openings(
         &mut self,
         _preprocessing: &Self::Preprocessing,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
     ) {
         self.a_init_final =
             Some(IdentityPolynomial::new(opening_point.len()).evaluate(opening_point));
@@ -396,7 +396,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<G>,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         opening_proof.verify(
@@ -627,7 +627,7 @@ where
                 // Split while cloning to save on future cloning in GrandProductCircuit
                 let memory_index = i / 2;
                 let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
-                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(&leaves_poly, &flag);
+                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(leaves_poly, flag);
                 GrandProductCircuit::new_split(
                     DensePolynomial::new(toggled_leaves_l),
                     DensePolynomial::new(toggled_leaves_r),
@@ -874,7 +874,6 @@ where
         let (primary_sumcheck_proof, r_primary_sumcheck, flag_evals, E_evals, outputs_eval) =
             Self::prove_primary_sumcheck(
                 preprocessing,
-                &F::zero(),
                 num_rounds,
                 &mut eq_poly,
                 &polynomials.E_polys,
@@ -891,7 +890,7 @@ where
             lookup_outputs_opening: outputs_eval,
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
-            &polynomials,
+            polynomials,
             &r_primary_sumcheck,
             &sumcheck_openings,
             transcript,
@@ -904,7 +903,7 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = Self::prove_memory_checking(preprocessing, &polynomials, transcript);
+        let memory_checking = Self::prove_memory_checking(preprocessing, polynomials, transcript);
 
         InstructionLookupsProof {
             _instructions: PhantomData,
@@ -928,7 +927,7 @@ where
         );
 
         // TODO: compartmentalize all primary sumcheck logic
-        let (claim_last, r_primary_sumcheck) = proof.primary_sumcheck.sumcheck_proof.verify::<G>(
+        let (claim_last, r_primary_sumcheck) = proof.primary_sumcheck.sumcheck_proof.verify(
             F::zero(),
             proof.primary_sumcheck.num_rounds,
             Self::sumcheck_poly_degree(),
@@ -951,7 +950,7 @@ where
         proof.primary_sumcheck.openings.verify_openings(
             generators,
             &proof.primary_sumcheck.opening_proof,
-            &commitment,
+            commitment,
             &r_primary_sumcheck,
             transcript,
         )?;
@@ -960,7 +959,7 @@ where
             preprocessing,
             generators,
             proof.memory_checking,
-            &commitment,
+            commitment,
             transcript,
         )?;
 
@@ -992,7 +991,7 @@ where
                 for (j, op) in ops.iter().enumerate() {
                     if let Some(op) = op {
                         let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(&op)];
+                            [InstructionSet::enum_index(op)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = access_sequence[j];
                             debug_assert!(memory_address < M);
@@ -1050,7 +1049,7 @@ where
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
 
-        let mut lookup_outputs = Self::compute_lookup_outputs(&ops);
+        let mut lookup_outputs = Self::compute_lookup_outputs(ops);
         lookup_outputs.resize(m, F::zero());
         let lookup_outputs = DensePolynomial::new(lookup_outputs);
 
@@ -1081,10 +1080,10 @@ where
     /// - `flag_polys`: Each of the flag selector polynomials describing which instruction is used at a given step of the CPU.
     /// - `degree`: Degree of the inner sumcheck polynomial. Corresponds to number of evaluation points per round.
     /// - `transcript`: Fiat-shamir transcript.
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove_primary_sumcheck")]
     fn prove_primary_sumcheck(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        _claim: &F,
         num_rounds: usize,
         eq_poly: &mut DensePolynomial<F>,
         memory_polys: &Vec<DensePolynomial<F>>,
@@ -1109,10 +1108,10 @@ where
 
         let round_uni_poly = Self::primary_sumcheck_inner_loop(
             preprocessing,
-            &eq_poly,
-            &flag_polys,
-            &memory_polys,
-            &lookup_outputs_poly,
+            eq_poly,
+            flag_polys,
+            memory_polys,
+            lookup_outputs_poly,
             num_eval_points,
         );
         compressed_polys.push(round_uni_poly.compress());
@@ -1139,10 +1138,10 @@ where
         for _round in 1..num_rounds {
             let round_uni_poly = Self::primary_sumcheck_inner_loop(
                 preprocessing,
-                &eq_poly,
+                eq_poly,
                 &flag_polys_updated,
                 &memory_polys_updated,
-                &lookup_outputs_poly,
+                lookup_outputs_poly,
                 num_eval_points,
             );
             compressed_polys.push(round_uni_poly.compress());
@@ -1190,8 +1189,8 @@ where
     fn primary_sumcheck_inner_loop(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         eq_poly: &DensePolynomial<F>,
-        flag_polys: &Vec<DensePolynomial<F>>,
-        memory_polys: &Vec<DensePolynomial<F>>,
+        flag_polys: &[DensePolynomial<F>],
+        memory_polys: &[DensePolynomial<F>],
         lookup_outputs_poly: &DensePolynomial<F>,
         num_eval_points: usize,
     ) -> UniPoly<F> {
@@ -1303,8 +1302,7 @@ where
                 },
             );
 
-        let round_uni_poly = UniPoly::from_evals(&evaluations);
-        round_uni_poly
+        UniPoly::from_evals(&evaluations)
     }
 
     fn update_primary_sumcheck_transcript(
@@ -1312,8 +1310,8 @@ where
         transcript: &mut ProofTranscript,
     ) -> F {
         round_uni_poly.append_to_transcript(b"poly", transcript);
-        let r_j = transcript.challenge_scalar::<F>(b"challenge_nextround");
-        r_j
+
+        transcript.challenge_scalar::<F>(b"challenge_nextround")
     }
 
     /// Combines the subtable values given by `vals` and the flag values given by `flags`.
@@ -1345,7 +1343,7 @@ where
     /// accesses the memory, it must be executing exactly one of those instructions.
     fn memory_flags(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        instruction_flags: &Vec<F>,
+        instruction_flags: &[F],
     ) -> Vec<F> {
         let mut memory_flags = vec![F::zero(); preprocessing.num_memories];
         for instruction_index in 0..Self::NUM_INSTRUCTIONS {
@@ -1362,10 +1360,11 @@ where
     #[tracing::instrument(skip_all)]
     fn memory_flag_polys(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        instruction_flag_bitvectors: &Vec<Vec<u64>>,
+        instruction_flag_bitvectors: &[Vec<u64>],
     ) -> Vec<DensePolynomial<F>> {
         let m = instruction_flag_bitvectors[0].len();
-        let memory_flag_polys = (0..preprocessing.num_memories)
+
+        (0..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
                 let mut memory_flag_bitvector = vec![0u64; m];
@@ -1383,8 +1382,7 @@ where
                 }
                 DensePolynomial::from_u64(&memory_flag_bitvector)
             })
-            .collect();
-        memory_flag_polys
+            .collect()
     }
 
     /// Returns the sumcheck polynomial degree for the "primary" sumcheck. Since the primary sumcheck expression

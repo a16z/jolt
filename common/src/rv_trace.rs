@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
@@ -28,7 +30,7 @@ impl MemoryOp {
 
 fn sum_u64_i32(a: u64, b: i32) -> u64 {
     if b.is_negative() {
-        let abs_b = b.abs() as u64;
+        let abs_b = b.unsigned_abs() as u64;
         if a < abs_b {
             panic!("overflow")
         }
@@ -39,34 +41,34 @@ fn sum_u64_i32(a: u64, b: i32) -> u64 {
     }
 }
 
-impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
-    fn into(self) -> [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
-        let instruction_type = self.instruction.opcode.instruction_type();
+impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
+    fn from(val: &RVTraceRow) -> Self {
+        let instruction_type = val.instruction.opcode.instruction_type();
 
         let rs1_read = || {
             MemoryOp::Read(
-                self.instruction.rs1.unwrap(),
-                self.register_state.rs1_val.unwrap(),
+                val.instruction.rs1.unwrap(),
+                val.register_state.rs1_val.unwrap(),
             )
         };
         let rs2_read = || {
             MemoryOp::Read(
-                self.instruction.rs2.unwrap(),
-                self.register_state.rs2_val.unwrap(),
+                val.instruction.rs2.unwrap(),
+                val.register_state.rs2_val.unwrap(),
             )
         };
         let rd_write = || {
             MemoryOp::Write(
-                self.instruction.rd.unwrap(),
-                self.register_state.rd_post_val.unwrap(),
+                val.instruction.rd.unwrap(),
+                val.register_state.rd_post_val.unwrap(),
             )
         };
 
-        let ram_byte_read = |index: usize| match self.memory_state {
+        let ram_byte_read = |index: usize| match val.memory_state {
             Some(MemoryState::Read {
                 address: _,
                 value: _,
-            }) => (self.register_state.rd_post_val.unwrap() >> (index * 8)) as u8,
+            }) => (val.register_state.rd_post_val.unwrap() >> (index * 8)) as u8,
             Some(MemoryState::Write {
                 address: _,
                 pre_value,
@@ -74,7 +76,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
             }) => (pre_value >> (index * 8)) as u8,
             None => panic!("Memory state not found"),
         };
-        let ram_byte_written = |index: usize| match self.memory_state {
+        let ram_byte_written = |index: usize| match val.memory_state {
             Some(MemoryState::Read {
                 address: _,
                 value: _,
@@ -88,8 +90,8 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
         };
 
         let rs1_offset = || -> u64 {
-            let rs1_val = self.register_state.rs1_val.unwrap();
-            let imm = self.instruction.imm.unwrap();
+            let rs1_val = val.register_state.rs1_val.unwrap();
+            let imm = val.instruction.imm.unwrap();
             sum_u64_i32(rs1_val, imm as i32)
         };
 
@@ -123,7 +125,7 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
                 MemoryOp::noop_read(),
                 MemoryOp::noop_read(),
             ],
-            RV32InstructionFormat::I => match self.instruction.opcode {
+            RV32InstructionFormat::I => match val.instruction.opcode {
                 RV32IM::ADDI
                 | RV32IM::SLLI
                 | RV32IM::SRLI
@@ -186,9 +188,9 @@ impl Into<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> for &RVTraceRow {
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                 ],
-                _ => unreachable!("{self:?}"),
+                _ => unreachable!("{val:?}"),
             },
-            RV32InstructionFormat::S => match self.instruction.opcode {
+            RV32InstructionFormat::S => match val.instruction.opcode {
                 RV32IM::SB => [
                     rs1_read(),
                     rs2_read(),
@@ -269,12 +271,13 @@ impl ELFInstruction {
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
-        flags[0] = match self.opcode {
-            RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC => true,
-            _ => false,
-        };
+        flags[0] = matches!(
+            self.opcode,
+            RV32IM::JAL | RV32IM::LUI | RV32IM::AUIPC,
+        );
 
-        flags[1] = match self.opcode {
+        flags[1] = matches!(
+            self.opcode,
             RV32IM::ADDI
             | RV32IM::XORI
             | RV32IM::ORI
@@ -286,34 +289,32 @@ impl ELFInstruction {
             | RV32IM::SLTIU
             | RV32IM::AUIPC
             | RV32IM::JAL
-            | RV32IM::JALR => true,
-            _ => false,
-        };
+            | RV32IM::JALR,
+        );
 
-        flags[2] = match self.opcode {
-            RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU => true,
-            _ => false,
-        };
+        flags[2] = matches!(
+            self.opcode,
+            RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU,
+        );
 
-        flags[3] = match self.opcode {
-            RV32IM::SB | RV32IM::SH | RV32IM::SW => true,
-            _ => false,
-        };
+        flags[3] = matches!(
+            self.opcode,
+            RV32IM::SB | RV32IM::SH | RV32IM::SW,
+        );
 
-        flags[4] = match self.opcode {
-            RV32IM::JAL | RV32IM::JALR => true,
-            _ => false,
-        };
+        flags[4] = matches!(
+            self.opcode,
+            RV32IM::JAL | RV32IM::JALR,
+        );
 
-        flags[5] = match self.opcode {
-            RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU => {
-                true
-            }
-            _ => false,
-        };
+        flags[5] = matches!(
+            self.opcode,
+            RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
+        );
 
         // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
-        flags[6] = match self.opcode {
+        flags[6] = !matches!(
+            self.opcode,
             RV32IM::SB
             | RV32IM::SH
             | RV32IM::SW
@@ -325,17 +326,14 @@ impl ELFInstruction {
             | RV32IM::BGEU
             | RV32IM::JAL
             | RV32IM::JALR
-            | RV32IM::LUI => false,
-            _ => true,
-        };
+            | RV32IM::LUI,
+        );
 
         let mask = 1u32 << 31;
-        flags[7] = match self.imm {
-            Some(imm) if imm & mask == mask => true,
-            _ => false,
-        };
+        flags[7] = matches!(self.imm, Some(imm) if imm & mask == mask);
 
-        flags[8] = match self.opcode {
+        flags[8] = matches!(
+            self.opcode,
             RV32IM::XOR
             | RV32IM::XORI
             | RV32IM::OR
@@ -357,9 +355,8 @@ impl ELFInstruction {
             | RV32IM::BLT
             | RV32IM::BGE
             | RV32IM::BLTU
-            | RV32IM::BGEU => true,
-            _ => false,
-        };
+            | RV32IM::BGEU,
+        );
 
         flags
     }
@@ -456,59 +453,61 @@ pub enum RV32IM {
     UNIMPL,
 }
 
-impl RV32IM {
-    pub fn from_str(s: &str) -> Self {
+impl FromStr for RV32IM {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<RV32IM, String> {
         match s {
-            "ADD" => Self::ADD,
-            "SUB" => Self::SUB,
-            "XOR" => Self::XOR,
-            "OR" => Self::OR,
-            "AND" => Self::AND,
-            "SLL" => Self::SLL,
-            "SRL" => Self::SRL,
-            "SRA" => Self::SRA,
-            "SLT" => Self::SLT,
-            "SLTU" => Self::SLTU,
-            "ADDI" => Self::ADDI,
-            "XORI" => Self::XORI,
-            "ORI" => Self::ORI,
-            "ANDI" => Self::ANDI,
-            "SLLI" => Self::SLLI,
-            "SRLI" => Self::SRLI,
-            "SRAI" => Self::SRAI,
-            "SLTI" => Self::SLTI,
-            "SLTIU" => Self::SLTIU,
-            "LB" => Self::LB,
-            "LH" => Self::LH,
-            "LW" => Self::LW,
-            "LBU" => Self::LBU,
-            "LHU" => Self::LHU,
-            "SB" => Self::SB,
-            "SH" => Self::SH,
-            "SW" => Self::SW,
-            "BEQ" => Self::BEQ,
-            "BNE" => Self::BNE,
-            "BLT" => Self::BLT,
-            "BGE" => Self::BGE,
-            "BLTU" => Self::BLTU,
-            "BGEU" => Self::BGEU,
-            "JAL" => Self::JAL,
-            "JALR" => Self::JALR,
-            "LUI" => Self::LUI,
-            "AUIPC" => Self::AUIPC,
-            "ECALL" => Self::ECALL,
-            "EBREAK" => Self::EBREAK,
-            "MUL" => Self::MUL,
-            "MULH" => Self::MULH,
-            "MULSU" => Self::MULSU,
-            "MULU" => Self::MULU,
-            "DIV" => Self::DIV,
-            "DIVU" => Self::DIVU,
-            "REM" => Self::REM,
-            "REMU" => Self::REMU,
-            "FENCE" => Self::FENCE,
-            "UNIMPL" => Self::UNIMPL,
-            _ => panic!("Could not match instruction to RV32IM set."),
+            "ADD" => Ok(Self::ADD),
+            "SUB" => Ok(Self::SUB),
+            "XOR" => Ok(Self::XOR),
+            "OR" => Ok(Self::OR),
+            "AND" => Ok(Self::AND),
+            "SLL" => Ok(Self::SLL),
+            "SRL" => Ok(Self::SRL),
+            "SRA" => Ok(Self::SRA),
+            "SLT" => Ok(Self::SLT),
+            "SLTU" => Ok(Self::SLTU),
+            "ADDI" => Ok(Self::ADDI),
+            "XORI" => Ok(Self::XORI),
+            "ORI" => Ok(Self::ORI),
+            "ANDI" => Ok(Self::ANDI),
+            "SLLI" => Ok(Self::SLLI),
+            "SRLI" => Ok(Self::SRLI),
+            "SRAI" => Ok(Self::SRAI),
+            "SLTI" => Ok(Self::SLTI),
+            "SLTIU" => Ok(Self::SLTIU),
+            "LB" => Ok(Self::LB),
+            "LH" => Ok(Self::LH),
+            "LW" => Ok(Self::LW),
+            "LBU" => Ok(Self::LBU),
+            "LHU" => Ok(Self::LHU),
+            "SB" => Ok(Self::SB),
+            "SH" => Ok(Self::SH),
+            "SW" => Ok(Self::SW),
+            "BEQ" => Ok(Self::BEQ),
+            "BNE" => Ok(Self::BNE),
+            "BLT" => Ok(Self::BLT),
+            "BGE" => Ok(Self::BGE),
+            "BLTU" => Ok(Self::BLTU),
+            "BGEU" => Ok(Self::BGEU),
+            "JAL" => Ok(Self::JAL),
+            "JALR" => Ok(Self::JALR),
+            "LUI" => Ok(Self::LUI),
+            "AUIPC" => Ok(Self::AUIPC),
+            "ECALL" => Ok(Self::ECALL),
+            "EBREAK" => Ok(Self::EBREAK),
+            "MUL" => Ok(Self::MUL),
+            "MULH" => Ok(Self::MULH),
+            "MULSU" => Ok(Self::MULSU),
+            "MULU" => Ok(Self::MULU),
+            "DIV" => Ok(Self::DIV),
+            "DIVU" => Ok(Self::DIVU),
+            "REM" => Ok(Self::REM),
+            "REMU" => Ok(Self::REMU),
+            "FENCE" => Ok(Self::FENCE),
+            "UNIMPL" => Ok(Self::UNIMPL),
+            _ => Err("Could not match instruction to RV32IM set.".to_string()),
         }
     }
 }

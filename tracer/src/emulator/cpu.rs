@@ -1,7 +1,10 @@
+#![allow(clippy::useless_format, clippy::type_complexity)]
+
 extern crate fnv;
 
 use std::convert::TryInto;
 use std::rc::Rc;
+use std::str::FromStr;
 
 use crate::trace::Tracer;
 use common::rv_trace::*;
@@ -189,8 +192,8 @@ fn _get_trap_type_name(trap_type: &TrapType) -> &'static str {
 
 fn get_trap_cause(trap: &Trap, xlen: &Xlen) -> u64 {
     let interrupt_bit = match xlen {
-        Xlen::Bit32 => 0x80000000 as u64,
-        Xlen::Bit64 => 0x8000000000000000 as u64,
+        Xlen::Bit32 => 0x80000000_u64,
+        Xlen::Bit64 => 0x8000000000000000_u64,
     };
     match trap.trap_type {
         TrapType::InstructionAddressMisaligned => 0,
@@ -333,17 +336,17 @@ impl Cpu {
                 // setup trace
                 let trace_inst = inst.trace.unwrap()(&inst, &self.xlen, word, instruction_address);
                 self.tracer.start_instruction(trace_inst);
-                self.tracer.capture_pre_state(self.x.clone(), &self.xlen);
+                self.tracer.capture_pre_state(self.x, &self.xlen);
 
                 // execute
                 let result = (inst.operation)(self, word, instruction_address);
                 self.x[0] = 0; // hardwired zero
 
                 // complete trace
-                self.tracer.capture_post_state(self.x.clone(), &self.xlen);
+                self.tracer.capture_post_state(self.x, &self.xlen);
                 self.tracer.end_instruction();
 
-                return result;
+                result
             }
             Err(()) => {
                 panic!(
@@ -351,7 +354,7 @@ impl Cpu {
                     instruction_address, original_word
                 );
             }
-        };
+        }
     }
 
     /// Decodes a word instruction data and returns a reference to
@@ -360,7 +363,7 @@ impl Cpu {
     /// The result will be stored to cache.
     fn decode(&mut self, word: u32) -> Result<&Instruction, ()> {
         match self.decode_cache.get(word) {
-            Some(index) => return Ok(&INSTRUCTIONS[index]),
+            Some(index) => Ok(&INSTRUCTIONS[index]),
             None => match self.decode_and_get_instruction_index(word) {
                 Ok(index) => {
                     self.decode_cache.insert(word, index);
@@ -388,121 +391,119 @@ impl Cpu {
     /// # Arguments
     /// * `word` word instruction data decoded
     fn decode_and_get_instruction_index(&self, word: u32) -> Result<usize, ()> {
-        for i in 0..INSTRUCTION_NUM {
-            let inst = &INSTRUCTIONS[i];
+        for (i, inst) in INSTRUCTIONS.iter().enumerate().take(INSTRUCTION_NUM) {
             if (word & inst.mask) == inst.data {
                 return Ok(i);
             }
         }
-        return Err(());
+        Err(())
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
         // @TODO: Optimize
         let minterrupt = self.read_csr_raw(CSR_MIP_ADDRESS) & self.read_csr_raw(CSR_MIE_ADDRESS);
 
-        if (minterrupt & MIP_MEIP) != 0 {
-            if self.handle_trap(
+        if (minterrupt & MIP_MEIP) != 0
+            && self.handle_trap(
                 Trap {
                     trap_type: TrapType::MachineExternalInterrupt,
                     value: self.pc, // dummy
                 },
                 instruction_address,
                 true,
-            ) {
-                // Who should clear mip bit?
-                self.write_csr_raw(
-                    CSR_MIP_ADDRESS,
-                    self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MEIP,
-                );
-                self.wfi = false;
-                return;
-            }
+            )
+        {
+            // Who should clear mip bit?
+            self.write_csr_raw(
+                CSR_MIP_ADDRESS,
+                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MEIP,
+            );
+            self.wfi = false;
+            return;
         }
-        if (minterrupt & MIP_MSIP) != 0 {
-            if self.handle_trap(
+        if (minterrupt & MIP_MSIP) != 0
+            && self.handle_trap(
                 Trap {
                     trap_type: TrapType::MachineSoftwareInterrupt,
                     value: self.pc, // dummy
                 },
                 instruction_address,
                 true,
-            ) {
-                self.write_csr_raw(
-                    CSR_MIP_ADDRESS,
-                    self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MSIP,
-                );
-                self.wfi = false;
-                return;
-            }
+            )
+        {
+            self.write_csr_raw(
+                CSR_MIP_ADDRESS,
+                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MSIP,
+            );
+            self.wfi = false;
+            return;
         }
-        if (minterrupt & MIP_MTIP) != 0 {
-            if self.handle_trap(
+        if (minterrupt & MIP_MTIP) != 0
+            && self.handle_trap(
                 Trap {
                     trap_type: TrapType::MachineTimerInterrupt,
                     value: self.pc, // dummy
                 },
                 instruction_address,
                 true,
-            ) {
-                self.write_csr_raw(
-                    CSR_MIP_ADDRESS,
-                    self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MTIP,
-                );
-                self.wfi = false;
-                return;
-            }
+            )
+        {
+            self.write_csr_raw(
+                CSR_MIP_ADDRESS,
+                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MTIP,
+            );
+            self.wfi = false;
+            return;
         }
-        if (minterrupt & MIP_SEIP) != 0 {
-            if self.handle_trap(
+        if (minterrupt & MIP_SEIP) != 0
+            && self.handle_trap(
                 Trap {
                     trap_type: TrapType::SupervisorExternalInterrupt,
                     value: self.pc, // dummy
                 },
                 instruction_address,
                 true,
-            ) {
-                self.write_csr_raw(
-                    CSR_MIP_ADDRESS,
-                    self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SEIP,
-                );
-                self.wfi = false;
-                return;
-            }
+            )
+        {
+            self.write_csr_raw(
+                CSR_MIP_ADDRESS,
+                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SEIP,
+            );
+            self.wfi = false;
+            return;
         }
-        if (minterrupt & MIP_SSIP) != 0 {
-            if self.handle_trap(
+        if (minterrupt & MIP_SSIP) != 0
+            && self.handle_trap(
                 Trap {
                     trap_type: TrapType::SupervisorSoftwareInterrupt,
                     value: self.pc, // dummy
                 },
                 instruction_address,
                 true,
-            ) {
-                self.write_csr_raw(
-                    CSR_MIP_ADDRESS,
-                    self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SSIP,
-                );
-                self.wfi = false;
-                return;
-            }
+            )
+        {
+            self.write_csr_raw(
+                CSR_MIP_ADDRESS,
+                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SSIP,
+            );
+            self.wfi = false;
+            return;
         }
-        if (minterrupt & MIP_STIP) != 0 {
-            if self.handle_trap(
+        if (minterrupt & MIP_STIP) != 0
+            && self.handle_trap(
                 Trap {
                     trap_type: TrapType::SupervisorTimerInterrupt,
                     value: self.pc, // dummy
                 },
                 instruction_address,
                 true,
-            ) {
-                self.write_csr_raw(
-                    CSR_MIP_ADDRESS,
-                    self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_STIP,
-                );
-                self.wfi = false;
-                return;
-            }
+            )
+        {
+            self.write_csr_raw(
+                CSR_MIP_ADDRESS,
+                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_STIP,
+            );
+            self.wfi = false;
         }
     }
 
@@ -575,6 +576,7 @@ impl Cpu {
             // 3. Interrupt is enabled if xIE in xstatus is 1 where x is privilege level
             // and new privilege level equals to current privilege level
 
+            #[allow(clippy::comparison_chain)]
             if new_privilege_encoding < current_privilege_encoding {
                 return false;
             } else if current_privilege_encoding == new_privilege_encoding {
@@ -1748,7 +1750,7 @@ fn parse_format_u(word: u32) -> FormatU {
 			} | // imm[63:32] = [31]
 			((word as u64) & 0xfffff000)
             // imm[31:12] = [31:12]
-        ) as u64,
+        ),
     }
 }
 
@@ -1839,7 +1841,7 @@ fn normalize_register(value: usize) -> u64 {
 fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_r(word);
     ELFInstruction {
-        opcode: RV32IM::from_str(inst.name),
+        opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
         raw: word,
         imm: None,
@@ -1852,8 +1854,8 @@ fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
 fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_i(word);
     ELFInstruction {
-        opcode: RV32IM::from_str(inst.name),
-        address: normalize_u64(address, &xlen),
+        opcode: RV32IM::from_str(inst.name).unwrap(),
+        address: normalize_u64(address, xlen),
         raw: word,
         imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
@@ -1865,8 +1867,8 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
 fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_s(word);
     ELFInstruction {
-        opcode: RV32IM::from_str(inst.name),
-        address: normalize_u64(address, &xlen),
+        opcode: RV32IM::from_str(inst.name).unwrap(),
+        address: normalize_u64(address, xlen),
         raw: word,
         imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
@@ -1878,8 +1880,8 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
 fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_b(word);
     ELFInstruction {
-        opcode: RV32IM::from_str(inst.name),
-        address: normalize_u64(address, &xlen),
+        opcode: RV32IM::from_str(inst.name).unwrap(),
+        address: normalize_u64(address, xlen),
         raw: word,
         imm: Some(normalize_b_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
@@ -1891,8 +1893,8 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
 fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_u(word);
     ELFInstruction {
-        opcode: RV32IM::from_str(inst.name),
-        address: normalize_u64(address, &xlen),
+        opcode: RV32IM::from_str(inst.name).unwrap(),
+        address: normalize_u64(address, xlen),
         raw: word,
         imm: Some(normalize_u_imm(f.imm)),
         rs1: None,
@@ -1905,8 +1907,8 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
 fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstruction {
     let f = parse_format_j(word);
     ELFInstruction {
-        opcode: RV32IM::from_str(inst.name),
-        address: normalize_u64(address, &xlen),
+        opcode: RV32IM::from_str(inst.name).unwrap(),
+        address: normalize_u64(address, xlen),
         raw: word,
         imm: Some(normalize_j_imm(f.imm)),
         rs1: None,
@@ -2537,10 +2539,10 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
                 PrivilegeMode::Machine => TrapType::EnvironmentCallFromMMode,
                 PrivilegeMode::Reserved => panic!("Unknown Privilege mode"),
             };
-            return Err(Trap {
+            Err(Trap {
                 trap_type: exception_type,
                 value: address,
-            });
+            })
         },
         disassemble: dump_empty,
         trace: None,
@@ -3138,7 +3140,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             let f = parse_format_r(word);
             cpu.x[f.rd] = match cpu.xlen {
                 Xlen::Bit32 => cpu.sign_extend((cpu.x[f.rs1] * cpu.x[f.rs2]) >> 32),
-                Xlen::Bit64 => ((cpu.x[f.rs1] as i128) * (cpu.x[f.rs2] as i128) >> 64) as i64,
+                Xlen::Bit64 => (((cpu.x[f.rs1] as i128) * (cpu.x[f.rs2] as i128)) >> 64) as i64,
             };
             Ok(())
         },
@@ -3570,7 +3572,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
         name: "SRAIW",
         operation: |cpu, word, _address| {
             let f = parse_format_r(word);
-            let shamt = ((word >> 20) & 0x1f) as u32;
+            let shamt = (word >> 20) & 0x1f;
             cpu.x[f.rd] = ((cpu.x[f.rs1] as i32) >> shamt) as i64;
             Ok(())
         },

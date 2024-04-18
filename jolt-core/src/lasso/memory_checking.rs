@@ -195,7 +195,7 @@ where
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
         let read_write_circuits: Vec<GrandProductCircuit<F>> = read_write_leaves
             .par_iter()
-            .map(|leaves| GrandProductCircuit::new(&leaves))
+            .map(|leaves| GrandProductCircuit::new(leaves))
             .collect();
         let read_write_hashes: Vec<F> = read_write_circuits
             .par_iter()
@@ -218,7 +218,7 @@ where
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
         let init_final_circuits: Vec<GrandProductCircuit<F>> = init_final_leaves
             .par_iter()
-            .map(|leaves| GrandProductCircuit::new(&leaves))
+            .map(|leaves| GrandProductCircuit::new(leaves))
             .collect();
         let init_final_hashes: Vec<F> = init_final_circuits
             .par_iter()
@@ -353,10 +353,10 @@ where
 
         let (claims_read_write, r_read_write) = proof
             .read_write_grand_product
-            .verify::<G>(&read_write_hashes, transcript);
+            .verify(&read_write_hashes, transcript);
         let (claims_init_final, r_init_final) = proof
             .init_final_grand_product
-            .verify::<G>(&init_final_hashes, transcript);
+            .verify(&init_final_hashes, transcript);
 
         proof.read_write_openings.verify_openings(
             generators,

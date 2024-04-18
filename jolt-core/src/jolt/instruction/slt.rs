@@ -63,7 +63,7 @@ impl JoltInstruction for SLTInstruction {
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
-        chunk_and_concatenate_operands(self.0 as u64, self.1 as u64, C, log_M)
+        chunk_and_concatenate_operands(self.0, self.1, C, log_M)
     }
 
     fn lookup_entry(&self) -> u64 {

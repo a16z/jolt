@@ -22,18 +22,18 @@ pub trait VariableBaseMSM: ScalarMul {
                     0 => Self::zero(),
                     1 => {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        msm_binary(bases, &scalars_u64)
+                        msm_binary(bases, scalars_u64)
                     }
                     2..=10 => {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
-                        msm_small(bases, &scalars_u64, max_num_bits as usize)
+                        msm_small(bases, scalars_u64, max_num_bits as usize)
                     }
                     11..=64 => {
                         let scalars_u64 = &map_field_elements_to_u64::<Self>(scalars);
                         if Self::NEGATION_IS_CHEAP {
-                            msm_u64_wnaf(bases, &scalars_u64, max_num_bits as usize)
+                            msm_u64_wnaf(bases, scalars_u64, max_num_bits as usize)
                         } else {
-                            msm_u64(bases, &scalars_u64, max_num_bits as usize)
+                            msm_u64(bases, scalars_u64, max_num_bits as usize)
                         }
                     }
                     _ => {
@@ -235,7 +235,7 @@ fn make_digits_bigint(
         num_bits
     };
     let digits_count = (num_bits + w - 1) / w;
-    (0..digits_count).into_iter().map(move |i| {
+    (0..digits_count).map(move |i| {
         // Construct a buffer of bits of the scalar, starting at `bit_offset`.
         let bit_offset = i * w;
         let u64_idx = bit_offset / 64;
@@ -451,7 +451,7 @@ fn make_digits_u64(scalar: u64, w: usize, num_bits: usize) -> impl Iterator<Item
     let mut carry = 0u64;
 
     let digits_count = (num_bits + w - 1) / w;
-    (0..digits_count).into_iter().map(move |i| {
+    (0..digits_count).map(move |i| {
         // Construct a buffer of bits of the scalar, starting at `bit_offset`.
         let bit_offset = i * w;
         let bit_idx = bit_offset % 64;

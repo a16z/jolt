@@ -39,7 +39,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F>
 
     fn evaluate_mle(&self, point: &[F]) -> F {
         let log_M = point.len();
-        let cutoff = WORD_SIZE % log_M as usize;
+        let cutoff = WORD_SIZE % log_M;
 
         let mut result = F::zero();
         for i in 0..cutoff {

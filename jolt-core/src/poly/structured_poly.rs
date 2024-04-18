@@ -34,13 +34,13 @@ where
     type Proof: Sync + CanonicalSerialize + CanonicalDeserialize;
 
     /// Evaluates each of the given `polynomials` at the given `opening_point`.
-    fn open(polynomials: &Polynomials, opening_point: &Vec<F>) -> Self;
+    fn open(polynomials: &Polynomials, opening_point: &[F]) -> Self;
 
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
     /// by `openings`. The polynomials should already be committed by the prover.
     fn prove_openings(
         polynomials: &Polynomials,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
@@ -51,7 +51,7 @@ where
     fn compute_verifier_openings(
         &mut self,
         _preprocessing: &Self::Preprocessing,
-        _opening_point: &Vec<F>,
+        _opening_point: &[F],
     ) {
     }
 
@@ -61,7 +61,7 @@ where
         generators: &PedersenGenerators<G>,
         opening_proof: &Self::Proof,
         commitment: &Polynomials::Commitment,
-        opening_point: &Vec<F>,
+        opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError>;
 }

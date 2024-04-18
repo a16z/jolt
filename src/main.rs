@@ -60,27 +60,27 @@ fn create_folder_structure(name: &str) -> Result<()> {
 
 fn create_host_files(name: &str) -> Result<()> {
     let mut toolchain_file = File::create(format!("{}/rust-toolchain.toml", name))?;
-    toolchain_file.write(RUST_TOOLCHAIN.as_bytes())?;
+    toolchain_file.write_all(RUST_TOOLCHAIN.as_bytes())?;
 
     let mut gitignore_file = File::create(format!("{}/.gitignore", name))?;
-    gitignore_file.write(GITIGNORE.as_bytes())?;
+    gitignore_file.write_all(GITIGNORE.as_bytes())?;
 
     let cargo_file_contents = HOST_CARGO_TEMPLATE.replace("{NAME}", name);
     let mut cargo_file = File::create(format!("{}/Cargo.toml", name))?;
-    cargo_file.write(cargo_file_contents.as_bytes())?;
+    cargo_file.write_all(cargo_file_contents.as_bytes())?;
 
     let mut main_file = File::create(format!("{}/src/main.rs", name))?;
-    main_file.write(HOST_MAIN.as_bytes())?;
+    main_file.write_all(HOST_MAIN.as_bytes())?;
 
     Ok(())
 }
 
 fn create_guest_files(name: &str) -> Result<()> {
     let mut cargo_file = File::create(format!("{}/guest/Cargo.toml", name))?;
-    cargo_file.write(GUEST_CARGO.as_bytes())?;
+    cargo_file.write_all(GUEST_CARGO.as_bytes())?;
 
     let mut lib_file = File::create(format!("{}/guest/src/lib.rs", name))?;
-    lib_file.write(GUEST_LIB.as_bytes())?;
+    lib_file.write_all(GUEST_LIB.as_bytes())?;
 
     Ok(())
 }
