@@ -105,7 +105,7 @@ fn download_jolt_toolchain(client: &Client, url: &str) {
     }
 
     let path = jolt_dir.join("rust-toolchain.tar.gz");
-    fs::write(&path, &bytes).unwrap();
+    fs::write(path, &bytes).unwrap();
 }
 
 fn get_jolt_toolchain_url(client: &Client, target: &str) -> String {
