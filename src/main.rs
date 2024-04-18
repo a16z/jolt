@@ -1,4 +1,7 @@
-use std::{fs::{self, File}, io::Write};
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
 use clap::{Parser, Subcommand};
 use eyre::Result;
@@ -68,7 +71,11 @@ fn link_toolchain() {
             "toolchain",
             "link",
             "riscv32i-jolt-zkvm-elf",
-            dirs::home_dir().unwrap().join(".jolt/rust/build/host/stage2").to_str().unwrap(),
+            dirs::home_dir()
+                .unwrap()
+                .join(".jolt/rust/build/host/stage2")
+                .to_str()
+                .unwrap(),
         ])
         .output()
         .expect("failed to link toolchain");
