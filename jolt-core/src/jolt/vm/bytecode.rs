@@ -1,4 +1,3 @@
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
@@ -8,9 +7,9 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::hyrax::{
-    matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof,
+    matrix_dimensions,
 };
-use crate::poly::pedersen::PedersenGenerators;
+use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -29,9 +28,10 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
 };
 
-pub type BytecodeProof<F, G> = MemoryCheckingProof<
-    G,
-    BytecodePolynomials<F, G>,
+pub type BytecodeProof<F, C> = MemoryCheckingProof<
+    F,
+    C,
+    BytecodePolynomials<F, C>,
     BytecodeReadWriteOpenings<F>,
     BytecodeInitFinalOpenings<F>,
 >;
@@ -141,8 +141,8 @@ pub fn random_bytecode_trace(
     trace
 }
 
-pub struct BytecodePolynomials<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    _group: PhantomData<G>,
+pub struct BytecodePolynomials<F: PrimeField, C: CommitmentScheme<Field = F>> {
+    _group: PhantomData<C>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
     pub(super) a_read_write: DensePolynomial<F>,
@@ -229,7 +229,7 @@ fn to_v_polys<F: PrimeField>(rows: &Vec<BytecodeRow>) -> [DensePolynomial<F>; 5]
     ]
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
+impl<F: PrimeField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn new(preprocessing: &BytecodePreprocessing<F>, mut trace: Vec<BytecodeRow>) -> Self {
         // Remap trace addresses
@@ -320,12 +320,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> BytecodePolynomials<F, G> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BytecodeCommitment<G: CurveGroup> {
-    pub trace_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    pub t_final_commitment: HyraxCommitment<1, G>,
+pub struct BytecodeCommitment<C: CommitmentScheme> {
+    pub trace_commitments: Vec<C::Commitment>,
+    pub t_final_commitment: C::Commitment,
 }
 
-impl<G: CurveGroup> AppendToTranscript for BytecodeCommitment<G> {
+impl<C: CommitmentScheme> AppendToTranscript for BytecodeCommitment<C> {
     fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_protocol_name(label);
 
@@ -338,15 +338,15 @@ impl<G: CurveGroup> AppendToTranscript for BytecodeCommitment<G> {
     }
 }
 
-impl<F, G> StructuredCommitment<G> for BytecodePolynomials<F, G>
+impl<F, C> StructuredCommitment<C> for BytecodePolynomials<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
-    type Commitment = BytecodeCommitment<G>;
+    type Commitment = BytecodeCommitment<C>;
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &C::Generators) -> Self::Commitment {
         let trace_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
@@ -356,9 +356,9 @@ where
             &self.v_read_write[3],
             &self.v_read_write[4],
         ];
-        let trace_commitments = HyraxCommitment::batch_commit_polys(trace_polys, generators);
+        let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators);
 
-        let t_final_commitment = HyraxCommitment::commit(&self.t_final, generators);
+        let t_final_commitment = C::commit(&self.t_final, generators);
 
         Self::Commitment {
             trace_commitments,
@@ -367,10 +367,10 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, BytecodePolynomials<F, G>> for BytecodeProof<F, G>
+impl<F, C> MemoryCheckingProver<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
     type Preprocessing = BytecodePreprocessing<F>;
     type ReadWriteOpenings = BytecodeReadWriteOpenings<F>;
@@ -392,7 +392,7 @@ where
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]
     fn compute_leaves(
         preprocessing: &BytecodePreprocessing<F>,
-        polynomials: &BytecodePolynomials<F, G>,
+        polynomials: &BytecodePolynomials<F, C>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
@@ -490,10 +490,10 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, BytecodePolynomials<F, G>> for BytecodeProof<F, G>
+impl<F, C> MemoryCheckingVerifier<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
     fn read_tuples(
         _: &BytecodePreprocessing<F>,
@@ -568,15 +568,15 @@ where
     t_read_opening: F,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>> for BytecodeReadWriteOpenings<F>
+impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeReadWriteOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
-    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
+    type Proof = C::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &BytecodePolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
@@ -593,7 +593,7 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BytecodePolynomials<F, G>,
+        polynomials: &BytecodePolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
@@ -602,7 +602,7 @@ where
             vec![openings.a_read_write_opening, openings.t_read_opening];
         combined_openings.extend(openings.v_read_write_openings.iter());
 
-        BatchedHyraxOpeningProof::prove(
+        C::batch_prove(
             &[
                 &polynomials.a_read_write,
                 &polynomials.t_read,
@@ -620,16 +620,17 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Generators,
         opening_proof: &Self::Proof,
-        commitment: &BytecodeCommitment<G>,
+        commitment: &BytecodeCommitment<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let mut combined_openings: Vec<F> = vec![self.a_read_write_opening, self.t_read_opening];
         combined_openings.extend(self.v_read_write_openings.iter());
 
-        opening_proof.verify(
+        C::batch_verify(
+            &opening_proof,
             generators,
             opening_point,
             &combined_openings,
@@ -652,16 +653,16 @@ where
     t_final: F,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, BytecodePolynomials<F, G>> for BytecodeInitFinalOpenings<F>
+impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeInitFinalOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
     type Preprocessing = BytecodePreprocessing<F>;
-    type Proof = HyraxOpeningProof<1, G>;
+    type Proof = C::Proof;
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::open")]
-    fn open(polynomials: &BytecodePolynomials<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &BytecodePolynomials<F, C>, opening_point: &[F]) -> Self {
         Self {
             a_init_final: None,
             v_init_final: None,
@@ -671,12 +672,12 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &BytecodePolynomials<F, G>,
+        polynomials: &BytecodePolynomials<F, C>,
         opening_point: &[F],
         _openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        HyraxOpeningProof::prove(&polynomials.t_final, opening_point, transcript)
+        C::prove(&polynomials.t_final, opening_point, transcript)
     }
 
     fn compute_verifier_openings(
@@ -701,13 +702,14 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Generators,
         opening_proof: &Self::Proof,
-        commitment: &BytecodeCommitment<G>,
+        commitment: &BytecodeCommitment<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        opening_proof.verify(
+        C::verify(
+            opening_proof,
             generators,
             transcript,
             opening_point,
@@ -719,6 +721,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::poly::{pedersen::PedersenGenerators, structured_poly::HyraxConfig};
+
     use super::*;
     use ark_bn254::{Fr, G1Projective};
     use std::collections::HashSet;
@@ -743,7 +747,7 @@ mod tests {
         ];
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, G1Projective> =
+        let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
@@ -773,10 +777,10 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
         let num_generators =
-            BytecodePolynomials::<Fr, G1Projective>::num_generators(program.len(), trace.len());
+            BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(program.len(), trace.len());
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, G1Projective> =
+        let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
@@ -812,9 +816,9 @@ mod tests {
         ];
 
         let num_generators =
-            BytecodePolynomials::<Fr, G1Projective>::num_generators(program.len(), trace.len());
+            BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(program.len(), trace.len());
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, G1Projective> =
+        let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
         let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&generators);
@@ -849,7 +853,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        BytecodePolynomials::<Fr, G1Projective>::validate_bytecode(&program, &trace);
+        BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::validate_bytecode(&program, &trace);
     }
 
     #[test]
@@ -865,6 +869,6 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        BytecodePolynomials::<Fr, G1Projective>::validate_bytecode(&program, &trace);
+        BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::validate_bytecode(&program, &trace);
     }
 }

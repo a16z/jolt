@@ -8,6 +8,7 @@ use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::Zero;
+use common::constants::NUM_R1CS_POLYS;
 use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
@@ -33,7 +34,7 @@ pub struct HyraxGenerators<const RATIO: usize, G: CurveGroup> {
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
-    row_commitments: Vec<G>,
+    pub row_commitments: Vec<G>,
 }
 
 impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
@@ -56,6 +57,8 @@ impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
 
         let (L_size, R_size) = matrix_dimensions(ell, RATIO);
         assert_eq!(L_size * R_size, n);
+        println!("NUM_R1CS_POLYS {}", NUM_R1CS_POLYS);
+        println!("RATIO          {}", RATIO);
 
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
         let row_commitments = eval_slice
@@ -136,7 +139,7 @@ impl<const RATIO: usize, G: CurveGroup> AppendToTranscript for HyraxCommitment<R
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
-    vector_matrix_product: Vec<G::ScalarField>,
+    pub vector_matrix_product: Vec<G::ScalarField>,
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
@@ -230,7 +233,7 @@ impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
-    joint_proof: HyraxOpeningProof<RATIO, G>,
+    pub joint_proof: HyraxOpeningProof<RATIO, G>,
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge

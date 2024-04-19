@@ -23,6 +23,7 @@ use crate::jolt::subtable::{
     srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable,
     JoltSubtableSet, LassoSubtable, SubtableId,
 };
+use crate::poly::structured_poly::CommitmentScheme;
 
 /// Generates an enum out of a list of JoltInstruction types. All JoltInstruction methods
 /// are callable on the enum type via enum_dispatch.
@@ -136,10 +137,10 @@ pub enum RV32IJoltVM {}
 pub const C: usize = 4;
 pub const M: usize = 1 << 16;
 
-impl<F, G> Jolt<F, G, C, M> for RV32IJoltVM
+impl<F, CS> Jolt<F, CS, C, M> for RV32IJoltVM
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
 {
     type InstructionSet = RV32I;
     type Subtables = RV32ISubtables<F>;
@@ -158,6 +159,7 @@ mod tests {
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
+    use crate::poly::structured_poly::HyraxConfig;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -170,10 +172,10 @@ mod tests {
     #[test]
     fn instruction_set_subtables() {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::InstructionSet::iter() {
+        for instruction in <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::InstructionSet::iter() {
             for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::Subtables::from(
+                let _ = <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::Subtables::from(
                     subtable.subtable_id(),
                 );
                 subtable_set.insert(subtable.subtable_id());
@@ -181,7 +183,7 @@ mod tests {
         }
         assert_eq!(
             subtable_set.len(),
-            <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::Subtables::COUNT,
+            <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::Subtables::COUNT,
             "Unused enum variants in Subtables"
         );
     }
@@ -198,7 +200,7 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, G1Projective, C, M>>::prove(
+        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, HyraxConfig<G1Projective>, C, M>>::prove(
             io_device,
             bytecode_trace,
             memory_trace,
@@ -226,7 +228,7 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, G1Projective, C, M>>::prove(
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
             io_device,
             bytecode_trace,
             memory_trace,

@@ -4,6 +4,7 @@
     clippy::too_many_arguments
 )]
 
+use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
@@ -297,15 +298,15 @@ impl<'a, F: PrimeField> R1CSInputs<'a, F> {
 
 /// Commitments unique to R1CS.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment<G: CurveGroup> {
-    io: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    aux: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+pub struct R1CSCommitment<C: CommitmentScheme> {
+    io: Vec<C::Commitment>,
+    aux: Vec<C::Commitment>,
+    chunks_x: Vec<C::Commitment>,
+    chunks_y: Vec<C::Commitment>,
+    circuit_flags: Vec<C::Commitment>,
 }
 
-impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
+impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
     fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"R1CSCommitment_begin");
         for commitment in &self.io {
@@ -328,12 +329,12 @@ impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct R1CSProof<F: PrimeField, C: CommitmentScheme<Field = F>> {
     pub key: UniformSpartanKey<F>,
-    proof: UniformSpartanProof<F, G>,
+    proof: UniformSpartanProof<F, C>,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
+impl<F: PrimeField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
     /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
     #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
     pub fn compute_witness_commit(
@@ -342,13 +343,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         padded_trace_len: usize,
         memory_start: u64,
         inputs: &R1CSInputs<F>,
-        generators: &PedersenGenerators<G>,
-    ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>), SpartanError> {
+        generators: &C::Generators,
+    ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<C>), SpartanError> {
         let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
         let _enter = span.enter();
         let mut jolt_shape = R1CSBuilder::default();
         R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);
-        let key = UniformSpartanProof::<F, G>::setup_precommitted(
+        let key = UniformSpartanProof::<F, C>::setup_precommitted(
             &jolt_shape,
             padded_trace_len,
             memory_start,
@@ -359,13 +360,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
         let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
         let io_segments = vec![pc_out, pc];
-        let io_comms = HyraxCommitment::batch_commit(&io_segments, generators);
-        let aux_comms = HyraxCommitment::batch_commit(&aux, generators);
+        let io_comms = C::batch_commit(&io_segments, &generators);
+        let aux_comms = C::batch_commit(&aux, &generators);
 
         // Commit to R1CS specific items
-        let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
+        let commit_to_chunks = |data: &Vec<F>| -> Vec<C::Commitment> {
             data.par_chunks(padded_trace_len)
-                .map(|chunk| HyraxCommitment::commit_slice(chunk, generators))
+                .map(|chunk| C::commit_slice(chunk, generators))
                 .collect()
         };
 
@@ -410,13 +411,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
     ) -> Result<Self, SpartanError> {
         // TODO(sragss): Fiat shamir (relevant) commitments
         let proof = UniformSpartanProof::prove_precommitted(&key, witness_segments, transcript)?;
-        Ok(R1CSProof::<F, G> { proof, key })
+        Ok(R1CSProof::<F, C> { proof, key })
     }
 
     fn format_commitments(
-        jolt_commitments: &JoltCommitments<G>,
+        jolt_commitments: &JoltCommitments<C>,
         C: usize,
-    ) -> Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> {
+    ) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
@@ -427,7 +428,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
             [jolt_commitments.instruction_lookups.trace_commitment.len() - RV32I::COUNT - 1
                 ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
 
-        let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
+        let mut combined_commitments: Vec<&C::Commitment> = Vec::new();
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
 
         combined_commitments.push(&bytecode_trace_commitments[0]); // a
@@ -463,8 +464,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
     pub fn verify(
         &self,
-        generators: &PedersenGenerators<G>,
-        jolt_commitments: JoltCommitments<G>,
+        generators: &C::Generators,
+        jolt_commitments: JoltCommitments<C>,
         C: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {

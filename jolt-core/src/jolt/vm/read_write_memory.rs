@@ -7,6 +7,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
+use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -262,12 +263,12 @@ const RAM_2: usize = 4;
 const RAM_3: usize = 5;
 const RAM_4: usize = 6;
 
-pub struct ReadWriteMemory<F, G>
+pub struct ReadWriteMemory<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
-    _group: PhantomData<G>,
+    _group: PhantomData<C>,
     /// Size of entire address space (i.e. registers + IO + RAM)
     memory_size: usize,
     /// MLE of initial memory values. RAM is initialized to contain the program bytecode and inputs.
@@ -298,7 +299,7 @@ fn map_to_polys<F: PrimeField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePo
         .unwrap()
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
+impl<F: PrimeField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
         program_io: &JoltDevice,
@@ -805,13 +806,14 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCommitment<G: CurveGroup> {
-    pub trace_commitments: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    pub v_final_commitment: HyraxCommitment<1, G>,
-    pub t_final_commitment: HyraxCommitment<1, G>,
+pub struct MemoryCommitment<C: CommitmentScheme> {
+    // TODO(sragss): Killed the generic programmability on C::Commitment. Could bring this back with C::Commitment<CommitmentConfig>
+    pub trace_commitments: Vec<C::Commitment>,
+    pub v_final_commitment: C::Commitment,
+    pub t_final_commitment: C::Commitment,
 }
 
-impl<G: CurveGroup> AppendToTranscript for MemoryCommitment<G> {
+impl<C: CommitmentScheme> AppendToTranscript for MemoryCommitment<C> {
     fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"MemoryCommitment_begin");
         for commitment in &self.trace_commitments {
@@ -826,10 +828,10 @@ impl<G: CurveGroup> AppendToTranscript for MemoryCommitment<G> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryReadWriteOpenings<F, G>
+pub struct MemoryReadWriteOpenings<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
     /// Evaluation of the a_read_write polynomial at the opening point.
     pub a_read_write_opening: [F; 4],
@@ -844,15 +846,15 @@ where
     pub identity_poly_opening: Option<F>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, JoltPolynomials<F, G>> for MemoryReadWriteOpenings<F, G>
+impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>> for MemoryReadWriteOpenings<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
-    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
+    type Proof = C::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
-    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let mut openings = [
             &polynomials.bytecode.v_read_write[1],
@@ -888,7 +890,7 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &JoltPolynomials<F, G>,
+        polynomials: &JoltPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
@@ -914,7 +916,7 @@ where
             .chain(openings.t_read_opening.into_iter())
             .chain(openings.t_write_ram_opening.into_iter())
             .collect::<Vec<_>>();
-        BatchedHyraxOpeningProof::prove(
+        C::batch_prove(
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -929,9 +931,9 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Generators,
         opening_proof: &Self::Proof,
-        commitment: &JoltCommitments<G>,
+        commitment: &JoltCommitments<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -943,7 +945,8 @@ where
             .chain(self.t_read_opening)
             .chain(self.t_write_ram_opening)
             .collect::<Vec<_>>();
-        opening_proof.verify(
+        C::batch_verify(
+            opening_proof,
             generators,
             opening_point,
             &openings,
@@ -972,24 +975,24 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryInitFinalOpeningProof<F, G>
+pub struct MemoryInitFinalOpeningProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
-    v_t_opening_proof: BatchedHyraxOpeningProof<1, G>,
+    v_t_opening_proof: C::BatchedProof,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, JoltPolynomials<F, G>> for MemoryInitFinalOpenings<F>
+impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>> for MemoryInitFinalOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
-    type Proof = MemoryInitFinalOpeningProof<F, G>;
+    type Proof = MemoryInitFinalOpeningProof<F, C>;
     type Preprocessing = ReadWriteMemoryPreprocessing;
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
-    fn open(polynomials: &JoltPolynomials<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let (v_final, t_final) = rayon::join(
             || polynomials.read_write_memory.v_final.evaluate_at_chi(&chis),
@@ -1006,12 +1009,12 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &JoltPolynomials<F, G>,
+        polynomials: &JoltPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let v_t_opening_proof = BatchedHyraxOpeningProof::prove(
+        let v_t_opening_proof = C::batch_prove(
             &[
                 &polynomials.read_write_memory.v_final,
                 &polynomials.read_write_memory.t_final,
@@ -1061,13 +1064,14 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Generators,
         opening_proof: &Self::Proof,
-        commitment: &JoltCommitments<G>,
+        commitment: &JoltCommitments<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        opening_proof.v_t_opening_proof.verify(
+        C::batch_verify(
+            &opening_proof.v_t_opening_proof,
             generators,
             opening_point,
             &[self.v_final, self.t_final],
@@ -1082,13 +1086,13 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingProver<F, G, JoltPolynomials<F, G>> for ReadWriteMemoryProof<F, G>
+impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>> for ReadWriteMemoryProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
     type Preprocessing = ReadWriteMemoryPreprocessing;
-    type ReadWriteOpenings = MemoryReadWriteOpenings<F, G>;
+    type ReadWriteOpenings = MemoryReadWriteOpenings<F, C>;
     type InitFinalOpenings = MemoryInitFinalOpenings<F>;
 
     // (a, v, t)
@@ -1102,7 +1106,7 @@ where
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
     fn compute_leaves(
         _: &Self::Preprocessing,
-        polynomials: &JoltPolynomials<F, G>,
+        polynomials: &JoltPolynomials<F, C>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
@@ -1253,10 +1257,10 @@ where
     }
 }
 
-impl<F, G> MemoryCheckingVerifier<F, G, JoltPolynomials<F, G>> for ReadWriteMemoryProof<F, G>
+impl<F, C> MemoryCheckingVerifier<F, C, JoltPolynomials<F, C>> for ReadWriteMemoryProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
     fn read_tuples(
         &_: &Self::Preprocessing,
@@ -1330,10 +1334,10 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct OutputSumcheckProof<F, G>
+pub struct OutputSumcheckProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
     num_rounds: usize,
     /// Sumcheck proof that v_final is equal to the program outputs at the relevant indices.
@@ -1341,16 +1345,16 @@ where
     /// Opening of v_final at the random point chosen over the course of sumcheck
     opening: F,
     /// Hyrax opening proof of the v_final opening
-    opening_proof: HyraxOpeningProof<1, G>,
+    opening_proof: C::Proof,
 }
 
-impl<F, G> OutputSumcheckProof<F, G>
+impl<F, C> OutputSumcheckProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
     fn prove_outputs(
-        polynomials: &ReadWriteMemory<F, G>,
+        polynomials: &ReadWriteMemory<F, C>,
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Self {
@@ -1406,7 +1410,7 @@ where
         let output_check_fn = |vals: &[F]| -> F { vals[0] * vals[1] * (vals[2] - vals[3]) };
 
         let (sumcheck_proof, r_sumcheck, sumcheck_openings) =
-            SumcheckInstanceProof::<F>::prove_arbitrary::<_, G>(
+            SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
                 &F::zero(),
                 num_rounds,
                 &mut sumcheck_polys,
@@ -1416,7 +1420,7 @@ where
             );
 
         let sumcheck_opening_proof =
-            HyraxOpeningProof::prove(&polynomials.v_final, &r_sumcheck, transcript);
+            C::prove(&polynomials.v_final, &r_sumcheck, transcript);
 
         Self {
             num_rounds,
@@ -1429,8 +1433,8 @@ where
     fn verify(
         proof: &Self,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        generators: &PedersenGenerators<G>,
-        commitment: &MemoryCommitment<G>,
+        generators: &C::Generators,
+        commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         let r_eq = transcript.challenge_vector(b"output_sumcheck", proof.num_rounds);
@@ -1490,7 +1494,8 @@ where
             "Output sumcheck check failed."
         );
 
-        proof.opening_proof.verify(
+        C::verify(
+            &proof.opening_proof,
             generators,
             transcript,
             &r_sumcheck,
@@ -1501,30 +1506,31 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct ReadWriteMemoryProof<F, G>
+pub struct ReadWriteMemoryProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
     pub memory_checking_proof: MemoryCheckingProof<
-        G,
-        JoltPolynomials<F, G>,
-        MemoryReadWriteOpenings<F, G>,
+        F,
+        C,
+        JoltPolynomials<F, C>,
+        MemoryReadWriteOpenings<F, C>,
         MemoryInitFinalOpenings<F>,
     >,
-    pub timestamp_validity_proof: TimestampValidityProof<F, G>,
-    pub output_proof: OutputSumcheckProof<F, G>,
+    pub timestamp_validity_proof: TimestampValidityProof<F, C>,
+    pub output_proof: OutputSumcheckProof<F, C>,
 }
 
-impl<F, G> ReadWriteMemoryProof<F, G>
+impl<F, C> ReadWriteMemoryProof<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]
     pub fn prove(
         preprocessing: &ReadWriteMemoryPreprocessing,
-        polynomials: &JoltPolynomials<F, G>,
+        polynomials: &JoltPolynomials<F, C>,
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Self {
@@ -1552,9 +1558,9 @@ where
 
     pub fn verify(
         mut self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Generators,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        commitment: &JoltCommitments<G>,
+        commitment: &JoltCommitments<C>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         ReadWriteMemoryProof::verify_memory_checking(

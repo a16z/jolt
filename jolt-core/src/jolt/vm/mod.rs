@@ -18,7 +18,7 @@ use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::hyrax::HyraxCommitment;
 use crate::poly::pedersen::PedersenGenerators;
-use crate::poly::structured_poly::StructuredCommitment;
+use crate::poly::structured_poly::{CommitmentScheme, StructuredCommitment};
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
@@ -45,54 +45,54 @@ use self::{
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
-pub struct JoltPreprocessing<F, G>
+pub struct JoltPreprocessing<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
-    pub generators: PedersenGenerators<G>,
+    pub generators: C::Generators,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
+pub struct JoltProof<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
     pub trace_length: usize,
     pub program_io: JoltDevice,
-    pub bytecode: BytecodeProof<F, G>,
-    pub read_write_memory: ReadWriteMemoryProof<F, G>,
-    pub instruction_lookups: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-    pub r1cs: R1CSProof<F, G>,
+    pub bytecode: BytecodeProof<F, CS>,
+    pub read_write_memory: ReadWriteMemoryProof<F, CS>,
+    pub instruction_lookups: InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>,
+    pub r1cs: R1CSProof<F, CS>,
 }
 
-pub struct JoltPolynomials<F, G>
+pub struct JoltPolynomials<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>,
 {
-    pub bytecode: BytecodePolynomials<F, G>,
-    pub read_write_memory: ReadWriteMemory<F, G>,
-    pub timestamp_range_check: RangeCheckPolynomials<F, G>,
-    pub instruction_lookups: InstructionPolynomials<F, G>,
+    pub bytecode: BytecodePolynomials<F, C>,
+    pub read_write_memory: ReadWriteMemory<F, C>,
+    pub timestamp_range_check: RangeCheckPolynomials<F, C>,
+    pub instruction_lookups: InstructionPolynomials<F, C>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltCommitments<G: CurveGroup> {
-    pub bytecode: BytecodeCommitment<G>,
-    pub read_write_memory: MemoryCommitment<G>,
-    pub timestamp_range_check: RangeCheckCommitment<G>,
-    pub instruction_lookups: InstructionCommitment<G>,
-    pub r1cs: Option<R1CSCommitment<G>>,
+pub struct JoltCommitments<C: CommitmentScheme> {
+    pub bytecode: BytecodeCommitment<C>,
+    pub read_write_memory: MemoryCommitment<C>,
+    pub timestamp_range_check: RangeCheckCommitment<C>,
+    pub instruction_lookups: InstructionCommitment<C>,
+    pub r1cs: Option<R1CSCommitment<C>>,
 }
 
-impl<G: CurveGroup> JoltCommitments<G> {
+impl<C: CommitmentScheme> JoltCommitments<C> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         self.bytecode.append_to_transcript(b"bytecode", transcript);
         self.read_write_memory
@@ -108,15 +108,15 @@ impl<G: CurveGroup> JoltCommitments<G> {
     }
 }
 
-impl<F, G> StructuredCommitment<G> for JoltPolynomials<F, G>
+impl<F, C> StructuredCommitment<C> for JoltPolynomials<F, C>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    C: CommitmentScheme<Field = F>
 {
-    type Commitment = JoltCommitments<G>;
+    type Commitment = JoltCommitments<C>;
 
     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &C::Generators) -> Self::Commitment {
         let bytecode_trace_polys = vec![
             &self.bytecode.a_read_write,
             &self.bytecode.t_read,
@@ -168,8 +168,7 @@ where
             .chain(range_check_polys.into_iter())
             .chain(instruction_trace_polys.into_iter())
             .collect::<Vec<_>>();
-        let mut trace_comitments =
-            HyraxCommitment::<NUM_R1CS_POLYS, G>::batch_commit_polys(all_trace_polys, generators);
+        let mut trace_comitments = C::batch_commit_polys_ref(&all_trace_polys, &generators);
 
         let bytecode_trace_commitment = trace_comitments
             .drain(..num_bytecode_trace_polys)
@@ -182,15 +181,14 @@ where
             .collect::<Vec<_>>();
         let instruction_trace_commitment = trace_comitments;
 
-        let bytecode_t_final_commitment =
-            HyraxCommitment::<1, G>::commit(&self.bytecode.t_final, generators);
+        let bytecode_t_final_commitment = C::commit(&self.bytecode.t_final, &generators);
         let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
-            || HyraxCommitment::<1, G>::commit(&self.read_write_memory.v_final, generators),
-            || HyraxCommitment::<1, G>::commit(&self.read_write_memory.t_final, generators),
+            || C::commit(&self.read_write_memory.v_final, &generators),
+            || C::commit(&self.read_write_memory.t_final, &generators),
         );
-        let instruction_final_commitment = HyraxCommitment::<64, G>::batch_commit_polys(
-            self.instruction_lookups.final_cts.iter().collect(),
-            generators,
+        let instruction_final_commitment = C::batch_commit_polys_ref(
+            &self.instruction_lookups.final_cts.iter().collect(),
+            &generators,
         );
 
         JoltCommitments {
@@ -215,7 +213,7 @@ where
     }
 }
 
-pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, const M: usize> {
+pub trait Jolt<F: PrimeField, CS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
 
@@ -226,13 +224,13 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltPreprocessing<F, G> {
+    ) -> JoltPreprocessing<F, CS> {
         let num_bytecode_generators =
-            BytecodePolynomials::<F, G>::num_generators(max_bytecode_size, max_trace_length);
+            BytecodePolynomials::<F, CS>::num_generators(max_bytecode_size, max_trace_length);
         let num_read_write_memory_generators =
-            ReadWriteMemory::<F, G>::num_generators(max_memory_address, max_trace_length);
+            ReadWriteMemory::<F, CS>::num_generators(max_memory_address, max_trace_length);
         let timestamp_range_check_generators =
-            TimestampValidityProof::<F, G>::num_generators(max_trace_length);
+            TimestampValidityProof::<F, CS>::num_generators(max_trace_length);
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             C,
             M,
@@ -243,7 +241,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             C,
             M,
             F,
-            G,
+            CS,
             Self::InstructionSet,
             Self::Subtables,
         >::num_generators(
@@ -257,7 +255,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             .iter()
             .map(BytecodeRow::from_instruction::<Self::InstructionSet>)
             .collect();
-        let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode_rows);
+        let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
         let max_num_generators = max([
             num_bytecode_generators,
@@ -266,7 +264,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             num_instruction_lookup_generators,
         ])
         .unwrap();
-        let generators = PedersenGenerators::new(max_num_generators, b"Jolt v1 Hyrax generators");
+
+        let generators = CS::generators(max_num_generators);
 
         JoltPreprocessing {
             generators,
@@ -283,10 +282,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Option<Self::InstructionSet>>,
         circuit_flags: Vec<F>,
-        preprocessing: JoltPreprocessing<F, G>,
+        preprocessing: JoltPreprocessing<F, CS>,
     ) -> (
-        JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
-        JoltCommitments<G>,
+        JoltProof<C, M, F, CS, Self::InstructionSet, Self::Subtables>,
+        JoltCommitments<CS>,
     ) {
         let trace_length = instructions.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -299,7 +298,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
             C,
             M,
             F,
-            G,
+            CS,
             Self::InstructionSet,
             Self::Subtables,
         >::polynomialize(
@@ -329,8 +328,8 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         );
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
-            || BytecodePolynomials::<F, G>::new(&preprocessing.bytecode, bytecode_trace),
-            || RangeCheckPolynomials::<F, G>::new(read_timestamps),
+            || BytecodePolynomials::<F, CS>::new(&preprocessing.bytecode, bytecode_trace),
+            || RangeCheckPolynomials::<F, CS>::new(read_timestamps),
         );
 
         let jolt_polynomials = JoltPolynomials {
@@ -395,9 +394,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn verify(
-        mut preprocessing: JoltPreprocessing<F, G>,
-        proof: JoltProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
-        commitments: JoltCommitments<G>,
+        mut preprocessing: JoltPreprocessing<F, CS>,
+        proof: JoltProof<C, M, F, CS, Self::InstructionSet, Self::Subtables>,
+        commitments: JoltCommitments<CS>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
@@ -440,9 +439,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn verify_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        generators: &PedersenGenerators<G>,
-        proof: InstructionLookupsProof<C, M, F, G, Self::InstructionSet, Self::Subtables>,
-        commitment: &InstructionCommitment<G>,
+        generators: &CS::Generators,
+        proof: InstructionLookupsProof<C, M, F, CS, Self::InstructionSet, Self::Subtables>,
+        commitment: &InstructionCommitment<CS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
@@ -450,9 +449,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn verify_bytecode(
         preprocessing: &BytecodePreprocessing<F>,
-        generators: &PedersenGenerators<G>,
-        proof: BytecodeProof<F, G>,
-        commitment: &BytecodeCommitment<G>,
+        generators: &CS::Generators,
+        proof: BytecodeProof<F, CS>,
+        commitment: &BytecodeCommitment<CS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
@@ -466,9 +465,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
 
     fn verify_memory(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
-        generators: &PedersenGenerators<G>,
-        proof: ReadWriteMemoryProof<F, G>,
-        commitment: &JoltCommitments<G>,
+        generators: &CS::Generators,
+        proof: ReadWriteMemoryProof<F, CS>,
+        commitment: &JoltCommitments<CS>,
         program_io: JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -480,9 +479,9 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
     }
 
     fn verify_r1cs(
-        generators: &PedersenGenerators<G>,
-        proof: R1CSProof<F, G>,
-        commitments: JoltCommitments<G>,
+        generators: &CS::Generators,
+        proof: R1CSProof<F, CS>,
+        commitments: JoltCommitments<CS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
@@ -494,10 +493,10 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         padded_trace_length: usize,
         memory_start: u64,
         instructions: &[Option<Self::InstructionSet>],
-        polynomials: &JoltPolynomials<F, G>,
+        polynomials: &JoltPolynomials<F, CS>,
         circuit_flags: Vec<F>,
-        generators: &PedersenGenerators<G>,
-    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>) {
+        generators: &CS::Generators,
+    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<CS>) {
         let log_M = log2(M) as usize;
 
         // Assemble the polynomials and commitments from the rest of Jolt.
@@ -577,7 +576,7 @@ pub trait Jolt<F: PrimeField, G: CurveGroup<ScalarField = F>, const C: usize, co
         );
 
         let (spartan_key, witness_segments, r1cs_commitments) =
-            R1CSProof::<F, G>::compute_witness_commit(
+            R1CSProof::<F, CS>::compute_witness_commit(
                 32,
                 C,
                 padded_trace_length,

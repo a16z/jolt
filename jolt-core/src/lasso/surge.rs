@@ -13,18 +13,18 @@ use crate::{
         hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
         identity_poly::IdentityPolynomial,
         pedersen::PedersenGenerators,
-        structured_poly::{StructuredCommitment, StructuredOpeningProof},
+        structured_poly::{CommitmentScheme, StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-pub struct SurgePolys<F, G>
+pub struct SurgePolys<F, CS>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
 {
-    _group: PhantomData<G>,
+    _marker: PhantomData<CS>,
     pub dim: Vec<DensePolynomial<F>>,
     pub read_cts: Vec<DensePolynomial<F>>,
     pub final_cts: Vec<DensePolynomial<F>>,
@@ -36,34 +36,34 @@ const SURGE_HYRAX_RATIO_READ_WRITE: usize = 16;
 const SURGE_HYRAX_RATIO_FINAL: usize = 4;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SurgeCommitment<G: CurveGroup> {
+pub struct SurgeCommitment<CS: CommitmentScheme> {
     /// Commitments to dim_i and read_cts_i polynomials.
-    pub dim_read_commitment: Vec<HyraxCommitment<SURGE_HYRAX_RATIO_READ_WRITE, G>>,
+    pub dim_read_commitment: Vec<CS::Commitment>,
     /// Commitment to final_cts_i polynomials.
-    pub final_commitment: Vec<HyraxCommitment<SURGE_HYRAX_RATIO_FINAL, G>>,
+    pub final_commitment: Vec<CS::Commitment>,
     /// Commitments to E_i polynomials.
-    pub E_commitment: Vec<HyraxCommitment<SURGE_HYRAX_RATIO_READ_WRITE, G>>,
+    pub E_commitment: Vec<CS::Commitment>,
 }
 
-impl<F, G> StructuredCommitment<G> for SurgePolys<F, G>
+impl<F, CS> StructuredCommitment<CS> for SurgePolys<F, CS>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>
 {
-    type Commitment = SurgeCommitment<G>;
+    type Commitment = SurgeCommitment<CS>;
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &CS::Generators) -> Self::Commitment {
         let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = HyraxCommitment::batch_commit_polys(dim_read_polys, generators);
+        let dim_read_commitment = CS::batch_commit_polys_ref(&dim_read_polys, &generators);
         let E_commitment =
-            HyraxCommitment::batch_commit_polys(self.E_polys.iter().collect(), generators);
+            CS::batch_commit_polys_ref(&self.E_polys.iter().collect(), &generators);
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
-            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), generators);
+            CS::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators);
 
         Self::Commitment {
             dim_read_commitment,
@@ -75,15 +75,15 @@ where
 
 type PrimarySumcheckOpenings<F> = Vec<F>;
 
-impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for PrimarySumcheckOpenings<F>
+impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for PrimarySumcheckOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>
 {
-    type Proof = BatchedHyraxOpeningProof<16, G>;
+    type Proof = CS::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &SurgePolys<F, CS>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .E_polys
@@ -94,12 +94,12 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &SurgePolys<F, G>,
+        polynomials: &SurgePolys<F, CS>,
         opening_point: &[F],
         E_poly_openings: &Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        BatchedHyraxOpeningProof::prove(
+        CS::batch_prove(
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             opening_point,
             E_poly_openings,
@@ -109,13 +109,14 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &CS::Generators,
         opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<G>,
+        commitment: &SurgeCommitment<CS>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        opening_proof.verify(
+        CS::batch_verify(
+            &opening_proof,
             generators,
             opening_point,
             self,
@@ -135,15 +136,15 @@ where
     E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
 }
 
-impl<F, G> StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeReadWriteOpenings<F>
+impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeReadWriteOpenings<F>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>
 {
-    type Proof = BatchedHyraxOpeningProof<16, G>;
+    type Proof = CS::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &SurgePolys<F, CS>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         Self {
@@ -155,7 +156,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &SurgePolys<F, G>,
+        polynomials: &SurgePolys<F, CS>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
@@ -173,7 +174,7 @@ where
         ]
         .concat();
 
-        BatchedHyraxOpeningProof::prove(
+        CS::batch_prove(
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -183,9 +184,9 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &CS::Generators,
         opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<G>,
+        commitment: &SurgeCommitment<CS>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -195,7 +196,8 @@ where
             self.E_poly_openings.as_slice(),
         ]
         .concat();
-        opening_proof.verify(
+        CS::batch_verify(
+            opening_proof,
             generators,
             opening_point,
             &read_write_openings,
@@ -221,18 +223,18 @@ where
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize>
-    StructuredOpeningProof<F, G, SurgePolys<F, G>> for SurgeFinalOpenings<F, Instruction, C, M>
+impl<F, CS, Instruction, const C: usize, const M: usize>
+    StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeFinalOpenings<F, Instruction, C, M>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
-    type Proof = BatchedHyraxOpeningProof<4, G>;
+    type Proof = CS::BatchedProof;
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &SurgePolys<F, CS>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let final_openings = polynomials
             .final_cts
@@ -249,12 +251,12 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &SurgePolys<F, G>,
+        polynomials: &SurgePolys<F, CS>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        BatchedHyraxOpeningProof::prove(
+        CS::batch_prove(
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
@@ -276,13 +278,14 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &CS::Generators,
         opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<G>,
+        commitment: &SurgeCommitment<CS>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        opening_proof.verify(
+        CS::batch_verify(
+            &opening_proof,
             generators,
             opening_point,
             &self.final_openings,
@@ -292,11 +295,11 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, G, SurgePolys<F, G>>
-    for SurgeProof<F, G, Instruction, C, M>
+impl<F, CS, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, CS, SurgePolys<F, CS>>
+    for SurgeProof<F, CS, Instruction, C, M>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
@@ -311,7 +314,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
     fn compute_leaves(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        polynomials: &SurgePolys<F, G>,
+        polynomials: &SurgePolys<F, CS>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
@@ -385,11 +388,11 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, SurgePolys<F, G>> for SurgeProof<F, G, Instruction, C, M>
+impl<F, CS, Instruction, const C: usize, const M: usize>
+    MemoryCheckingVerifier<F, CS, SurgePolys<F, CS>> for SurgeProof<F, CS, Instruction, C, M>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     fn read_tuples(
@@ -459,16 +462,16 @@ where
     }
 }
 
-pub struct SurgePrimarySumcheck<F, G>
+pub struct SurgePrimarySumcheck<F, CS>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>
 {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     claimed_evaluation: F,
     openings: PrimarySumcheckOpenings<F>,
-    opening_proof: BatchedHyraxOpeningProof<16, G>,
+    opening_proof: CS::BatchedProof,
 }
 
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
@@ -480,21 +483,22 @@ where
     materialized_subtables: Vec<Vec<F>>,
 }
 
-pub struct SurgeProof<F, G, Instruction, const C: usize, const M: usize>
+pub struct SurgeProof<F, CS, Instruction, const C: usize, const M: usize>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
     /// Commitments to all polynomials
-    commitment: SurgeCommitment<G>,
+    commitment: SurgeCommitment<CS>,
 
     /// Primary collation sumcheck proof
-    primary_sumcheck: SurgePrimarySumcheck<F, G>,
+    primary_sumcheck: SurgePrimarySumcheck<F, CS>,
 
     memory_checking: MemoryCheckingProof<
-        G,
-        SurgePolys<F, G>,
+        F,
+        CS,
+        SurgePolys<F, CS>,
         SurgeReadWriteOpenings<F>,
         SurgeFinalOpenings<F, Instruction, C, M>,
     >,
@@ -522,10 +526,10 @@ where
     }
 }
 
-impl<F, G, Instruction, const C: usize, const M: usize> SurgeProof<F, G, Instruction, C, M>
+impl<F, CS, Instruction, const C: usize, const M: usize> SurgeProof<F, CS, Instruction, C, M>
 where
     F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     fn num_memories() -> usize {
@@ -559,7 +563,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        generators: &PedersenGenerators<G>,
+        generators: &CS::Generators,
         ops: Vec<Instruction>,
         transcript: &mut ProofTranscript,
     ) -> Self {
@@ -590,7 +594,7 @@ where
             instruction.combine_lookups(vals_no_eq, C, M) * eq
         };
 
-        let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<F>::prove_arbitrary::<_, G>(
+        let (primary_sumcheck_proof, r_z, _) = SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
             &sumcheck_claim,
             num_rounds,
             &mut combined_sumcheck_polys,
@@ -627,8 +631,8 @@ where
 
     pub fn verify(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        generators: &PedersenGenerators<G>,
-        proof: SurgeProof<F, G, Instruction, C, M>,
+        generators: &CS::Generators,
+        proof: SurgeProof<F, CS, Instruction, C, M>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
@@ -677,7 +681,7 @@ where
     fn construct_polys(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         ops: &Vec<Instruction>,
-    ) -> SurgePolys<F, G> {
+    ) -> SurgePolys<F, CS> {
         let num_lookups = ops.len().next_power_of_two();
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];
 
@@ -749,7 +753,7 @@ where
             .collect();
 
         SurgePolys {
-            _group: PhantomData,
+            _marker: PhantomData,
             dim,
             read_cts,
             final_cts,
@@ -758,7 +762,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, G>, eq: &DensePolynomial<F>) -> F {
+    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, CS>, eq: &DensePolynomial<F>) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
@@ -784,7 +788,7 @@ mod tests {
     use super::SurgePreprocessing;
     use crate::{
         jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof,
-        poly::pedersen::PedersenGenerators, utils::transcript::ProofTranscript,
+        poly::{pedersen::PedersenGenerators, structured_poly::HyraxConfig}, utils::transcript::ProofTranscript,
     };
     use ark_bn254::{Fr, G1Projective};
 
@@ -802,10 +806,10 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::num_generators(16),
+            SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::num_generators(16),
             b"LassoV1",
         );
-        let proof = SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::prove(
+        let proof = SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::prove(
             &preprocessing,
             &generators,
             ops,
@@ -832,10 +836,10 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::num_generators(16),
+            SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::num_generators(16),
             b"LassoV1",
         );
-        let proof = SurgeProof::<Fr, G1Projective, XORInstruction, C, M>::prove(
+        let proof = SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::prove(
             &preprocessing,
             &generators,
             ops,

@@ -217,13 +217,10 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
-    pub fn prove<G>(
+    pub fn prove(
         mut batch: BatchedGrandProductCircuit<F>,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>) {
         let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
         let mut claims_to_verify = (0..batch.circuits.len())
             .map(|i| batch.circuits[i].evaluate())
@@ -244,7 +241,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
-            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched::<G>(
+            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched(
                 &claim, params, &coeff_vec, transcript,
             );
 
@@ -416,7 +413,7 @@ mod grand_product_circuit_tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let circuits_vec = vec![factorial_circuit];
         let batch = BatchedGrandProductCircuit::new_batch(circuits_vec);
-        let (proof, _) = BatchedGrandProductArgument::prove::<G1Projective>(batch, &mut transcript);
+        let (proof, _) = BatchedGrandProductArgument::prove(batch, &mut transcript);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         proof.verify(&expected_eval, &mut transcript);
@@ -439,7 +436,7 @@ mod grand_product_circuit_tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let (proof, prove_rand) =
-            BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(batch, &mut transcript);
+            BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read = Fr::from(10) * Fr::from(20);
         let expected_eval_write = Fr::from(100) * Fr::from(200);
@@ -492,7 +489,7 @@ mod grand_product_circuit_tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let (proof, prove_rand) =
-            BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(batch, &mut transcript);
+            BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read: Fr = Fr::from(10) * Fr::from(20) * Fr::from(40);
         let expected_eval_write: Fr = Fr::from(100) * Fr::from(200) * Fr::from(400);

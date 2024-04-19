@@ -2,6 +2,7 @@
 
 use crate::poly::hyrax::BatchedHyraxOpeningProof;
 use crate::poly::pedersen::PedersenGenerators;
+use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -181,19 +182,19 @@ impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct UniformSpartanProof<F: PrimeField, C: CommitmentScheme<Field = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
     eval_arg: Vec<F>, // TODO(arasuarun / sragss): better name
     claimed_witnesss_evals: Vec<F>,
-    opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
+    opening_proof: C::BatchedProof,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
+impl<F: PrimeField, C: CommitmentScheme<Field =F>> UniformSpartanProof<F, C> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
-    pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
-        circuit: &C,
+    pub fn setup_precommitted<ShapeBuilder: UniformShapeBuilder<F>>(
+        circuit: &ShapeBuilder,
         padded_num_steps: usize,
         memory_start: u64,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
@@ -275,7 +276,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         };
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_cubic::<G, _>(
+            SumcheckInstanceProof::prove_spartan_cubic::<_>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
@@ -401,7 +402,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<G, _>(
+            SumcheckInstanceProof::prove_spartan_quadratic::<_>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
@@ -424,9 +425,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
             segmented_padded_witness.into_dense_polys();
-        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
-            witness_segment_polys.iter().collect();
-        let opening_proof = BatchedHyraxOpeningProof::prove(
+        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> = witness_segment_polys
+            .iter()
+            .collect();
+        let opening_proof = C::batch_prove(
             &witness_segment_polys_ref,
             r_y_point,
             &witness_evals,
@@ -455,10 +457,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     pub fn verify_precommitted(
         &self,
-        witness_segment_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>,
+        witness_segment_commitments: Vec<&C::Commitment>,
         key: &UniformSpartanKey<F>,
         io: &[F],
-        generators: &PedersenGenerators<G>,
+        generators: &C::Generators,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         assert_eq!(io.len(), 0); // Currently not using io
@@ -630,10 +632,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        self.opening_proof
-            .verify(
-                generators,
-                r_y_point,
+        C::batch_verify(
+            &self.opening_proof,
+                &generators,
+                &r_y_point,
                 &self.claimed_witnesss_evals,
                 &witness_segment_commitments,
                 transcript,
