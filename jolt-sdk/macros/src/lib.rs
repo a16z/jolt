@@ -378,7 +378,7 @@ impl MacroBuilder {
             quote! {
                 #[cfg(feature = "guest")]
                 #[global_allocator]
-                static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator::new();
+                static ALLOCATOR: jolt::BumpAllocator = jolt::BumpAllocator;
             }
         }
     }
