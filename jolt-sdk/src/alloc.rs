@@ -1,44 +1,36 @@
-use core::{
-    alloc::{GlobalAlloc, Layout},
-    cell::UnsafeCell,
-};
+use core::alloc::{GlobalAlloc, Layout};
 
-pub struct BumpAllocator {
-    offset: UnsafeCell<usize>,
+pub struct BumpAllocator;
+
+unsafe impl GlobalAlloc for BumpAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        sys_alloc(layout.size(), layout.align())
+    }
+
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
 }
-
-unsafe impl Sync for BumpAllocator {}
 
 extern "C" {
     static _HEAP_PTR: u8;
 }
 
-fn heap_start() -> usize {
-    unsafe { _HEAP_PTR as *const u8 as usize }
-}
+static mut ALLOC_NEXT: usize = 0;
 
-impl BumpAllocator {
-    pub const fn new() -> Self {
-        Self {
-            offset: UnsafeCell::new(0),
-        }
+#[no_mangle]
+pub unsafe extern "C" fn sys_alloc(size: usize, align: usize) -> *mut u8 {
+    let mut next = unsafe { ALLOC_NEXT };
+
+    if next == 0 {
+        next = unsafe { (&_HEAP_PTR) as *const u8 as usize };
     }
 
-    pub fn free_memory(&self) -> usize {
-        heap_start() + (self.offset.get() as usize)
-    }
-}
+    next = align_up(next, align);
 
-unsafe impl GlobalAlloc for BumpAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let alloc_start = align_up(self.free_memory(), layout.align());
-        let alloc_end = alloc_start + layout.size();
-        *self.offset.get() = alloc_end - self.free_memory();
+    let ptr = next as *mut u8;
+    next += size;
 
-        alloc_start as *mut u8
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+    unsafe { ALLOC_NEXT = next };
+    ptr
 }
 
 fn align_up(addr: usize, align: usize) -> usize {
