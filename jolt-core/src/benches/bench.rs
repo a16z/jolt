@@ -70,14 +70,15 @@ fn prove_example<T: Serialize>(
             HyraxConfig<ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>>,
         > = RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
-            io_device,
-            bytecode_trace,
-            memory_trace,
-            instruction_trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
+                io_device,
+                bytecode_trace,
+                memory_trace,
+                instruction_trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
 
         // println!("Proof sizing:");
         // serialize_and_print_size("jolt_commitments", &jolt_commitments);
@@ -119,14 +120,15 @@ fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
             HyraxConfig<ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>>,
         > = RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
-            io_device,
-            bytecode_trace,
-            memory_trace,
-            instruction_trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
+                io_device,
+                bytecode_trace,
+                memory_trace,
+                instruction_trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),

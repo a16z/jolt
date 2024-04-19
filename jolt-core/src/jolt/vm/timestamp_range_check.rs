@@ -1,4 +1,3 @@
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS};
@@ -19,9 +18,8 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
+        hyrax::matrix_dimensions,
         identity_poly::IdentityPolynomial,
-        pedersen::PedersenGenerators,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::grand_product::{
@@ -257,7 +255,7 @@ where
 impl<F, C> MemoryCheckingProver<F, C, RangeCheckPolynomials<F, C>> for TimestampValidityProof<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     type ReadWriteOpenings = RangeCheckOpenings<F, C>;
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
@@ -452,7 +450,7 @@ impl<F, C> MemoryCheckingVerifier<F, C, RangeCheckPolynomials<F, C>>
     for TimestampValidityProof<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     fn verify_memory_checking(
         _: &NoPreprocessing,
@@ -567,7 +565,7 @@ where
 impl<F, C> TimestampValidityProof<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove(

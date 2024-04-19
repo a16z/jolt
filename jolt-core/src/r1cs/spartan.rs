@@ -1,13 +1,10 @@
 #![allow(clippy::len_without_is_empty)]
 
-use crate::poly::hyrax::BatchedHyraxOpeningProof;
-use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
@@ -18,10 +15,9 @@ use thiserror::Error;
 
 use super::r1cs_shape::R1CSShape;
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxCommitment},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
-use common::constants::NUM_R1CS_POLYS;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformSpartanKey<F: PrimeField> {
@@ -191,7 +187,7 @@ pub struct UniformSpartanProof<F: PrimeField, C: CommitmentScheme<Field = F>> {
     opening_proof: C::BatchedProof,
 }
 
-impl<F: PrimeField, C: CommitmentScheme<Field =F>> UniformSpartanProof<F, C> {
+impl<F: PrimeField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
     pub fn setup_precommitted<ShapeBuilder: UniformShapeBuilder<F>>(
         circuit: &ShapeBuilder,
@@ -425,9 +421,8 @@ impl<F: PrimeField, C: CommitmentScheme<Field =F>> UniformSpartanProof<F, C> {
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
             segmented_padded_witness.into_dense_polys();
-        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> = witness_segment_polys
-            .iter()
-            .collect();
+        let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
+            witness_segment_polys.iter().collect();
         let opening_proof = C::batch_prove(
             &witness_segment_polys_ref,
             r_y_point,
@@ -634,13 +629,13 @@ impl<F: PrimeField, C: CommitmentScheme<Field =F>> UniformSpartanProof<F, C> {
         let r_y_point = &inner_sumcheck_r[n_prefix..];
         C::batch_verify(
             &self.opening_proof,
-                &generators,
-                &r_y_point,
-                &self.claimed_witnesss_evals,
-                &witness_segment_commitments,
-                transcript,
-            )
-            .map_err(|_| SpartanError::InvalidHyraxProof)?;
+            &generators,
+            &r_y_point,
+            &self.claimed_witnesss_evals,
+            &witness_segment_commitments,
+            transcript,
+        )
+        .map_err(|_| SpartanError::InvalidHyraxProof)?;
 
         Ok(())
     }

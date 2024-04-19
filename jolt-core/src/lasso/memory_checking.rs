@@ -3,7 +3,6 @@
 
 use crate::poly::{
     dense_mlpoly::DensePolynomial,
-    pedersen::PedersenGenerators,
     structured_poly::{CommitmentScheme, StructuredCommitment, StructuredOpeningProof},
 };
 use crate::subprotocols::grand_product::{
@@ -12,7 +11,6 @@ use crate::subprotocols::grand_product::{
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::ProofTranscript;
 
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
@@ -33,10 +31,7 @@ pub struct MultisetHashes<F: PrimeField> {
 }
 
 impl<F: PrimeField> MultisetHashes<F> {
-    pub fn append_to_transcript(
-        &self,
-        transcript: &mut ProofTranscript,
-    ) {
+    pub fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_scalars(b"Read multiset hashes", &self.read_hashes);
         transcript.append_scalars(b"Write multiset hashes", &self.write_hashes);
         transcript.append_scalars(b"Init multiset hashes", &self.init_hashes);
@@ -102,7 +97,8 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<F, C, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+    ) -> MemoryCheckingProof<F, C, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>
+    {
         // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
 
         // fka "ProductLayerProof"

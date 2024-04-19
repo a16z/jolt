@@ -8,7 +8,6 @@ use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    poly::{hyrax::HyraxCommitment, pedersen::PedersenGenerators},
     r1cs::r1cs_shape::R1CSShape,
     utils::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
@@ -21,13 +20,9 @@ use super::{
     spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof},
 };
 
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{
-    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
-    rv_trace::NUM_CIRCUIT_FLAGS,
-};
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use strum::EnumCount;
@@ -414,10 +409,7 @@ impl<F: PrimeField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         Ok(R1CSProof::<F, C> { proof, key })
     }
 
-    fn format_commitments(
-        jolt_commitments: &JoltCommitments<C>,
-        C: usize,
-    ) -> Vec<&C::Commitment> {
+    fn format_commitments(jolt_commitments: &JoltCommitments<C>, C: usize) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments

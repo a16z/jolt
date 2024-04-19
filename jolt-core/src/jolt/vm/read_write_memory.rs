@@ -1,4 +1,3 @@
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
@@ -15,12 +14,8 @@ use crate::{
         NoPreprocessing,
     },
     poly::{
-        dense_mlpoly::DensePolynomial,
-        eq_poly::EqPolynomial,
-        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof},
-        identity_poly::IdentityPolynomial,
-        pedersen::PedersenGenerators,
-        structured_poly::StructuredOpeningProof,
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::matrix_dimensions,
+        identity_poly::IdentityPolynomial, structured_poly::StructuredOpeningProof,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
@@ -266,7 +261,7 @@ const RAM_4: usize = 6;
 pub struct ReadWriteMemory<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     _group: PhantomData<C>,
     /// Size of entire address space (i.e. registers + IO + RAM)
@@ -831,7 +826,7 @@ impl<C: CommitmentScheme> AppendToTranscript for MemoryCommitment<C> {
 pub struct MemoryReadWriteOpenings<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     /// Evaluation of the a_read_write polynomial at the opening point.
     pub a_read_write_opening: [F; 4],
@@ -849,7 +844,7 @@ where
 impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>> for MemoryReadWriteOpenings<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     type Proof = C::BatchedProof;
 
@@ -986,7 +981,7 @@ where
 impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>> for MemoryInitFinalOpenings<F>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     type Proof = MemoryInitFinalOpeningProof<F, C>;
     type Preprocessing = ReadWriteMemoryPreprocessing;
@@ -1419,8 +1414,7 @@ where
                 transcript,
             );
 
-        let sumcheck_opening_proof =
-            C::prove(&polynomials.v_final, &r_sumcheck, transcript);
+        let sumcheck_opening_proof = C::prove(&polynomials.v_final, &r_sumcheck, transcript);
 
         Self {
             num_rounds,
@@ -1509,7 +1503,7 @@ where
 pub struct ReadWriteMemoryProof<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     pub memory_checking_proof: MemoryCheckingProof<
         F,

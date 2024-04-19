@@ -1,4 +1,3 @@
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::NUM_R1CS_POLYS;
@@ -11,8 +10,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment};
-use crate::poly::pedersen::PedersenGenerators;
+use crate::poly::hyrax::matrix_dimensions;
 use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{

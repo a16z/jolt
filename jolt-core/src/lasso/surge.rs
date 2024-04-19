@@ -1,4 +1,3 @@
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -10,9 +9,8 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment},
+        hyrax::matrix_dimensions,
         identity_poly::IdentityPolynomial,
-        pedersen::PedersenGenerators,
         structured_poly::{CommitmentScheme, StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -31,10 +29,6 @@ where
     pub E_polys: Vec<DensePolynomial<F>>,
 }
 
-// TODO(moodlezoup): Make these tunable
-const SURGE_HYRAX_RATIO_READ_WRITE: usize = 16;
-const SURGE_HYRAX_RATIO_FINAL: usize = 4;
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeCommitment<CS: CommitmentScheme> {
     /// Commitments to dim_i and read_cts_i polynomials.
@@ -48,7 +42,7 @@ pub struct SurgeCommitment<CS: CommitmentScheme> {
 impl<F, CS> StructuredCommitment<CS> for SurgePolys<F, CS>
 where
     F: PrimeField,
-    CS: CommitmentScheme<Field = F>
+    CS: CommitmentScheme<Field = F>,
 {
     type Commitment = SurgeCommitment<CS>;
 
@@ -58,8 +52,7 @@ where
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
         let dim_read_commitment = CS::batch_commit_polys_ref(&dim_read_polys, &generators);
-        let E_commitment =
-            CS::batch_commit_polys_ref(&self.E_polys.iter().collect(), &generators);
+        let E_commitment = CS::batch_commit_polys_ref(&self.E_polys.iter().collect(), &generators);
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
@@ -78,7 +71,7 @@ type PrimarySumcheckOpenings<F> = Vec<F>;
 impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for PrimarySumcheckOpenings<F>
 where
     F: PrimeField,
-    CS: CommitmentScheme<Field = F>
+    CS: CommitmentScheme<Field = F>,
 {
     type Proof = CS::BatchedProof;
 
@@ -139,7 +132,7 @@ where
 impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeReadWriteOpenings<F>
 where
     F: PrimeField,
-    CS: CommitmentScheme<Field = F>
+    CS: CommitmentScheme<Field = F>,
 {
     type Proof = CS::BatchedProof;
 
@@ -295,8 +288,8 @@ where
     }
 }
 
-impl<F, CS, Instruction, const C: usize, const M: usize> MemoryCheckingProver<F, CS, SurgePolys<F, CS>>
-    for SurgeProof<F, CS, Instruction, C, M>
+impl<F, CS, Instruction, const C: usize, const M: usize>
+    MemoryCheckingProver<F, CS, SurgePolys<F, CS>> for SurgeProof<F, CS, Instruction, C, M>
 where
     F: PrimeField,
     CS: CommitmentScheme<Field = F>,
@@ -465,7 +458,7 @@ where
 pub struct SurgePrimarySumcheck<F, CS>
 where
     F: PrimeField,
-    CS: CommitmentScheme<Field = F>
+    CS: CommitmentScheme<Field = F>,
 {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
@@ -787,8 +780,10 @@ where
 mod tests {
     use super::SurgePreprocessing;
     use crate::{
-        jolt::instruction::xor::XORInstruction, lasso::surge::SurgeProof,
-        poly::{pedersen::PedersenGenerators, structured_poly::HyraxConfig}, utils::transcript::ProofTranscript,
+        jolt::instruction::xor::XORInstruction,
+        lasso::surge::SurgeProof,
+        poly::{pedersen::PedersenGenerators, structured_poly::HyraxConfig},
+        utils::transcript::ProofTranscript,
     };
     use ark_bn254::{Fr, G1Projective};
 

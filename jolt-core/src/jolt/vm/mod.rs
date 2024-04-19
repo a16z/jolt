@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -16,8 +15,6 @@ use crate::jolt::{
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::hyrax::HyraxCommitment;
-use crate::poly::pedersen::PedersenGenerators;
 use crate::poly::structured_poly::{CommitmentScheme, StructuredCommitment};
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
@@ -25,7 +22,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use common::{
-    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
+    constants::MEMORY_OPS_PER_INSTRUCTION,
     rv_trace::{ELFInstruction, JoltDevice, MemoryOp},
 };
 
@@ -111,7 +108,7 @@ impl<C: CommitmentScheme> JoltCommitments<C> {
 impl<F, C> StructuredCommitment<C> for JoltPolynomials<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     type Commitment = JoltCommitments<C>;
 

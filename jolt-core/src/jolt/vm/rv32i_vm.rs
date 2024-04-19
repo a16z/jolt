@@ -1,4 +1,3 @@
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
@@ -172,7 +171,9 @@ mod tests {
     #[test]
     fn instruction_set_subtables() {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::InstructionSet::iter() {
+        for instruction in
+            <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::InstructionSet::iter()
+        {
             for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
                 let _ = <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::Subtables::from(
@@ -200,14 +201,15 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, HyraxConfig<G1Projective>, C, M>>::prove(
-            io_device,
-            bytecode_trace,
-            memory_trace,
-            instruction_trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
+        let (proof, commitments) =
+            <RV32IJoltVM as Jolt<Fr, HyraxConfig<G1Projective>, C, M>>::prove(
+                io_device,
+                bytecode_trace,
+                memory_trace,
+                instruction_trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
         let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
         assert!(
             verification_result.is_ok(),
@@ -228,14 +230,15 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
-            io_device,
-            bytecode_trace,
-            memory_trace,
-            instruction_trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, HyraxConfig<G1Projective>, C, M>>::prove(
+                io_device,
+                bytecode_trace,
+                memory_trace,
+                instruction_trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
 
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(

@@ -3,15 +3,26 @@ use std::marker::PhantomData;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::Zero;
 use common::constants::NUM_R1CS_POLYS;
 use num_integer::Roots;
-use ark_std::Zero;
 
 use rayon::prelude::*;
 
-use super::{dense_mlpoly::DensePolynomial, hyrax::{BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof}, pedersen::PedersenGenerators};
+use super::{
+    dense_mlpoly::DensePolynomial,
+    hyrax::{BatchedHyraxOpeningProof, HyraxCommitment, HyraxOpeningProof},
+    pedersen::PedersenGenerators,
+};
 use crate::{
-    lasso::memory_checking::NoPreprocessing, poly::{eq_poly::EqPolynomial, pedersen::PedersenCommitment}, utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::{AppendToTranscript, ProofTranscript}}
+    lasso::memory_checking::NoPreprocessing,
+    poly::pedersen::PedersenCommitment,
+    utils::{
+        errors::ProofVerifyError,
+        math::Math,
+        mul_0_1_optimized,
+        transcript::{AppendToTranscript, ProofTranscript},
+    },
 };
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -23,10 +34,19 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
     fn generators(max_commit_size: usize) -> Self::Generators;
     fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Generators) -> Self::Commitment;
-    fn batch_commit(evals: &Vec<Vec<Self::Field>>, gens: &Self::Generators) -> Vec<Self::Commitment>;
+    fn batch_commit(
+        evals: &Vec<Vec<Self::Field>>,
+        gens: &Self::Generators,
+    ) -> Vec<Self::Commitment>;
     fn commit_slice(evals: &[Self::Field], gens: &Self::Generators) -> Self::Commitment;
-    fn batch_commit_polys(polys: &Vec<DensePolynomial<Self::Field>>, gens: &Self::Generators) -> Vec<Self::Commitment>;
-    fn batch_commit_polys_ref(polys: &Vec<&DensePolynomial<Self::Field>>, gens: &Self::Generators) -> Vec<Self::Commitment>;
+    fn batch_commit_polys(
+        polys: &Vec<DensePolynomial<Self::Field>>,
+        gens: &Self::Generators,
+    ) -> Vec<Self::Commitment>;
+    fn batch_commit_polys_ref(
+        polys: &Vec<&DensePolynomial<Self::Field>>,
+        gens: &Self::Generators,
+    ) -> Vec<Self::Commitment>;
     fn prove(
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
@@ -48,7 +68,6 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError>;
 
-    
     fn batch_verify(
         batch_proof: &Self::BatchedProof,
         generators: &Self::Generators,
@@ -65,7 +84,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
 #[derive(Clone)]
 pub struct HyraxConfig<G: CurveGroup> {
-    marker: PhantomData<G>
+    marker: PhantomData<G>,
 }
 
 pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize, usize) {
@@ -80,8 +99,6 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     (col_size, row_size)
 }
 
-
-
 impl<G: CurveGroup> CommitmentScheme for HyraxConfig<G> {
     type Field = G::ScalarField; // TODO(sragss): include? or seperate field config?
     type Generators = PedersenGenerators<G>;
@@ -95,13 +112,19 @@ impl<G: CurveGroup> CommitmentScheme for HyraxConfig<G> {
     fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Generators) -> Self::Commitment {
         HyraxCommitment::commit(poly, gens)
     }
-    fn batch_commit(evals: &Vec<Vec<Self::Field>>, gens: &Self::Generators) -> Vec<Self::Commitment> {
+    fn batch_commit(
+        evals: &Vec<Vec<Self::Field>>,
+        gens: &Self::Generators,
+    ) -> Vec<Self::Commitment> {
         HyraxCommitment::batch_commit(evals, gens)
     }
     fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Generators) -> Self::Commitment {
         HyraxCommitment::commit_slice(eval_slice, generators)
     }
-    fn batch_commit_polys(polys: &Vec<DensePolynomial<Self::Field>>, generators: &Self::Generators) -> Vec<Self::Commitment> {
+    fn batch_commit_polys(
+        polys: &Vec<DensePolynomial<Self::Field>>,
+        generators: &Self::Generators,
+    ) -> Vec<Self::Commitment> {
         let num_vars = polys[0].get_num_vars();
         let n = num_vars.pow2();
         polys
@@ -127,7 +150,10 @@ impl<G: CurveGroup> CommitmentScheme for HyraxConfig<G> {
             })
             .collect()
     }
-    fn batch_commit_polys_ref(polys: &Vec<&DensePolynomial<Self::Field>>, generators: &Self::Generators) -> Vec<Self::Commitment> {
+    fn batch_commit_polys_ref(
+        polys: &Vec<&DensePolynomial<Self::Field>>,
+        generators: &Self::Generators,
+    ) -> Vec<Self::Commitment> {
         let num_vars = polys[0].get_num_vars();
         let n = num_vars.pow2();
         polys
@@ -176,7 +202,14 @@ impl<G: CurveGroup> CommitmentScheme for HyraxConfig<G> {
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-        HyraxOpeningProof::verify(proof, generators, transcript, opening_point, opening, commitment)
+        HyraxOpeningProof::verify(
+            proof,
+            generators,
+            transcript,
+            opening_point,
+            opening,
+            commitment,
+        )
     }
     fn batch_verify(
         batch_proof: &Self::BatchedProof,
@@ -186,7 +219,14 @@ impl<G: CurveGroup> CommitmentScheme for HyraxConfig<G> {
         commitments: &[&Self::Commitment],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        BatchedHyraxOpeningProof::verify(batch_proof, generators, opening_point, openings, commitments, transcript)
+        BatchedHyraxOpeningProof::verify(
+            batch_proof,
+            generators,
+            opening_point,
+            openings,
+            commitments,
+            transcript,
+        )
     }
     fn protocol_name() -> &'static [u8] {
         b"Jolt BatchedHyraxOpeningProof"

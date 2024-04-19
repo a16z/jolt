@@ -6,9 +6,7 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::{
-    matrix_dimensions,
-};
+use crate::poly::hyrax::matrix_dimensions;
 use crate::poly::structured_poly::CommitmentScheme;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -493,7 +491,7 @@ where
 impl<F, C> MemoryCheckingVerifier<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     fn read_tuples(
         _: &BytecodePreprocessing<F>,
@@ -656,7 +654,7 @@ where
 impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeInitFinalOpenings<F>
 where
     F: PrimeField,
-    C: CommitmentScheme<Field = F>
+    C: CommitmentScheme<Field = F>,
 {
     type Preprocessing = BytecodePreprocessing<F>;
     type Proof = C::Proof;
@@ -776,8 +774,10 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let num_generators =
-            BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(program.len(), trace.len());
+        let num_generators = BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(
+            program.len(),
+            trace.len(),
+        );
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
@@ -815,8 +815,10 @@ mod tests {
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let num_generators =
-            BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(program.len(), trace.len());
+        let num_generators = BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(
+            program.len(),
+            trace.len(),
+        );
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);

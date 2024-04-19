@@ -5,7 +5,6 @@ use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 
@@ -241,9 +240,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
-            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched(
-                &claim, params, &coeff_vec, transcript,
-            );
+            let (proof, rand_prod, claims_prod) =
+                SumcheckInstanceProof::prove_cubic_batched(&claim, params, &coeff_vec, transcript);
 
             let (claims_poly_A, claims_poly_B, _claim_eq) = claims_prod;
             for i in 0..batch.circuits.len() {
@@ -435,8 +433,7 @@ mod grand_product_circuit_tests {
         let batch = BatchedGrandProductCircuit::new_batch(vec![read_gpc, write_gpc]);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_rand) =
-            BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
+        let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read = Fr::from(10) * Fr::from(20);
         let expected_eval_write = Fr::from(100) * Fr::from(200);
@@ -488,8 +485,7 @@ mod grand_product_circuit_tests {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_rand) =
-            BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
+        let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read: Fr = Fr::from(10) * Fr::from(20) * Fr::from(40);
         let expected_eval_write: Fr = Fr::from(100) * Fr::from(200) * Fr::from(400);

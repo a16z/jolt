@@ -8,7 +8,6 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use itertools::multizip;
@@ -1295,13 +1294,12 @@ mod test {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_randomness, _evals) =
-            SumcheckInstanceProof::prove_cubic_batched(
-                &claim,
-                cubic_sumcheck_params,
-                &coeffs,
-                &mut transcript,
-            );
+        let (proof, prove_randomness, _evals) = SumcheckInstanceProof::prove_cubic_batched(
+            &claim,
+            cubic_sumcheck_params,
+            &coeffs,
+            &mut transcript,
+        );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let verify_result = proof.verify(claim, 2, 3, &mut transcript);
@@ -1358,13 +1356,12 @@ mod test {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_randomness, prove_evals) =
-            SumcheckInstanceProof::prove_cubic_batched(
-                &claim,
-                cubic_sumcheck_params,
-                &coeffs,
-                &mut transcript,
-            );
+        let (proof, prove_randomness, prove_evals) = SumcheckInstanceProof::prove_cubic_batched(
+            &claim,
+            cubic_sumcheck_params,
+            &coeffs,
+            &mut transcript,
+        );
 
         // Prover eval: unwrap and combine
         let (leaf_eval, flag_eval, eq_eval) = prove_evals;
