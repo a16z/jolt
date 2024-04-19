@@ -65,15 +65,12 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
         };
 
         let ram_byte_read = |index: usize| match val.memory_state {
-            Some(MemoryState::Read {
-                address: _,
-                value: _,
-            }) => (val.register_state.rd_post_val.unwrap() >> (index * 8)) as u8,
+            Some(MemoryState::Read { address: _, value }) => (value >> (index * 8)) as u8,
             Some(MemoryState::Write {
                 address: _,
-                pre_value,
+                pre_value: _,
                 post_value: _,
-            }) => (pre_value >> (index * 8)) as u8,
+            }) => panic!("Unexpected MemoryState::Write"),
             None => panic!("Memory state not found"),
         };
         let ram_byte_written = |index: usize| match val.memory_state {
