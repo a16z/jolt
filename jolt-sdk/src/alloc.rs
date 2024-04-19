@@ -16,6 +16,8 @@ extern "C" {
 
 static mut ALLOC_NEXT: usize = 0;
 
+
+#[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn sys_alloc(size: usize, align: usize) -> *mut u8 {
     let mut next = unsafe { ALLOC_NEXT };
