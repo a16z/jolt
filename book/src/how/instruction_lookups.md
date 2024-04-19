@@ -30,7 +30,7 @@ being the table storing all $2^{16}$ evaluations of the simple function). And th
 the results of the subtable lookups into the result of the original lookup (instruction execution on the un-chunked inputs)
 is handled via an invocation of the sum-check protocol. We call this the "primary sumcheck" instance in Lasso.
 
-The "primary sumcheck" collation looks as follows for a trace of length $m$ and a VM with $f$ unique instructions.
+The "primary sumcheck" collation looks as follows for a trace of length $m$ and a VM with $F$ unique instructions.
 
 $\sum_{x \in \{0,1\}^{\log_2(m)}} \left[\widetilde{\text{eq}}(r,x) \cdot \sum_{f \in \{0,1\}^{\log_2(F)}} \widetilde{\text{flags}_f}(x) \cdot g_f(\text{terms}_f(x))\right]$
 
