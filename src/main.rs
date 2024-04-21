@@ -56,8 +56,13 @@ fn install_no_std_toolchain() {
 }
 
 fn install_jolt_toolchain() {
+    let client = Client::builder()
+        .timeout(None)
+        .user_agent("Mozilla/5.0")
+        .build()
+        .unwrap();
+
     let target = target_lexicon::HOST.to_string();
-    let client = Client::builder().user_agent("Mozilla/5.0").build().unwrap();
     let url = get_jolt_toolchain_url(&client, &target);
     println!("downloading toolchain...");
     download_jolt_toolchain(&client, &url);
