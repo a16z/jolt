@@ -10,8 +10,8 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::matrix_dimensions;
-use crate::poly::structured_poly::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::hyrax::matrix_dimensions;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},

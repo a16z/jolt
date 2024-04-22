@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::poly::commitment::hyrax::matrix_dimensions;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::hyrax::matrix_dimensions;
-use crate::poly::structured_poly::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -719,7 +719,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::{pedersen::PedersenGenerators, structured_poly::HyraxConfig};
+    use crate::poly::{commitment::pedersen::PedersenGenerators, commitment::hyrax::HyraxScheme};
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
@@ -745,7 +745,7 @@ mod tests {
         ];
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
+        let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
@@ -774,13 +774,13 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let num_generators = BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(
+        let num_generators = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::num_generators(
             program.len(),
             trace.len(),
         );
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
+        let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
@@ -815,12 +815,12 @@ mod tests {
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let num_generators = BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::num_generators(
+        let num_generators = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::num_generators(
             program.len(),
             trace.len(),
         );
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
-        let polys: BytecodePolynomials<Fr, HyraxConfig<G1Projective>> =
+        let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
         let generators = PedersenGenerators::new(num_generators, b"test");
         let commitments = polys.commit(&generators);
@@ -855,7 +855,7 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(5), 0u64, 0u64, 0u64, 0u64, 0u64), // no_op: shouldn't exist in pgoram
         ];
-        BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::validate_bytecode(&program, &trace);
+        BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
     }
 
     #[test]
@@ -871,6 +871,6 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        BytecodePolynomials::<Fr, HyraxConfig<G1Projective>>::validate_bytecode(&program, &trace);
+        BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::validate_bytecode(&program, &trace);
     }
 }

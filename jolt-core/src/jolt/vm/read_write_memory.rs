@@ -6,7 +6,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use crate::poly::structured_poly::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -14,7 +14,7 @@ use crate::{
         NoPreprocessing,
     },
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::matrix_dimensions,
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, commitment::hyrax::matrix_dimensions,
         identity_poly::IdentityPolynomial, structured_poly::StructuredOpeningProof,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,

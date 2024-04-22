@@ -4,7 +4,7 @@
     clippy::too_many_arguments
 )]
 
-use crate::poly::structured_poly::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},

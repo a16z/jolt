@@ -1,6 +1,6 @@
 #![allow(clippy::len_without_is_empty)]
 
-use crate::poly::structured_poly::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;

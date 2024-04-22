@@ -9,9 +9,9 @@ use crate::{
     poly::{
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        hyrax::matrix_dimensions,
+        commitment::{hyrax::matrix_dimensions, commitment_scheme::CommitmentScheme},
         identity_poly::IdentityPolynomial,
-        structured_poly::{CommitmentScheme, StructuredCommitment, StructuredOpeningProof},
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
@@ -782,7 +782,7 @@ mod tests {
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
-        poly::{pedersen::PedersenGenerators, structured_poly::HyraxConfig},
+        poly::{commitment::pedersen::PedersenGenerators, commitment::hyrax::HyraxScheme},
         utils::transcript::ProofTranscript,
     };
     use ark_bn254::{Fr, G1Projective};
@@ -801,10 +801,10 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::num_generators(16),
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(16),
             b"LassoV1",
         );
-        let proof = SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::prove(
+        let proof = SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::prove(
             &preprocessing,
             &generators,
             ops,
@@ -831,10 +831,10 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::num_generators(16),
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(16),
             b"LassoV1",
         );
-        let proof = SurgeProof::<Fr, HyraxConfig<G1Projective>, XORInstruction, C, M>::prove(
+        let proof = SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::prove(
             &preprocessing,
             &generators,
             ops,

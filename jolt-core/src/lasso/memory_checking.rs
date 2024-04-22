@@ -3,7 +3,8 @@
 
 use crate::poly::{
     dense_mlpoly::DensePolynomial,
-    structured_poly::{CommitmentScheme, StructuredCommitment, StructuredOpeningProof},
+    structured_poly::{StructuredCommitment, StructuredOpeningProof},
+    commitment::commitment_scheme::CommitmentScheme
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,

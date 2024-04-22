@@ -15,7 +15,8 @@ use crate::jolt::{
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::structured_poly::{CommitmentScheme, StructuredCommitment};
+use crate::poly::structured_poly::StructuredCommitment;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;

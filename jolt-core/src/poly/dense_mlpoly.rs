@@ -311,7 +311,7 @@ impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::hyrax::matrix_dimensions;
+    use crate::poly::commitment::hyrax::matrix_dimensions;
 
     use super::*;
     use ark_bn254::Fr;
