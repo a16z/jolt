@@ -61,6 +61,8 @@ target-lexicon = "0.12.14"
 reqwest = { version = "0.12.3", features = ["json", "blocking"] }
 dirs = "5.0.1"
 eyre = "0.6.12"
+indicatif = "0.17.8"
+tokio = "1.37.0"
 
 common = { path = "../common" }
 tracer = { path = "../tracer" }

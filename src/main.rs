@@ -43,7 +43,6 @@ fn create_project(name: String) {
 }
 
 fn install_toolchain() {
-    println!("downloading toolchain...");
     if let Err(err) = toolchain::install_toolchain() {
         panic!("toolchain install failed: {}", err);
     }

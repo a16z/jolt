@@ -5,8 +5,10 @@ use std::{
 };
 
 use dirs::home_dir;
-use eyre::{bail, Result};
-use reqwest::blocking::Client;
+use eyre::{bail, eyre, Result};
+use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::Client;
+use tokio::runtime::Runtime;
 
 const TOOLCHAIN_TAG: &str = "nightly-3c5f0ec3f4f98a2d211061a83bade8d62c6a6135";
 
@@ -16,13 +18,11 @@ pub fn install_toolchain() -> Result<()> {
         return Ok(());
     }
 
-    let client = Client::builder()
-        .timeout(None)
-        .user_agent("Mozilla/5.0")
-        .build()?;
-
+    let client = Client::builder().user_agent("Mozilla/5.0").build()?;
     let toolchain_url = toolchain_url();
-    download_toolchain(&client, &toolchain_url)?;
+
+    let rt = Runtime::new().unwrap();
+    rt.block_on(download_toolchain(&client, &toolchain_url))?;
     unpack_toolchain()?;
     link_toolchain()?;
 
@@ -67,17 +67,40 @@ fn unpack_toolchain() -> Result<()> {
     Ok(())
 }
 
-fn download_toolchain(client: &Client, url: &str) -> Result<()> {
-    let bytes = client.get(url).send()?.bytes()?;
+async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
     let jolt_dir = jolt_dir();
+    let output_path = jolt_dir.join("rust-toolchain.tar.gz");
     if !jolt_dir.exists() {
         fs::create_dir(&jolt_dir)?;
     }
 
-    let path = jolt_dir.join("rust-toolchain.tar.gz");
-    fs::write(path, &bytes)?;
+    println!("Downloading toolchain");
+    let mut response = client.get(url).send().await?;
+    if response.status().is_success() {
+        let mut file = File::create(output_path)?;
+        let total_size = response.content_length().unwrap_or(0);
 
-    Ok(())
+        let pb = ProgressBar::new(total_size);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
+                .progress_chars("#>-"),
+        );
+
+        let mut downloaded: u64 = 0;
+        while let Some(chunk) = response.chunk().await.unwrap() {
+            file.write_all(&chunk)?;
+            let new = downloaded + (chunk.len() as u64);
+            pb.set_position(new);
+            downloaded = new;
+        }
+
+        pb.finish_with_message("Download complete");
+
+        Ok(())
+    } else {
+        Err(eyre!("failed to download toolchain"))
+    }
 }
 
 fn toolchain_url() -> String {
