@@ -30,6 +30,7 @@ use crate::{
 use self::analyze::ProgramSummary;
 
 pub mod analyze;
+pub mod toolchain;
 
 #[derive(Clone)]
 pub struct Program {

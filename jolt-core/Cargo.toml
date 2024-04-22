@@ -57,6 +57,10 @@ tracing-flame = "0.2.0"
 tracing-subscriber = "0.3.18"
 tracing-texray = "0.2.0"
 iai-callgrind = "0.10.2"
+target-lexicon = "0.12.14"
+reqwest = { version = "0.12.3", features = ["json", "blocking"] }
+dirs = "5.0.1"
+eyre = "0.6.12"
 
 common = { path = "../common" }
 tracer = { path = "../tracer" }

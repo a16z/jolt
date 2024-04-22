@@ -6,9 +6,9 @@ use std::{
 use clap::{Parser, Subcommand};
 use eyre::Result;
 use rand::prelude::SliceRandom;
-use reqwest::blocking::Client;
-use serde_json::Value;
 use sysinfo::System;
+
+use jolt_core::host::toolchain::install_toolchain;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -56,77 +56,10 @@ fn install_no_std_toolchain() {
 }
 
 fn install_jolt_toolchain() {
-    let client = Client::builder()
-        .timeout(None)
-        .user_agent("Mozilla/5.0")
-        .build()
-        .unwrap();
-
-    let target = target_lexicon::HOST.to_string();
-    let url = get_jolt_toolchain_url(&client, &target);
     println!("downloading toolchain...");
-    download_jolt_toolchain(&client, &url);
-    unpack_toolchain();
-    link_toolchain();
-}
-
-fn link_toolchain() {
-    let output = std::process::Command::new("rustup")
-        .args([
-            "toolchain",
-            "link",
-            "riscv32i-jolt-zkvm-elf",
-            dirs::home_dir()
-                .unwrap()
-                .join(".jolt/rust/build/host/stage2")
-                .to_str()
-                .unwrap(),
-        ])
-        .output()
-        .expect("failed to link toolchain");
-
-    if !output.status.success() {
-        println!("{}", String::from_utf8(output.stderr).unwrap());
+    if let Err(err) = install_toolchain() {
+        panic!("toolchain install failed: {}", err);
     }
-}
-
-fn unpack_toolchain() {
-    let output = std::process::Command::new("tar")
-        .args(["-xzf", "rust-toolchain.tar.gz"])
-        .current_dir(dirs::home_dir().unwrap().join(".jolt"))
-        .output()
-        .expect("unpacking toolchain failed");
-
-    if !output.status.success() {
-        println!("{}", String::from_utf8(output.stderr).unwrap());
-    }
-}
-
-fn download_jolt_toolchain(client: &Client, url: &str) {
-    let bytes = client.get(url).send().unwrap().bytes().unwrap();
-    let jolt_dir = dirs::home_dir().unwrap().join(".jolt");
-    if !jolt_dir.exists() {
-        fs::create_dir(&jolt_dir).unwrap();
-    }
-
-    let path = jolt_dir.join("rust-toolchain.tar.gz");
-    fs::write(path, &bytes).unwrap();
-}
-
-fn get_jolt_toolchain_url(client: &Client, target: &str) -> String {
-    let json = client
-        .get("https://api.github.com/repos/a16z/rust/releases/latest")
-        .send()
-        .unwrap()
-        .json::<Value>()
-        .unwrap();
-
-    let tag = json["tag_name"].as_str().unwrap();
-
-    format!(
-        "https://github.com/a16z/rust/releases/download/{}/rust-toolchain-{}.tar.gz",
-        tag, target
-    )
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
