@@ -8,7 +8,7 @@ use eyre::Result;
 use rand::prelude::SliceRandom;
 use sysinfo::System;
 
-use jolt_core::host::toolchain::install_toolchain;
+use jolt_core::host::toolchain;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -32,7 +32,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::New { name } => create_project(name),
-        Command::InstallToolchain => install_toolchains(),
+        Command::InstallToolchain => install_toolchain(),
     }
 }
 
@@ -42,24 +42,12 @@ fn create_project(name: String) {
     create_guest_files(&name).expect("file creation failed");
 }
 
-fn install_toolchains() {
-    install_no_std_toolchain();
-    install_jolt_toolchain();
-    display_welcome();
-}
-
-fn install_no_std_toolchain() {
-    std::process::Command::new("rustup")
-        .args(["target", "add", "riscv32i-unknown-none-elf"])
-        .output()
-        .expect("could not install toolchain");
-}
-
-fn install_jolt_toolchain() {
+fn install_toolchain() {
     println!("downloading toolchain...");
-    if let Err(err) = install_toolchain() {
+    if let Err(err) = toolchain::install_toolchain() {
         panic!("toolchain install failed: {}", err);
     }
+    display_welcome();
 }
 
 fn create_folder_structure(name: &str) -> Result<()> {
