@@ -27,9 +27,10 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
-use self::analyze::ProgramSummary;
+use self::{analyze::ProgramSummary, toolchain::install_toolchain};
 
 pub mod analyze;
+pub mod toolchain;
 
 #[derive(Clone)]
 pub struct Program {
@@ -91,6 +92,7 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
+            install_toolchain().unwrap();
             self.save_linker();
 
             let rust_flags = [
@@ -102,17 +104,11 @@ impl Program {
                 "panic=abort",
             ];
 
-            let toolchain = if self.std {
-                "riscv32i-jolt-zkvm-elf"
-            } else {
-                "riscv32i-unknown-none-elf"
-            };
-
-            let mut envs = vec![("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f"))];
-
-            if self.std {
-                envs.push(("RUSTUP_TOOLCHAIN", toolchain.to_string()));
-            }
+            let toolchain = "riscv32i-jolt-zkvm-elf";
+            let mut envs = vec![
+                ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
+                ("RUSTUP_TOOLCHAIN", toolchain.to_string()),
+            ];
 
             if let Some(func) = &self.func {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
