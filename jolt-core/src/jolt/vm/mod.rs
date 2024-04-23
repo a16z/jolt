@@ -223,12 +223,13 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<F, CS> {
-        let num_bytecode_generators =
-            BytecodePolynomials::<F, CS>::num_generators(max_bytecode_size, max_trace_length);
-        let num_read_write_memory_generators =
-            ReadWriteMemory::<F, CS>::num_generators(max_memory_address, max_trace_length);
-        let timestamp_range_check_generators =
-            TimestampValidityProof::<F, CS>::num_generators(max_trace_length);
+        let bytecode_generator_shapes =
+            BytecodePolynomials::<F, CS>::generator_shapes(max_bytecode_size, max_trace_length);
+        let ram_generator_shapes =
+            ReadWriteMemory::<F, CS>::generator_shapes(max_memory_address, max_trace_length);
+        let timestamp_range_check_generator_shapes =
+            TimestampValidityProof::<F, CS>::generator_shapes(max_trace_length);
+
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             C,
             M,
@@ -242,7 +243,7 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
             CS,
             Self::InstructionSet,
             Self::Subtables,
-        >::num_generators(
+        >::generator_shapes(
             &instruction_lookups_preprocessing,
             max_trace_length,
         );
@@ -255,15 +256,13 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
-        let max_num_generators = max([
-            num_bytecode_generators,
-            num_read_write_memory_generators,
-            timestamp_range_check_generators,
-            num_instruction_lookup_generators,
-        ])
-        .unwrap();
+        let mut generator_shapes = Vec::new();
+        generator_shapes.extend(bytecode_generator_shapes);
+        generator_shapes.extend(ram_generator_shapes);
+        generator_shapes.extend(timestamp_range_check_generator_shapes);
+        generator_shapes.extend(num_instruction_lookup_generators);
 
-        let generators = CS::generators(max_num_generators);
+        let generators = CS::generators(&generator_shapes);
 
         JoltPreprocessing {
             generators,

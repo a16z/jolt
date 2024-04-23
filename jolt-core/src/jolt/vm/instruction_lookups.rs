@@ -10,7 +10,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
 use crate::poly::commitment::hyrax::matrix_dimensions;
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
@@ -1427,19 +1427,19 @@ where
 
     /// Computes the maximum number of group generators needed to commit to instruction
     /// lookup polynomials using Hyrax, given the maximum trace length.
-    pub fn num_generators(
+    pub fn generator_shapes(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
-    ) -> usize {
+    ) -> Vec<GeneratorShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
-        let num_read_write_generators =
-            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
-        let num_init_final_generators = matrix_dimensions(
-            (M * preprocessing.num_memories).next_power_of_two().log_2(),
-            1,
-        )
-        .1;
-        std::cmp::max(num_read_write_generators, num_init_final_generators)
+        // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
+        let c: usize = 4;
+        let num_instructions: usize = 20;
+        let trace_batch_size = c + preprocessing.num_memories + preprocessing.num_memories + num_instructions + 1;
+        let read_write_generator_shape = GeneratorShape::new(max_trace_length, trace_batch_size);
+        let init_final_generator_shape = GeneratorShape::new(M * preprocessing.num_memories.next_power_of_two(), 1);
+
+        vec![read_write_generator_shape, init_final_generator_shape]
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]

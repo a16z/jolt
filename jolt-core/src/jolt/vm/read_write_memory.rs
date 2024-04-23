@@ -6,7 +6,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -780,29 +780,28 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
 
     /// Computes the maximum number of group generators needed to commit to read-write
     /// memory polynomials using Hyrax, given the maximum memory address and maximum trace length.
-    pub fn num_generators(max_memory_address: usize, max_trace_length: usize) -> usize {
+    pub fn generator_shapes(max_memory_address: usize, max_trace_length: usize) -> Vec<GeneratorShape> {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
         // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
-        let t_read_write_num_vars = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION)
-            .next_power_of_two()
-            .log_2();
-        // v_final, t_final
-        let init_final_num_vars = max_memory_address.next_power_of_two().log_2();
-        let num_read_write_generators = std::cmp::max(
-            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1,
-            matrix_dimensions(t_read_write_num_vars, 1).1,
-        );
-        let num_init_final_generators = matrix_dimensions(init_final_num_vars, 1).1;
+        let t_read_write_len = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION).next_power_of_two();
+        let t_read_write_shape = GeneratorShape::new(t_read_write_len, 1);
 
-        std::cmp::max(num_read_write_generators, num_init_final_generators)
+        // TODO(sragss): Low confidence this is correct.
+        // { a_ram, v_read, v_write_rd, v_write_ram }
+        let r1cs_poly_count = 1 + MEMORY_OPS_PER_INSTRUCTION + 1 + 4;
+        let r1cs_shape = GeneratorShape::new(max_trace_length, r1cs_poly_count);
+        // v_final, t_final
+        let init_final_len = max_memory_address.next_power_of_two();
+        let init_final_shape = GeneratorShape::new(init_final_len, 1);
+
+        vec![t_read_write_shape, r1cs_shape, init_final_shape]
     }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCommitment<C: CommitmentScheme> {
-    // TODO(sragss): Killed the generic programmability on C::Commitment. Could bring this back with C::Commitment<CommitmentConfig>
     pub trace_commitments: Vec<C::Commitment>,
     pub v_final_commitment: C::Commitment,
     pub t_final_commitment: C::Commitment,

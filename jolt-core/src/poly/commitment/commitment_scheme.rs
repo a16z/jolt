@@ -8,6 +8,21 @@ use crate::{
     },
 };
 
+#[derive(Clone, Debug)]
+pub struct GeneratorShape {
+    pub input_length: usize,
+    pub batch_size: usize
+}
+
+impl GeneratorShape {
+    pub fn new(input_length: usize, batch_size: usize) -> Self {
+        Self {
+            input_length,
+            batch_size,
+        }
+    }
+}
+
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField;
     type Generators: Clone + Sync + Send;
@@ -15,7 +30,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
 
-    fn generators(max_commit_size: usize) -> Self::Generators;
+    fn generators(shapes: &[GeneratorShape]) -> Self::Generators;
     fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit(
         evals: &Vec<Vec<Self::Field>>,

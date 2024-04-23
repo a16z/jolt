@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
 use crate::poly::commitment::hyrax::matrix_dimensions;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
@@ -779,9 +779,10 @@ where
 
     /// Computes the maximum number of group generators needed to commit to timestamp
     /// range-check polynomials using Hyrax, given the maximum trace length.
-    pub fn num_generators(max_trace_length: usize) -> usize {
+    pub fn generator_shapes(max_trace_length: usize) -> Vec<GeneratorShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
-        matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1
+
+        vec![GeneratorShape::new(max_trace_length, 4 * MEMORY_OPS_PER_INSTRUCTION)]
     }
 
     fn protocol_name() -> &'static [u8] {
