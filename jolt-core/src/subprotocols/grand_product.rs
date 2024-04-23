@@ -5,7 +5,6 @@ use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 
@@ -217,12 +216,10 @@ pub struct BatchedGrandProductArgument<F: PrimeField> {
 
 impl<F: PrimeField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
-    pub fn prove<G>(
+    pub fn prove(
         mut batch: BatchedGrandProductCircuit<F>,
         transcript: &mut ProofTranscript,
     ) -> (Self, Vec<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
     {
         let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
         let mut claims_to_verify = (0..batch.circuits.len())
@@ -244,7 +241,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
-            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched::<G>(
+            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched(
                 &claim, params, &coeff_vec, transcript,
             );
 

@@ -663,7 +663,7 @@ where
         let _span = trace_span!("TimestampValidityProof: prove grand products");
         let _enter = _span.enter();
         let (batched_grand_product, r_grand_product) =
-            BatchedGrandProductArgument::prove::<G>(batched_circuit, transcript);
+            BatchedGrandProductArgument::prove(batched_circuit, transcript);
         drop(_enter);
         drop(_span);
 

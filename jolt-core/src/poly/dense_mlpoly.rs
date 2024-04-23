@@ -7,7 +7,6 @@ use crate::utils::math::Math;
 use ark_ff::PrimeField;
 use core::ops::Index;
 use rayon::prelude::*;
-use std::ops::AddAssign;
 
 #[derive(Debug, PartialEq)]
 pub struct DensePolynomial<F> {
@@ -199,15 +198,6 @@ impl<F: PrimeField> DensePolynomial<F> {
         }
     }
 
-    pub fn bound_poly_var_bot(&mut self, r: &F) {
-        let n = self.len() / 2;
-        for i in 0..n {
-            self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
-        }
-        self.num_vars -= 1;
-        self.len = n;
-    }
-
     // returns Z(r) in O(n) time
     pub fn evaluate(&self, r: &[F]) -> F {
         // r must have a value for each variable
@@ -292,20 +282,6 @@ impl<F> Index<usize> for DensePolynomial<F> {
 impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
     fn as_ref(&self) -> &DensePolynomial<F> {
         self
-    }
-}
-
-impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
-    fn add_assign(&mut self, rhs: &DensePolynomial<F>) {
-        assert_eq!(self.num_vars, rhs.num_vars);
-        assert_eq!(self.len, rhs.len);
-        let summed_evaluations: Vec<F> = self.Z.iter().zip(&rhs.Z).map(|(a, b)| *a + *b).collect();
-
-        *self = Self {
-            num_vars: self.num_vars,
-            len: self.len,
-            Z: summed_evaluations,
-        }
     }
 }
 

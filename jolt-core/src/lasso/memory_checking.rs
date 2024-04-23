@@ -173,9 +173,9 @@ where
         multiset_hashes.append_to_transcript::<G>(transcript);
 
         let (read_write_grand_product, r_read_write) =
-            BatchedGrandProductArgument::prove::<G>(read_write_circuit, transcript);
+            BatchedGrandProductArgument::prove(read_write_circuit, transcript);
         let (init_final_grand_product, r_init_final) =
-            BatchedGrandProductArgument::prove::<G>(init_final_circuit, transcript);
+            BatchedGrandProductArgument::prove(init_final_circuit, transcript);
         (
             read_write_grand_product,
             init_final_grand_product,
