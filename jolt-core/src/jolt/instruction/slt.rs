@@ -1,5 +1,6 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
@@ -19,7 +20,7 @@ impl JoltInstruction for SLTInstruction {
         (self.0, self.1)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         let vals_by_subtable = self.slice_values(vals, C, M);
 
         let gt_msb = vals_by_subtable[0];
@@ -47,7 +48,7 @@ impl JoltInstruction for SLTInstruction {
         C + 1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         _: usize,
@@ -71,7 +72,6 @@ impl JoltInstruction for SLTInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }

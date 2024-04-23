@@ -1,7 +1,7 @@
 #![allow(dead_code)]
+use crate::poly::field::JoltField;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ff::PrimeField;
 use ark_serialize::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
@@ -14,11 +14,11 @@ pub struct UniPoly<F> {
 // ax^2 + bx + c stored as vec![c,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct CompressedUniPoly<F: PrimeField> {
+pub struct CompressedUniPoly<F: JoltField> {
     coeffs_except_linear_term: Vec<F>,
 }
 
-impl<F: PrimeField> UniPoly<F> {
+impl<F: JoltField> UniPoly<F> {
     #[allow(dead_code)]
     pub fn from_coeff(coeffs: Vec<F>) -> Self {
         UniPoly { coeffs }
@@ -85,7 +85,7 @@ impl<F: PrimeField> UniPoly<F> {
     }
 }
 
-impl<F: PrimeField> CompressedUniPoly<F> {
+impl<F: JoltField> CompressedUniPoly<F> {
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {
@@ -102,7 +102,7 @@ impl<F: PrimeField> CompressedUniPoly<F> {
     }
 }
 
-impl<F: PrimeField> AppendToTranscript for UniPoly<F> {
+impl<F: JoltField> AppendToTranscript for UniPoly<F> {
     fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"UniPoly_begin");
         for i in 0..self.coeffs.len() {
@@ -123,11 +123,11 @@ mod tests {
         test_from_evals_quad_helper::<Fr>()
     }
 
-    fn test_from_evals_quad_helper<F: PrimeField>() {
+    fn test_from_evals_quad_helper<F: JoltField>() {
         // polynomial is 2x^2 + 3x + 1
         let e0 = F::one();
-        let e1 = F::from(6u64);
-        let e2 = F::from(15u64);
+        let e1 = F::from_u64(6u64).unwrap();
+        let e2 = F::from_u64(15u64).unwrap();
         let evals = vec![e0, e1, e2];
         let poly = UniPoly::from_evals(&evals);
 
@@ -135,8 +135,8 @@ mod tests {
         assert_eq!(poly.eval_at_one(), e1);
         assert_eq!(poly.coeffs.len(), 3);
         assert_eq!(poly.coeffs[0], F::one());
-        assert_eq!(poly.coeffs[1], F::from(3u64));
-        assert_eq!(poly.coeffs[2], F::from(2u64));
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64).unwrap());
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64).unwrap());
 
         let hint = e0 + e1;
         let compressed_poly = poly.compress();
@@ -145,20 +145,20 @@ mod tests {
             assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
         }
 
-        let e3 = F::from(28u64);
-        assert_eq!(poly.evaluate(&F::from(3u64)), e3);
+        let e3 = F::from_u64(28u64).unwrap();
+        assert_eq!(poly.evaluate(&F::from_u64(3u64).unwrap()), e3);
     }
 
     #[test]
     fn test_from_evals_cubic() {
         test_from_evals_cubic_helper::<Fr>()
     }
-    fn test_from_evals_cubic_helper<F: PrimeField>() {
+    fn test_from_evals_cubic_helper<F: JoltField>() {
         // polynomial is x^3 + 2x^2 + 3x + 1
         let e0 = F::one();
-        let e1 = F::from(7u64);
-        let e2 = F::from(23u64);
-        let e3 = F::from(55u64);
+        let e1 = F::from_u64(7u64).unwrap();
+        let e2 = F::from_u64(23u64).unwrap();
+        let e3 = F::from_u64(55u64).unwrap();
         let evals = vec![e0, e1, e2, e3];
         let poly = UniPoly::from_evals(&evals);
 
@@ -166,8 +166,8 @@ mod tests {
         assert_eq!(poly.eval_at_one(), e1);
         assert_eq!(poly.coeffs.len(), 4);
         assert_eq!(poly.coeffs[0], F::one());
-        assert_eq!(poly.coeffs[1], F::from(3u64));
-        assert_eq!(poly.coeffs[2], F::from(2u64));
+        assert_eq!(poly.coeffs[1], F::from_u64(3u64).unwrap());
+        assert_eq!(poly.coeffs[2], F::from_u64(2u64).unwrap());
         assert_eq!(poly.coeffs[3], F::one());
 
         let hint = e0 + e1;
@@ -177,7 +177,7 @@ mod tests {
             assert_eq!(decompressed_poly.coeffs[i], poly.coeffs[i]);
         }
 
-        let e4 = F::from(109u64);
-        assert_eq!(poly.evaluate(&F::from(4u64)), e4);
+        let e4 = F::from_u64(109u64).unwrap();
+        assert_eq!(poly.evaluate(&F::from_u64(4u64).unwrap()), e4);
     }
 }

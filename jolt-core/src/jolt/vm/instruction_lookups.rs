@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::NUM_R1CS_POLYS;
 use itertools::{interleave, Itertools};
@@ -36,7 +36,7 @@ use crate::{
 /// All polynomials associated with Jolt instruction lookups.
 pub struct InstructionPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     _marker: PhantomData<C>,
@@ -95,7 +95,7 @@ impl<C: CommitmentScheme> AppendToTranscript for InstructionCommitment<C> {
 
 impl<F, C> StructuredCommitment<C> for InstructionPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Commitment = InstructionCommitment<C>;
@@ -126,7 +126,7 @@ where
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
 struct PrimarySumcheckOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     E_poly_openings: Vec<F>,
@@ -138,7 +138,7 @@ where
 
 impl<F, C> StructuredOpeningProof<F, C, InstructionPolynomials<F, C>> for PrimarySumcheckOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Proof = C::BatchedProof;
@@ -208,7 +208,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluations of the dim_i polynomials at the opening point. Vector is of length C.
     dim_openings: Vec<F>,
@@ -223,7 +223,7 @@ where
 impl<F, C> StructuredOpeningProof<F, C, InstructionPolynomials<F, C>>
     for InstructionReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Proof = C::BatchedProof;
@@ -324,7 +324,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionFinalOpenings<F, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     Subtables: JoltSubtableSet<F>,
 {
     _subtables: PhantomData<Subtables>,
@@ -339,7 +339,7 @@ where
 impl<F, C, Subtables> StructuredOpeningProof<F, C, InstructionPolynomials<F, C>>
     for InstructionFinalOpenings<F, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
     Subtables: JoltSubtableSet<F>,
 {
@@ -415,7 +415,7 @@ impl<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
     MemoryCheckingProver<F, CS, InstructionPolynomials<F, CS>>
     for InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
@@ -676,7 +676,7 @@ impl<F, CS, InstructionSet, Subtables, const C: usize, const M: usize>
     MemoryCheckingVerifier<F, CS, InstructionPolynomials<F, CS>>
     for InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
@@ -742,7 +742,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionLookupsProof<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     Subtables: JoltSubtableSet<F>,
     InstructionSet: JoltInstructionSet,
@@ -759,7 +759,7 @@ where
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct PrimarySumcheck<F: PrimeField, CS: CommitmentScheme<Field = F>> {
+pub struct PrimarySumcheck<F: JoltField, CS: CommitmentScheme<Field = F>> {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     openings: PrimarySumcheckOpenings<F>,
@@ -767,7 +767,7 @@ pub struct PrimarySumcheck<F: PrimeField, CS: CommitmentScheme<Field = F>> {
 }
 
 #[derive(Clone)]
-pub struct InstructionLookupsPreprocessing<F: PrimeField> {
+pub struct InstructionLookupsPreprocessing<F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
     instruction_to_memory_indices: Vec<Vec<usize>>,
     memory_to_subtable_index: Vec<usize>,
@@ -776,7 +776,7 @@ pub struct InstructionLookupsPreprocessing<F: PrimeField> {
     num_memories: usize,
 }
 
-impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
+impl<F: JoltField> InstructionLookupsPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
     pub fn preprocess<const C: usize, const M: usize, InstructionSet, Subtables>() -> Self
     where
@@ -850,7 +850,7 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
 impl<F, CS, InstructionSet, Subtables, const C: usize, const M: usize>
     InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,

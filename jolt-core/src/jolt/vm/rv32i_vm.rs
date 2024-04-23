@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -57,8 +57,8 @@ macro_rules! subtable_enum {
         #[repr(usize)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
-        pub enum $enum_name<F: PrimeField> { $($alias($struct)),+ }
-        impl<F: PrimeField> From<SubtableId> for $enum_name<F> {
+        pub enum $enum_name<F: JoltField> { $($alias($struct)),+ }
+        impl<F: JoltField> From<SubtableId> for $enum_name<F> {
           fn from(subtable_id: SubtableId) -> Self {
             $(
               if subtable_id == TypeId::of::<$struct>() {
@@ -69,12 +69,12 @@ macro_rules! subtable_enum {
           }
         }
 
-        impl<F: PrimeField> From<$enum_name<F>> for usize {
+        impl<F: JoltField> From<$enum_name<F>> for usize {
             fn from(subtable: $enum_name<F>) -> usize {
                 unsafe { *<*const _>::from(&subtable).cast::<usize>() }
             }
         }
-        impl<F: PrimeField> JoltSubtableSet<F> for $enum_name<F> {}
+        impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
     };
 }
 
@@ -138,7 +138,7 @@ pub const M: usize = 1 << 16;
 
 impl<F, CS> Jolt<F, CS, C, M> for RV32IJoltVM
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
 {
     type InstructionSet = RV32I;

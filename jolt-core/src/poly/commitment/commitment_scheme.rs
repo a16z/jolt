@@ -1,11 +1,15 @@
-use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::{poly::dense_mlpoly::DensePolynomial, utils::{errors::ProofVerifyError, transcript::{AppendToTranscript, ProofTranscript}}};
+use crate::{
+    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    utils::{
+        errors::ProofVerifyError,
+        transcript::{AppendToTranscript, ProofTranscript},
+    },
+};
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
-    // type Field: JoltField;
-    type Field: PrimeField;
+    type Field: JoltField;
     type Generators: Clone + Sync + Send;
     type Commitment: Sync + Send + CanonicalSerialize + CanonicalDeserialize + AppendToTranscript;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;

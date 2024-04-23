@@ -1,20 +1,20 @@
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::field::JoltField;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
-use ark_ff::PrimeField;
 use ark_serialize::*;
 
 #[derive(Debug, Clone)]
-pub struct GrandProductCircuit<F: PrimeField> {
+pub struct GrandProductCircuit<F: JoltField> {
     left_vec: Vec<DensePolynomial<F>>,
     right_vec: Vec<DensePolynomial<F>>,
 }
 
-impl<F: PrimeField> GrandProductCircuit<F> {
+impl<F: JoltField> GrandProductCircuit<F> {
     fn compute_layer(
         inp_left: &DensePolynomial<F>,
         inp_right: &DensePolynomial<F>,
@@ -104,7 +104,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct LayerProofBatched<F: PrimeField> {
+pub struct LayerProofBatched<F: JoltField> {
     pub proof: SumcheckInstanceProof<F>,
     pub claims_poly_A: Vec<F>,
     pub claims_poly_B: Vec<F>,
@@ -112,7 +112,7 @@ pub struct LayerProofBatched<F: PrimeField> {
 }
 
 #[allow(dead_code)]
-impl<F: PrimeField> LayerProofBatched<F> {
+impl<F: JoltField> LayerProofBatched<F> {
     pub fn verify(
         &self,
         claim: F,
@@ -126,7 +126,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
     }
 }
 
-pub struct BatchedGrandProductCircuit<F: PrimeField> {
+pub struct BatchedGrandProductCircuit<F: JoltField> {
     pub circuits: Vec<GrandProductCircuit<F>>,
 
     flags_present: bool,
@@ -134,7 +134,7 @@ pub struct BatchedGrandProductCircuit<F: PrimeField> {
     fingerprint_polys: Option<Vec<DensePolynomial<F>>>,
 }
 
-impl<F: PrimeField> BatchedGrandProductCircuit<F> {
+impl<F: JoltField> BatchedGrandProductCircuit<F> {
     pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
         Self {
             circuits,
@@ -210,11 +210,11 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductArgument<F: PrimeField> {
+pub struct BatchedGrandProductArgument<F: JoltField> {
     proof: Vec<LayerProofBatched<F>>,
 }
 
-impl<F: PrimeField> BatchedGrandProductArgument<F> {
+impl<F: JoltField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
     pub fn prove(
         mut batch: BatchedGrandProductCircuit<F>,
@@ -397,8 +397,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 #[cfg(test)]
 mod grand_product_circuit_tests {
     use super::*;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_std::{One, Zero};
+    use ark_bn254::Fr;
 
     #[test]
     fn prove_verify() {

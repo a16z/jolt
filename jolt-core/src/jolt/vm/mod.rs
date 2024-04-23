@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -14,9 +14,9 @@ use crate::jolt::{
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
@@ -45,7 +45,7 @@ use super::instruction::JoltInstructionSet;
 #[derive(Clone)]
 pub struct JoltPreprocessing<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     pub generators: C::Generators,
@@ -57,7 +57,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltProof<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
@@ -72,7 +72,7 @@ where
 
 pub struct JoltPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     pub bytecode: BytecodePolynomials<F, C>,
@@ -108,7 +108,7 @@ impl<C: CommitmentScheme> JoltCommitments<C> {
 
 impl<F, C> StructuredCommitment<C> for JoltPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Commitment = JoltCommitments<C>;
@@ -211,7 +211,7 @@ where
     }
 }
 
-pub trait Jolt<F: PrimeField, CS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
+pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
 

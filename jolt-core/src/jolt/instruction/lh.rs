@@ -1,11 +1,12 @@
-use ark_ff::PrimeField;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
     identity::IdentitySubtable, sign_extend::SignExtendSubtable, LassoSubtable,
 };
+use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
@@ -16,7 +17,7 @@ impl JoltInstruction for LHInstruction {
         (0, self.0)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], _C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _C: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
         assert!(vals.len() == 2);
@@ -31,7 +32,7 @@ impl JoltInstruction for LHInstruction {
         1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         M: usize,
@@ -63,7 +64,6 @@ impl JoltInstruction for LHInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64)
     }
 }

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 
 use ark_std::test_rng;
 #[cfg(feature = "multicore")]
@@ -31,7 +31,7 @@ pub mod transcript;
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: PrimeField>(value: usize, bits: usize) -> Vec<F> {
+pub fn index_to_field_bitvector<F: JoltField>(value: usize, bits: usize) -> Vec<F> {
     assert!(value < 1 << bits);
 
     let mut bitvector: Vec<F> = Vec::with_capacity(bits);
@@ -47,7 +47,7 @@ pub fn index_to_field_bitvector<F: PrimeField>(value: usize, bits: usize) -> Vec
 }
 
 /// Convert Vec<F> which should represent a bitvector to a packed string of bits {0, 1, ?}
-pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
+pub fn ff_bitvector_dbg<F: JoltField>(f: &Vec<F>) -> String {
     let mut result = "".to_owned();
     for bit in f {
         if *bit == F::one() {
@@ -62,7 +62,7 @@ pub fn ff_bitvector_dbg<F: PrimeField>(f: &Vec<F>) -> String {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
+pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
     a.par_iter()
         .zip_eq(b.par_iter())
         .map(|(a_i, b_i)| *a_i * b_i)
@@ -71,7 +71,7 @@ pub fn compute_dotproduct<F: PrimeField>(a: &[F], b: &[F]) -> F {
 
 /// Compute dotproduct optimized for values being 0 / 1
 #[tracing::instrument(skip_all)]
-pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
+pub fn compute_dotproduct_low_optimized<F: JoltField>(a: &[F], b: &[F]) -> F {
     a.par_iter()
         .zip_eq(b.par_iter())
         .map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i))
@@ -79,7 +79,7 @@ pub fn compute_dotproduct_low_optimized<F: PrimeField>(a: &[F], b: &[F]) -> F {
 }
 
 #[inline(always)]
-pub fn mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
+pub fn mul_0_1_optimized<F: JoltField>(a: &F, b: &F) -> F {
     if a.is_zero() || b.is_zero() {
         F::zero()
     } else if a.is_one() {
@@ -92,7 +92,7 @@ pub fn mul_0_1_optimized<F: PrimeField>(a: &F, b: &F) -> F {
 }
 
 #[inline(always)]
-pub fn mul_0_optimized<F: PrimeField>(likely_zero: &F, x: &F) -> F {
+pub fn mul_0_optimized<F: JoltField>(likely_zero: &F, x: &F) -> F {
     if likely_zero.is_zero() {
         F::zero()
     } else {
@@ -116,18 +116,18 @@ pub fn split_bits(item: usize, num_bits: usize) -> (usize, usize) {
     (high_chunk, low_chunk)
 }
 
-pub fn gen_random_point<F: PrimeField>(memory_bits: usize) -> Vec<F> {
+pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
     let mut rng = test_rng();
     let mut r_i: Vec<F> = Vec::with_capacity(memory_bits);
     for _ in 0..memory_bits {
-        r_i.push(F::rand(&mut rng));
+        r_i.push(F::random(&mut rng));
     }
     r_i
 }
 
 #[inline]
 #[tracing::instrument(skip_all, name = "split_poly_flagged")]
-pub fn split_poly_flagged<F: PrimeField>(
+pub fn split_poly_flagged<F: JoltField>(
     poly: &DensePolynomial<F>,
     flags: &DensePolynomial<F>,
 ) -> (Vec<F>, Vec<F>) {
@@ -153,7 +153,7 @@ pub fn split_poly_flagged<F: PrimeField>(
     (left, right)
 }
 
-pub fn count_poly_zeros<F: PrimeField>(poly: &DensePolynomial<F>) -> usize {
+pub fn count_poly_zeros<F: JoltField>(poly: &DensePolynomial<F>) -> usize {
     let mut count = 0;
     for i in 0..poly.len() {
         if poly[i].is_zero() {

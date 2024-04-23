@@ -16,7 +16,7 @@ fn msm_setup<G: CurveGroup>(num_points: usize) -> (Vec<G>, Vec<G::ScalarField>) 
     )
 }
 
-fn bound_poly_setup<F: PrimeField>(size: usize) -> (DensePolynomial<F>, F) {
+fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F) {
     let mut rng = test_rng();
 
     (
@@ -25,7 +25,7 @@ fn bound_poly_setup<F: PrimeField>(size: usize) -> (DensePolynomial<F>, F) {
     )
 }
 
-fn eval_poly_setup<F: PrimeField>(size: usize) -> (DensePolynomial<F>, Vec<F>) {
+fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F>) {
     let mut rng = test_rng();
 
     let poly = DensePolynomial::new(vec![F::rand(&mut rng); size]);
@@ -41,14 +41,14 @@ fn bench_msm<G: CurveGroup>(input: (Vec<G>, Vec<G::ScalarField>)) -> G {
 
 #[library_benchmark]
 #[bench::long(bound_poly_setup::<Fr>(4096))]
-fn bench_polynomial_binding<F: PrimeField>(input: (DensePolynomial<F>, F)) {
+fn bench_polynomial_binding<F: JoltField>(input: (DensePolynomial<F>, F)) {
     let (mut poly, val) = input;
     black_box(poly.bound_poly_var_top(&val));
 }
 
 #[library_benchmark]
 #[bench::long(eval_poly_setup::<Fr>(4096))]
-fn bench_polynomial_evaluate<F: PrimeField>(input: (DensePolynomial<F>, Vec<F>)) -> F {
+fn bench_polynomial_evaluate<F: JoltField>(input: (DensePolynomial<F>, Vec<F>)) -> F {
     let (poly, points) = input;
     black_box(poly.evaluate(&points))
 }

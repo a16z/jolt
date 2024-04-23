@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS};
 use itertools::interleave;
@@ -32,7 +32,7 @@ use super::read_write_memory::MemoryCommitment;
 
 pub struct RangeCheckPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     _group: PhantomData<C>,
@@ -45,7 +45,7 @@ where
 
 impl<F, C> RangeCheckPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::new")]
@@ -181,7 +181,7 @@ impl<C: CommitmentScheme> AppendToTranscript for RangeCheckCommitment<C> {
 
 impl<F, C> StructuredCommitment<C> for RangeCheckPolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Commitment = RangeCheckCommitment<C>;
@@ -204,7 +204,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct RangeCheckOpenings<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     read_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION],
@@ -217,7 +217,7 @@ where
 
 impl<F, C> StructuredOpeningProof<F, C, RangeCheckPolynomials<F, C>> for RangeCheckOpenings<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Proof = C::BatchedProof;
@@ -254,7 +254,7 @@ where
 
 impl<F, C> MemoryCheckingProver<F, C, RangeCheckPolynomials<F, C>> for TimestampValidityProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type ReadWriteOpenings = RangeCheckOpenings<F, C>;
@@ -449,7 +449,7 @@ where
 impl<F, C> MemoryCheckingVerifier<F, C, RangeCheckPolynomials<F, C>>
     for TimestampValidityProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     fn verify_memory_checking(
@@ -553,7 +553,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampValidityProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     multiset_hashes: MultisetHashes<F>,
@@ -564,7 +564,7 @@ where
 
 impl<F, C> TimestampValidityProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]

@@ -7,7 +7,7 @@
 /// 4. Checks that the result equals the expected value, given by the `lookup_output`
 macro_rules! jolt_instruction_test {
     ($instr:expr) => {
-        use ark_ff::PrimeField;
+        use crate::poly::field::JoltField;
 
         let subtable_lookup_indices = $instr.to_indices(C, ark_std::log2(M) as usize);
 

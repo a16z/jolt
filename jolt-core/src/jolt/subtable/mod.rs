@@ -1,11 +1,11 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use std::any::TypeId;
 use std::marker::Sync;
 use strum::{EnumCount, IntoEnumIterator};
 
 #[enum_dispatch]
-pub trait LassoSubtable<F: PrimeField>: 'static + Sync {
+pub trait LassoSubtable<F: JoltField>: 'static + Sync {
     /// Returns the TypeId of this subtable.
     /// The `Jolt` trait has associated enum types `InstructionSet` and `Subtables`.
     /// This function is used to resolve the many-to-many mapping between `InstructionSet` variants
@@ -21,7 +21,7 @@ pub trait LassoSubtable<F: PrimeField>: 'static + Sync {
 }
 
 pub type SubtableId = TypeId;
-pub trait JoltSubtableSet<F: PrimeField>:
+pub trait JoltSubtableSet<F: JoltField>:
     LassoSubtable<F> + IntoEnumIterator + EnumCount + From<SubtableId> + Into<usize> + Send + Sync
 {
     fn enum_index(subtable: Box<dyn LassoSubtable<F>>) -> usize {

@@ -1,11 +1,11 @@
 #![allow(clippy::len_without_is_empty)]
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
-use ark_ff::PrimeField;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
@@ -20,7 +20,7 @@ use crate::{
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<F: PrimeField> {
+pub struct UniformSpartanKey<F: JoltField> {
     shape_single_step: R1CSShape<F>, // Single step shape
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
@@ -28,7 +28,7 @@ pub struct UniformSpartanKey<F: PrimeField> {
     pub(crate) vk_digest: F,         // digest of the verifier's key
 }
 
-impl<F: PrimeField> UniformSpartanKey<F> {
+impl<F: JoltField> UniformSpartanKey<F> {
     /// Returns the digest of the r1cs shape
     pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
         let mut compressed_bytes = Vec::new();
@@ -47,8 +47,8 @@ impl<F: PrimeField> UniformSpartanKey<F> {
             });
 
             // turn the bit vector into a scalar
-            let mut digest = F::ZERO;
-            let mut coeff = F::ONE;
+            let mut digest = F::zero();
+            let mut coeff = F::one();
             for bit in bv {
                 if bit {
                     digest += coeff;
@@ -97,20 +97,20 @@ pub enum SpartanError {
 }
 
 // Trait which will kick out a small and big R1CS shape
-pub trait UniformShapeBuilder<F: PrimeField> {
+pub trait UniformShapeBuilder<F: JoltField> {
     fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F>;
 }
 
 // TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
 // and can run all the normal DensePolynomial ops.
-pub struct SegmentedPaddedWitness<F: PrimeField> {
+pub struct SegmentedPaddedWitness<F: JoltField> {
     total_len: usize,
     segments: Vec<Vec<F>>,
     segment_len: usize,
     zero: F,
 }
 
-impl<F: PrimeField> SegmentedPaddedWitness<F> {
+impl<F: JoltField> SegmentedPaddedWitness<F> {
     pub fn new(total_len: usize, segments: Vec<Vec<F>>) -> Self {
         let segment_len = segments[0].len();
         for segment in &segments {
@@ -124,7 +124,7 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
             total_len,
             segments,
             segment_len,
-            zero: F::ZERO,
+            zero: F::zero(),
         }
     }
 
@@ -148,7 +148,7 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
     }
 }
 
-impl<F: PrimeField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
+impl<F: JoltField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
     type Output = F;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -164,11 +164,11 @@ impl<F: PrimeField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
     }
 }
 
-pub trait IndexablePoly<F: PrimeField>: std::ops::Index<usize, Output = F> + Sync {
+pub trait IndexablePoly<F: JoltField>: std::ops::Index<usize, Output = F> + Sync {
     fn len(&self) -> usize;
 }
 
-impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
+impl<F: JoltField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
     fn len(&self) -> usize {
         self.total_len
     }
@@ -178,7 +178,7 @@ impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<F: PrimeField, C: CommitmentScheme<Field = F>> {
+pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
@@ -187,7 +187,7 @@ pub struct UniformSpartanProof<F: PrimeField, C: CommitmentScheme<Field = F>> {
     opening_proof: C::BatchedProof,
 }
 
-impl<F: PrimeField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
     pub fn setup_precommitted<ShapeBuilder: UniformShapeBuilder<F>>(
         circuit: &ShapeBuilder,
@@ -556,8 +556,8 @@ impl<F: PrimeField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         That is, it ignores the case where x is all 1s, outputting 0.
         Assumes x and y are provided big-endian. */
         let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
-            let one = F::from(1_u64);
-            let _two = F::from(2_u64);
+            let one = F::from_u64(1_u64).unwrap();
+            let _two = F::from_u64(2_u64).unwrap();
 
             /* If y+1 = x, then the two bit vectors are of the following form.
                 Let k be the longest suffix of 1s in x.
@@ -641,12 +641,12 @@ impl<F: PrimeField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     }
 }
 
-struct SparsePolynomial<F: PrimeField> {
+struct SparsePolynomial<F: JoltField> {
     num_vars: usize,
     Z: Vec<(usize, F)>,
 }
 
-impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
+impl<Scalar: JoltField> SparsePolynomial<Scalar> {
     pub fn new(num_vars: usize, Z: Vec<(usize, Scalar)>) -> Self {
         SparsePolynomial { num_vars, Z }
     }
@@ -655,12 +655,12 @@ impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
     /// return 1 when a == r, otherwise return 0.
     fn compute_chi(a: &[bool], r: &[Scalar]) -> Scalar {
         assert_eq!(a.len(), r.len());
-        let mut chi_i = Scalar::ONE;
+        let mut chi_i = Scalar::one();
         for j in 0..r.len() {
             if a[j] {
                 chi_i *= r[j];
             } else {
-                chi_i *= Scalar::ONE - r[j];
+                chi_i *= Scalar::one() - r[j];
             }
         }
         chi_i

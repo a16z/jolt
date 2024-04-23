@@ -1,6 +1,6 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
-use rand_core::RngCore;
+use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(test)]
 use std::collections::HashSet;
@@ -14,7 +14,7 @@ use crate::{
         NoPreprocessing,
     },
     poly::{
-        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, commitment::hyrax::matrix_dimensions,
+        commitment::hyrax::matrix_dimensions, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial, structured_poly::StructuredOpeningProof,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
@@ -49,7 +49,7 @@ impl RandomInstruction for ELFInstruction {
     }
 }
 
-pub fn random_memory_trace<F: PrimeField>(
+pub fn random_memory_trace<F: JoltField>(
     memory_init: &Vec<(u64, u8)>,
     max_memory_address: usize,
     m: usize,
@@ -260,7 +260,7 @@ const RAM_4: usize = 6;
 
 pub struct ReadWriteMemory<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     _group: PhantomData<C>,
@@ -286,7 +286,7 @@ where
     pub t_final: DensePolynomial<F>,
 }
 
-fn map_to_polys<F: PrimeField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePolynomial<F>; N] {
+fn map_to_polys<F: JoltField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePolynomial<F>; N] {
     vals.par_iter()
         .map(|vals| DensePolynomial::from_u64(vals))
         .collect::<Vec<DensePolynomial<F>>>()
@@ -294,7 +294,7 @@ fn map_to_polys<F: PrimeField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePo
         .unwrap()
 }
 
-impl<F: PrimeField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new(
         program_io: &JoltDevice,
@@ -825,7 +825,7 @@ impl<C: CommitmentScheme> AppendToTranscript for MemoryCommitment<C> {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryReadWriteOpenings<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     /// Evaluation of the a_read_write polynomial at the opening point.
@@ -843,7 +843,7 @@ where
 
 impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>> for MemoryReadWriteOpenings<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Proof = C::BatchedProof;
@@ -957,7 +957,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryInitFinalOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
@@ -972,7 +972,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryInitFinalOpeningProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     v_t_opening_proof: C::BatchedProof,
@@ -980,7 +980,7 @@ where
 
 impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>> for MemoryInitFinalOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Proof = MemoryInitFinalOpeningProof<F, C>;
@@ -1083,7 +1083,7 @@ where
 
 impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>> for ReadWriteMemoryProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Preprocessing = ReadWriteMemoryPreprocessing;
@@ -1254,7 +1254,7 @@ where
 
 impl<F, C> MemoryCheckingVerifier<F, C, JoltPolynomials<F, C>> for ReadWriteMemoryProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     fn read_tuples(
@@ -1331,7 +1331,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct OutputSumcheckProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     num_rounds: usize,
@@ -1345,7 +1345,7 @@ where
 
 impl<F, C> OutputSumcheckProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     fn prove_outputs(
@@ -1502,7 +1502,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct ReadWriteMemoryProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     pub memory_checking_proof: MemoryCheckingProof<
@@ -1518,7 +1518,7 @@ where
 
 impl<F, C> ReadWriteMemoryProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]

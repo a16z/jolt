@@ -2,13 +2,13 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ff::PrimeField;
 use ark_serialize::*;
 use itertools::multizip;
 use rayon::prelude::*;
@@ -27,7 +27,7 @@ pub enum CubicSumcheckType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CubicSumcheckParams<F: PrimeField> {
+pub struct CubicSumcheckParams<F: JoltField> {
     poly_As: Vec<DensePolynomial<F>>,
     poly_Bs: Vec<DensePolynomial<F>>,
 
@@ -38,7 +38,7 @@ pub struct CubicSumcheckParams<F: PrimeField> {
     pub sumcheck_type: CubicSumcheckType,
 }
 
-impl<F: PrimeField> CubicSumcheckParams<F> {
+impl<F: JoltField> CubicSumcheckParams<F> {
     pub fn new_prod(
         poly_lefts: Vec<DensePolynomial<F>>,
         poly_rights: Vec<DensePolynomial<F>>,
@@ -138,7 +138,7 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
 }
 
-impl<F: PrimeField> SumcheckInstanceProof<F> {
+impl<F: JoltField> SumcheckInstanceProof<F> {
     /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
     ///
     /// Params
@@ -1052,11 +1052,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SumcheckInstanceProof<F: PrimeField> {
+pub struct SumcheckInstanceProof<F: JoltField> {
     compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
-impl<F: PrimeField> SumcheckInstanceProof<F> {
+impl<F: JoltField> SumcheckInstanceProof<F> {
     pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> SumcheckInstanceProof<F> {
         SumcheckInstanceProof { compressed_polys }
     }
@@ -1123,7 +1123,7 @@ pub mod bench {
     use crate::subprotocols::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
     use crate::utils::index_to_field_bitvector;
     use ark_bn254::Fr;
-    use ark_std::{rand::Rng, test_rng, One, UniformRand, Zero};
+    use ark_std::{rand::Rng, test_rng, UniformRand};
     use criterion::black_box;
 
     pub fn sumcheck_bench(
@@ -1268,9 +1268,7 @@ pub mod bench {
 mod test {
     use super::*;
     use crate::poly::eq_poly::EqPolynomial;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_ff::Zero;
-    use ark_std::One;
+    use ark_bn254::Fr;
 
     #[test]
     fn flags_special_trivial() {

@@ -20,7 +20,7 @@ use super::{
     spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof},
 };
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
@@ -29,7 +29,7 @@ use strum::EnumCount;
 
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
 /// Returns (io, aux) = (pc_out, pc, aux)
-fn synthesize_witnesses<F: PrimeField>(
+fn synthesize_witnesses<F: JoltField>(
     inputs: &R1CSInputs<F>,
     num_aux: usize,
 ) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
@@ -86,7 +86,7 @@ fn synthesize_witnesses<F: PrimeField>(
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct R1CSInputs<'a, F: PrimeField> {
+pub struct R1CSInputs<'a, F: JoltField> {
     padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
@@ -102,7 +102,7 @@ pub struct R1CSInputs<'a, F: PrimeField> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct R1CSStepInputs<F: PrimeField> {
+pub struct R1CSStepInputs<F: JoltField> {
     pub padded_trace_len: usize,
     pub input_pc: F,
     pub bytecode_v: Vec<F>,
@@ -115,7 +115,7 @@ pub struct R1CSStepInputs<F: PrimeField> {
     pub instruction_flags_bits: Vec<F>,
 }
 
-impl<'a, F: PrimeField> R1CSInputs<'a, F> {
+impl<'a, F: JoltField> R1CSInputs<'a, F> {
     #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
     pub fn new(
         padded_trace_len: usize,
@@ -168,7 +168,7 @@ impl<'a, F: PrimeField> R1CSInputs<'a, F> {
 
     pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
         let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
-            F::ZERO
+            F::zero()
         } else {
             self.bytecode_a[step_index]
         };
@@ -324,12 +324,12 @@ impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: PrimeField, C: CommitmentScheme<Field = F>> {
+pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     pub key: UniformSpartanKey<F>,
     proof: UniformSpartanProof<F, C>,
 }
 
-impl<F: PrimeField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
     /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
     #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
     pub fn compute_witness_commit(
@@ -473,7 +473,7 @@ impl<F: PrimeField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
     }
 }
 
-impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
+impl<F: JoltField> UniformShapeBuilder<F> for R1CSBuilder {
     fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F> {
         let mut jolt_shape = R1CSBuilder::default();
         R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);

@@ -1,10 +1,11 @@
-use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{or::OrSubtable, LassoSubtable};
+use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
@@ -15,7 +16,7 @@ impl JoltInstruction for ORInstruction {
         (self.0, self.1)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         concatenate_lookups(vals, C, log2(M) as usize / 2)
     }
 
@@ -23,7 +24,7 @@ impl JoltInstruction for ORInstruction {
         1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         _: usize,
@@ -40,7 +41,6 @@ impl JoltInstruction for ORInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }

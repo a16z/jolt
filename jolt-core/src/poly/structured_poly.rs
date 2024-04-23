@@ -1,5 +1,4 @@
-
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::commitment::commitment_scheme::CommitmentScheme;
@@ -26,7 +25,7 @@ pub trait StructuredCommitment<C: CommitmentScheme>: Send + Sync + Sized {
 pub trait StructuredOpeningProof<F, C, Polynomials>:
     Sync + CanonicalSerialize + CanonicalDeserialize
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
     Polynomials: StructuredCommitment<C> + ?Sized,
 {

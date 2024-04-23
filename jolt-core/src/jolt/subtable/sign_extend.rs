@@ -1,14 +1,14 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
 #[derive(Default)]
-pub struct SignExtendSubtable<F: PrimeField, const WIDTH: usize> {
+pub struct SignExtendSubtable<F: JoltField, const WIDTH: usize> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField, const WIDTH: usize> SignExtendSubtable<F, WIDTH> {
+impl<F: JoltField, const WIDTH: usize> SignExtendSubtable<F, WIDTH> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -16,7 +16,7 @@ impl<F: PrimeField, const WIDTH: usize> SignExtendSubtable<F, WIDTH> {
     }
 }
 
-impl<F: PrimeField, const WIDTH: usize> LassoSubtable<F> for SignExtendSubtable<F, WIDTH> {
+impl<F: JoltField, const WIDTH: usize> LassoSubtable<F> for SignExtendSubtable<F, WIDTH> {
     fn materialize(&self, M: usize) -> Vec<F> {
         // TODO(moodlezoup): This subtable currently only works for M = 2^16
         assert_eq!(M, 1 << 16);

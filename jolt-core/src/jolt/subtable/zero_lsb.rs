@@ -1,14 +1,14 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
 #[derive(Default)]
-pub struct ZeroLSBSubtable<F: PrimeField> {
+pub struct ZeroLSBSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> ZeroLSBSubtable<F> {
+impl<F: JoltField> ZeroLSBSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -16,7 +16,7 @@ impl<F: PrimeField> ZeroLSBSubtable<F> {
     }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for ZeroLSBSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for ZeroLSBSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         // always set LSB to 0
         (0..M)

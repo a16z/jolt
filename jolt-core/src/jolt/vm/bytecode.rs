@@ -1,13 +1,13 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
-use rand_core::RngCore;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyrax::matrix_dimensions;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
@@ -139,7 +139,7 @@ pub fn random_bytecode_trace(
     trace
 }
 
-pub struct BytecodePolynomials<F: PrimeField, C: CommitmentScheme<Field = F>> {
+pub struct BytecodePolynomials<F: JoltField, C: CommitmentScheme<Field = F>> {
     _group: PhantomData<C>,
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write,
     /// so the read addresses and write addresses are the same.
@@ -155,7 +155,7 @@ pub struct BytecodePolynomials<F: PrimeField, C: CommitmentScheme<Field = F>> {
 }
 
 #[derive(Clone)]
-pub struct BytecodePreprocessing<F: PrimeField> {
+pub struct BytecodePreprocessing<F: JoltField> {
     /// Size of the (padded) bytecode.
     code_size: usize,
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
@@ -164,7 +164,7 @@ pub struct BytecodePreprocessing<F: PrimeField> {
     v_init_final: [DensePolynomial<F>; 5],
 }
 
-impl<F: PrimeField> BytecodePreprocessing<F> {
+impl<F: JoltField> BytecodePreprocessing<F> {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
     pub fn preprocess(mut bytecode: Vec<BytecodeRow>) -> Self {
         for instruction in bytecode.iter_mut() {
@@ -196,7 +196,7 @@ impl<F: PrimeField> BytecodePreprocessing<F> {
     }
 }
 
-fn to_v_polys<F: PrimeField>(rows: &Vec<BytecodeRow>) -> [DensePolynomial<F>; 5] {
+fn to_v_polys<F: JoltField>(rows: &Vec<BytecodeRow>) -> [DensePolynomial<F>; 5] {
     let len = rows.len().next_power_of_two();
     let mut bitflags = Vec::with_capacity(len);
     let mut rd = Vec::with_capacity(len);
@@ -227,7 +227,7 @@ fn to_v_polys<F: PrimeField>(rows: &Vec<BytecodeRow>) -> [DensePolynomial<F>; 5]
     ]
 }
 
-impl<F: PrimeField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
     pub fn new(preprocessing: &BytecodePreprocessing<F>, mut trace: Vec<BytecodeRow>) -> Self {
         // Remap trace addresses
@@ -338,7 +338,7 @@ impl<C: CommitmentScheme> AppendToTranscript for BytecodeCommitment<C> {
 
 impl<F, C> StructuredCommitment<C> for BytecodePolynomials<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Commitment = BytecodeCommitment<C>;
@@ -367,7 +367,7 @@ where
 
 impl<F, C> MemoryCheckingProver<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Preprocessing = BytecodePreprocessing<F>;
@@ -490,7 +490,7 @@ where
 
 impl<F, C> MemoryCheckingVerifier<F, C, BytecodePolynomials<F, C>> for BytecodeProof<F, C>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     fn read_tuples(
@@ -556,7 +556,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluation of the a_read_write polynomial at the opening point.
     a_read_write_opening: F,
@@ -568,7 +568,7 @@ where
 
 impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Proof = C::BatchedProof;
@@ -641,7 +641,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeInitFinalOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
@@ -653,7 +653,7 @@ where
 
 impl<F, C> StructuredOpeningProof<F, C, BytecodePolynomials<F, C>> for BytecodeInitFinalOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
     type Preprocessing = BytecodePreprocessing<F>;
@@ -719,7 +719,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::{commitment::pedersen::PedersenGenerators, commitment::hyrax::HyraxScheme};
+    use crate::poly::{commitment::hyrax::HyraxScheme, commitment::pedersen::PedersenGenerators};
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};

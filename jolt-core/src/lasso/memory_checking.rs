@@ -2,9 +2,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::{
+    commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
     structured_poly::{StructuredCommitment, StructuredOpeningProof},
-    commitment::commitment_scheme::CommitmentScheme
 };
 use crate::subprotocols::grand_product::{
     BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
@@ -12,7 +12,7 @@ use crate::subprotocols::grand_product::{
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::ProofTranscript;
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -20,7 +20,7 @@ use std::iter::zip;
 use std::marker::PhantomData;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MultisetHashes<F: PrimeField> {
+pub struct MultisetHashes<F: JoltField> {
     /// Multiset hash of "read" tuples
     pub read_hashes: Vec<F>,
     /// Multiset hash of "write" tuples
@@ -31,7 +31,7 @@ pub struct MultisetHashes<F: PrimeField> {
     pub final_hashes: Vec<F>,
 }
 
-impl<F: PrimeField> MultisetHashes<F> {
+impl<F: JoltField> MultisetHashes<F> {
     pub fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_scalars(b"Read multiset hashes", &self.read_hashes);
         transcript.append_scalars(b"Write multiset hashes", &self.write_hashes);
@@ -43,7 +43,7 @@ impl<F: PrimeField> MultisetHashes<F> {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryCheckingProof<F, C, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
     Polynomials: StructuredCommitment<C>,
     ReadWriteOpenings: StructuredOpeningProof<F, C, Polynomials>,
@@ -71,7 +71,7 @@ pub struct NoPreprocessing;
 
 pub trait MemoryCheckingProver<F, C, Polynomials>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
@@ -320,7 +320,7 @@ where
 pub trait MemoryCheckingVerifier<F, C, Polynomials>:
     MemoryCheckingProver<F, C, Polynomials>
 where
-    F: PrimeField,
+    F: JoltField,
     C: CommitmentScheme<Field = F>,
     Polynomials: StructuredCommitment<C> + std::marker::Sync,
 {

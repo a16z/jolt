@@ -1,5 +1,5 @@
-use ark_ff::PrimeField;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
@@ -8,6 +8,7 @@ use crate::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
         lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
     },
+    poly::field::JoltField,
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -19,7 +20,7 @@ impl JoltInstruction for BGEInstruction {
         (self.0, self.1)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         // 1 - LTS(x, y) =
         F::one() - SLTInstruction(self.0, self.1).combine_lookups(vals, C, M)
     }
@@ -28,7 +29,7 @@ impl JoltInstruction for BGEInstruction {
         C + 1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         _: usize,
@@ -52,7 +53,6 @@ impl JoltInstruction for BGEInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }

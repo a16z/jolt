@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
@@ -7,9 +7,9 @@ use crate::{
     jolt::instruction::JoltInstruction,
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
+        commitment::{commitment_scheme::CommitmentScheme, hyrax::matrix_dimensions},
         dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
-        commitment::{hyrax::matrix_dimensions, commitment_scheme::CommitmentScheme},
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
@@ -19,7 +19,7 @@ use crate::{
 
 pub struct SurgePolys<F, CS>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
 {
     _marker: PhantomData<CS>,
@@ -41,7 +41,7 @@ pub struct SurgeCommitment<CS: CommitmentScheme> {
 
 impl<F, CS> StructuredCommitment<CS> for SurgePolys<F, CS>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
 {
     type Commitment = SurgeCommitment<CS>;
@@ -70,7 +70,7 @@ type PrimarySumcheckOpenings<F> = Vec<F>;
 
 impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for PrimarySumcheckOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
 {
     type Proof = CS::BatchedProof;
@@ -122,7 +122,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     dim_openings: Vec<F>,    // C-sized
     read_openings: Vec<F>,   // C-sized
@@ -131,7 +131,7 @@ where
 
 impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
 {
     type Proof = CS::BatchedProof;
@@ -207,7 +207,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeFinalOpenings<F, Instruction, const C: usize, const M: usize>
 where
-    F: PrimeField,
+    F: JoltField,
     Instruction: JoltInstruction + Default,
 {
     _instruction: PhantomData<Instruction>,
@@ -219,7 +219,7 @@ where
 impl<F, CS, Instruction, const C: usize, const M: usize>
     StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeFinalOpenings<F, Instruction, C, M>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
@@ -291,7 +291,7 @@ where
 impl<F, CS, Instruction, const C: usize, const M: usize>
     MemoryCheckingProver<F, CS, SurgePolys<F, CS>> for SurgeProof<F, CS, Instruction, C, M>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
@@ -384,7 +384,7 @@ where
 impl<F, CS, Instruction, const C: usize, const M: usize>
     MemoryCheckingVerifier<F, CS, SurgePolys<F, CS>> for SurgeProof<F, CS, Instruction, C, M>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
@@ -457,7 +457,7 @@ where
 
 pub struct SurgePrimarySumcheck<F, CS>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
 {
     sumcheck_proof: SumcheckInstanceProof<F>,
@@ -469,7 +469,7 @@ where
 
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
 where
-    F: PrimeField,
+    F: JoltField,
     Instruction: JoltInstruction + Default,
 {
     _instruction: PhantomData<Instruction>,
@@ -478,7 +478,7 @@ where
 
 pub struct SurgeProof<F, CS, Instruction, const C: usize, const M: usize>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
@@ -499,7 +499,7 @@ where
 
 impl<F, Instruction, const C: usize, const M: usize> SurgePreprocessing<F, Instruction, C, M>
 where
-    F: PrimeField,
+    F: JoltField,
     Instruction: JoltInstruction + Default + Sync,
 {
     #[tracing::instrument(skip_all, name = "Surge::preprocess")]
@@ -521,7 +521,7 @@ where
 
 impl<F, CS, Instruction, const C: usize, const M: usize> SurgeProof<F, CS, Instruction, C, M>
 where
-    F: PrimeField,
+    F: JoltField,
     CS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
@@ -782,7 +782,7 @@ mod tests {
     use crate::{
         jolt::instruction::xor::XORInstruction,
         lasso::surge::SurgeProof,
-        poly::{commitment::pedersen::PedersenGenerators, commitment::hyrax::HyraxScheme},
+        poly::{commitment::hyrax::HyraxScheme, commitment::pedersen::PedersenGenerators},
         utils::transcript::ProofTranscript,
     };
     use ark_bn254::{Fr, G1Projective};

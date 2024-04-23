@@ -3,8 +3,8 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
+use crate::poly::field::JoltField;
 use crate::utils::math::Math;
-use ark_ff::PrimeField;
 use core::ops::Index;
 use rayon::prelude::*;
 use std::ops::AddAssign;
@@ -16,7 +16,7 @@ pub struct DensePolynomial<F> {
     Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 
-impl<F: PrimeField> DensePolynomial<F> {
+impl<F: JoltField> DensePolynomial<F> {
     pub fn new(Z: Vec<F>) -> Self {
         assert!(
             utils::is_power_of_two(Z.len()),
@@ -274,7 +274,7 @@ impl<F: PrimeField> DensePolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Clone for DensePolynomial<F> {
+impl<F: JoltField> Clone for DensePolynomial<F> {
     fn clone(&self) -> Self {
         Self::new(self.Z[0..self.len].to_vec())
     }
@@ -295,7 +295,7 @@ impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
     }
 }
 
-impl<F: PrimeField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
+impl<F: JoltField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
     fn add_assign(&mut self, rhs: &DensePolynomial<F>) {
         assert_eq!(self.num_vars, rhs.num_vars);
         assert_eq!(self.len, rhs.len);
@@ -315,19 +315,12 @@ mod tests {
 
     use super::*;
     use ark_bn254::Fr;
-    use ark_bn254::G1Projective;
-    use ark_ec::CurveGroup;
     use ark_std::test_rng;
-    use ark_std::One;
-    use ark_std::UniformRand;
 
-    fn evaluate_with_LR<G: CurveGroup>(
-        Z: &[G::ScalarField],
-        r: &[G::ScalarField],
-    ) -> G::ScalarField {
+    fn evaluate_with_LR<F: JoltField>(Z: &[F], r: &[F]) -> F {
         let ell = r.len();
         let (L_size, _R_size) = matrix_dimensions(ell, 1);
-        let eq = EqPolynomial::<G::ScalarField>::new(r.to_vec());
+        let eq = EqPolynomial::<F>::new(r.to_vec());
         let (L, R) = eq.compute_factored_evals(L_size);
 
         // ensure ell is even
@@ -340,7 +333,7 @@ mod tests {
         // compute vector-matrix product between L and Z viewed as a matrix
         let LZ = (0..m)
             .map(|i| (0..m).map(|j| L[j] * Z[j * m + i]).sum())
-            .collect::<Vec<G::ScalarField>>();
+            .collect::<Vec<F>>();
 
         // compute dot product between LZ and R
         compute_dotproduct(&LZ, &R)
@@ -348,30 +341,30 @@ mod tests {
 
     #[test]
     fn check_polynomial_evaluation() {
-        check_polynomial_evaluation_helper::<G1Projective>()
+        check_polynomial_evaluation_helper::<Fr>()
     }
 
-    fn check_polynomial_evaluation_helper<G: CurveGroup>() {
+    fn check_polynomial_evaluation_helper<F: JoltField>() {
         // Z = [1, 2, 1, 4]
         let Z = vec![
-            G::ScalarField::one(),
-            G::ScalarField::from(2u64),
-            G::ScalarField::one(),
-            G::ScalarField::from(4u64),
+            F::one(),
+            F::from_u64(2u64).unwrap(),
+            F::one(),
+            F::from_u64(4u64).unwrap(),
         ];
 
         // r = [4,3]
-        let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
+        let r = vec![F::from_u64(4u64).unwrap(), F::from_u64(3u64).unwrap()];
 
-        let eval_with_LR = evaluate_with_LR::<G>(&Z, &r);
+        let eval_with_LR = evaluate_with_LR::<F>(&Z, &r);
         let poly = DensePolynomial::new(Z);
 
         let eval = poly.evaluate(&r);
-        assert_eq!(eval, G::ScalarField::from(28u64));
+        assert_eq!(eval, F::from_u64(28u64).unwrap());
         assert_eq!(eval_with_LR, eval);
     }
 
-    pub fn compute_factored_chis_at_r<F: PrimeField>(r: &[F]) -> (Vec<F>, Vec<F>) {
+    pub fn compute_factored_chis_at_r<F: JoltField>(r: &[F]) -> (Vec<F>, Vec<F>) {
         let mut L: Vec<F> = Vec::new();
         let mut R: Vec<F> = Vec::new();
 
@@ -410,7 +403,7 @@ mod tests {
         (L, R)
     }
 
-    pub fn compute_chis_at_r<F: PrimeField>(r: &[F]) -> Vec<F> {
+    pub fn compute_chis_at_r<F: JoltField>(r: &[F]) -> Vec<F> {
         let ell = r.len();
         let n = ell.pow2();
         let mut chis: Vec<F> = Vec::new();
@@ -429,7 +422,7 @@ mod tests {
         chis
     }
 
-    pub fn compute_outerproduct<F: PrimeField>(L: &[F], R: &[F]) -> Vec<F> {
+    pub fn compute_outerproduct<F: JoltField>(L: &[F], R: &[F]) -> Vec<F> {
         assert_eq!(L.len(), R.len());
         (0..L.len())
             .map(|i| (0..R.len()).map(|j| L[i] * R[j]).collect::<Vec<F>>())
@@ -441,19 +434,19 @@ mod tests {
 
     #[test]
     fn check_memoized_chis() {
-        check_memoized_chis_helper::<G1Projective>()
+        check_memoized_chis_helper::<Fr>()
     }
 
-    fn check_memoized_chis_helper<G: CurveGroup>() {
+    fn check_memoized_chis_helper<F: JoltField>() {
         let mut prng = test_rng();
 
         let s = 10;
-        let mut r: Vec<G::ScalarField> = Vec::new();
+        let mut r: Vec<F> = Vec::new();
         for _i in 0..s {
-            r.push(G::ScalarField::rand(&mut prng));
+            r.push(F::random(&mut prng));
         }
-        let chis = compute_chis_at_r::<G::ScalarField>(&r);
-        let chis_m = EqPolynomial::<G::ScalarField>::new(r).evals();
+        let chis = compute_chis_at_r::<F>(&r);
+        let chis_m = EqPolynomial::<F>::new(r).evals();
         assert_eq!(chis, chis_m);
     }
 
@@ -462,13 +455,13 @@ mod tests {
         check_factored_chis_helper::<Fr>()
     }
 
-    fn check_factored_chis_helper<F: PrimeField>() {
+    fn check_factored_chis_helper<F: JoltField>() {
         let mut prng = test_rng();
 
         let s = 10;
         let mut r: Vec<F> = Vec::new();
         for _i in 0..s {
-            r.push(F::rand(&mut prng));
+            r.push(F::random(&mut prng));
         }
         let chis = EqPolynomial::new(r.clone()).evals();
         let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
@@ -482,13 +475,13 @@ mod tests {
         check_memoized_factored_chis_helper::<Fr>()
     }
 
-    fn check_memoized_factored_chis_helper<F: PrimeField>() {
+    fn check_memoized_factored_chis_helper<F: JoltField>() {
         let mut prng = test_rng();
 
         let s = 10;
         let mut r: Vec<F> = Vec::new();
         for _i in 0..s {
-            r.push(F::rand(&mut prng));
+            r.push(F::random(&mut prng));
         }
         let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
         let (L, R) = compute_factored_chis_at_r(&r);

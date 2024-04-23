@@ -1,17 +1,16 @@
 use std::marker::PhantomData;
 
-use crate::poly::dense_mlpoly::DensePolynomial;
 use super::commitment_scheme::CommitmentScheme;
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
+use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::field::JoltField;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::Zero;
 use common::constants::NUM_R1CS_POLYS;
 use num_integer::Roots;
 use rayon::prelude::*;
@@ -36,8 +35,7 @@ pub fn matrix_dimensions(num_vars: usize, matrix_aspect_ratio: usize) -> (usize,
     (col_size, row_size)
 }
 
-// impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
     type Field = G::ScalarField; // TODO(sragss): include? or seperate field config?
     type Generators = PedersenGenerators<G>;
     type Commitment = HyraxCommitment<NUM_R1CS_POLYS, G>;
@@ -171,7 +169,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSc
     }
 }
 
-impl<G: CurveGroup> HyraxScheme<G> {
+impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxScheme<G> {
     #[tracing::instrument(skip_all, name = "HyraxOpeningProof::vector_matrix_product")]
     fn vector_matrix_product(
         poly: &DensePolynomial<G::ScalarField>,
@@ -207,7 +205,7 @@ pub struct HyraxCommitment<const RATIO: usize, G: CurveGroup> {
     pub row_commitments: Vec<G>,
 }
 
-impl<const RATIO: usize, G: CurveGroup> HyraxCommitment<RATIO, G> {
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<RATIO, G> {
     #[tracing::instrument(skip_all, name = "HyraxCommitment::commit")]
     pub fn commit(
         poly: &DensePolynomial<G::ScalarField>,
@@ -313,7 +311,7 @@ pub struct HyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
 }
 
 /// See Section 14.3 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<const RATIO: usize, G: CurveGroup> HyraxOpeningProof<RATIO, G> {
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<RATIO, G> {
     fn protocol_name() -> &'static [u8] {
         b"Hyrax opening proof"
     }
@@ -407,7 +405,9 @@ pub struct BatchedHyraxOpeningProof<const RATIO: usize, G: CurveGroup> {
 }
 
 /// See Section 16.1 of Thaler's Proofs, Arguments, and Zero-Knowledge
-impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
+impl<const RATIO: usize, F: JoltField, G: CurveGroup<ScalarField = F>>
+    BatchedHyraxOpeningProof<RATIO, G>
+{
     #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::prove")]
     pub fn prove(
         polynomials: &[&DensePolynomial<G::ScalarField>],
@@ -534,27 +534,29 @@ impl<const RATIO: usize, G: CurveGroup> BatchedHyraxOpeningProof<RATIO, G> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::G1Projective;
-    use ark_std::One;
+    use ark_bn254::{Fr, G1Projective};
 
     #[test]
     fn check_polynomial_commit() {
-        check_polynomial_commit_helper::<G1Projective>()
+        check_polynomial_commit_helper::<Fr, G1Projective>()
     }
 
-    fn check_polynomial_commit_helper<G: CurveGroup>() {
+    fn check_polynomial_commit_helper<F: JoltField, G: CurveGroup<ScalarField = F>>() {
         let Z = vec![
             G::ScalarField::one(),
-            G::ScalarField::from(2u64),
+            G::ScalarField::from_u64(2u64).unwrap(),
             G::ScalarField::one(),
-            G::ScalarField::from(4u64),
+            G::ScalarField::from_u64(4u64).unwrap(),
         ];
         let poly = DensePolynomial::new(Z);
 
         // r = [4,3]
-        let r = vec![G::ScalarField::from(4u64), G::ScalarField::from(3u64)];
+        let r = vec![
+            G::ScalarField::from_u64(4u64).unwrap(),
+            G::ScalarField::from_u64(3u64).unwrap(),
+        ];
         let eval = poly.evaluate(&r);
-        assert_eq!(eval, G::ScalarField::from(28u64));
+        assert_eq!(eval, G::ScalarField::from_u64(28u64).unwrap());
 
         let generators: PedersenGenerators<G> = PedersenGenerators::new(1 << 8, b"test-two");
         let poly_commitment: HyraxCommitment<1, G> = HyraxCommitment::commit(&poly, &generators);
