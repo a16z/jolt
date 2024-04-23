@@ -356,7 +356,7 @@ where
             &self.v_read_write[4],
         ];
         println!("BytecodePolynomials::commit -- C::batch_commit_polys_ref");
-        let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators);
+        let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators, NUM_R1CS_POLYS);
 
         let t_final_commitment = C::commit(&self.t_final, generators);
 
@@ -615,6 +615,7 @@ where
             ],
             opening_point,
             &combined_openings,
+            NUM_R1CS_POLYS,
             transcript,
         )
     }

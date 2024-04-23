@@ -3,7 +3,7 @@
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::RAM_START_ADDRESS;
+use common::constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS};
 use itertools::max;
 use rayon::prelude::*;
 use strum::EnumCount;
@@ -166,7 +166,7 @@ where
             .chain(range_check_polys.into_iter())
             .chain(instruction_trace_polys.into_iter())
             .collect::<Vec<_>>();
-        let mut trace_comitments = C::batch_commit_polys_ref(&all_trace_polys, &generators);
+        let mut trace_comitments = C::batch_commit_polys_ref(&all_trace_polys, &generators, NUM_R1CS_POLYS);
 
         let bytecode_trace_commitment = trace_comitments
             .drain(..num_bytecode_trace_polys)
@@ -187,6 +187,7 @@ where
         let instruction_final_commitment = C::batch_commit_polys_ref(
             &self.instruction_lookups.final_cts.iter().collect(),
             &generators,
+            NUM_R1CS_POLYS,
         );
 
         JoltCommitments {

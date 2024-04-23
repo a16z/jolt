@@ -24,7 +24,6 @@ pub struct HyraxScheme<G: CurveGroup> {
 
 pub fn matrix_dimensions(num_vars: usize, batch_size: usize) -> (usize, usize) {
     let mut row_size = (num_vars / 2).pow2();
-    let batch_size = 1;
     row_size = (row_size * batch_size.sqrt()).next_power_of_two();
 
     let right_num_vars = std::cmp::min(row_size.log_2(), num_vars - 1);
@@ -58,10 +57,11 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         HyraxCommitment::commit(poly, gens)
     }
     fn batch_commit(
-        evals: &Vec<Vec<Self::Field>>,
+        evals: &[&[Self::Field]],
         gens: &Self::Generators,
+        batch_size: usize
     ) -> Vec<Self::Commitment> {
-        HyraxCommitment::batch_commit(evals, gens)
+        HyraxCommitment::batch_commit(evals, gens, batch_size)
     }
     fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Generators) -> Self::Commitment {
         HyraxCommitment::commit_slice(eval_slice, generators)
@@ -69,15 +69,17 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     fn batch_commit_polys(
         polys: &Vec<DensePolynomial<Self::Field>>,
         generators: &Self::Generators,
+        batch_size: usize
     ) -> Vec<Self::Commitment> {
         let polys_ref: Vec<&DensePolynomial<Self::Field>> = polys.iter().collect();
-        HyraxCommitment::batch_commit_polys(&polys_ref, generators)
+        HyraxCommitment::batch_commit_polys(&polys_ref, generators, batch_size)
     }
     fn batch_commit_polys_ref(
         polys: &Vec<&DensePolynomial<Self::Field>>,
         generators: &Self::Generators,
+        batch_size: usize
     ) -> Vec<Self::Commitment> {
-        HyraxCommitment::batch_commit_polys(polys, generators)
+        HyraxCommitment::batch_commit_polys(polys, generators, batch_size)
     }
     fn prove(
         poly: &DensePolynomial<Self::Field>,
@@ -90,9 +92,10 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
+        batch_size: usize,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        BatchedHyraxOpeningProof::prove(polynomials, opening_point, openings, transcript)
+        BatchedHyraxOpeningProof::prove(polynomials, opening_point, openings, batch_size, transcript)
     }
     fn verify(
         proof: &Self::Proof,
@@ -174,14 +177,15 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
 
     #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit")]
     pub fn batch_commit(
-        batch: &Vec<Vec<G::ScalarField>>,
+        batch: &[&[G::ScalarField]],
         generators: &PedersenGenerators<G>,
+        batch_size: usize
     ) -> Vec<Self> {
         let n = batch[0].len();
         batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
         let ell = n.log_2();
 
-        let (L_size, R_size) = matrix_dimensions(ell, batch.len());
+        let (L_size, R_size) = matrix_dimensions(ell, batch_size);
         assert_eq!(L_size * R_size, n);
         println!("batch_size: {}", batch.len());
         println!("batch_commit({L_size}, {R_size})\n");
@@ -205,6 +209,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
     pub fn batch_commit_polys(
         polys: &Vec<&DensePolynomial<G::ScalarField>>,
         generators: &PedersenGenerators<G>,
+        batch_size: usize
     ) -> Vec<Self> {
         let num_vars = polys[0].get_num_vars();
         let n = num_vars.pow2();
@@ -212,7 +217,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
             .iter()
             .for_each(|poly| assert_eq!(poly.as_ref().len(), n));
 
-        let (L_size, R_size) = matrix_dimensions(num_vars, polys.len());
+        let (L_size, R_size) = matrix_dimensions(num_vars, batch_size);
         assert_eq!(L_size * R_size, n);
         println!("batch_size: {}", polys.len());
         println!("batch_commit_polys({L_size}, {R_size})\n");
@@ -354,6 +359,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>>
         polynomials: &[&DensePolynomial<G::ScalarField>],
         opening_point: &[G::ScalarField],
         openings: &[G::ScalarField],
+        batch_size: usize,
         transcript: &mut ProofTranscript,
     ) -> Self {
         transcript.append_protocol_name(Self::protocol_name());
@@ -409,9 +415,45 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>>
         drop(_enter);
         drop(_span);
 
-        let joint_proof =
-            HyraxOpeningProof::prove(&DensePolynomial::new(rlc_poly), opening_point, transcript);
-        Self { joint_proof, batch_size: polynomials.len() }
+        // let joint_proof =
+        //     HyraxOpeningProof::prove(&DensePolynomial::new(rlc_poly), opening_point, transcript);
+        let poly = DensePolynomial::new(rlc_poly);
+        transcript.append_protocol_name(Self::protocol_name());
+
+        // assert vectors are of the right size
+        assert_eq!(poly.get_num_vars(), opening_point.len());
+
+        // compute the L and R vectors
+        let (L_size, _R_size) = matrix_dimensions(poly.get_num_vars(), batch_size);
+        let eq = EqPolynomial::new(opening_point.to_vec());
+        let (L, _R) = eq.compute_factored_evals(L_size);
+
+        // compute vector-matrix product between L and Z viewed as a matrix
+        // let vector_matrix_product = HyraxOpeningProof::<G>::vector_matrix_product(&poly, &L);
+        let (_, R_size) = matrix_dimensions(poly.get_num_vars(), batch_size);
+
+        let vector_matrix_product = poly.evals_ref()
+            .par_chunks(R_size)
+            .enumerate()
+            .map(|(i, row)| {
+                row.iter()
+                    .map(|x| mul_0_1_optimized(&L[i], x))
+                    .collect::<Vec<G::ScalarField>>()
+            })
+            .reduce(
+                || vec![G::ScalarField::zero(); R_size],
+                |mut acc: Vec<_>, row| {
+                    acc.iter_mut().zip(row).for_each(|(x, y)| *x += y);
+                    acc
+                },
+            );
+
+        let joint_proof = HyraxOpeningProof {
+            vector_matrix_product,
+        };
+
+
+        Self { joint_proof, batch_size }
     }
 
     pub fn verify(
@@ -427,6 +469,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>>
         println!("commit len: {}", commitments.len());
         println!("openings len: {}", openings.len());
         println!("row_commitments_len: {}", commitments[0].row_commitments.len());
+        commitments.iter().enumerate().for_each(|(i, commitment)| assert_eq!(L_size, commitment.row_commitments.len(), "Row commitment {}/{} wrong length.", i, commitments.len()));
 
         transcript.append_protocol_name(Self::protocol_name());
 
@@ -460,15 +503,38 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>>
                 },
             );
 
-        self.joint_proof.verify(
-            pedersen_generators,
-            transcript,
-            opening_point,
-            &rlc_eval,
-            &HyraxCommitment {
-                row_commitments: rlc_commitment,
-            },
+        // self.joint_proof.verify(
+        //     pedersen_generators,
+        //     transcript,
+        //     opening_point,
+        //     &rlc_eval,
+        //     &HyraxCommitment {
+        //         row_commitments: rlc_commitment,
+        //     },
+        // )
+        transcript.append_protocol_name(Self::protocol_name());
+        let (L_size, R_size) = matrix_dimensions(opening_point.len(), self.batch_size);
+        println!("HyraxOpeningProof::verify({L_size}, {R_size}), RATIO: {}", self.batch_size);
+        let eq: EqPolynomial<_> = EqPolynomial::new(opening_point.to_vec());
+        let (L, R) = eq.compute_factored_evals(L_size);
+
+        // Verifier-derived commitment to u * a = \prod Com(u_j)^{a_j}
+        let homomorphically_derived_commitment: G =
+            VariableBaseMSM::msm(&G::normalize_batch(&rlc_commitment), &L).unwrap();
+
+        let product_commitment = VariableBaseMSM::msm(
+            &G::normalize_batch(&pedersen_generators.generators[..R_size]),
+            &self.joint_proof.vector_matrix_product,
         )
+        .unwrap();
+
+        let dot_product = compute_dotproduct(&self.joint_proof.vector_matrix_product, &R);
+
+        if (homomorphically_derived_commitment == product_commitment) && (dot_product == rlc_eval) {
+            Ok(())
+        } else {
+            Err(ProofVerifyError::InternalError)
+        }
     }
 
     fn protocol_name() -> &'static [u8] {

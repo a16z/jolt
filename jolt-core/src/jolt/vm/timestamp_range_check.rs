@@ -195,7 +195,7 @@ where
             .chain(self.final_cts_read_timestamp.iter())
             .chain(self.final_cts_global_minus_read.iter())
             .collect();
-        let commitments = C::batch_commit_polys_ref(&polys, &generators);
+        let commitments = C::batch_commit_polys_ref(&polys, &generators, NUM_R1CS_POLYS);
 
         Self::Commitment { commitments }
     }
@@ -592,7 +592,7 @@ where
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect::<Vec<F>>();
 
-        let opening_proof = C::batch_prove(&polys, &r_grand_product, &openings, transcript);
+        let opening_proof = C::batch_prove(&polys, &r_grand_product, &openings, NUM_R1CS_POLYS, transcript);
 
         let mut openings = openings.into_iter();
         let read_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION] =

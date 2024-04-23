@@ -22,6 +22,7 @@ use super::{
 
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use common::constants::NUM_R1CS_POLYS;
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use std::borrow::Borrow;
@@ -296,9 +297,9 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
 pub struct R1CSCommitment<C: CommitmentScheme> {
     io: Vec<C::Commitment>,
     aux: Vec<C::Commitment>,
-    chunks_x: Vec<C::Commitment>,
-    chunks_y: Vec<C::Commitment>,
-    circuit_flags: Vec<C::Commitment>,
+    /// Operand chunks { x, y }
+    chunks: Vec<C::Commitment>,
+    circuit_flags: Vec<C::Commitment>
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
@@ -310,11 +311,8 @@ impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
         for commitment in &self.aux {
             commitment.append_to_transcript(b"aux", transcript);
         }
-        for commitment in &self.chunks_x {
-            commitment.append_to_transcript(b"chunks_x", transcript);
-        }
-        for commitment in &self.chunks_y {
-            commitment.append_to_transcript(b"chunks_y", transcript);
+        for commitment in &self.chunks{
+            commitment.append_to_transcript(b"chunks_s", transcript);
         }
         for commitment in &self.circuit_flags {
             commitment.append_to_transcript(b"circuit_flags", transcript);
@@ -352,32 +350,31 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         drop(_enter);
         drop(span);
 
-        // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
         let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
         let io_segments = vec![pc_out, pc];
-        let io_comms = C::batch_commit(&io_segments, &generators);
-        let aux_comms = C::batch_commit(&aux, &generators);
-
-        // Commit to R1CS specific items
-        let commit_to_chunks = |data: &Vec<F>| -> Vec<C::Commitment> {
-            data.par_chunks(padded_trace_len)
-                .map(|chunk| C::commit_slice(chunk, generators))
-                .collect()
-        };
+        let io_segments_ref = vec![io_segments[0].as_slice(), io_segments[1].as_slice()];
+        let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
+        let io_comms = C::batch_commit(&io_segments_ref.as_slice(), &generators, NUM_R1CS_POLYS);
+        let aux_comms = C::batch_commit(aux_ref.as_slice(), &generators, NUM_R1CS_POLYS);
 
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
         let _guard = span.enter();
-        let chunks_x_comms = commit_to_chunks(&inputs.chunks_x);
-        let chunks_y_comms = commit_to_chunks(&inputs.chunks_y);
-        let circuit_flags_comm = commit_to_chunks(&inputs.circuit_flags_bits);
+        let chunk_batch_size = inputs.chunks_x.len() / padded_trace_len + inputs.chunks_y.len() / padded_trace_len;
+        let mut chunk_batch_slices: Vec<&[F]> = Vec::with_capacity(chunk_batch_size);
+        for batchee in [&inputs.chunks_x, &inputs.chunks_y].iter() {
+            chunk_batch_slices.extend(batchee.chunks(padded_trace_len));
+        }
+        let chunks_comms = C::batch_commit(chunk_batch_slices.as_slice(), &generators, NUM_R1CS_POLYS);
+
+        let circuit_flag_slices: Vec<&[F]> = inputs.circuit_flags_bits.chunks(padded_trace_len).collect();
+        let circuit_flags_comms = C::batch_commit(circuit_flag_slices.as_slice(), &generators, NUM_R1CS_POLYS);
         drop(_guard);
 
         let r1cs_commitments = R1CSCommitment {
             io: io_comms,
             aux: aux_comms,
-            chunks_x: chunks_x_comms,
-            chunks_y: chunks_y_comms,
-            circuit_flags: circuit_flags_comm,
+            chunks: chunks_comms,
+            circuit_flags: circuit_flags_comms
         };
 
         let cloning_stuff_span =
@@ -387,8 +384,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
 
         let mut w_segments: Vec<Vec<F>> =
             Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux.len());
-        // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
-        w_segments.par_extend(io_segments.into_par_iter());
+        w_segments.extend(io_segments.into_iter());
         w_segments.par_extend(inputs_segments.into_par_iter());
         w_segments.par_extend(aux.into_par_iter());
 
@@ -432,8 +428,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
 
         combined_commitments.extend(memory_trace_commitments.iter());
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks_x.iter());
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks_y.iter());
+        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks.iter());
 
         combined_commitments.extend(instruction_lookup_indices_commitments.iter());
 

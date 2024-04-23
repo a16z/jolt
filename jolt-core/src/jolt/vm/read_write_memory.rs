@@ -914,6 +914,7 @@ where
             &read_write_polys,
             opening_point,
             &read_write_openings,
+            NUM_R1CS_POLYS,
             transcript,
         )
     }
@@ -1015,6 +1016,7 @@ where
             ],
             opening_point,
             &[openings.v_final, openings.t_final],
+            1,
             transcript,
         );
 

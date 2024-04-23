@@ -110,10 +110,10 @@ where
             .chain(self.instruction_flag_polys.iter())
             .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, &generators);
+        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, &generators, NUM_R1CS_POLYS);
 
         let final_commitment =
-            C::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators);
+            C::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators, NUM_R1CS_POLYS);
 
         Self::Commitment {
             trace_commitment,
@@ -171,6 +171,7 @@ where
             &primary_sumcheck_polys,
             opening_point,
             &primary_sumcheck_openings,
+            NUM_R1CS_POLYS,
             transcript,
         )
     }
@@ -289,6 +290,7 @@ where
             &read_write_polys,
             opening_point,
             &read_write_openings,
+            NUM_R1CS_POLYS,
             transcript,
         )
     }
@@ -374,6 +376,7 @@ where
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
+            NUM_R1CS_POLYS,
             transcript,
         )
     }

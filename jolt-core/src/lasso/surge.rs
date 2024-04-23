@@ -29,6 +29,10 @@ where
     pub E_polys: Vec<DensePolynomial<F>>,
 }
 
+// TODO(moodlezoup): Make these tunable
+const SURGE_HYRAX_RATIO_READ_WRITE: usize = 16;
+const SURGE_HYRAX_RATIO_FINAL: usize = 4;
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SurgeCommitment<CS: CommitmentScheme> {
     /// Commitments to dim_i and read_cts_i polynomials.
@@ -51,12 +55,12 @@ where
         let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = CS::batch_commit_polys_ref(&dim_read_polys, &generators);
-        let E_commitment = CS::batch_commit_polys_ref(&self.E_polys.iter().collect(), &generators);
+        let dim_read_commitment = CS::batch_commit_polys_ref(&dim_read_polys, &generators, SURGE_HYRAX_RATIO_READ_WRITE);
+        let E_commitment = CS::batch_commit_polys_ref(&self.E_polys.iter().collect(), &generators, SURGE_HYRAX_RATIO_READ_WRITE);
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
-            CS::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators);
+            CS::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators, SURGE_HYRAX_RATIO_FINAL);
 
         Self::Commitment {
             dim_read_commitment,
@@ -96,6 +100,7 @@ where
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             opening_point,
             E_poly_openings,
+            16,
             transcript,
         )
     }
@@ -171,6 +176,7 @@ where
             &read_write_polys,
             opening_point,
             &read_write_openings,
+            SURGE_HYRAX_RATIO_READ_WRITE,
             transcript,
         )
     }
@@ -253,6 +259,7 @@ where
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
+            SURGE_HYRAX_RATIO_FINAL,
             transcript,
         )
     }

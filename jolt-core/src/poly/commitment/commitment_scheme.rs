@@ -33,17 +33,20 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn generators(shapes: &[GeneratorShape]) -> Self::Generators;
     fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit(
-        evals: &Vec<Vec<Self::Field>>,
+        evals: &[&[Self::Field]],
         gens: &Self::Generators,
+        batch_size: usize,
     ) -> Vec<Self::Commitment>;
     fn commit_slice(evals: &[Self::Field], gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit_polys(
         polys: &Vec<DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
+        batch_size: usize
     ) -> Vec<Self::Commitment>;
     fn batch_commit_polys_ref(
         polys: &Vec<&DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
+        batch_size: usize
     ) -> Vec<Self::Commitment>;
     fn prove(
         poly: &DensePolynomial<Self::Field>,
@@ -54,6 +57,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
+        batch_size: usize,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof;
 
