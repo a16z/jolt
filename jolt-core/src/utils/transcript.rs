@@ -58,7 +58,7 @@ impl ProofTranscript {
     }
 
     pub fn challenge_scalar<F: JoltField>(&mut self, label: &'static [u8]) -> F {
-        let mut buf = vec![0u8; F::BYTES];
+        let mut buf = vec![0u8; F::NUM_BYTES];
         self.inner.challenge_bytes(label, &mut buf);
         F::from_bytes(&buf)
     }

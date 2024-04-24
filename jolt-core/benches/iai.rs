@@ -45,8 +45,7 @@ fn bench_msm<G: CurveGroup>(input: (Vec<G>, Vec<G::ScalarField>)) -> G {
 #[bench::long(bound_poly_setup::<Fr>(4096))]
 fn bench_polynomial_binding<F: JoltField>(input: (DensePolynomial<F>, F)) {
     let (mut poly, val) = input;
-    poly.bound_poly_var_top(&val);
-    black_box(());
+    black_box(poly.bound_poly_var_top(&val));
 }
 
 #[library_benchmark]

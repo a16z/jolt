@@ -92,9 +92,9 @@ pub enum SpartanError {
     #[error("InvalidWitnessLength")]
     InvalidWitnessLength,
 
-    /// returned when an invalid Hyrax proof is provided
-    #[error("InvalidHyraxProof")]
-    InvalidHyraxProof,
+    /// returned when an invalid PCS proof is provided
+    #[error("InvalidPCSProof")]
+    InvalidPCSProof,
 }
 
 // Trait which will kick out a small and big R1CS shape
@@ -637,7 +637,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             &witness_segment_commitments,
             transcript,
         )
-        .map_err(|_| SpartanError::InvalidHyraxProof)?;
+        .map_err(|_| SpartanError::InvalidPCSProof)?;
 
         Ok(())
     }

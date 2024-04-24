@@ -14,7 +14,7 @@ pub trait StructuredCommitment<C: CommitmentScheme>: Send + Sync + Sized {
     /// The batched commitment to these polynomials.
     type Commitment;
 
-    /// Commits to batched polynomials, typically using `HyraxCommitment::batch_commit_polys`.
+    /// Commits to batched polynomials.
     fn commit(&self, generators: &C::Generators) -> Self::Commitment;
 }
 
