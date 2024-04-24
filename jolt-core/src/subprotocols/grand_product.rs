@@ -8,6 +8,23 @@ use crate::utils::transcript::ProofTranscript;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 
+pub trait BatchedGrandProduct<F: PrimeField> {
+    type Leaves;
+
+    fn construct(leaves: Self::Leaves) -> Self;
+    // fn evaluate(&self) -> F;
+    fn layers(self) -> impl Iterator<Item = impl BatchedGrandProductLayer<F>>;
+}
+
+// pub trait BatchedCubicSumcheck ?
+pub trait BatchedGrandProductLayer<F: PrimeField> {
+    // type Sumcheck;
+    fn bind(&mut self, r: &F);
+    fn evaluate(&self, r: &F) -> F;
+    // fn prove_sumcheck(self, claim: &F, coeffs: &[F], ) -> SumcheckInstanceProof<F>
+}
+
+
 #[derive(Debug, Clone)]
 pub struct GrandProductCircuit<F: PrimeField> {
     left_vec: Vec<DensePolynomial<F>>,
@@ -219,8 +236,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
     pub fn prove(
         mut batch: BatchedGrandProductCircuit<F>,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>)
-    {
+    ) -> (Self, Vec<F>) {
         let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
         let mut claims_to_verify = (0..batch.circuits.len())
             .map(|i| batch.circuits[i].evaluate())
@@ -241,9 +257,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
-            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched(
-                &claim, params, &coeff_vec, transcript,
-            );
+            let (proof, rand_prod, claims_prod) =
+                SumcheckInstanceProof::prove_cubic_batched(&claim, params, &coeff_vec, transcript);
 
             let (claims_poly_A, claims_poly_B, _claim_eq) = claims_prod;
             for i in 0..batch.circuits.len() {

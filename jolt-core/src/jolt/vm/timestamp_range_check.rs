@@ -24,7 +24,8 @@ use crate::{
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
     subprotocols::grand_product::{
-        BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
+        BatchedGrandProduct, BatchedGrandProductArgument, BatchedGrandProductCircuit,
+        BatchedGrandProductLayer, GrandProductCircuit,
     },
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
@@ -559,6 +560,53 @@ where
     openings: RangeCheckOpenings<F, G>,
     opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
     batched_grand_product: BatchedGrandProductArgument<F>,
+}
+
+struct SimpleGrandProductCircuit<F: PrimeField> {
+    layers: Vec<Vec<F>>,
+}
+
+impl<F: PrimeField> SimpleGrandProductCircuit<F> {
+    fn new(leaves: Vec<F>) -> Self {
+        let num_layers = leaves.len().log_2();
+        let mut layers = Vec::with_capacity(num_layers);
+        layers.push(leaves);
+
+        for i in 0..num_layers - 1 {
+            let previous_layer = &layers[i];
+            let len = previous_layer.len() / 2;
+            let new_layer = (0..len)
+                .into_iter()
+                .map(|i| mul_0_1_optimized(&previous_layer[2 * i], &previous_layer[2 * i + 1]))
+                .collect();
+            layers.push(new_layer);
+        }
+
+        Self { layers }
+    }
+}
+
+struct TimestampValidityGrandProduct<F: PrimeField> {
+    circuits: Vec<SimpleGrandProductCircuit<F>>,
+}
+
+impl<F: PrimeField> BatchedGrandProduct<F> for TimestampValidityGrandProduct<F> {
+    type Leaves = (Vec<Vec<F>>, Vec<Vec<F>>);
+
+    fn construct(leaves: Self::Leaves) -> Self {
+        let (read_write_leaves, init_final_leaves) = leaves;
+        let circuits = read_write_leaves
+            .into_par_iter()
+            .chain(init_final_leaves.into_par_iter())
+            .map(|leaves_poly| SimpleGrandProductCircuit::new(leaves_poly))
+            .collect();
+
+        Self { circuits }
+    }
+
+    fn layers(self) -> impl Iterator<Item = impl BatchedGrandProductLayer<F>> {
+        todo!()
+    }
 }
 
 impl<F, G> TimestampValidityProof<F, G>

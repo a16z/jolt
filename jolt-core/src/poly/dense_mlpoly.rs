@@ -198,6 +198,15 @@ impl<F: PrimeField> DensePolynomial<F> {
         }
     }
 
+    pub fn bound_poly_var_bot(&mut self, r: &F) {
+        let n = self.len() / 2;
+        for i in 0..n {
+            self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
+        }
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
     // returns Z(r) in O(n) time
     pub fn evaluate(&self, r: &[F]) -> F {
         // r must have a value for each variable
