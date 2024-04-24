@@ -137,10 +137,13 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
 
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::new(point).evals();
-        self.segments
+        let evals = self
+            .segments
             .par_iter()
             .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
-            .collect()
+            .collect();
+        drop_in_background_thread(chi);
+        evals
     }
 
     pub fn into_dense_polys(self) -> Vec<DensePolynomial<F>> {
