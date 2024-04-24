@@ -1,9 +1,8 @@
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_std::{test_rng, UniformRand};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use jolt_core::{msm::VariableBaseMSM, poly::dense_mlpoly::DensePolynomial};
+use jolt_core::{msm::VariableBaseMSM, poly::{dense_mlpoly::DensePolynomial, field::JoltField}};
 use std::hint::black_box;
 
 fn msm_setup<G: CurveGroup>(num_points: usize) -> (Vec<G>, Vec<G::ScalarField>) {
@@ -20,16 +19,16 @@ fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F) {
     let mut rng = test_rng();
 
     (
-        DensePolynomial::new(vec![F::rand(&mut rng); size]),
-        F::rand(&mut rng),
+        DensePolynomial::new(vec![F::random(&mut rng); size]),
+        F::random(&mut rng),
     )
 }
 
 fn eval_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, Vec<F>) {
     let mut rng = test_rng();
 
-    let poly = DensePolynomial::new(vec![F::rand(&mut rng); size]);
-    let points = vec![F::rand(&mut rng); poly.get_num_vars()];
+    let poly = DensePolynomial::new(vec![F::random(&mut rng); size]);
+    let points = vec![F::random(&mut rng); poly.get_num_vars()];
     (poly, points)
 }
 
