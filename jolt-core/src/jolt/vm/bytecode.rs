@@ -775,8 +775,8 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let generator_shapes =
-            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::generator_shapes(
+        let commitment_shapes =
+            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
                 program.len(),
                 trace.len(),
             );
@@ -787,7 +787,7 @@ mod tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
-        let generators = HyraxScheme::<G1Projective>::setup(&generator_shapes);
+        let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
         let commitments = polys.commit(&generators);
         let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
@@ -817,15 +817,15 @@ mod tests {
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let generator_shapes =
-            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::generator_shapes(
+        let commit_shapes =
+            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
                 program.len(),
                 trace.len(),
             );
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
-        let generators = HyraxScheme::<G1Projective>::setup(&generator_shapes);
+        let generators = HyraxScheme::<G1Projective>::setup(&commit_shapes);
         let commitments = polys.commit(&generators);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
