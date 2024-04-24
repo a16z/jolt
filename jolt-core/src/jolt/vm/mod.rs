@@ -166,7 +166,7 @@ where
             .chain(instruction_trace_polys.into_iter())
             .collect::<Vec<_>>();
         let mut trace_comitments =
-            C::batch_commit_polys_ref(&all_trace_polys, &generators, BatchType::Big);
+            C::batch_commit_polys_ref(&all_trace_polys, generators, BatchType::Big);
 
         let bytecode_trace_commitment = trace_comitments
             .drain(..num_bytecode_trace_polys)
@@ -179,14 +179,14 @@ where
             .collect::<Vec<_>>();
         let instruction_trace_commitment = trace_comitments;
 
-        let bytecode_t_final_commitment = C::commit(&self.bytecode.t_final, &generators);
+        let bytecode_t_final_commitment = C::commit(&self.bytecode.t_final, generators);
         let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
-            || C::commit(&self.read_write_memory.v_final, &generators),
-            || C::commit(&self.read_write_memory.t_final, &generators),
+            || C::commit(&self.read_write_memory.v_final, generators),
+            || C::commit(&self.read_write_memory.t_final, generators),
         );
         let instruction_final_commitment = C::batch_commit_polys_ref(
             &self.instruction_lookups.final_cts.iter().collect(),
-            &generators,
+            generators,
             BatchType::Big,
         );
 

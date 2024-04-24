@@ -61,11 +61,11 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn is_zero(&self) -> bool {
-        <Self as ark_std::Zero>::is_zero(&self)
+        <Self as ark_std::Zero>::is_zero(self)
     }
 
     fn is_one(&self) -> bool {
-        <Self as ark_std::One>::is_one(&self)
+        <Self as ark_std::One>::is_one(self)
     }
 
     fn zero() -> Self {
@@ -86,6 +86,6 @@ impl JoltField for ark_bn254::Fr {
 
     fn from_bytes(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), Self::BYTES);
-        ark_bn254::Fr::from_le_bytes_mod_order(&bytes)
+        ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 }

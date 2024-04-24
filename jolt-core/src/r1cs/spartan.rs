@@ -631,8 +631,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let r_y_point = &inner_sumcheck_r[n_prefix..];
         C::batch_verify(
             &self.opening_proof,
-            &generators,
-            &r_y_point,
+            generators,
+            r_y_point,
             &self.claimed_witnesss_evals,
             &witness_segment_commitments,
             transcript,

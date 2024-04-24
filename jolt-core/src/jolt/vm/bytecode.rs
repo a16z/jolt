@@ -633,7 +633,7 @@ where
         combined_openings.extend(self.v_read_write_openings.iter());
 
         C::batch_verify(
-            &opening_proof,
+            opening_proof,
             generators,
             opening_point,
             &combined_openings,
@@ -755,14 +755,14 @@ mod tests {
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
         let (read_write_leaves, init_final_leaves) =
-            BytecodeProof::compute_leaves(&preprocessing, &polys, &gamma, &tau);
+            BytecodeProof::compute_leaves(&preprocessing, &polys, gamma, tau);
         let init_leaves = &init_final_leaves[0];
         let read_leaves = &read_write_leaves[0];
         let write_leaves = &read_write_leaves[1];
         let final_leaves = &init_final_leaves[1];
 
-        let read_final_leaves = vec![read_leaves.evals(), final_leaves.evals()].concat();
-        let init_write_leaves = vec![init_leaves.evals(), write_leaves.evals()].concat();
+        let read_final_leaves = [read_leaves.evals(), final_leaves.evals()].concat();
+        let init_write_leaves = [init_leaves.evals(), write_leaves.evals()].concat();
         let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
         assert_eq!(difference.len(), 0);
     }

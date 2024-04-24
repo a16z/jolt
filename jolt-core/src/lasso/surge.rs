@@ -52,17 +52,17 @@ where
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
         let dim_read_commitment =
-            CS::batch_commit_polys_ref(&dim_read_polys, &generators, BatchType::SurgeReadWrite);
+            CS::batch_commit_polys_ref(&dim_read_polys, generators, BatchType::SurgeReadWrite);
         let E_commitment = CS::batch_commit_polys_ref(
             &self.E_polys.iter().collect(),
-            &generators,
+            generators,
             BatchType::SurgeReadWrite,
         );
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment = CS::batch_commit_polys_ref(
             &self.final_cts.iter().collect(),
-            &generators,
+            generators,
             BatchType::SurgeInitFinal,
         );
 
@@ -118,7 +118,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         CS::batch_verify(
-            &opening_proof,
+            opening_proof,
             generators,
             opening_point,
             self,
@@ -289,7 +289,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         CS::batch_verify(
-            &opening_proof,
+            opening_proof,
             generators,
             opening_point,
             &self.final_openings,

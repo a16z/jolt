@@ -194,7 +194,7 @@ where
             .chain(self.final_cts_read_timestamp.iter())
             .chain(self.final_cts_global_minus_read.iter())
             .collect();
-        let commitments = C::batch_commit_polys_ref(&polys, &generators, BatchType::Big);
+        let commitments = C::batch_commit_polys_ref(&polys, generators, BatchType::Big);
 
         Self::Commitment { commitments }
     }

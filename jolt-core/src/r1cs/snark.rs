@@ -353,8 +353,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         let io_segments = vec![pc_out, pc];
         let io_segments_ref = vec![io_segments[0].as_slice(), io_segments[1].as_slice()];
         let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
-        let io_comms = C::batch_commit(&io_segments_ref.as_slice(), &generators, BatchType::Big);
-        let aux_comms = C::batch_commit(aux_ref.as_slice(), &generators, BatchType::Big);
+        let io_comms = C::batch_commit(io_segments_ref.as_slice(), generators, BatchType::Big);
+        let aux_comms = C::batch_commit(aux_ref.as_slice(), generators, BatchType::Big);
 
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
         let _guard = span.enter();
@@ -365,12 +365,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
             chunk_batch_slices.extend(batchee.chunks(padded_trace_len));
         }
         let chunks_comms =
-            C::batch_commit(chunk_batch_slices.as_slice(), &generators, BatchType::Big);
+            C::batch_commit(chunk_batch_slices.as_slice(), generators, BatchType::Big);
 
         let circuit_flag_slices: Vec<&[F]> =
             inputs.circuit_flags_bits.chunks(padded_trace_len).collect();
         let circuit_flags_comms =
-            C::batch_commit(circuit_flag_slices.as_slice(), &generators, BatchType::Big);
+            C::batch_commit(circuit_flag_slices.as_slice(), generators, BatchType::Big);
         drop(_guard);
 
         let r1cs_commitments = R1CSCommitment {

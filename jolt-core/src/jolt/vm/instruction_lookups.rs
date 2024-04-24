@@ -108,11 +108,11 @@ where
             .chain(self.instruction_flag_polys.iter())
             .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, &generators, BatchType::Big);
+        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
 
         let final_commitment = C::batch_commit_polys_ref(
             &self.final_cts.iter().collect(),
-            &generators,
+            generators,
             BatchType::Big,
         );
 
