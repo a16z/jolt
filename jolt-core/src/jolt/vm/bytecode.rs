@@ -579,7 +579,6 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, C>, opening_point: &[F]) -> Self {
-        println!("BytecodeReadWriteOpenings::open");
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
