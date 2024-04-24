@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
 
-pub use crate::poly::field::JoltField;
+use jolt_core::poly::commitment::hyrax::HyraxScheme;
+pub use jolt_core::poly::field::JoltField;
 pub use ark_bn254::{Fr as F, G1Projective as G};
 pub use ark_ec::CurveGroup;
 
@@ -21,10 +22,12 @@ pub use jolt_core::jolt::vm::{
 };
 pub use tracer;
 
+pub type CommitmentScheme = HyraxScheme<G>;
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct Proof {
-    pub proof: RV32IJoltProof<F, G>,
-    pub commitments: JoltCommitments<G>,
+    pub proof: RV32IJoltProof<F, CommitmentScheme>,
+    pub commitments: JoltCommitments<CommitmentScheme>,
 }
 
 impl Proof {

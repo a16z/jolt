@@ -179,7 +179,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
-                jolt::JoltPreprocessing<jolt::F, jolt::G>
+                jolt::JoltPreprocessing<jolt::F, jolt::CommitmentScheme>
             ) {
                 #imports
 
@@ -190,7 +190,7 @@ impl MacroBuilder {
                 let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<jolt::F, jolt::G> =
+                let preprocessing: JoltPreprocessing<jolt::F, jolt::CommitmentScheme> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         memory_init,
@@ -231,7 +231,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::G>,
+                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::CommitmentScheme>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
@@ -387,8 +387,7 @@ impl MacroBuilder {
         quote! {
             #[cfg(not(feature = "guest"))]
             use jolt::{
-                CurveGroup,
-                PrimeField,
+                JoltField,
                 host::Program,
                 JoltPreprocessing,
                 Jolt,

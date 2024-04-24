@@ -145,7 +145,7 @@ where
     type Subtables = RV32ISubtables<F>;
 }
 
-pub type RV32IJoltProof<F, G> = JoltProof<C, M, F, G, RV32I, RV32ISubtables<F>>;
+pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
 
 // ==================== TEST ====================
 
