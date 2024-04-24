@@ -135,10 +135,6 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
         self.total_len
     }
 
-    pub fn segment_len(&self) -> usize {
-        self.segment_len
-    }
-
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::new(point).evals();
         self.segments
