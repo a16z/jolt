@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -186,7 +186,7 @@ where
     type Commitment = RangeCheckCommitment<C>;
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::commit")]
-    fn commit(&self, generators: &C::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &C::Setup) -> Self::Commitment {
         let polys: Vec<&DensePolynomial<F>> = self
             .read_cts_read_timestamp
             .iter()
@@ -241,7 +241,7 @@ where
 
     fn verify_openings(
         &self,
-        _generators: &C::Generators,
+        _generators: &C::Setup,
         _opening_proof: &Self::Proof,
         _commitment: &RangeCheckCommitment<C>,
         _opening_point: &[F],
@@ -453,7 +453,7 @@ where
 {
     fn verify_memory_checking(
         _: &NoPreprocessing,
-        _: &C::Generators,
+        _: &C::Setup,
         mut _proof: MemoryCheckingProof<
             F,
             C,
@@ -677,7 +677,7 @@ where
 
     pub fn verify(
         &mut self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         range_check_commitment: &RangeCheckCommitment<C>,
         memory_commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,
@@ -784,10 +784,10 @@ where
 
     /// Computes the maximum number of group generators needed to commit to timestamp
     /// range-check polynomials using Hyrax, given the maximum trace length.
-    pub fn generator_shapes(max_trace_length: usize) -> Vec<GeneratorShape> {
+    pub fn generator_shapes(max_trace_length: usize) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        vec![GeneratorShape::new(max_trace_length, BatchType::Big)]
+        vec![CommitShape::new(max_trace_length, BatchType::Big)]
     }
 
     fn protocol_name() -> &'static [u8] {

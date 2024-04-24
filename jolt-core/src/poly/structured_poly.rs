@@ -15,7 +15,7 @@ pub trait StructuredCommitment<C: CommitmentScheme>: Send + Sync + Sized {
     type Commitment;
 
     /// Commits to batched polynomials.
-    fn commit(&self, generators: &C::Generators) -> Self::Commitment;
+    fn commit(&self, generators: &C::Setup) -> Self::Commitment;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
@@ -57,7 +57,7 @@ where
     /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &Polynomials::Commitment,
         opening_point: &[F],

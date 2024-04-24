@@ -6,7 +6,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -783,19 +783,19 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
     pub fn generator_shapes(
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> Vec<GeneratorShape> {
+    ) -> Vec<CommitShape> {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
         // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
         let t_read_write_len = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION).next_power_of_two();
-        let t_read_write_shape = GeneratorShape::new(t_read_write_len, BatchType::Big);
+        let t_read_write_shape = CommitShape::new(t_read_write_len, BatchType::Big);
 
         // { a_ram, v_read, v_write_rd, v_write_ram }
-        let r1cs_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
+        let r1cs_shape = CommitShape::new(max_trace_length, BatchType::Big);
         // v_final, t_final
         let init_final_len = max_memory_address.next_power_of_two();
-        let init_final_shape = GeneratorShape::new(init_final_len, BatchType::Small);
+        let init_final_shape = CommitShape::new(init_final_len, BatchType::Small);
 
         vec![t_read_write_shape, r1cs_shape, init_final_shape]
     }
@@ -927,7 +927,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &JoltCommitments<C>,
         opening_point: &[F],
@@ -1061,7 +1061,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &JoltCommitments<C>,
         opening_point: &[F],
@@ -1429,7 +1429,7 @@ where
     fn verify(
         proof: &Self,
         preprocessing: &ReadWriteMemoryPreprocessing,
-        generators: &C::Generators,
+        generators: &C::Setup,
         commitment: &MemoryCommitment<C>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -1554,7 +1554,7 @@ where
 
     pub fn verify(
         mut self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         commitment: &JoltCommitments<C>,
         transcript: &mut ProofTranscript,

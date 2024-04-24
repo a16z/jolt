@@ -9,7 +9,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -99,7 +99,7 @@ where
     type Commitment = InstructionCommitment<C>;
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(&self, generators: &C::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &C::Setup) -> Self::Commitment {
         let trace_polys: Vec<&DensePolynomial<F>> = self
             .dim
             .iter()
@@ -175,7 +175,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<C>,
         opening_point: &[F],
@@ -294,7 +294,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<C>,
         opening_point: &[F],
@@ -394,7 +394,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &InstructionCommitment<C>,
         opening_point: &[F],
@@ -917,7 +917,7 @@ where
 
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        generators: &CS::Generators,
+        generators: &CS::Setup,
         proof: InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>,
         commitment: &InstructionCommitment<CS>,
         transcript: &mut ProofTranscript,
@@ -1430,11 +1430,11 @@ where
     pub fn generator_shapes(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
-    ) -> Vec<GeneratorShape> {
+    ) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
         // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
-        let read_write_generator_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
-        let init_final_generator_shape = GeneratorShape::new(
+        let read_write_generator_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let init_final_generator_shape = CommitShape::new(
             M * preprocessing.num_memories.next_power_of_two(),
             BatchType::Small,
         );

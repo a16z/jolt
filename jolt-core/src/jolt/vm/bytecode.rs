@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -305,16 +305,16 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
     pub fn generator_shapes(
         max_bytecode_size: usize,
         max_trace_length: usize,
-    ) -> Vec<GeneratorShape> {
+    ) -> Vec<CommitShape> {
         // Account for no-op prepended to bytecode
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
         // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
-        let read_write_gen_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
+        let read_write_gen_shape = CommitShape::new(max_trace_length, BatchType::Big);
 
         // t_final
-        let init_final_gen_shape = GeneratorShape::new(max_bytecode_size, BatchType::Small);
+        let init_final_gen_shape = CommitShape::new(max_bytecode_size, BatchType::Small);
 
         vec![read_write_gen_shape, init_final_gen_shape]
     }
@@ -347,7 +347,7 @@ where
     type Commitment = BytecodeCommitment<C>;
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::commit")]
-    fn commit(&self, generators: &C::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &C::Setup) -> Self::Commitment {
         let trace_polys = vec![
             &self.a_read_write,
             &self.t_read, // t_read isn't used in r1cs, but it's cleaner to commit to it as a rectangular matrix alongside everything else
@@ -623,7 +623,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<C>,
         opening_point: &[F],
@@ -705,7 +705,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &BytecodeCommitment<C>,
         opening_point: &[F],
@@ -791,7 +791,7 @@ mod tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
-        let generators = HyraxScheme::<G1Projective>::generators(&generator_shapes);
+        let generators = HyraxScheme::<G1Projective>::setup(&generator_shapes);
         let commitments = polys.commit(&generators);
         let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
 
@@ -829,7 +829,7 @@ mod tests {
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
-        let generators = HyraxScheme::<G1Projective>::generators(&generator_shapes);
+        let generators = HyraxScheme::<G1Projective>::setup(&generator_shapes);
         let commitments = polys.commit(&generators);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");

@@ -335,7 +335,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         padded_trace_len: usize,
         memory_start: u64,
         inputs: &R1CSInputs<F>,
-        generators: &C::Generators,
+        generators: &C::Setup,
     ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<C>), SpartanError> {
         let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
         let _enter = span.enter();
@@ -454,7 +454,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
 
     pub fn verify(
         &self,
-        generators: &C::Generators,
+        generators: &C::Setup,
         jolt_commitments: JoltCommitments<C>,
         C: usize,
         transcript: &mut ProofTranscript,

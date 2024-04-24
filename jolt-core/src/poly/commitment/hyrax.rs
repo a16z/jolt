@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use super::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
+use super::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
@@ -49,12 +49,12 @@ pub fn matrix_dimensions(num_vars: usize, ratio: usize) -> (usize, usize) {
 
 impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
     type Field = G::ScalarField;
-    type Generators = PedersenGenerators<G>;
+    type Setup = PedersenGenerators<G>;
     type Commitment = HyraxCommitment<G>;
     type Proof = HyraxOpeningProof<G>;
     type BatchedProof = BatchedHyraxOpeningProof<G>;
 
-    fn generators(shapes: &[GeneratorShape]) -> Self::Generators {
+    fn setup(shapes: &[CommitShape]) -> Self::Setup {
         let mut max_len: usize = 0;
         for shape in shapes {
             let len = matrix_dimensions(
@@ -68,17 +68,17 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         }
         PedersenGenerators::new(max_len, b"Jolt v1 Hyrax generators")
     }
-    fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Generators) -> Self::Commitment {
+    fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Setup) -> Self::Commitment {
         HyraxCommitment::commit(poly, gens)
     }
     fn batch_commit(
         evals: &[&[Self::Field]],
-        gens: &Self::Generators,
+        gens: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         HyraxCommitment::batch_commit(evals, gens, batch_type)
     }
-    fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Generators) -> Self::Commitment {
+    fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Setup) -> Self::Commitment {
         HyraxCommitment::commit_slice(eval_slice, generators)
     }
     fn prove(
@@ -106,7 +106,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     }
     fn verify(
         proof: &Self::Proof,
-        generators: &Self::Generators,
+        generators: &Self::Setup,
         transcript: &mut ProofTranscript,
         opening_point: &[Self::Field],
         opening: &Self::Field,
@@ -125,7 +125,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     }
     fn batch_verify(
         batch_proof: &Self::BatchedProof,
-        generators: &Self::Generators,
+        generators: &Self::Setup,
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         commitments: &[&Self::Commitment],

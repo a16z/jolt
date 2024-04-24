@@ -47,7 +47,7 @@ where
     type Commitment = SurgeCommitment<PCS>;
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(&self, generators: &PCS::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &PCS::Setup) -> Self::Commitment {
         let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
@@ -105,7 +105,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<PCS>,
         opening_point: &[F],
@@ -181,7 +181,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<PCS>,
         opening_point: &[F],
@@ -276,7 +276,7 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         opening_proof: &Self::Proof,
         commitment: &SurgeCommitment<PCS>,
         opening_point: &[F],
@@ -562,7 +562,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         ops: Vec<Instruction>,
         transcript: &mut ProofTranscript,
     ) -> Self {
@@ -630,7 +630,7 @@ where
 
     pub fn verify(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         proof: SurgeProof<F, PCS, Instruction, C, M>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {

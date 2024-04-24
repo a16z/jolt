@@ -457,7 +457,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         witness_segment_commitments: Vec<&C::Commitment>,
         key: &UniformSpartanKey<F>,
         io: &[F],
-        generators: &C::Generators,
+        generators: &C::Setup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         assert_eq!(io.len(), 0); // Currently not using io

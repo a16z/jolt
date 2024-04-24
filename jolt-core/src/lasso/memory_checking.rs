@@ -327,7 +327,7 @@ where
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
-        generators: &C::Generators,
+        generators: &C::Setup,
         mut proof: MemoryCheckingProof<
             F,
             C,

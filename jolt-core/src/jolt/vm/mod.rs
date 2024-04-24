@@ -47,7 +47,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    pub generators: PCS::Generators,
+    pub generators: PCS::Setup,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
@@ -113,7 +113,7 @@ where
     type Commitment = JoltCommitments<PCS>;
 
     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-    fn commit(&self, generators: &PCS::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &PCS::Setup) -> Self::Commitment {
         let bytecode_trace_polys = vec![
             &self.bytecode.a_read_write,
             &self.bytecode.t_read,
@@ -263,7 +263,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         generator_shapes.extend(timestamp_range_check_generator_shapes);
         generator_shapes.extend(num_instruction_lookup_generators);
 
-        let generators = PCS::generators(&generator_shapes);
+        let generators = PCS::setup(&generator_shapes);
 
         JoltPreprocessing {
             generators,
@@ -437,7 +437,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     fn verify_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
         commitment: &InstructionCommitment<PCS>,
         transcript: &mut ProofTranscript,
@@ -447,7 +447,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     fn verify_bytecode(
         preprocessing: &BytecodePreprocessing<F>,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         proof: BytecodeProof<F, PCS>,
         commitment: &BytecodeCommitment<PCS>,
         transcript: &mut ProofTranscript,
@@ -463,7 +463,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     fn verify_memory(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         proof: ReadWriteMemoryProof<F, PCS>,
         commitment: &JoltCommitments<PCS>,
         program_io: JoltDevice,
@@ -477,7 +477,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     }
 
     fn verify_r1cs(
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
         proof: R1CSProof<F, PCS>,
         commitments: JoltCommitments<PCS>,
         transcript: &mut ProofTranscript,
@@ -493,7 +493,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         instructions: &[Option<Self::InstructionSet>],
         polynomials: &JoltPolynomials<F, PCS>,
         circuit_flags: Vec<F>,
-        generators: &PCS::Generators,
+        generators: &PCS::Setup,
     ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<PCS>) {
         let log_M = log2(M) as usize;
 
