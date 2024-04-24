@@ -184,8 +184,8 @@ where
             || C::commit(&self.read_write_memory.v_final, generators),
             || C::commit(&self.read_write_memory.t_final, generators),
         );
-        let instruction_final_commitment = C::batch_commit_polys_ref(
-            &self.instruction_lookups.final_cts.iter().collect(),
+        let instruction_final_commitment = C::batch_commit_polys(
+            &self.instruction_lookups.final_cts,
             generators,
             BatchType::Big,
         );
