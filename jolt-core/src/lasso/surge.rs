@@ -53,18 +53,12 @@ where
             self.dim.iter().chain(self.read_cts.iter()).collect();
         let dim_read_commitment =
             CS::batch_commit_polys_ref(&dim_read_polys, generators, BatchType::SurgeReadWrite);
-        let E_commitment = CS::batch_commit_polys(
-            &self.E_polys,
-            generators,
-            BatchType::SurgeReadWrite,
-        );
+        let E_commitment =
+            CS::batch_commit_polys(&self.E_polys, generators, BatchType::SurgeReadWrite);
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
-        let final_commitment = CS::batch_commit_polys(
-            &self.final_cts,
-            generators,
-            BatchType::SurgeInitFinal,
-        );
+        let final_commitment =
+            CS::batch_commit_polys(&self.final_cts, generators, BatchType::SurgeInitFinal);
 
         Self::Commitment {
             dim_read_commitment,

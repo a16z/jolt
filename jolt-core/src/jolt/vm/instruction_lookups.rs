@@ -110,11 +110,7 @@ where
             .collect();
         let trace_commitment = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
 
-        let final_commitment = C::batch_commit_polys(
-            &self.final_cts,
-            generators,
-            BatchType::Big,
-        );
+        let final_commitment = C::batch_commit_polys(&self.final_cts, generators, BatchType::Big);
 
         Self::Commitment {
             trace_commitment,
