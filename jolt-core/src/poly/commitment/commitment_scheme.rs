@@ -50,12 +50,18 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         polys: &Vec<DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
         batch_type: BatchType,
-    ) -> Vec<Self::Commitment>;
+    ) -> Vec<Self::Commitment> {
+        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
+        Self::batch_commit(&slices, gens, batch_type)
+    }
     fn batch_commit_polys_ref(
         polys: &Vec<&DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
         batch_type: BatchType,
-    ) -> Vec<Self::Commitment>;
+    ) -> Vec<Self::Commitment> {
+        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
+        Self::batch_commit(&slices, gens, batch_type)
+    }
     fn prove(
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated

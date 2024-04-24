@@ -79,21 +79,6 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     fn commit_slice(eval_slice: &[Self::Field], generators: &Self::Generators) -> Self::Commitment {
         HyraxCommitment::commit_slice(eval_slice, generators)
     }
-    fn batch_commit_polys(
-        polys: &Vec<DensePolynomial<Self::Field>>,
-        generators: &Self::Generators,
-        batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
-        let polys_ref: Vec<&DensePolynomial<Self::Field>> = polys.iter().collect();
-        HyraxCommitment::batch_commit_polys(&polys_ref, generators, batch_type)
-    }
-    fn batch_commit_polys_ref(
-        polys: &Vec<&DensePolynomial<Self::Field>>,
-        generators: &Self::Generators,
-        batch_type: BatchType,
-    ) -> Vec<Self::Commitment> {
-        HyraxCommitment::batch_commit_polys(polys, generators, batch_type)
-    }
     fn prove(
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
@@ -214,40 +199,6 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
         let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
 
         let rows = batch.par_iter().flat_map(|poly| poly.par_chunks(R_size));
-        let row_commitments: Vec<G> = rows
-            .map(|row| PedersenCommitment::commit_vector(row, &gens))
-            .collect();
-
-        row_commitments
-            .par_chunks(L_size)
-            .map(|chunk| Self {
-                row_commitments: chunk.to_vec(),
-            })
-            .collect()
-    }
-
-    #[tracing::instrument(skip_all, name = "HyraxCommitment::batch_commit_polys")]
-    pub fn batch_commit_polys(
-        polys: &Vec<&DensePolynomial<G::ScalarField>>,
-        generators: &PedersenGenerators<G>,
-        batch_type: BatchType,
-    ) -> Vec<Self> {
-        let num_vars = polys[0].get_num_vars();
-        let n = num_vars.pow2();
-        polys
-            .iter()
-            .for_each(|poly| assert_eq!(poly.as_ref().len(), n));
-
-        let ratio = batch_type_to_ratio(&batch_type);
-
-        let (L_size, R_size) = matrix_dimensions(num_vars, ratio);
-        assert_eq!(L_size * R_size, n);
-
-        let gens = CurveGroup::normalize_batch(&generators.generators[..R_size]);
-
-        let rows = polys
-            .par_iter()
-            .flat_map(|poly| poly.evals_ref().par_chunks(R_size));
         let row_commitments: Vec<G> = rows
             .map(|row| PedersenCommitment::commit_vector(row, &gens))
             .collect();
