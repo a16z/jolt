@@ -787,10 +787,7 @@ where
     pub fn generator_shapes(max_trace_length: usize) -> Vec<GeneratorShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        vec![GeneratorShape::new(
-            max_trace_length,
-            BatchType::Big
-        )]
+        vec![GeneratorShape::new(max_trace_length, BatchType::Big)]
     }
 
     fn protocol_name() -> &'static [u8] {

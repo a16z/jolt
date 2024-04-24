@@ -1438,8 +1438,10 @@ where
         let max_trace_length = max_trace_length.next_power_of_two();
         // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
         let read_write_generator_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
-        let init_final_generator_shape =
-            GeneratorShape::new(M * preprocessing.num_memories.next_power_of_two(), BatchType::Small);
+        let init_final_generator_shape = GeneratorShape::new(
+            M * preprocessing.num_memories.next_power_of_two(),
+            BatchType::Small,
+        );
 
         vec![read_write_generator_shape, init_final_generator_shape]
     }
