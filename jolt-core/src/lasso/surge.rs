@@ -487,6 +487,7 @@ where
     materialized_subtables: Vec<Vec<F>>,
 }
 
+#[allow(clippy::type_complexity)]
 pub struct SurgeProof<F, CS, Instruction, const C: usize, const M: usize>
 where
     F: JoltField,

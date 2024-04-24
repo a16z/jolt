@@ -47,7 +47,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ) -> Vec<Self::Commitment>;
     fn commit_slice(evals: &[Self::Field], gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit_polys(
-        polys: &Vec<DensePolynomial<Self::Field>>,
+        polys: &[DensePolynomial<Self::Field>],
         gens: &Self::Generators,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
@@ -55,7 +55,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         Self::batch_commit(&slices, gens, batch_type)
     }
     fn batch_commit_polys_ref(
-        polys: &Vec<&DensePolynomial<Self::Field>>,
+        polys: &[&DensePolynomial<Self::Field>],
         gens: &Self::Generators,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
