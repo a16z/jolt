@@ -775,11 +775,10 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let commitment_shapes =
-            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
-                program.len(),
-                trace.len(),
-            );
+        let commitment_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
+            program.len(),
+            trace.len(),
+        );
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
@@ -817,11 +816,10 @@ mod tests {
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let commit_shapes =
-            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
-                program.len(),
-                trace.len(),
-            );
+        let commit_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
+            program.len(),
+            trace.len(),
+        );
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);
