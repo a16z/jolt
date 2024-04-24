@@ -26,7 +26,7 @@ const TRACE_LEN_R1CS_POLYS_BATCH_RATIO: usize = 64;
 const SURGE_RATIO_READ_WRITE: usize = 16;
 const SURGE_RATIO_FINAL: usize = 4;
 
-pub fn batch_type_to_ratio(batch_type: BatchType) -> usize {
+pub fn batch_type_to_ratio(batch_type: &BatchType) -> usize {
     match batch_type {
         BatchType::Big => TRACE_LEN_R1CS_POLYS_BATCH_RATIO,
         BatchType::Small => 1,
@@ -58,7 +58,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         let mut max_len: usize = 0;
         for shape in shapes {
             println!("Shape: {shape:?}");
-            let len = matrix_dimensions(shape.input_length.log_2(), shape.batch_size).1;
+            let len = matrix_dimensions(shape.input_length.log_2(), batch_type_to_ratio(&shape.batch_type)).1;
             if len > max_len {
                 max_len = len;
             }
@@ -204,7 +204,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
         batch.iter().for_each(|poly| assert_eq!(poly.len(), n));
         let ell = n.log_2();
 
-        let ratio = batch_type_to_ratio(batch_type);
+        let ratio = batch_type_to_ratio(&batch_type);
 
         let (L_size, R_size) = matrix_dimensions(ell, ratio);
         assert_eq!(L_size * R_size, n);
@@ -238,7 +238,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
             .iter()
             .for_each(|poly| assert_eq!(poly.as_ref().len(), n));
 
-        let ratio = batch_type_to_ratio(batch_type);
+        let ratio = batch_type_to_ratio(&batch_type);
 
         let (L_size, R_size) = matrix_dimensions(num_vars, ratio);
         assert_eq!(L_size * R_size, n);
@@ -443,7 +443,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         assert_eq!(poly.get_num_vars(), opening_point.len());
 
         // compute the L and R vectors
-        let ratio = batch_type_to_ratio(batch_type);
+        let ratio = batch_type_to_ratio(&batch_type);
         let (L_size, _R_size) = matrix_dimensions(poly.get_num_vars(), ratio);
         let eq = EqPolynomial::new(opening_point.to_vec());
         let (L, _R) = eq.compute_factored_evals(L_size);

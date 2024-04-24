@@ -789,7 +789,7 @@ where
 
         vec![GeneratorShape::new(
             max_trace_length,
-            4 * MEMORY_OPS_PER_INSTRUCTION,
+            BatchType::Big
         )]
     }
 

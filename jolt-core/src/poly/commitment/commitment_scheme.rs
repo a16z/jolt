@@ -11,18 +11,19 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct GeneratorShape {
     pub input_length: usize,
-    pub batch_size: usize,
+    pub batch_type: BatchType,
 }
 
 impl GeneratorShape {
-    pub fn new(input_length: usize, batch_size: usize) -> Self {
+    pub fn new(input_length: usize, batch_type: BatchType) -> Self {
         Self {
             input_length,
-            batch_size,
+            batch_type,
         }
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum BatchType {
     Big,
     Small,

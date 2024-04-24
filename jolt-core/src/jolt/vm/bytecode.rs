@@ -311,10 +311,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
         // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
-        let read_write_gen_shape = GeneratorShape::new(max_trace_length, 7);
+        let read_write_gen_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
 
         // t_final
-        let init_final_gen_shape = GeneratorShape::new(max_bytecode_size, 1);
+        let init_final_gen_shape = GeneratorShape::new(max_bytecode_size, BatchType::Small);
 
         vec![read_write_gen_shape, init_final_gen_shape]
     }

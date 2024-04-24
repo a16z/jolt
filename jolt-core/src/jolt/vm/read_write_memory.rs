@@ -789,15 +789,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
 
         // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
         let t_read_write_len = (max_trace_length * MEMORY_OPS_PER_INSTRUCTION).next_power_of_two();
-        let t_read_write_shape = GeneratorShape::new(t_read_write_len, 1);
+        let t_read_write_shape = GeneratorShape::new(t_read_write_len, BatchType::Big);
 
-        // TODO(sragss): Low confidence this is correct.
         // { a_ram, v_read, v_write_rd, v_write_ram }
-        let r1cs_poly_count = 1 + MEMORY_OPS_PER_INSTRUCTION + 1 + 4;
-        let r1cs_shape = GeneratorShape::new(max_trace_length, r1cs_poly_count);
+        let r1cs_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
         // v_final, t_final
         let init_final_len = max_memory_address.next_power_of_two();
-        let init_final_shape = GeneratorShape::new(init_final_len, 1);
+        let init_final_shape = GeneratorShape::new(init_final_len, BatchType::Small);
 
         vec![t_read_write_shape, r1cs_shape, init_final_shape]
     }
