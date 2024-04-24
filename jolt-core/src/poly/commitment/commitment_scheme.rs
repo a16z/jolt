@@ -11,16 +11,24 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct GeneratorShape {
     pub input_length: usize,
-    pub batch_size: usize
+    pub batch_type: BatchType,
 }
 
 impl GeneratorShape {
-    pub fn new(input_length: usize, batch_size: usize) -> Self {
+    pub fn new(input_length: usize, batch_type: BatchType) -> Self {
         Self {
             input_length,
-            batch_size,
+            batch_type,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum BatchType {
+    Big,
+    Small,
+    SurgeInitFinal,
+    SurgeReadWrite,
 }
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -33,18 +41,27 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn generators(shapes: &[GeneratorShape]) -> Self::Generators;
     fn commit(poly: &DensePolynomial<Self::Field>, gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit(
-        evals: &Vec<Vec<Self::Field>>,
+        evals: &[&[Self::Field]],
         gens: &Self::Generators,
+        batch_type: BatchType,
     ) -> Vec<Self::Commitment>;
     fn commit_slice(evals: &[Self::Field], gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit_polys(
         polys: &Vec<DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
-    ) -> Vec<Self::Commitment>;
+        batch_type: BatchType,
+    ) -> Vec<Self::Commitment> {
+        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
+        Self::batch_commit(&slices, gens, batch_type)
+    }
     fn batch_commit_polys_ref(
         polys: &Vec<&DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
-    ) -> Vec<Self::Commitment>;
+        batch_type: BatchType,
+    ) -> Vec<Self::Commitment> {
+        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
+        Self::batch_commit(&slices, gens, batch_type)
+    }
     fn prove(
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
@@ -54,6 +71,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
+        batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof;
 

@@ -5,12 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
-use crate::poly::commitment::hyrax::matrix_dimensions;
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{BYTES_PER_INSTRUCTION, NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{BYTES_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::ELFInstruction;
 use common::to_ram_address;
 
@@ -23,7 +22,7 @@ use crate::{
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    utils::{errors::ProofVerifyError, math::Math},
+    utils::errors::ProofVerifyError,
 };
 
 pub type BytecodeProof<F, C> = MemoryCheckingProof<
@@ -303,16 +302,19 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
 
     /// Computes the maximum number of group generators needed to commit to bytecode
     /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
-    pub fn generator_shapes(max_bytecode_size: usize, max_trace_length: usize) -> Vec<GeneratorShape> {
+    pub fn generator_shapes(
+        max_bytecode_size: usize,
+        max_trace_length: usize,
+    ) -> Vec<GeneratorShape> {
         // Account for no-op prepended to bytecode
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
         // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
-        let read_write_gen_shape= GeneratorShape::new(max_trace_length, 7);
+        let read_write_gen_shape = GeneratorShape::new(max_trace_length, BatchType::Big);
 
         // t_final
-        let init_final_gen_shape= GeneratorShape::new(max_bytecode_size, 1);
+        let init_final_gen_shape = GeneratorShape::new(max_bytecode_size, BatchType::Small);
 
         vec![read_write_gen_shape, init_final_gen_shape]
     }
@@ -356,7 +358,7 @@ where
             &self.v_read_write[4],
         ];
         println!("BytecodePolynomials::commit -- C::batch_commit_polys_ref");
-        let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators);
+        let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
 
         let t_final_commitment = C::commit(&self.t_final, generators);
 
@@ -577,7 +579,6 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::open")]
     fn open(polynomials: &BytecodePolynomials<F, C>, opening_point: &[F]) -> Self {
-        println!("BytecodeReadWriteOpenings::open");
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         Self {
             a_read_write_opening: polynomials.a_read_write.evaluate_at_chi(&chis),
@@ -615,6 +616,7 @@ where
             ],
             opening_point,
             &combined_openings,
+            BatchType::Big,
             transcript,
         )
     }
@@ -722,7 +724,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::commitment::{hyrax::{HyraxCommitment, HyraxScheme}, pedersen::PedersenGenerators};
+    use crate::poly::commitment::hyrax::HyraxScheme;
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
@@ -777,10 +779,11 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
         ];
-        let generator_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::generator_shapes(
-            program.len(),
-            trace.len(),
-        );
+        let generator_shapes =
+            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::generator_shapes(
+                program.len(),
+                trace.len(),
+            );
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
@@ -818,10 +821,11 @@ mod tests {
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
 
-        let generator_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::generator_shapes(
-            program.len(),
-            trace.len(),
-        );
+        let generator_shapes =
+            BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::generator_shapes(
+                program.len(),
+                trace.len(),
+            );
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
             BytecodePolynomials::new(&preprocessing, trace);

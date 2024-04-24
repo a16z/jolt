@@ -1,6 +1,6 @@
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(test)]
@@ -8,8 +8,7 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
-use crate::poly::commitment::hyrax::matrix_dimensions;
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -25,7 +24,7 @@ use crate::{
     subprotocols::grand_product::{
         BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
     },
-    utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
+    utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
 use super::read_write_memory::MemoryCommitment;
@@ -195,7 +194,7 @@ where
             .chain(self.final_cts_read_timestamp.iter())
             .chain(self.final_cts_global_minus_read.iter())
             .collect();
-        let commitments = C::batch_commit_polys_ref(&polys, &generators);
+        let commitments = C::batch_commit_polys_ref(&polys, &generators, BatchType::Big);
 
         Self::Commitment { commitments }
     }
@@ -592,7 +591,13 @@ where
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect::<Vec<F>>();
 
-        let opening_proof = C::batch_prove(&polys, &r_grand_product, &openings, transcript);
+        let opening_proof = C::batch_prove(
+            &polys,
+            &r_grand_product,
+            &openings,
+            BatchType::Big,
+            transcript,
+        );
 
         let mut openings = openings.into_iter();
         let read_cts_read_timestamp: [F; MEMORY_OPS_PER_INSTRUCTION] =
@@ -782,7 +787,7 @@ where
     pub fn generator_shapes(max_trace_length: usize) -> Vec<GeneratorShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        vec![GeneratorShape::new(max_trace_length, 4 * MEMORY_OPS_PER_INSTRUCTION)]
+        vec![GeneratorShape::new(max_trace_length, BatchType::Big)]
     }
 
     fn protocol_name() -> &'static [u8] {

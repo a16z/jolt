@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::poly::{commitment::commitment_scheme::BatchType, field::JoltField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
@@ -51,12 +51,20 @@ where
         let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
-        let dim_read_commitment = CS::batch_commit_polys_ref(&dim_read_polys, &generators);
-        let E_commitment = CS::batch_commit_polys_ref(&self.E_polys.iter().collect(), &generators);
+        let dim_read_commitment =
+            CS::batch_commit_polys_ref(&dim_read_polys, &generators, BatchType::SurgeReadWrite);
+        let E_commitment = CS::batch_commit_polys_ref(
+            &self.E_polys.iter().collect(),
+            &generators,
+            BatchType::SurgeReadWrite,
+        );
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
-        let final_commitment =
-            CS::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators);
+        let final_commitment = CS::batch_commit_polys_ref(
+            &self.final_cts.iter().collect(),
+            &generators,
+            BatchType::SurgeInitFinal,
+        );
 
         Self::Commitment {
             dim_read_commitment,
@@ -96,6 +104,7 @@ where
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             opening_point,
             E_poly_openings,
+            BatchType::SurgeReadWrite,
             transcript,
         )
     }
@@ -171,6 +180,7 @@ where
             &read_write_polys,
             opening_point,
             &read_write_openings,
+            BatchType::SurgeReadWrite,
             transcript,
         )
     }
@@ -253,6 +263,7 @@ where
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
+            BatchType::SurgeInitFinal,
             transcript,
         )
     }

@@ -1,5 +1,6 @@
 #![allow(clippy::len_without_is_empty)]
 
+use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
@@ -427,6 +428,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             &witness_segment_polys_ref,
             r_y_point,
             &witness_evals,
+            BatchType::Big,
             transcript,
         );
 
