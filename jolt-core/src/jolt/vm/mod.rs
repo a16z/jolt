@@ -3,8 +3,7 @@
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::{NUM_R1CS_POLYS, RAM_START_ADDRESS};
-use itertools::max;
+use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use strum::EnumCount;
 
@@ -14,7 +13,7 @@ use crate::jolt::{
     vm::timestamp_range_check::TimestampValidityProof,
 };
 use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
@@ -166,7 +165,8 @@ where
             .chain(range_check_polys.into_iter())
             .chain(instruction_trace_polys.into_iter())
             .collect::<Vec<_>>();
-        let mut trace_comitments = C::batch_commit_polys_ref(&all_trace_polys, &generators, NUM_R1CS_POLYS);
+        let mut trace_comitments =
+            C::batch_commit_polys_ref(&all_trace_polys, &generators, BatchType::Big);
 
         let bytecode_trace_commitment = trace_comitments
             .drain(..num_bytecode_trace_polys)
@@ -187,7 +187,7 @@ where
         let instruction_final_commitment = C::batch_commit_polys_ref(
             &self.instruction_lookups.final_cts.iter().collect(),
             &generators,
-            NUM_R1CS_POLYS,
+            BatchType::Big,
         );
 
         JoltCommitments {

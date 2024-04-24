@@ -6,7 +6,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -14,8 +14,8 @@ use crate::{
         NoPreprocessing,
     },
     poly::{
-        commitment::hyrax::matrix_dimensions, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
-        identity_poly::IdentityPolynomial, structured_poly::StructuredOpeningProof,
+        dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, identity_poly::IdentityPolynomial,
+        structured_poly::StructuredOpeningProof,
     },
     subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{errors::ProofVerifyError, math::Math, mul_0_optimized, transcript::ProofTranscript},
@@ -23,7 +23,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION,
-    NUM_R1CS_POLYS, RAM_START_ADDRESS, REGISTER_COUNT,
+    RAM_START_ADDRESS, REGISTER_COUNT,
 };
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryLayout, MemoryOp, RV32IM};
 use common::to_ram_address;
@@ -780,7 +780,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
 
     /// Computes the maximum number of group generators needed to commit to read-write
     /// memory polynomials using Hyrax, given the maximum memory address and maximum trace length.
-    pub fn generator_shapes(max_memory_address: usize, max_trace_length: usize) -> Vec<GeneratorShape> {
+    pub fn generator_shapes(
+        max_memory_address: usize,
+        max_trace_length: usize,
+    ) -> Vec<GeneratorShape> {
         let max_memory_address = max_memory_address.next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
@@ -914,7 +917,7 @@ where
             &read_write_polys,
             opening_point,
             &read_write_openings,
-            NUM_R1CS_POLYS,
+            BatchType::Big,
             transcript,
         )
     }
@@ -1016,7 +1019,7 @@ where
             ],
             opening_point,
             &[openings.v_final, openings.t_final],
-            1,
+            BatchType::Small,
             transcript,
         );
 

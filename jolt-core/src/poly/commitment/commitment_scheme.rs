@@ -11,7 +11,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct GeneratorShape {
     pub input_length: usize,
-    pub batch_size: usize
+    pub batch_size: usize,
 }
 
 impl GeneratorShape {
@@ -21,6 +21,13 @@ impl GeneratorShape {
             batch_size,
         }
     }
+}
+
+pub enum BatchType {
+    Big,
+    Small,
+    SurgeInitFinal,
+    SurgeReadWrite,
 }
 
 pub trait CommitmentScheme: Clone + Sync + Send + 'static {
@@ -35,18 +42,18 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     fn batch_commit(
         evals: &[&[Self::Field]],
         gens: &Self::Generators,
-        batch_size: usize,
+        batch_type: BatchType,
     ) -> Vec<Self::Commitment>;
     fn commit_slice(evals: &[Self::Field], gens: &Self::Generators) -> Self::Commitment;
     fn batch_commit_polys(
         polys: &Vec<DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
-        batch_size: usize
+        batch_type: BatchType,
     ) -> Vec<Self::Commitment>;
     fn batch_commit_polys_ref(
         polys: &Vec<&DensePolynomial<Self::Field>>,
         gens: &Self::Generators,
-        batch_size: usize
+        batch_type: BatchType,
     ) -> Vec<Self::Commitment>;
     fn prove(
         poly: &DensePolynomial<Self::Field>,
@@ -57,7 +64,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
-        batch_size: usize,
+        batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof;
 

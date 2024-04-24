@@ -1,6 +1,5 @@
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::NUM_R1CS_POLYS;
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
@@ -10,8 +9,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme, GeneratorShape};
-use crate::poly::commitment::hyrax::matrix_dimensions;
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, GeneratorShape};
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -110,10 +108,13 @@ where
             .chain(self.instruction_flag_polys.iter())
             .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, &generators, NUM_R1CS_POLYS);
+        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, &generators, BatchType::Big);
 
-        let final_commitment =
-            C::batch_commit_polys_ref(&self.final_cts.iter().collect(), &generators, NUM_R1CS_POLYS);
+        let final_commitment = C::batch_commit_polys_ref(
+            &self.final_cts.iter().collect(),
+            &generators,
+            BatchType::Big,
+        );
 
         Self::Commitment {
             trace_commitment,
@@ -171,7 +172,7 @@ where
             &primary_sumcheck_polys,
             opening_point,
             &primary_sumcheck_openings,
-            NUM_R1CS_POLYS,
+            BatchType::Big,
             transcript,
         )
     }
@@ -290,7 +291,7 @@ where
             &read_write_polys,
             opening_point,
             &read_write_openings,
-            NUM_R1CS_POLYS,
+            BatchType::Big,
             transcript,
         )
     }
@@ -376,7 +377,7 @@ where
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
-            NUM_R1CS_POLYS,
+            BatchType::Big,
             transcript,
         )
     }
@@ -1438,9 +1439,11 @@ where
         // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
         let c: usize = 4;
         let num_instructions: usize = 20;
-        let trace_batch_size = c + preprocessing.num_memories + preprocessing.num_memories + num_instructions + 1;
+        let trace_batch_size =
+            c + preprocessing.num_memories + preprocessing.num_memories + num_instructions + 1;
         let read_write_generator_shape = GeneratorShape::new(max_trace_length, trace_batch_size);
-        let init_final_generator_shape = GeneratorShape::new(M * preprocessing.num_memories.next_power_of_two(), 1);
+        let init_final_generator_shape =
+            GeneratorShape::new(M * preprocessing.num_memories.next_power_of_two(), 1);
 
         vec![read_write_generator_shape, init_final_generator_shape]
     }

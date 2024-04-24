@@ -1,5 +1,6 @@
 #![allow(clippy::len_without_is_empty)]
 
+use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
@@ -8,7 +9,6 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
-use common::constants::NUM_R1CS_POLYS;
 use rayon::prelude::*;
 use sha3::Digest;
 use sha3::Sha3_256;
@@ -428,7 +428,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             &witness_segment_polys_ref,
             r_y_point,
             &witness_evals,
-            NUM_R1CS_POLYS,
+            BatchType::Big,
             transcript,
         );
 
