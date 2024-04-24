@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
 use tracing::trace_span;
 
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -782,9 +782,8 @@ where
         Ok(())
     }
 
-    /// Computes the maximum number of group generators needed to commit to timestamp
-    /// range-check polynomials using Hyrax, given the maximum trace length.
-    pub fn generator_shapes(max_trace_length: usize) -> Vec<CommitShape> {
+    /// Computes the shape of all commitments.
+    pub fn commitment_shapes(max_trace_length: usize) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
 
         vec![CommitShape::new(max_trace_length, BatchType::Big)]

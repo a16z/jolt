@@ -224,12 +224,12 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> JoltPreprocessing<F, PCS> {
-        let bytecode_generator_shapes =
-            BytecodePolynomials::<F, PCS>::generator_shapes(max_bytecode_size, max_trace_length);
-        let ram_generator_shapes =
-            ReadWriteMemory::<F, PCS>::generator_shapes(max_memory_address, max_trace_length);
-        let timestamp_range_check_generator_shapes =
-            TimestampValidityProof::<F, PCS>::generator_shapes(max_trace_length);
+        let bytecode_commitment_shapes =
+            BytecodePolynomials::<F, PCS>::commit_shapes(max_bytecode_size, max_trace_length);
+        let ram_commitment_shapes =
+            ReadWriteMemory::<F, PCS>::commitment_shapes(max_memory_address, max_trace_length);
+        let timestamp_range_check_commitment_shapes =
+            TimestampValidityProof::<F, PCS>::commitment_shapes(max_trace_length);
 
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             C,
@@ -237,14 +237,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::InstructionSet,
             Self::Subtables,
         >();
-        let num_instruction_lookup_generators = InstructionLookupsProof::<
+        let instruction_lookups_commitment_shapes = InstructionLookupsProof::<
             C,
             M,
             F,
             PCS,
             Self::InstructionSet,
             Self::Subtables,
-        >::generator_shapes(
+        >::commitment_shapes(
             &instruction_lookups_preprocessing,
             max_trace_length,
         );
@@ -257,13 +257,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .collect();
         let bytecode_preprocessing = BytecodePreprocessing::<F>::preprocess(bytecode_rows);
 
-        let mut generator_shapes = Vec::new();
-        generator_shapes.extend(bytecode_generator_shapes);
-        generator_shapes.extend(ram_generator_shapes);
-        generator_shapes.extend(timestamp_range_check_generator_shapes);
-        generator_shapes.extend(num_instruction_lookup_generators);
-
-        let generators = PCS::setup(&generator_shapes);
+        let commitment_shapes = [
+            bytecode_commitment_shapes,
+            ram_commitment_shapes,
+            timestamp_range_check_commitment_shapes,
+            instruction_lookups_commitment_shapes,
+        ]
+        .concat();
+        let generators = PCS::setup(&commitment_shapes);
 
         JoltPreprocessing {
             generators,

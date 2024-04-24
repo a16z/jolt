@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -300,12 +300,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         }
     }
 
-    /// Computes the maximum number of group generators needed to commit to bytecode
-    /// polynomials using Hyrax, given the maximum bytecode size and maximum trace length.
-    pub fn generator_shapes(
-        max_bytecode_size: usize,
-        max_trace_length: usize,
-    ) -> Vec<CommitShape> {
+    /// Computes the shape of all commitment for use in PCS::setup().
+    pub fn commit_shapes(max_bytecode_size: usize, max_trace_length: usize) -> Vec<CommitShape> {
         // Account for no-op prepended to bytecode
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();

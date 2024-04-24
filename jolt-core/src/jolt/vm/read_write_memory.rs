@@ -6,7 +6,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     lasso::memory_checking::{
@@ -778,9 +778,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         (a_polys, v_read_polys, v_write_polys)
     }
 
-    /// Computes the maximum number of group generators needed to commit to read-write
-    /// memory polynomials using Hyrax, given the maximum memory address and maximum trace length.
-    pub fn generator_shapes(
+    /// Computes the shape of all commitments.
+    pub fn commitment_shapes(
         max_memory_address: usize,
         max_trace_length: usize,
     ) -> Vec<CommitShape> {

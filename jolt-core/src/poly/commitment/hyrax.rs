@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use super::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
+use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;

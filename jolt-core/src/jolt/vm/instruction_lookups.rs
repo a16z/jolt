@@ -9,7 +9,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme, CommitShape};
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -1425,9 +1425,8 @@ where
         subtable_lookup_indices
     }
 
-    /// Computes the maximum number of group generators needed to commit to instruction
-    /// lookup polynomials using Hyrax, given the maximum trace length.
-    pub fn generator_shapes(
+    /// Computes the shape of all commitments.
+    pub fn commitment_shapes(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
     ) -> Vec<CommitShape> {
