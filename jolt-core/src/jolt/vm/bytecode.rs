@@ -725,10 +725,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::commitment::{
-        hyrax::{HyraxCommitment, HyraxScheme},
-        pedersen::PedersenGenerators,
-    };
+    use crate::poly::commitment::hyrax::HyraxScheme;
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};

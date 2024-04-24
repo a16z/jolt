@@ -11,7 +11,6 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::NUM_R1CS_POLYS;
 use num_integer::Roots;
 use rayon::prelude::*;
 use tracing::trace_span;
@@ -21,6 +20,19 @@ use crate::msm::VariableBaseMSM;
 #[derive(Clone)]
 pub struct HyraxScheme<G: CurveGroup> {
     marker: PhantomData<G>,
+}
+
+const TRACE_LEN_R1CS_POLYS_BATCH_RATIO: usize = 64;
+const SURGE_RATIO_READ_WRITE: usize = 16;
+const SURGE_RATIO_FINAL: usize = 4;
+
+pub fn batch_type_to_ratio(batch_type: BatchType) -> usize {
+    match batch_type {
+        BatchType::Big => TRACE_LEN_R1CS_POLYS_BATCH_RATIO,
+        BatchType::Small => 1,
+        BatchType::SurgeReadWrite => SURGE_RATIO_READ_WRITE,
+        BatchType::SurgeInitFinal => SURGE_RATIO_FINAL,
+    }
 }
 
 pub fn matrix_dimensions(num_vars: usize, ratio: usize) -> (usize, usize) {
@@ -33,18 +45,6 @@ pub fn matrix_dimensions(num_vars: usize, ratio: usize) -> (usize, usize) {
     let col_size = left_num_vars.pow2();
 
     (col_size, row_size)
-}
-
-const SURGE_RATIO_READ_WRITE: usize = 16;
-const SURGE_RATIO_FINAL: usize = 4;
-
-pub fn batch_type_to_ratio(batch_type: BatchType) -> usize {
-    match batch_type {
-        BatchType::Big => NUM_R1CS_POLYS,
-        BatchType::Small => 1,
-        BatchType::SurgeReadWrite => SURGE_RATIO_READ_WRITE,
-        BatchType::SurgeInitFinal => SURGE_RATIO_FINAL,
-    }
 }
 
 impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxScheme<G> {
