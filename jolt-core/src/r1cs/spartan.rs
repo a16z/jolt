@@ -264,7 +264,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         #[cfg(test)]
         {
             // Check that Z is a satisfying assignment
-            for (i, ((az, bz), cz)) in poly_Az.evals_ref().iter().zip(poly_Bz.evals_ref()).zip(poly_Cz.evals_ref()).enumerate() {
+            for (i, ((az, bz), cz)) in poly_Az
+                .evals_ref()
+                .iter()
+                .zip(poly_Bz.evals_ref())
+                .zip(poly_Cz.evals_ref())
+                .enumerate()
+            {
                 if *az * bz != *cz {
                     let padded_segment_len = segmented_padded_witness.segment_len;
                     let error_segment_index = i / padded_segment_len;
