@@ -44,6 +44,8 @@ use self::{
 
 use super::instruction::JoltInstructionSet;
 
+use crate::msm::Icicle;
+
 #[derive(Clone)]
 pub struct JoltPreprocessing<F, PCS>
 where

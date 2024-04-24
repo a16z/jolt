@@ -9,6 +9,8 @@ use std::marker::PhantomData;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
+use crate::msm::Icicle;
+
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{

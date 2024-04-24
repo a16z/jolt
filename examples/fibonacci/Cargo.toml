@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+jolt-sdk = { path = "../../jolt-sdk", features = ["host", "icicle"] }
 guest = { package = "fibonacci-guest", path = "./guest" }
 
 hex = "0.4.3"
 sha3 = { version = "0.10.8", default-features = false }
+
+[features]
+icicle = ["jolt-sdk/icicle"]
