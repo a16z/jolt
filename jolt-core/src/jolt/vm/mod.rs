@@ -42,54 +42,54 @@ use self::{
 use super::instruction::JoltInstructionSet;
 
 #[derive(Clone)]
-pub struct JoltPreprocessing<F, C>
+pub struct JoltPreprocessing<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    pub generators: C::Generators,
+    pub generators: PCS::Generators,
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltProof<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
+pub struct JoltProof<const C: usize, const M: usize, F, PCS, InstructionSet, Subtables>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
     pub trace_length: usize,
     pub program_io: JoltDevice,
-    pub bytecode: BytecodeProof<F, CS>,
-    pub read_write_memory: ReadWriteMemoryProof<F, CS>,
-    pub instruction_lookups: InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>,
-    pub r1cs: R1CSProof<F, CS>,
+    pub bytecode: BytecodeProof<F, PCS>,
+    pub read_write_memory: ReadWriteMemoryProof<F, PCS>,
+    pub instruction_lookups: InstructionLookupsProof<C, M, F, PCS, InstructionSet, Subtables>,
+    pub r1cs: R1CSProof<F, PCS>,
 }
 
-pub struct JoltPolynomials<F, C>
+pub struct JoltPolynomials<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    pub bytecode: BytecodePolynomials<F, C>,
-    pub read_write_memory: ReadWriteMemory<F, C>,
-    pub timestamp_range_check: RangeCheckPolynomials<F, C>,
-    pub instruction_lookups: InstructionPolynomials<F, C>,
+    pub bytecode: BytecodePolynomials<F, PCS>,
+    pub read_write_memory: ReadWriteMemory<F, PCS>,
+    pub timestamp_range_check: RangeCheckPolynomials<F, PCS>,
+    pub instruction_lookups: InstructionPolynomials<F, PCS>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct JoltCommitments<C: CommitmentScheme> {
-    pub bytecode: BytecodeCommitment<C>,
-    pub read_write_memory: MemoryCommitment<C>,
-    pub timestamp_range_check: RangeCheckCommitment<C>,
-    pub instruction_lookups: InstructionCommitment<C>,
-    pub r1cs: Option<R1CSCommitment<C>>,
+pub struct JoltCommitments<PCS: CommitmentScheme> {
+    pub bytecode: BytecodeCommitment<PCS>,
+    pub read_write_memory: MemoryCommitment<PCS>,
+    pub timestamp_range_check: RangeCheckCommitment<PCS>,
+    pub instruction_lookups: InstructionCommitment<PCS>,
+    pub r1cs: Option<R1CSCommitment<PCS>>,
 }
 
-impl<C: CommitmentScheme> JoltCommitments<C> {
+impl<PCS: CommitmentScheme> JoltCommitments<PCS> {
     fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         self.bytecode.append_to_transcript(b"bytecode", transcript);
         self.read_write_memory
@@ -105,15 +105,15 @@ impl<C: CommitmentScheme> JoltCommitments<C> {
     }
 }
 
-impl<F, C> StructuredCommitment<C> for JoltPolynomials<F, C>
+impl<F, PCS> StructuredCommitment<PCS> for JoltPolynomials<F, PCS>
 where
     F: JoltField,
-    C: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    type Commitment = JoltCommitments<C>;
+    type Commitment = JoltCommitments<PCS>;
 
     #[tracing::instrument(skip_all, name = "JoltPolynomials::commit")]
-    fn commit(&self, generators: &C::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &PCS::Generators) -> Self::Commitment {
         let bytecode_trace_polys = vec![
             &self.bytecode.a_read_write,
             &self.bytecode.t_read,
@@ -166,7 +166,7 @@ where
             .chain(instruction_trace_polys.into_iter())
             .collect::<Vec<_>>();
         let mut trace_comitments =
-            C::batch_commit_polys_ref(&all_trace_polys, generators, BatchType::Big);
+            PCS::batch_commit_polys_ref(&all_trace_polys, generators, BatchType::Big);
 
         let bytecode_trace_commitment = trace_comitments
             .drain(..num_bytecode_trace_polys)
@@ -179,12 +179,12 @@ where
             .collect::<Vec<_>>();
         let instruction_trace_commitment = trace_comitments;
 
-        let bytecode_t_final_commitment = C::commit(&self.bytecode.t_final, generators);
+        let bytecode_t_final_commitment = PCS::commit(&self.bytecode.t_final, generators);
         let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
-            || C::commit(&self.read_write_memory.v_final, generators),
-            || C::commit(&self.read_write_memory.t_final, generators),
+            || PCS::commit(&self.read_write_memory.v_final, generators),
+            || PCS::commit(&self.read_write_memory.t_final, generators),
         );
-        let instruction_final_commitment = C::batch_commit_polys(
+        let instruction_final_commitment = PCS::batch_commit_polys(
             &self.instruction_lookups.final_cts,
             generators,
             BatchType::Big,
@@ -212,7 +212,7 @@ where
     }
 }
 
-pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
+pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, const M: usize> {
     type InstructionSet: JoltInstructionSet;
     type Subtables: JoltSubtableSet<F>;
 
@@ -223,13 +223,13 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         max_bytecode_size: usize,
         max_memory_address: usize,
         max_trace_length: usize,
-    ) -> JoltPreprocessing<F, CS> {
+    ) -> JoltPreprocessing<F, PCS> {
         let bytecode_generator_shapes =
-            BytecodePolynomials::<F, CS>::generator_shapes(max_bytecode_size, max_trace_length);
+            BytecodePolynomials::<F, PCS>::generator_shapes(max_bytecode_size, max_trace_length);
         let ram_generator_shapes =
-            ReadWriteMemory::<F, CS>::generator_shapes(max_memory_address, max_trace_length);
+            ReadWriteMemory::<F, PCS>::generator_shapes(max_memory_address, max_trace_length);
         let timestamp_range_check_generator_shapes =
-            TimestampValidityProof::<F, CS>::generator_shapes(max_trace_length);
+            TimestampValidityProof::<F, PCS>::generator_shapes(max_trace_length);
 
         let instruction_lookups_preprocessing = InstructionLookupsPreprocessing::preprocess::<
             C,
@@ -241,7 +241,7 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
             C,
             M,
             F,
-            CS,
+            PCS,
             Self::InstructionSet,
             Self::Subtables,
         >::generator_shapes(
@@ -263,7 +263,7 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         generator_shapes.extend(timestamp_range_check_generator_shapes);
         generator_shapes.extend(num_instruction_lookup_generators);
 
-        let generators = CS::generators(&generator_shapes);
+        let generators = PCS::generators(&generator_shapes);
 
         JoltPreprocessing {
             generators,
@@ -280,10 +280,10 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
         instructions: Vec<Option<Self::InstructionSet>>,
         circuit_flags: Vec<F>,
-        preprocessing: JoltPreprocessing<F, CS>,
+        preprocessing: JoltPreprocessing<F, PCS>,
     ) -> (
-        JoltProof<C, M, F, CS, Self::InstructionSet, Self::Subtables>,
-        JoltCommitments<CS>,
+        JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
+        JoltCommitments<PCS>,
     ) {
         let trace_length = instructions.len();
         let padded_trace_length = trace_length.next_power_of_two();
@@ -296,7 +296,7 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
             C,
             M,
             F,
-            CS,
+            PCS,
             Self::InstructionSet,
             Self::Subtables,
         >::polynomialize(
@@ -326,8 +326,8 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         );
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
-            || BytecodePolynomials::<F, CS>::new(&preprocessing.bytecode, bytecode_trace),
-            || RangeCheckPolynomials::<F, CS>::new(read_timestamps),
+            || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, bytecode_trace),
+            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps),
         );
 
         let jolt_polynomials = JoltPolynomials {
@@ -392,9 +392,9 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
     }
 
     fn verify(
-        mut preprocessing: JoltPreprocessing<F, CS>,
-        proof: JoltProof<C, M, F, CS, Self::InstructionSet, Self::Subtables>,
-        commitments: JoltCommitments<CS>,
+        mut preprocessing: JoltPreprocessing<F, PCS>,
+        proof: JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
+        commitments: JoltCommitments<PCS>,
     ) -> Result<(), ProofVerifyError> {
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &proof.program_io, proof.trace_length);
@@ -437,9 +437,9 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
 
     fn verify_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        generators: &CS::Generators,
-        proof: InstructionLookupsProof<C, M, F, CS, Self::InstructionSet, Self::Subtables>,
-        commitment: &InstructionCommitment<CS>,
+        generators: &PCS::Generators,
+        proof: InstructionLookupsProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
+        commitment: &InstructionCommitment<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
@@ -447,9 +447,9 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
 
     fn verify_bytecode(
         preprocessing: &BytecodePreprocessing<F>,
-        generators: &CS::Generators,
-        proof: BytecodeProof<F, CS>,
-        commitment: &BytecodeCommitment<CS>,
+        generators: &PCS::Generators,
+        proof: BytecodeProof<F, PCS>,
+        commitment: &BytecodeCommitment<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         BytecodeProof::verify_memory_checking(
@@ -463,9 +463,9 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
 
     fn verify_memory(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
-        generators: &CS::Generators,
-        proof: ReadWriteMemoryProof<F, CS>,
-        commitment: &JoltCommitments<CS>,
+        generators: &PCS::Generators,
+        proof: ReadWriteMemoryProof<F, PCS>,
+        commitment: &JoltCommitments<PCS>,
         program_io: JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -477,9 +477,9 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
     }
 
     fn verify_r1cs(
-        generators: &CS::Generators,
-        proof: R1CSProof<F, CS>,
-        commitments: JoltCommitments<CS>,
+        generators: &PCS::Generators,
+        proof: R1CSProof<F, PCS>,
+        commitments: JoltCommitments<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         proof
@@ -491,10 +491,10 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         padded_trace_length: usize,
         memory_start: u64,
         instructions: &[Option<Self::InstructionSet>],
-        polynomials: &JoltPolynomials<F, CS>,
+        polynomials: &JoltPolynomials<F, PCS>,
         circuit_flags: Vec<F>,
-        generators: &CS::Generators,
-    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<CS>) {
+        generators: &PCS::Generators,
+    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<PCS>) {
         let log_M = log2(M) as usize;
 
         // Assemble the polynomials and commitments from the rest of Jolt.
@@ -574,7 +574,7 @@ pub trait Jolt<F: JoltField, CS: CommitmentScheme<Field = F>, const C: usize, co
         );
 
         let (spartan_key, witness_segments, r1cs_commitments) =
-            R1CSProof::<F, CS>::compute_witness_commit(
+            R1CSProof::<F, PCS>::compute_witness_commit(
                 32,
                 C,
                 padded_trace_length,

@@ -17,12 +17,12 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
-pub struct SurgePolys<F, CS>
+pub struct SurgePolys<F, PCS>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    _marker: PhantomData<CS>,
+    _marker: PhantomData<PCS>,
     pub dim: Vec<DensePolynomial<F>>,
     pub read_cts: Vec<DensePolynomial<F>>,
     pub final_cts: Vec<DensePolynomial<F>>,
@@ -39,26 +39,26 @@ pub struct SurgeCommitment<CS: CommitmentScheme> {
     pub E_commitment: Vec<CS::Commitment>,
 }
 
-impl<F, CS> StructuredCommitment<CS> for SurgePolys<F, CS>
+impl<F, PCS> StructuredCommitment<PCS> for SurgePolys<F, PCS>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    type Commitment = SurgeCommitment<CS>;
+    type Commitment = SurgeCommitment<PCS>;
 
     #[tracing::instrument(skip_all, name = "SurgePolys::commit")]
-    fn commit(&self, generators: &CS::Generators) -> Self::Commitment {
+    fn commit(&self, generators: &PCS::Generators) -> Self::Commitment {
         let _read_write_num_vars = self.dim[0].get_num_vars();
         let dim_read_polys: Vec<&DensePolynomial<F>> =
             self.dim.iter().chain(self.read_cts.iter()).collect();
         let dim_read_commitment =
-            CS::batch_commit_polys_ref(&dim_read_polys, generators, BatchType::SurgeReadWrite);
+            PCS::batch_commit_polys_ref(&dim_read_polys, generators, BatchType::SurgeReadWrite);
         let E_commitment =
-            CS::batch_commit_polys(&self.E_polys, generators, BatchType::SurgeReadWrite);
+            PCS::batch_commit_polys(&self.E_polys, generators, BatchType::SurgeReadWrite);
 
         let _final_num_vars = self.final_cts[0].get_num_vars();
         let final_commitment =
-            CS::batch_commit_polys(&self.final_cts, generators, BatchType::SurgeInitFinal);
+            PCS::batch_commit_polys(&self.final_cts, generators, BatchType::SurgeInitFinal);
 
         Self::Commitment {
             dim_read_commitment,
@@ -70,15 +70,15 @@ where
 
 type PrimarySumcheckOpenings<F> = Vec<F>;
 
-impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for PrimarySumcheckOpenings<F>
+impl<F, PCS> StructuredOpeningProof<F, PCS, SurgePolys<F, PCS>> for PrimarySumcheckOpenings<F>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    type Proof = CS::BatchedProof;
+    type Proof = PCS::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, CS>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         polynomials
             .E_polys
@@ -89,12 +89,12 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &SurgePolys<F, CS>,
+        polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         E_poly_openings: &Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        CS::batch_prove(
+        PCS::batch_prove(
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             opening_point,
             E_poly_openings,
@@ -105,13 +105,13 @@ where
 
     fn verify_openings(
         &self,
-        generators: &CS::Generators,
+        generators: &PCS::Generators,
         opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<CS>,
+        commitment: &SurgeCommitment<PCS>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        CS::batch_verify(
+        PCS::batch_verify(
             opening_proof,
             generators,
             opening_point,
@@ -132,15 +132,15 @@ where
     E_poly_openings: Vec<F>, // NUM_MEMORIES-sized
 }
 
-impl<F, CS> StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeReadWriteOpenings<F>
+impl<F, PCS> StructuredOpeningProof<F, PCS, SurgePolys<F, PCS>> for SurgeReadWriteOpenings<F>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
-    type Proof = CS::BatchedProof;
+    type Proof = PCS::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, CS>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         Self {
@@ -152,7 +152,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &SurgePolys<F, CS>,
+        polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
@@ -170,7 +170,7 @@ where
         ]
         .concat();
 
-        CS::batch_prove(
+        PCS::batch_prove(
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -181,9 +181,9 @@ where
 
     fn verify_openings(
         &self,
-        generators: &CS::Generators,
+        generators: &PCS::Generators,
         opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<CS>,
+        commitment: &SurgeCommitment<PCS>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -193,7 +193,7 @@ where
             self.E_poly_openings.as_slice(),
         ]
         .concat();
-        CS::batch_verify(
+        PCS::batch_verify(
             opening_proof,
             generators,
             opening_point,
@@ -220,18 +220,18 @@ where
     v_init_final: Option<Vec<F>>, // Computed by verifier
 }
 
-impl<F, CS, Instruction, const C: usize, const M: usize>
-    StructuredOpeningProof<F, CS, SurgePolys<F, CS>> for SurgeFinalOpenings<F, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize>
+    StructuredOpeningProof<F, PCS, SurgePolys<F, PCS>> for SurgeFinalOpenings<F, Instruction, C, M>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
-    type Proof = CS::BatchedProof;
+    type Proof = PCS::BatchedProof;
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
-    fn open(polynomials: &SurgePolys<F, CS>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let final_openings = polynomials
             .final_cts
@@ -248,12 +248,12 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &SurgePolys<F, CS>,
+        polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        CS::batch_prove(
+        PCS::batch_prove(
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
@@ -276,13 +276,13 @@ where
 
     fn verify_openings(
         &self,
-        generators: &CS::Generators,
+        generators: &PCS::Generators,
         opening_proof: &Self::Proof,
-        commitment: &SurgeCommitment<CS>,
+        commitment: &SurgeCommitment<PCS>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        CS::batch_verify(
+        PCS::batch_verify(
             opening_proof,
             generators,
             opening_point,
@@ -293,11 +293,11 @@ where
     }
 }
 
-impl<F, CS, Instruction, const C: usize, const M: usize>
-    MemoryCheckingProver<F, CS, SurgePolys<F, CS>> for SurgeProof<F, CS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize>
+    MemoryCheckingProver<F, PCS, SurgePolys<F, PCS>> for SurgeProof<F, PCS, Instruction, C, M>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     type Preprocessing = SurgePreprocessing<F, Instruction, C, M>;
@@ -312,7 +312,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
     fn compute_leaves(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        polynomials: &SurgePolys<F, CS>,
+        polynomials: &SurgePolys<F, PCS>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
@@ -460,16 +460,16 @@ where
     }
 }
 
-pub struct SurgePrimarySumcheck<F, CS>
+pub struct SurgePrimarySumcheck<F, PCS>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
 {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     claimed_evaluation: F,
     openings: PrimarySumcheckOpenings<F>,
-    opening_proof: CS::BatchedProof,
+    opening_proof: PCS::BatchedProof,
 }
 
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
@@ -482,22 +482,22 @@ where
 }
 
 #[allow(clippy::type_complexity)]
-pub struct SurgeProof<F, CS, Instruction, const C: usize, const M: usize>
+pub struct SurgeProof<F, PCS, Instruction, const C: usize, const M: usize>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default,
 {
     /// Commitments to all polynomials
-    commitment: SurgeCommitment<CS>,
+    commitment: SurgeCommitment<PCS>,
 
     /// Primary collation sumcheck proof
-    primary_sumcheck: SurgePrimarySumcheck<F, CS>,
+    primary_sumcheck: SurgePrimarySumcheck<F, PCS>,
 
     memory_checking: MemoryCheckingProof<
         F,
-        CS,
-        SurgePolys<F, CS>,
+        PCS,
+        SurgePolys<F, PCS>,
         SurgeReadWriteOpenings<F>,
         SurgeFinalOpenings<F, Instruction, C, M>,
     >,
@@ -525,10 +525,10 @@ where
     }
 }
 
-impl<F, CS, Instruction, const C: usize, const M: usize> SurgeProof<F, CS, Instruction, C, M>
+impl<F, PCS, Instruction, const C: usize, const M: usize> SurgeProof<F, PCS, Instruction, C, M>
 where
     F: JoltField,
-    CS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F>,
     Instruction: JoltInstruction + Default + Sync,
 {
     fn num_memories() -> usize {
@@ -562,7 +562,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::prove")]
     pub fn prove(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        generators: &CS::Generators,
+        generators: &PCS::Generators,
         ops: Vec<Instruction>,
         transcript: &mut ProofTranscript,
     ) -> Self {
@@ -630,8 +630,8 @@ where
 
     pub fn verify(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        generators: &CS::Generators,
-        proof: SurgeProof<F, CS, Instruction, C, M>,
+        generators: &PCS::Generators,
+        proof: SurgeProof<F, PCS, Instruction, C, M>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
@@ -680,7 +680,7 @@ where
     fn construct_polys(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
         ops: &Vec<Instruction>,
-    ) -> SurgePolys<F, CS> {
+    ) -> SurgePolys<F, PCS> {
         let num_lookups = ops.len().next_power_of_two();
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];
 
@@ -761,7 +761,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_primary_sumcheck_claim")]
-    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, CS>, eq: &DensePolynomial<F>) -> F {
+    fn compute_primary_sumcheck_claim(polys: &SurgePolys<F, PCS>, eq: &DensePolynomial<F>) -> F {
         let g_operands = &polys.E_polys;
         let hypercube_size = g_operands[0].len();
         g_operands
