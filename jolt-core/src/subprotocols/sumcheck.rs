@@ -1282,7 +1282,7 @@ mod test {
         let claim = Fr::from(4); // r points eq to the 1,1 eval
         let coeffs = vec![Fr::one(), Fr::zero()];
 
-        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + &Fr::one() - f);
+        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + Fr::one() - f);
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
             vec![factorial.clone(), factorial.clone()],
@@ -1344,7 +1344,7 @@ mod test {
 
         let coeffs = vec![Fr::one(), Fr::zero()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
 
-        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + &Fr::one() - f);
+        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + Fr::one() - f);
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
             vec![h.clone(), h.clone()],
