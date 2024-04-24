@@ -81,7 +81,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn square(&self) -> Self {
-        <Self as ark_ff::Field>::square(&self)
+        <Self as ark_ff::Field>::square(self)
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
