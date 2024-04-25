@@ -29,8 +29,6 @@ use crate::{
     },
 };
 
-use crate::msm::Icicle;
-
 use super::JoltTraceStep;
 
 /// All polynomials associated with Jolt instruction lookups.
