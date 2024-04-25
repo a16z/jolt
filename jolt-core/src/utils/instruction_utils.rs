@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 
 pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
     assert!(C * log_M >= word_size);
@@ -8,7 +8,7 @@ pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
 /// into a single field element. `operand_bits` is the number of bits required to represent
 /// each element in `vals`. If an element of `vals` is larger it will not be truncated, which
 /// is commonly used by the collation functions of instructions.
-pub fn concatenate_lookups<F: PrimeField>(vals: &[F], C: usize, operand_bits: usize) -> F {
+pub fn concatenate_lookups<F: JoltField>(vals: &[F], C: usize, operand_bits: usize) -> F {
     assert_eq!(vals.len(), C);
 
     let mut sum = F::zero();

@@ -14,7 +14,7 @@ macro_rules! subtable_materialize_mle_parity_test {
             for i in 0..M {
                 assert_eq!(
                     materialized[i],
-                    subtable.evaluate_mle(&crate::utils::index_to_field_bitvector(i, log_M)),
+                    subtable.evaluate_mle(&$crate::utils::index_to_field_bitvector(i, log_M)),
                     "MLE did not match materialized subtable at index {}",
                     i
                 );

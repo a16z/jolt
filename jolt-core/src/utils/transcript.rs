@@ -1,5 +1,5 @@
+use crate::poly::field::JoltField;
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use merlin::Transcript;
 
 pub struct ProofTranscript {
@@ -29,13 +29,13 @@ impl ProofTranscript {
         self.append_message(b"protocol-name", protocol_name);
     }
 
-    pub fn append_scalar<F: PrimeField>(&mut self, label: &'static [u8], scalar: &F) {
+    pub fn append_scalar<F: JoltField>(&mut self, label: &'static [u8], scalar: &F) {
         let mut buf = vec![];
         scalar.serialize_compressed(&mut buf).unwrap();
         self.inner.append_message(label, &buf);
     }
 
-    pub fn append_scalars<F: PrimeField>(&mut self, label: &'static [u8], scalars: &[F]) {
+    pub fn append_scalars<F: JoltField>(&mut self, label: &'static [u8], scalars: &[F]) {
         self.append_message(label, b"begin_append_vector");
         for item in scalars.iter() {
             self.append_scalar(label, item);
@@ -57,13 +57,13 @@ impl ProofTranscript {
         self.inner.append_message(label, b"end_append_vector");
     }
 
-    pub fn challenge_scalar<F: PrimeField>(&mut self, label: &'static [u8]) -> F {
-        let mut buf = [0u8; 64];
+    pub fn challenge_scalar<F: JoltField>(&mut self, label: &'static [u8]) -> F {
+        let mut buf = vec![0u8; F::NUM_BYTES];
         self.inner.challenge_bytes(label, &mut buf);
-        F::from_le_bytes_mod_order(&buf)
+        F::from_bytes(&buf)
     }
 
-    pub fn challenge_vector<F: PrimeField>(&mut self, label: &'static [u8], len: usize) -> Vec<F> {
+    pub fn challenge_vector<F: JoltField>(&mut self, label: &'static [u8], len: usize) -> Vec<F> {
         (0..len)
             .map(|_i| self.challenge_scalar(label))
             .collect::<Vec<F>>()

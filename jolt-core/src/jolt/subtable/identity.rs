@@ -1,14 +1,14 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
 #[derive(Default)]
-pub struct IdentitySubtable<F: PrimeField> {
+pub struct IdentitySubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> IdentitySubtable<F> {
+impl<F: JoltField> IdentitySubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -16,7 +16,7 @@ impl<F: PrimeField> IdentitySubtable<F> {
     }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for IdentitySubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for IdentitySubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         (0..M).map(|i| F::from_u64(i as u64).unwrap()).collect()
     }

@@ -2,14 +2,13 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_serialize::*;
 use itertools::multizip;
 use rayon::prelude::*;
@@ -28,7 +27,7 @@ pub enum CubicSumcheckType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CubicSumcheckParams<F: PrimeField> {
+pub struct CubicSumcheckParams<F: JoltField> {
     poly_As: Vec<DensePolynomial<F>>,
     poly_Bs: Vec<DensePolynomial<F>>,
 
@@ -39,7 +38,7 @@ pub struct CubicSumcheckParams<F: PrimeField> {
     pub sumcheck_type: CubicSumcheckType,
 }
 
-impl<F: PrimeField> CubicSumcheckParams<F> {
+impl<F: JoltField> CubicSumcheckParams<F> {
     pub fn new_prod(
         poly_lefts: Vec<DensePolynomial<F>>,
         poly_rights: Vec<DensePolynomial<F>>,
@@ -139,7 +138,7 @@ impl<F: PrimeField> CubicSumcheckParams<F> {
     }
 }
 
-impl<F: PrimeField> SumcheckInstanceProof<F> {
+impl<F: JoltField> SumcheckInstanceProof<F> {
     /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
     ///
     /// Params
@@ -153,7 +152,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     /// - `r_eval_point`: Final random point of evaluation
     /// - `final_evals`: Each of the polys evaluated at `r_eval_point`
     #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
-    pub fn prove_arbitrary<Func, G>(
+    pub fn prove_arbitrary<Func>(
         _claim: &F,
         num_rounds: usize,
         polys: &mut Vec<DensePolynomial<F>>,
@@ -163,7 +162,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&[F]) -> F + std::marker::Sync,
-        G: CurveGroup<ScalarField = F>,
     {
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
@@ -252,38 +250,32 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched")]
-    pub fn prove_cubic_batched<G>(
+    pub fn prove_cubic_batched(
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F)) {
         match params.sumcheck_type {
             CubicSumcheckType::Prod => {
-                Self::prove_cubic_batched_prod::<G>(claim, params, coeffs, transcript)
+                Self::prove_cubic_batched_prod(claim, params, coeffs, transcript)
             }
             CubicSumcheckType::ProdOnes => {
-                Self::prove_cubic_batched_prod_ones::<G>(claim, params, coeffs, transcript)
+                Self::prove_cubic_batched_prod_ones(claim, params, coeffs, transcript)
             }
             CubicSumcheckType::Flags => {
-                Self::prove_cubic_batched_flags::<G>(claim, params, coeffs, transcript)
+                Self::prove_cubic_batched_flags(claim, params, coeffs, transcript)
             }
         }
     }
 
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_batched_prod")]
-    pub fn prove_cubic_batched_prod<G>(
+    pub fn prove_cubic_batched_prod(
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F)) {
         assert_eq!(params.poly_As.len(), params.poly_Bs.len());
         assert_eq!(params.poly_As.len(), coeffs.len());
 
@@ -391,15 +383,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_cubic_batched_prod_ones")]
-    pub fn prove_cubic_batched_prod_ones<G>(
+    pub fn prove_cubic_batched_prod_ones(
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F)) {
         let mut params = params;
 
         let mut e = *claim;
@@ -638,15 +627,12 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[tracing::instrument(skip_all, name = "Sumcheck.prove_batched_special_fork_flags")]
-    pub fn prove_cubic_batched_flags<G>(
+    pub fn prove_cubic_batched_flags(
         claim: &F,
         params: CubicSumcheckParams<F>,
         coeffs: &[F],
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F))
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>, (Vec<F>, Vec<F>, F)) {
         let mut params = params;
 
         let mut e = *claim;
@@ -834,7 +820,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     }
 
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_cubic")]
-    pub fn prove_spartan_cubic<G, Func>(
+    pub fn prove_spartan_cubic<Func>(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
@@ -846,7 +832,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     ) -> (Self, Vec<F>, Vec<F>)
     where
         Func: Fn(&F, &F, &F, &F) -> F + Sync,
-        G: CurveGroup<ScalarField = F>,
     {
         let mut r: Vec<F> = Vec::new();
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
@@ -910,16 +895,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     // passing them in as a single `MultilinearPolynomial`, which would require
     // an expensive concatenation. We defer the actual instantation of a
     // `MultilinearPolynomial` to the end of the 0th round.
-    pub fn prove_spartan_quadratic<G, P: IndexablePoly<F>>(
+    pub fn prove_spartan_quadratic<P: IndexablePoly<F>>(
         claim: &F,
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
         W: &P,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>, Vec<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
         let mut claim_per_round = *claim;
@@ -1070,11 +1052,11 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
-pub struct SumcheckInstanceProof<F: PrimeField> {
+pub struct SumcheckInstanceProof<F: JoltField> {
     compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
-impl<F: PrimeField> SumcheckInstanceProof<F> {
+impl<F: JoltField> SumcheckInstanceProof<F> {
     pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> SumcheckInstanceProof<F> {
         SumcheckInstanceProof { compressed_polys }
     }
@@ -1140,8 +1122,8 @@ pub mod bench {
     use crate::poly::eq_poly::EqPolynomial;
     use crate::subprotocols::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
     use crate::utils::index_to_field_bitvector;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_std::{rand::Rng, test_rng, One, UniformRand, Zero};
+    use ark_bn254::Fr;
+    use ark_std::{rand::Rng, test_rng, UniformRand};
     use criterion::black_box;
 
     pub fn sumcheck_bench(
@@ -1179,7 +1161,7 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = ProofTranscript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched(
                     &claim,
                     params,
                     &coeffs,
@@ -1224,7 +1206,7 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = ProofTranscript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched(
                     &claim,
                     params,
                     &coeffs,
@@ -1271,7 +1253,7 @@ pub mod bench {
             b.iter(|| {
                 let mut transcript = ProofTranscript::new(b"test_transcript");
                 let params = black_box(params.clone());
-                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
+                let (_proof, _r, _evals) = SumcheckInstanceProof::prove_cubic_batched(
                     &joint_claim,
                     params,
                     &coeffs,
@@ -1286,9 +1268,7 @@ pub mod bench {
 mod test {
     use super::*;
     use crate::poly::eq_poly::EqPolynomial;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_ff::Zero;
-    use ark_std::One;
+    use ark_bn254::Fr;
 
     #[test]
     fn flags_special_trivial() {
@@ -1302,7 +1282,7 @@ mod test {
         let claim = Fr::from(4); // r points eq to the 1,1 eval
         let coeffs = vec![Fr::one(), Fr::zero()];
 
-        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
+        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + Fr::one() - f);
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
             vec![factorial.clone(), factorial.clone()],
@@ -1312,13 +1292,12 @@ mod test {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_randomness, _evals) =
-            SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
-                &claim,
-                cubic_sumcheck_params,
-                &coeffs,
-                &mut transcript,
-            );
+        let (proof, prove_randomness, _evals) = SumcheckInstanceProof::prove_cubic_batched(
+            &claim,
+            cubic_sumcheck_params,
+            &coeffs,
+            &mut transcript,
+        );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let verify_result = proof.verify(claim, 2, 3, &mut transcript);
@@ -1365,7 +1344,7 @@ mod test {
 
         let coeffs = vec![Fr::one(), Fr::zero()]; // TODO(sragss): Idk how to make this work in the case of non-one coefficients.
 
-        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + (&Fr::one() - f));
+        let comb_func = |h: &Fr, f: &Fr, eq: &Fr| eq * &(h * f + Fr::one() - f);
 
         let cubic_sumcheck_params = CubicSumcheckParams::new_flags(
             vec![h.clone(), h.clone()],
@@ -1375,13 +1354,12 @@ mod test {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_randomness, prove_evals) =
-            SumcheckInstanceProof::prove_cubic_batched::<G1Projective>(
-                &claim,
-                cubic_sumcheck_params,
-                &coeffs,
-                &mut transcript,
-            );
+        let (proof, prove_randomness, prove_evals) = SumcheckInstanceProof::prove_cubic_batched(
+            &claim,
+            cubic_sumcheck_params,
+            &coeffs,
+            &mut transcript,
+        );
 
         // Prover eval: unwrap and combine
         let (leaf_eval, flag_eval, eq_eval) = prove_evals;

@@ -1,15 +1,15 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
 #[derive(Default)]
-pub struct EqAbsSubtable<F: PrimeField> {
+pub struct EqAbsSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> EqAbsSubtable<F> {
+impl<F: JoltField> EqAbsSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -17,7 +17,7 @@ impl<F: PrimeField> EqAbsSubtable<F> {
     }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for EqAbsSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for EqAbsSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = vec![F::zero(); M];
         let bits_per_operand = (log2(M) / 2) as usize;

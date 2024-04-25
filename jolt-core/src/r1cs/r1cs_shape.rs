@@ -1,6 +1,6 @@
 use std::cmp::max;
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -10,7 +10,7 @@ use super::spartan::{IndexablePoly, SpartanError};
 
 /// A type that holds the shape of the R1CS matrices
 #[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSShape<F: PrimeField> {
+pub struct R1CSShape<F: JoltField> {
     pub(crate) num_cons: usize,
     pub(crate) num_vars: usize,
     pub(crate) num_io: usize,
@@ -19,7 +19,7 @@ pub struct R1CSShape<F: PrimeField> {
     pub(crate) C: Vec<(usize, usize, F)>,
 }
 
-impl<F: PrimeField> R1CSShape<F> {
+impl<F: JoltField> R1CSShape<F> {
     /// Create an object of type `R1CSShape` from the explicitly specified R1CS matrices
     #[tracing::instrument(skip_all, name = "R1CSShape::new")]
     pub fn new(
@@ -103,7 +103,7 @@ impl<F: PrimeField> R1CSShape<F> {
                         let inner = std::sync::Mutex::new(vec![F::zero(); remaining_rows]);
                         chunks.push(inner);
                     } else {
-                        let inner = std::sync::Mutex::new(vec![F::ZERO; row_chunk_size]);
+                        let inner = std::sync::Mutex::new(vec![F::zero(); row_chunk_size]);
                         chunks.push(inner);
                         remaining_rows -= row_chunk_size;
                     }

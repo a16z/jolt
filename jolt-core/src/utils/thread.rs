@@ -1,6 +1,6 @@
 use std::thread::{self, JoinHandle};
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 
 pub fn drop_in_background_thread<T>(data: T)
 where
@@ -18,12 +18,12 @@ pub fn allocate_vec_in_background<T: Clone + Send + 'static>(
 }
 
 #[tracing::instrument(skip_all, name = "unsafe_allocate_zero_vec")]
-pub fn unsafe_allocate_zero_vec<F: PrimeField + ark_std::Zero + Sized>(size: usize) -> Vec<F> {
+pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
     // https://stackoverflow.com/questions/59314686/how-to-efficiently-create-a-large-vector-of-items-initialized-to-the-same-value
 
     // Check for safety of 0 allocation
     unsafe {
-        let value = &F::ZERO;
+        let value = &F::zero();
         let ptr = value as *const F as *const u8;
         let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
         assert!(bytes.iter().all(|&byte| byte == 0));

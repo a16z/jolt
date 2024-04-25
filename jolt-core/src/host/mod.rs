@@ -8,7 +8,6 @@ use std::{
     process::Command,
 };
 
-use ark_ff::PrimeField;
 use postcard;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -24,6 +23,7 @@ use tracer::ELFInstruction;
 
 use crate::{
     jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+    poly::field::JoltField,
     utils::thread::unsafe_allocate_zero_vec,
 };
 
@@ -157,7 +157,7 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace<F: PrimeField>(
+    pub fn trace<F: JoltField>(
         mut self,
     ) -> (
         JoltDevice,
@@ -213,7 +213,7 @@ impl Program {
         )
     }
 
-    pub fn trace_analyze<F: PrimeField>(mut self) -> ProgramSummary {
+    pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary {
         self.build();
         let elf = self.elf.as_ref().unwrap();
         let (raw_trace, _) =

@@ -1,6 +1,7 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
@@ -15,7 +16,7 @@ impl JoltInstruction for SWInstruction {
         (0, self.0)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], _: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, M: usize) -> F {
         // TODO(moodlezoup): make this work with different M
         assert!(M == 1 << 16);
         assert!(vals.len() == 2);
@@ -26,7 +27,7 @@ impl JoltInstruction for SWInstruction {
         1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         M: usize,
@@ -50,7 +51,6 @@ impl JoltInstruction for SWInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64)
     }
 }

@@ -1,8 +1,7 @@
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use super::pedersen::PedersenGenerators;
+use super::commitment::commitment_scheme::CommitmentScheme;
 use crate::{
     lasso::memory_checking::NoPreprocessing,
     utils::{errors::ProofVerifyError, transcript::ProofTranscript},
@@ -11,24 +10,24 @@ use crate::{
 /// Encapsulates the pattern of a collection of related polynomials (e.g. those used to
 /// prove instruction lookups in Jolt) that can be "batched" for more efficient
 /// commitments/openings.
-pub trait StructuredCommitment<G: CurveGroup>: Send + Sync + Sized {
+pub trait StructuredCommitment<C: CommitmentScheme>: Send + Sync + Sized {
     /// The batched commitment to these polynomials.
     type Commitment;
 
-    /// Commits to batched polynomials, typically using `HyraxCommitment::batch_commit_polys`.
-    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment;
+    /// Commits to batched polynomials.
+    fn commit(&self, generators: &C::Setup) -> Self::Commitment;
 }
 
 /// Encapsulates the pattern of opening a batched polynomial commitment at a single point.
 /// Note that there may be a one-to-many mapping from `StructuredCommitment` to `StructuredOpeningProof`:
 /// different subset of the same polynomials may be opened at different points, resulting in
 /// different opening proofs.
-pub trait StructuredOpeningProof<F, G, Polynomials>:
+pub trait StructuredOpeningProof<F, C, Polynomials>:
     Sync + CanonicalSerialize + CanonicalDeserialize
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Polynomials: StructuredCommitment<G> + ?Sized,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+    Polynomials: StructuredCommitment<C> + ?Sized,
 {
     type Preprocessing = NoPreprocessing;
     type Proof: Sync + CanonicalSerialize + CanonicalDeserialize;
@@ -58,7 +57,7 @@ where
     /// Verifies an opening proof, given the associated polynomial `commitment` and `opening_point`.
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
         commitment: &Polynomials::Commitment,
         opening_point: &[F],
