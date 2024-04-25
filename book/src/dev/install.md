@@ -11,4 +11,8 @@ guest programs manually use `rustup target add riscv32i-unknown-none-elf`.
 
 For building this book:
 
-`cargo install mdbook`
+`cargo install mdbook mdbook-katex`
+
+For watching the changes in your local browser:
+
+`mdbook watch book --open`
