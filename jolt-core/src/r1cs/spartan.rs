@@ -262,6 +262,25 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_Bz = DensePolynomial::new(B_z);
         let mut poly_Cz = DensePolynomial::new(C_z);
 
+        #[cfg(test)]
+        {
+            // Check that Z is a satisfying assignment
+            for (i, ((az, bz), cz)) in poly_Az
+                .evals_ref()
+                .iter()
+                .zip(poly_Bz.evals_ref())
+                .zip(poly_Cz.evals_ref())
+                .enumerate()
+            {
+                if *az * bz != *cz {
+                    let padded_segment_len = segmented_padded_witness.segment_len;
+                    let error_segment_index = i / padded_segment_len;
+                    let error_step_index = i % padded_segment_len;
+                    panic!("witness is not a satisfying assignment. Failed on segment {error_segment_index} at step {error_step_index}");
+                }
+            }
+        }
+
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
             if B.is_zero() || C.is_zero() {
