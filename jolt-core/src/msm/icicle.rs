@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     use crate::msm::{map_field_elements_to_u64, msm_bigint, msm_binary, msm_u64_wnaf};
     use ark_bn254::{Fr, G1Affine, G1Projective};
-    use ark_std::{test_rng, UniformRand};
+    use ark_std::{test_rng, UniformRand, Zero, rand::{distributions::Uniform, Rng}};
 
     #[test]
     fn icicle_consistency() {
@@ -140,5 +140,70 @@ mod tests {
         assert_ne!(icicle_res, msm_u64_res);
         assert_ne!(icicle_res, msm_binary);
         assert_ne!(msm_u64_res, msm_binary);
+    }
+
+    #[test]
+    fn msm_consistency_scalars_all_0() {
+        let mut rng = test_rng();
+        let n = 20;
+        let scalars = vec![Fr::zero(); n];
+        let bases = vec![G1Affine::rand(&mut rng); n];
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+
+        assert_eq!(icicle_res, msm_res);
+    }
+
+    #[test]
+    fn msm_consistency_scalars_random_0_1() {
+        let mut rng = test_rng();
+        let range = Uniform::new(0, 1);
+        let n = 20;
+        let scalars: Vec<Fr> = (0..n).map(|_| Fr::from(rng.sample(&range))).collect();
+        let bases = vec![G1Affine::rand(&mut rng); n];
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+
+        assert_eq!(icicle_res, msm_res);
+    }
+
+    #[test]
+    fn msm_consistency_scalars_random_0_2_9() {
+        let mut rng = test_rng();
+        let n = 2_i32.pow(9) as usize;
+        let scalars = vec![Fr::rand(&mut rng); n];
+        let bases = vec![G1Affine::rand(&mut rng); n];
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+
+        assert_eq!(icicle_res, msm_res);
+    }
+
+    #[test]
+    fn msm_consistency_scalars_random_0_2_63() {
+        let mut rng = test_rng();
+        let n = 2_i32.pow(63) as usize;
+        let scalars = vec![Fr::rand(&mut rng); n];
+        let bases = vec![G1Affine::rand(&mut rng); n];
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+
+        assert_eq!(icicle_res, msm_res);
+    }
+    #[test]
+    fn msm_consistency_scalars_random_0_2_253() {
+        let mut rng = test_rng();
+        let n = 2_i32.pow(253) as usize;
+        let scalars = vec![Fr::rand(&mut rng); n];
+        let bases = vec![G1Affine::rand(&mut rng); n];
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+
+        assert_eq!(icicle_res, msm_res);
     }
 }
