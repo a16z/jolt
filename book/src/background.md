@@ -4,4 +4,5 @@ If you're interested in learning the nitty gritty details of SNARKs including qu
 - [GKR](./background/gkr.md)
 - [Multilinear Extensions](./background/multilinear-extensions.md)
 - [EQ Polynomial](./background/eq-polynomial.md)
+- [Batched Openings](./background/batched-openings.md)
 - [Memory Checking](./background/memory-checking.md)
