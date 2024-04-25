@@ -11,11 +11,11 @@ use crate::msm::VariableBaseMSM;
 use crate::msm::Icicle;
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
-pub struct PedersenGenerators<G: CurveGroup> {
+pub struct PedersenGenerators<G: CurveGroup + Icicle> {
     pub generators: Vec<G>,
 }
 
-impl<G: CurveGroup> PedersenGenerators<G> {
+impl<G: CurveGroup + Icicle> PedersenGenerators<G> {
     #[tracing::instrument(skip_all, name = "PedersenGenerators::new")]
     pub fn new(len: usize, label: &[u8]) -> Self {
         let mut shake = Shake256::default();
