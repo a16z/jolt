@@ -115,6 +115,8 @@ mod tests {
     use crate::msm::{map_field_elements_to_u64, msm_bigint, msm_binary, msm_u64_wnaf};
     use ark_bn254::{Fr, G1Affine, G1Projective};
     use ark_std::{test_rng, UniformRand, Zero, rand::{distributions::Uniform, Rng}};
+    use num_bigint::BigUint;
+    use num_traits::pow;
 
     #[test]
     fn icicle_consistency() {
@@ -160,7 +162,7 @@ mod tests {
         let mut rng = test_rng();
         let range = Uniform::new(0, 1);
         let n = 20;
-        let scalars: Vec<Fr> = (0..n).map(|_| Fr::from(rng.sample(&range))).collect();
+        let scalars: Vec<Fr> = vec![Fr::from(rng.sample(&range));n];
         let bases = vec![G1Affine::rand(&mut rng); n];
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
@@ -172,8 +174,9 @@ mod tests {
     #[test]
     fn msm_consistency_scalars_random_0_2_9() {
         let mut rng = test_rng();
-        let n = 2_i32.pow(9) as usize;
-        let scalars = vec![Fr::rand(&mut rng); n];
+        let n = 20;
+        let range = Uniform::new(0,2u128.pow(9u32));
+        let scalars: Vec<Fr> = vec![Fr::from(rng.sample(&range));n];
         let bases = vec![G1Affine::rand(&mut rng); n];
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
@@ -185,19 +188,38 @@ mod tests {
     #[test]
     fn msm_consistency_scalars_random_0_2_63() {
         let mut rng = test_rng();
-        let n = 2_i32.pow(63) as usize;
-        let scalars = vec![Fr::rand(&mut rng); n];
+        let n = 20;
+        let range = Uniform::new(0,2u128.pow(63u32));
+        let scalars = vec![Fr::from(rng.sample(&range)); n];
         let bases = vec![G1Affine::rand(&mut rng); n];
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
         let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
 
         assert_eq!(icicle_res, msm_res);
+
+        let max_num_bits = scalars
+            .iter()
+            .map(|s| s.into_bigint().num_bits())
+            .max()
+            .unwrap();
+        let scalars_u64 = &map_field_elements_to_u64::<G1Projective>(&scalars);
+        let msm_binary = msm_binary::<G1Projective>(&bases, &scalars_u64);
+        let msm_u64_res = msm_u64_wnaf::<G1Projective>(&bases, scalars_u64, max_num_bits as usize);
+        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
+        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
+
+        assert_eq!(icicle_res, msm_bigint_res);
+        assert_eq!(icicle_res, msm_u64_res);
+        assert_ne!(icicle_res, msm_binary);
+        assert_ne!(msm_u64_res, msm_binary);
+        assert_ne!(msm_bigint_res, msm_binary);
     }
+
     #[test]
     fn msm_consistency_scalars_random_0_2_253() {
         let mut rng = test_rng();
-        let n = 2_i32.pow(253) as usize;
+        let n = 20;
         let scalars = vec![Fr::rand(&mut rng); n];
         let bases = vec![G1Affine::rand(&mut rng); n];
 
@@ -205,5 +227,22 @@ mod tests {
         let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
 
         assert_eq!(icicle_res, msm_res);
+
+        let max_num_bits = scalars
+            .iter()
+            .map(|s| s.into_bigint().num_bits())
+            .max()
+            .unwrap();
+        let scalars_u64 = &map_field_elements_to_u64::<G1Projective>(&scalars);
+        let msm_binary = msm_binary::<G1Projective>(&bases, &scalars_u64);
+        let msm_u64_res = msm_u64_wnaf::<G1Projective>(&bases, scalars_u64, max_num_bits as usize);
+        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
+        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
+
+        assert_eq!(icicle_res, msm_bigint_res);
+        assert_ne!(icicle_res, msm_u64_res);
+        assert_ne!(icicle_res, msm_binary);
+        assert_ne!(msm_u64_res, msm_binary);
+        assert_ne!(msm_bigint_res, msm_binary);
     }
 }
