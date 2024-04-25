@@ -16,8 +16,6 @@ use common::to_ram_address;
 
 use rayon::prelude::*;
 
-use crate::msm::Icicle;
-
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{

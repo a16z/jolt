@@ -32,8 +32,6 @@ use crate::{
 
 use super::read_write_memory::MemoryCommitment;
 
-use crate::msm::Icicle;
-
 pub struct RangeCheckPolynomials<F, C>
 where
     F: JoltField,

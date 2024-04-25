@@ -21,8 +21,6 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::iter::zip;
 use std::marker::PhantomData;
 
-use crate::msm::Icicle;
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MultisetHashes<F: JoltField> {
     /// Multiset hash of "read" tuples
