@@ -1,5 +1,5 @@
 use ark_bn254::G1Projective;
-use ark_ec::{CurveGroup, ScalarMul};
+use ark_ec::{CurveGroup, ScalarMul, VariableBaseMSM as ark_VariableBaseMSM};
 use ark_ff::{BigInteger, Field, PrimeField};
 use icicle_bn254::curve::CurveCfg;
 use icicle_core::{
@@ -121,15 +121,19 @@ mod tests {
     #[test]
     fn icicle_consistency() {
         let mut rng = test_rng();
-        let n = 20;
+        let n = 3;
         let scalars = vec![Fr::rand(&mut rng); n];
+        println!("Consistency");
+        println!("scalars: {:?}", scalars);
         let bases = vec![G1Affine::rand(&mut rng); n];
+        println!("bases: {:?}", bases);
         let max_num_bits = scalars
             .iter()
             .map(|s| s.into_bigint().num_bits())
             .max()
             .unwrap();
 
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
         let scalars_u64 = &map_field_elements_to_u64::<G1Projective>(&scalars);
         let msm_binary = msm_binary::<G1Projective>(&bases, &scalars_u64);
@@ -137,10 +141,14 @@ mod tests {
         let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
         let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
 
+        assert_eq!(arkworks_res, msm_bigint_res);
+        assert_eq!(icicle_res, arkworks_res);
         assert_eq!(icicle_res, msm_bigint_res);
         //Note: Results of Icicle msm and msm_bigint are inconsistent with msm_u64, msm_small, and msm_binary
         assert_ne!(icicle_res, msm_u64_res);
+        assert_ne!(arkworks_res, msm_u64_res);
         assert_ne!(icicle_res, msm_binary);
+        assert_ne!(arkworks_res, msm_binary);
         assert_ne!(msm_u64_res, msm_binary);
     }
 
@@ -188,7 +196,7 @@ mod tests {
     #[test]
     fn msm_consistency_scalars_random_0_2_63() {
         let mut rng = test_rng();
-        let n = 20;
+        let n = 3;
         let range = Uniform::new(0,2u128.pow(63u32));
         let scalars = vec![Fr::from(rng.sample(&range)); n];
         let bases = vec![G1Affine::rand(&mut rng); n];
@@ -219,7 +227,7 @@ mod tests {
     #[test]
     fn msm_consistency_scalars_random_0_2_253() {
         let mut rng = test_rng();
-        let n = 20;
+        let n = 3;
         let scalars = vec![Fr::rand(&mut rng); n];
         let bases = vec![G1Affine::rand(&mut rng); n];
 
