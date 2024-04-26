@@ -1,12 +1,265 @@
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::field::JoltField;
+use crate::poly::unipoly::CompressedUniPoly;
+use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::thread::drop_in_background_thread;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use itertools::Itertools;
+use rayon::prelude::*;
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct BatchedGrandProductLayerProof<F: JoltField> {
+    pub proof: SumcheckInstanceProof<F>,
+    pub left_claims: Vec<F>,
+    pub right_claims: Vec<F>,
+}
+
+impl<F: JoltField> BatchedGrandProductLayerProof<F> {
+    fn verify(
+        &self,
+        claim: F,
+        num_rounds: usize,
+        degree_bound: usize,
+        transcript: &mut ProofTranscript,
+    ) -> (F, Vec<F>) {
+        self.proof
+            .verify(claim, num_rounds, degree_bound, transcript)
+            .unwrap()
+    }
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct BatchedGrandProductProof<F: JoltField> {
+    pub layers: Vec<BatchedGrandProductLayerProof<F>>,
+}
+
+pub trait BatchedGrandProduct<F: JoltField>: Sized {
+    type Leaves;
+
+    fn construct(leaves: Self::Leaves) -> Self;
+    fn num_layers(&self) -> usize;
+    fn claims(&self) -> Vec<F>;
+    fn layers(self) -> impl Iterator<Item = impl BatchedCubicSumcheck<F>>;
+
+    #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
+    fn prove_grand_product(
+        self,
+        transcript: &mut ProofTranscript,
+    ) -> (BatchedGrandProductProof<F>, Vec<F>) {
+        let mut proof_layers = Vec::with_capacity(self.num_layers());
+        let mut claims_to_verify = self.claims();
+        let mut r_grand_product = Vec::new();
+
+        for mut layer in self.layers() {
+            // produce a fresh set of coeffs
+            let coeffs: Vec<F> =
+                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+            // produce a joint claim
+            let claim = claims_to_verify
+                .iter()
+                .zip(coeffs.iter())
+                .map(|(&claim, &coeff)| claim * coeff)
+                .sum();
+            
+            // TODO: directly compute eq evals to avoid clone
+            let mut eq_poly =
+                DensePolynomial::new(EqPolynomial::<F>::new(r_grand_product.clone()).evals());
+
+            let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
+                layer.prove_sumcheck(&claim, &coeffs, &mut eq_poly, transcript);
+            
+            layer.drop();
+            drop_in_background_thread(eq_poly);
+
+            let (left_claims, right_claims) = sumcheck_claims;
+            for (left, right) in left_claims.iter().zip(right_claims.iter()) {
+                transcript.append_scalar(b"sumcheck left claim", left);
+                transcript.append_scalar(b"sumcheck right claim", right);
+            }
+
+            // produce a random challenge to condense two claims into a single claim
+            let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+
+            claims_to_verify = left_claims
+                .iter()
+                .zip(right_claims.iter())
+                .map(|(&left_claim, &right_claim)| {
+                    left_claim + r_layer * (right_claim - left_claim)
+                })
+                .collect::<Vec<F>>();
+
+            // TODO: avoid collect
+            r_sumcheck
+                .into_par_iter()
+                .rev()
+                .collect_into_vec(&mut r_grand_product);
+            r_grand_product.push(r_layer);
+
+            proof_layers.push(BatchedGrandProductLayerProof {
+                proof: sumcheck_proof,
+                left_claims,
+                right_claims,
+            });
+        }
+
+        (
+            BatchedGrandProductProof {
+                layers: proof_layers,
+            },
+            r_grand_product,
+        )
+    }
+
+    fn verify_grand_product(
+        proof: &BatchedGrandProductProof<F>,
+        claims: &Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (Vec<F>, Vec<F>) {
+        let mut r_grand_product: Vec<F> = Vec::new();
+        let mut claims_to_verify = claims.to_owned();
+
+        for (num_rounds, layer_proof) in proof.layers.iter().enumerate() {
+            // produce a fresh set of coeffs
+            let coeffs: Vec<F> =
+                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+            // produce a joint claim
+            let claim = claims_to_verify
+                .iter()
+                .zip(coeffs.iter())
+                .map(|(&claim, &coeff)| claim * coeff)
+                .sum();
+
+            let (sumcheck_claim, r_sumcheck) = layer_proof.verify(claim, num_rounds, 3, transcript);
+            assert_eq!(claims.len(), layer_proof.left_claims.len());
+            assert_eq!(claims.len(), layer_proof.right_claims.len());
+
+            for (left, right) in layer_proof
+                .left_claims
+                .iter()
+                .zip(layer_proof.right_claims.iter())
+            {
+                transcript.append_scalar(b"sumcheck left claim", left);
+                transcript.append_scalar(b"sumcheck right claim", right);
+            }
+
+            assert_eq!(r_grand_product.len(), r_sumcheck.len());
+
+            let eq: F = r_grand_product
+                .iter()
+                .zip_eq(r_sumcheck.iter().rev())
+                .map(|(&r_gp, &r_sc)| r_gp * r_sc + (F::one() - r_gp) * (F::one() - r_sc))
+                .product();
+
+            let expected_sumcheck_claim: F = (0..claims.len())
+                .map(|i| {
+                    coeffs[i]
+                        * CubicSumcheckParams::combine_prod(
+                            &layer_proof.left_claims[i],
+                            &layer_proof.right_claims[i],
+                            &eq,
+                        )
+                })
+                .sum();
+
+            assert_eq!(expected_sumcheck_claim, sumcheck_claim);
+
+            // produce a random challenge to condense two claims into a single claim
+            let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+
+            claims_to_verify = layer_proof
+                .left_claims
+                .iter()
+                .zip(layer_proof.right_claims.iter())
+                .map(|(&left_claim, &right_claim)| {
+                    left_claim + r_layer * (right_claim - left_claim)
+                })
+                .collect();
+
+            // TODO: avoid collect
+            let mut ext: Vec<_> = r_sumcheck.into_iter().rev().collect();
+            ext.push(r_layer);
+            r_grand_product = ext;
+        }
+
+        (claims_to_verify, r_grand_product)
+    }
+}
+
+pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
+    fn num_rounds(&self) -> usize;
+    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
+    fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: (F, F, F)) -> (F, F, F);
+    fn final_claims(&self) -> (Vec<F>, Vec<F>);
+    fn drop(self);
+
+    #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
+    fn prove_sumcheck(
+        &mut self,
+        claim: &F,
+        coeffs: &[F],
+        eq_poly: &mut DensePolynomial<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
+        // TODO(moodlezoup): check lengths of self, coeffs, eq_poly
+
+        let mut e = *claim;
+        let mut r: Vec<F> = Vec::new();
+        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
+
+        for _round in 0..self.num_rounds() {
+            let eq = &eq_poly;
+            let half = eq.len() / 2;
+
+            let span = tracing::span!(tracing::Level::TRACE, "evals");
+            let _enter = span.enter();
+            let evals = (0..half)
+                .into_par_iter()
+                .map(|i| {
+                    let eq_evals = {
+                        let eval_point_0 = eq[2 * i];
+                        let m_eq = eq[2 * i + 1] - eq[2 * i];
+                        let eval_point_2 = eq[2 * i + 1] + m_eq;
+                        let eval_point_3 = eval_point_2 + m_eq;
+                        (eval_point_0, eval_point_2, eval_point_3)
+                    };
+
+                    self.cubic_evals(i, coeffs, eq_evals)
+                })
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
+            drop(_enter);
+
+            let evals = [evals.0, e - evals.0, evals.1, evals.2];
+            let cubic_poly = UniPoly::from_evals(&evals);
+            // append the prover's message to the transcript
+            cubic_poly.append_to_transcript(b"poly", transcript);
+            //derive the verifier's challenge for the next round
+            let r_j = transcript.challenge_scalar(b"challenge_nextround");
+
+            r.push(r_j);
+            // bind polynomials to verifier's challenge
+            self.bind(eq_poly, &r_j);
+
+            e = cubic_poly.evaluate(&r_j);
+            cubic_polys.push(cubic_poly.compress());
+        }
+
+        debug_assert_eq!(eq_poly.len(), 1);
+
+        (
+            SumcheckInstanceProof::new(cubic_polys),
+            r,
+            self.final_claims(),
+        )
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct GrandProductCircuit<F: JoltField> {
