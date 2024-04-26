@@ -42,6 +42,10 @@ impl Icicle for G1Projective {
         <Self::IC as Curve>::ScalarField::from_bytes_le(&ark_bytes)
     }
 
+    fn to_ark_scalar(scalar: &<Self::IC as Curve>::ScalarField ) -> Self::ScalarField {
+        Self::ScalarField::from_random_bytes(&scalar.to_bytes_le()).unwrap()
+    }
+
     fn to_ark_projective(point: &Projective<Self::IC>) -> Self {
         let proj_x =
             <Self as CurveGroup>::BaseField::from_random_bytes(&point.x.to_bytes_le()).unwrap();
@@ -58,9 +62,26 @@ impl Icicle for G1Projective {
     fn from_ark_affine(point: &Self::MulBase) -> Affine<Self::IC> {
         Affine::<Self::IC> {
             x: Self::from_ark_base_field(&point.x),
-            y: Self::from_ark_base_field(&point.y),
+            y: Self::from_ark_base_field(&point.y)
         }
     }
+
+    fn from_ark_projective(ark: &Self) -> Projective<Self::IC> {
+        let proj_x = ark.x * ark.z;
+        let proj_z = ark.z * ark.z * ark.z;
+        Projective::<Self::IC> {
+            x: Self::from_ark_base_field(&proj_x),
+            y: Self::from_ark_base_field(&ark.y),
+            z: Self::from_ark_base_field(&proj_z)
+        }
+    }
+
+    fn to_ark_affine(affine: &Affine<Self::IC>) -> Self::MulBase {
+        let ark_x = <Self as CurveGroup>::BaseField::from_random_bytes(&affine.x.to_bytes_le()).unwrap();
+        let ark_y = <Self as CurveGroup>::BaseField::from_random_bytes(&affine.y.to_bytes_le()).unwrap();
+        Self::MulBase::new_unchecked(ark_x, ark_y,)
+    }
+
 }
 
 pub trait Icicle: ScalarMul {
@@ -75,9 +96,15 @@ pub trait Icicle: ScalarMul {
 
     fn from_ark_scalar(scalar: &Self::ScalarField) -> <Self::IC as Curve>::ScalarField;
 
+    fn to_ark_scalar(scalar: &<Self::IC as Curve>::ScalarField ) -> Self::ScalarField;
+
     fn to_ark_projective(point: &Projective<Self::IC>) -> Self;
 
+    fn from_ark_projective(ark: &Self) -> Projective<Self::IC>;
+
     fn from_ark_affine(point: &Self::MulBase) -> Affine<Self::IC>;
+
+    fn to_ark_affine(ark: &Affine<Self::IC>) -> Self::MulBase;
 }
 pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
     bases: &[V::MulBase],
@@ -115,8 +142,8 @@ mod tests {
     use crate::msm::{map_field_elements_to_u64, msm_bigint, msm_binary, msm_u64_wnaf};
     use ark_bn254::{Fr, G1Affine, G1Projective};
     use ark_std::{test_rng, UniformRand, Zero, rand::{distributions::Uniform, Rng}};
-    use num_bigint::BigUint;
-    use num_traits::pow;
+    use icicle_bn254::curve::{CurveCfg, ScalarCfg};
+    use icicle_core::traits::GenerateRandom;
 
     #[test]
     fn icicle_consistency() {
@@ -175,8 +202,10 @@ mod tests {
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
         let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
 
         assert_eq!(icicle_res, msm_res);
+        assert_eq!(arkworks_res, msm_res);
     }
 
     #[test]
@@ -189,8 +218,10 @@ mod tests {
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
         let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
 
         assert_eq!(icicle_res, msm_res);
+        assert_eq!(arkworks_res, msm_res);
     }
 
     #[test]
@@ -203,8 +234,10 @@ mod tests {
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
         let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
 
         assert_eq!(icicle_res, msm_res);
+        assert_eq!(arkworks_res, msm_res);
 
         let max_num_bits = scalars
             .iter()
@@ -233,8 +266,10 @@ mod tests {
 
         let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
         let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
 
         assert_eq!(icicle_res, msm_res);
+        assert_eq!(arkworks_res, msm_res);
 
         let max_num_bits = scalars
             .iter()
@@ -253,4 +288,51 @@ mod tests {
         assert_ne!(msm_u64_res, msm_binary);
         assert_ne!(msm_bigint_res, msm_binary);
     }
+
+    #[test]
+    fn icicle_arkworks_conversion() {
+        let mut rng = test_rng();
+        let icicle_affine = CurveCfg::generate_random_affine_points(1)[0];
+        let icicle_projective = CurveCfg::generate_random_projective_points(1)[0];
+        let icicle_scalar = ScalarCfg::generate_random(1)[0];
+
+        // Icicle -> Arkworks -> Icicle
+        let ark_scalar = G1Projective::to_ark_scalar(&icicle_scalar);
+        let scalar_res = G1Projective::from_ark_scalar(&ark_scalar);
+        assert_eq!(scalar_res, icicle_scalar);
+
+        let ark_projective = G1Projective::to_ark_projective(&icicle_projective);
+        let projective_res = G1Projective::from_ark_projective(&ark_projective);
+        assert_eq!(projective_res, icicle_projective);
+
+        let ark_affine = G1Projective::to_ark_affine(&icicle_affine);
+        let affine_res = G1Projective::from_ark_affine(&ark_affine);
+        assert_eq!(affine_res, icicle_affine);
+
+        // Arkworks -> Icicle Affine -> Icicle Proj -> Icicle Proj 
+        // This avoids using added helper methods
+        let rand_affine = G1Affine::rand(&mut rng);
+        let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
+        let icicle_to_proj = icicle_affine.to_projective();
+        let proj_res = G1Projective::to_ark_projective(&icicle_to_proj);
+        assert_eq!(rand_affine, proj_res);
+
+        // Arkworks -> Icicle -> Arkworks
+        let rand_affine = G1Affine::rand(&mut rng);
+        let rand_projective = G1Projective::rand(&mut rng);
+        let rand_scalar = Fr::rand(&mut rng);
+
+        let icicle_scalar = G1Projective::from_ark_scalar(&rand_scalar);
+        let scalar_res = G1Projective::to_ark_scalar(&icicle_scalar);
+        assert_eq!(rand_scalar, scalar_res);
+
+        let icicle_projective = G1Projective::from_ark_projective(&rand_projective);
+        let proj_res = G1Projective::to_ark_projective(&icicle_projective);
+        assert_eq!(proj_res, rand_projective);
+
+        let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
+        let affine_res = G1Projective::to_ark_affine(&icicle_affine);
+        assert_eq!(affine_res, rand_affine);
+    }
+
 }
