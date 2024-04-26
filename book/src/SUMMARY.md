@@ -27,5 +27,6 @@
     - [Dev](./dev/README.md)
         - [Install](./dev/install.md)
         - [Tools](./dev/tools.md)
-    - [Known optimizations still to be implemented](./opts.md)
+    - [Future Plans](./opts.md)
+        - [Zero Knowledge](./future/zk.md)
     - [Other tasks](./tasks.md)
