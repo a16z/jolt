@@ -150,10 +150,7 @@ mod tests {
         let mut rng = test_rng();
         let n = 3;
         let scalars = vec![Fr::rand(&mut rng); n];
-        println!("Consistency");
-        println!("scalars: {:?}", scalars);
         let bases = vec![G1Affine::rand(&mut rng); n];
-        println!("bases: {:?}", bases);
         let max_num_bits = scalars
             .iter()
             .map(|s| s.into_bigint().num_bits())
@@ -179,239 +176,169 @@ mod tests {
         assert_ne!(msm_u64_res, msm_binary);
     }
 
+    fn icicle_test<V: VariableBaseMSM + Icicle + ark_ec::VariableBaseMSM>(
+    bases: &[V::MulBase],
+    scalars: &[V::ScalarField],
+    ) {
+        let max_num_bits = scalars
+            .iter()
+            .map(|s| s.into_bigint().num_bits())
+            .max()
+            .unwrap();
+
+        let icicle_res = icicle_msm::<V>(&bases, &scalars);
+        let msm_res: V  = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: V = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
+
+        assert_eq!(icicle_res, arkworks_res);
+        assert_eq!(icicle_res, msm_res);
+    }
+
     #[test]
     fn msm_consistency_scalars_all_0() {
-        let mut rng = test_rng();
-        let n = 20;
-        let scalars = vec![Fr::zero(); n];
-        let bases = vec![G1Affine::rand(&mut rng); n];
+        for _ in 0..10 {
+            let mut rng = test_rng();
+            let n = 20;
+            let scalars = vec![Fr::zero(); n];
+            let bases = vec![G1Affine::rand(&mut rng); n];
 
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-
-        assert_eq!(icicle_res, msm_res);
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     #[test]
     fn msm_consistency_scalars_random_0_1() {
-        let mut rng = test_rng();
-        let range = Uniform::new(0, 1);
-        let n = 20;
-        let scalars: Vec<Fr> = vec![Fr::from(rng.sample(&range));n];
-        let bases = vec![G1Affine::rand(&mut rng); n];
+        for _ in 0..10 {
+            let mut rng = test_rng();
+            let range = Uniform::new(0, 1);
+            let n = 20;
+            let scalars: Vec<Fr> = vec![Fr::from(rng.sample(&range));n];
+            let bases = vec![G1Affine::rand(&mut rng); n];
 
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(arkworks_res, msm_res);
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     #[test]
     fn msm_consistency_scalars_random_0_2_9() {
-        let mut rng = test_rng();
-        let n = 20;
-        let range = Uniform::new(0,2u128.pow(9u32));
-        let scalars: Vec<Fr> = vec![Fr::from(rng.sample(&range));n];
-        let bases = vec![G1Affine::rand(&mut rng); n];
+        for _ in 0..100 {
+            let mut rng = test_rng();
+            let n = 20;
+            let range = Uniform::new(0,2u128.pow(9u32));
+            let scalars: Vec<Fr> = vec![Fr::from(rng.sample(&range));n];
+            let bases = vec![G1Affine::rand(&mut rng); n];
 
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(arkworks_res, msm_res);
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     #[test]
     fn msm_consistency_scalars_random_0_2_63() {
-        let mut rng = test_rng();
-        let n = 3;
-        let range = Uniform::new(0,2u128.pow(63u32));
-        let scalars = vec![Fr::from(rng.sample(&range)); n];
-        let bases = vec![G1Affine::rand(&mut rng); n];
-
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(arkworks_res, msm_res);
-
-        let max_num_bits = scalars
-            .iter()
-            .map(|s| s.into_bigint().num_bits())
-            .max()
-            .unwrap();
-        let scalars_u64 = &map_field_elements_to_u64::<G1Projective>(&scalars);
-        let msm_binary = msm_binary::<G1Projective>(&bases, &scalars_u64);
-        let msm_u64_res = msm_u64_wnaf::<G1Projective>(&bases, scalars_u64, max_num_bits as usize);
-        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
-        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
-
-        assert_eq!(icicle_res, msm_bigint_res);
-        assert_eq!(icicle_res, msm_u64_res);
-        assert_ne!(icicle_res, msm_binary);
-        assert_ne!(msm_u64_res, msm_binary);
-        assert_ne!(msm_bigint_res, msm_binary);
+        for _ in 0..100 {
+            let mut rng = test_rng();
+            let n = 3;
+            let range = Uniform::new(0,2u128.pow(63u32));
+            let scalars = vec![Fr::from(rng.sample(&range)); n];
+            let bases = vec![G1Affine::rand(&mut rng); n];
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     #[test]
     fn msm_consistency_scalars_random_0_2_253() {
-        let mut rng = test_rng();
-        let n = 3;
-        let scalars = vec![Fr::rand(&mut rng); n];
-        let bases = vec![G1Affine::rand(&mut rng); n];
+        for _ in 0..100 {
+            let mut rng = test_rng();
+            let n = 3;
+            let scalars = vec![Fr::rand(&mut rng); n];
+            let bases = vec![G1Affine::rand(&mut rng); n];
 
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(arkworks_res, msm_res);
-
-        let max_num_bits = scalars
-            .iter()
-            .map(|s| s.into_bigint().num_bits())
-            .max()
-            .unwrap();
-        let scalars_u64 = &map_field_elements_to_u64::<G1Projective>(&scalars);
-        let msm_binary = msm_binary::<G1Projective>(&bases, &scalars_u64);
-        let msm_u64_res = msm_u64_wnaf::<G1Projective>(&bases, scalars_u64, max_num_bits as usize);
-        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
-        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
-
-        assert_eq!(icicle_res, msm_bigint_res);
-        assert_ne!(icicle_res, msm_u64_res);
-        assert_ne!(icicle_res, msm_binary);
-        assert_ne!(msm_u64_res, msm_binary);
-        assert_ne!(msm_bigint_res, msm_binary);
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     //TODO: rework to be inline with past test
     #[test]
     fn icicle_arkworks_conversion() {
-        let mut rng = test_rng();
-        let icicle_affine = CurveCfg::generate_random_affine_points(1)[0];
-        let icicle_projective = CurveCfg::generate_random_projective_points(1)[0];
-        let icicle_scalar = ScalarCfg::generate_random(1)[0];
+        for _ in 0..100 {
+            let mut rng = test_rng();
+            let icicle_affine = CurveCfg::generate_random_affine_points(1)[0];
+            let icicle_projective = CurveCfg::generate_random_projective_points(1)[0];
+            let icicle_scalar = ScalarCfg::generate_random(1)[0];
 
-        // Icicle -> Arkworks -> Icicle
-        let ark_scalar = G1Projective::to_ark_scalar(&icicle_scalar);
-        let scalar_res = G1Projective::from_ark_scalar(&ark_scalar);
-        assert_eq!(scalar_res, icicle_scalar);
+            // Icicle -> Arkworks -> Icicle
+            let ark_scalar = G1Projective::to_ark_scalar(&icicle_scalar);
+            let scalar_res = G1Projective::from_ark_scalar(&ark_scalar);
+            assert_eq!(scalar_res, icicle_scalar);
 
-        let ark_projective = G1Projective::to_ark_projective(&icicle_projective);
-        let projective_res = G1Projective::from_ark_projective(&ark_projective);
-        assert_eq!(projective_res, icicle_projective);
+            let ark_projective = G1Projective::to_ark_projective(&icicle_projective);
+            let projective_res = G1Projective::from_ark_projective(&ark_projective);
+            assert_eq!(projective_res, icicle_projective);
 
-        let ark_affine = G1Projective::to_ark_affine(&icicle_affine);
-        let affine_res = G1Projective::from_ark_affine(&ark_affine);
-        assert_eq!(affine_res, icicle_affine);
+            let ark_affine = G1Projective::to_ark_affine(&icicle_affine);
+            let affine_res = G1Projective::from_ark_affine(&ark_affine);
+            assert_eq!(affine_res, icicle_affine);
 
-        // Arkworks -> Icicle Affine -> Icicle Proj -> Icicle Proj 
-        // This avoids using added helper methods
-        let rand_affine = G1Affine::rand(&mut rng);
-        let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
-        let icicle_to_proj = icicle_affine.to_projective();
-        let proj_res = G1Projective::to_ark_projective(&icicle_to_proj);
-        assert_eq!(rand_affine, proj_res);
+            // Arkworks -> Icicle Affine -> Icicle Proj -> Icicle Proj 
+            // This avoids using added helper methods
+            let rand_affine = G1Affine::rand(&mut rng);
+            let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
+            let icicle_to_proj = icicle_affine.to_projective();
+            let proj_res = G1Projective::to_ark_projective(&icicle_to_proj);
+            assert_eq!(rand_affine, proj_res);
 
-        // Arkworks -> Icicle -> Arkworks
-        let rand_affine = G1Affine::rand(&mut rng);
-        let rand_projective = G1Projective::rand(&mut rng);
-        let rand_scalar = Fr::rand(&mut rng);
+            // Arkworks -> Icicle -> Arkworks
+            let rand_affine = G1Affine::rand(&mut rng);
+            let rand_projective = G1Projective::rand(&mut rng);
+            let rand_scalar = Fr::rand(&mut rng);
 
-        let icicle_scalar = G1Projective::from_ark_scalar(&rand_scalar);
-        let scalar_res = G1Projective::to_ark_scalar(&icicle_scalar);
-        assert_eq!(rand_scalar, scalar_res);
+            let icicle_scalar = G1Projective::from_ark_scalar(&rand_scalar);
+            let scalar_res = G1Projective::to_ark_scalar(&icicle_scalar);
+            assert_eq!(rand_scalar, scalar_res);
 
-        let icicle_projective = G1Projective::from_ark_projective(&rand_projective);
-        let proj_res = G1Projective::to_ark_projective(&icicle_projective);
-        assert_eq!(proj_res, rand_projective);
+            let icicle_projective = G1Projective::from_ark_projective(&rand_projective);
+            let proj_res = G1Projective::to_ark_projective(&icicle_projective);
+            assert_eq!(proj_res, rand_projective);
 
-        let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
-        let affine_res = G1Projective::to_ark_affine(&icicle_affine);
-        assert_eq!(affine_res, rand_affine);
+            let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
+            let affine_res = G1Projective::to_ark_affine(&icicle_affine);
+            assert_eq!(affine_res, rand_affine);
+        }
     }
 
     #[test]
     fn zero_pad() {
-        let mut rng = test_rng();
-        let n = 3;
-        let mut scalars = vec![Fr::rand(&mut rng); n];
-        //Pad scalars to length 4 with 0 vector 
-        scalars.push(Fr::zero());
-        let bases = vec![G1Affine::rand(&mut rng); n + 1];
-        let max_num_bits = scalars
-            .iter()
-            .map(|s| s.into_bigint().num_bits())
-            .max()
-            .unwrap();
-
-
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
-        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(icicle_res, arkworks_res);
-        assert_eq!(arkworks_res, msm_bigint_res);
-        assert_eq!(icicle_res, msm_bigint_res);
+        for _ in 0..100 {
+            let mut rng = test_rng();
+            let n = 3;
+            let mut scalars = vec![Fr::rand(&mut rng); n];
+            //Pad scalars to length 4 with 0 vector -> We should see this succeed when 2_253 (aka msm of length 3) fails
+            scalars.push(Fr::zero());
+            let bases = vec![G1Affine::rand(&mut rng); n + 1];
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     #[test]
     fn point_doubling_1() {
-        let mut rng = test_rng();
-        let scalars = vec![Fr::rand(&mut rng); 3];
-        let rand_base = G1Affine::rand(&mut rng);
-        let bases = vec![rand_base, rand_base, (rand_base + rand_base).into()];
-        let max_num_bits = scalars
-            .iter()
-            .map(|s| s.into_bigint().num_bits())
-            .max()
-            .unwrap();
-
-
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
-        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(icicle_res, arkworks_res);
-        assert_eq!(arkworks_res, msm_bigint_res);
-        assert_eq!(icicle_res, msm_bigint_res);
+        for _ in 0..10 {
+            let mut rng = test_rng();
+            let scalars = vec![Fr::rand(&mut rng); 4];
+            let rand_base = G1Affine::rand(&mut rng);
+            let bases = vec![rand_base, rand_base, rand_base, (rand_base + rand_base).into()];
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
     #[test]
     fn point_doubling_2() {
-        let mut rng = test_rng();
-        let n = 3;
-        let scalars = vec![Fr::rand(&mut rng); n];
-        let rand_base = G1Affine::rand(&mut rng);
-        let bases = vec![rand_base, (rand_base + rand_base).into(), (rand_base + rand_base + rand_base).into()];
-        let max_num_bits = scalars
-            .iter()
-            .map(|s| s.into_bigint().num_bits())
-            .max()
-            .unwrap();
-
-
-        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
-        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
-        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
-        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
-
-        assert_eq!(icicle_res, msm_res);
-        assert_eq!(icicle_res, arkworks_res);
-        assert_eq!(arkworks_res, msm_bigint_res);
-        assert_eq!(icicle_res, msm_bigint_res);
+        for _ in 0..10 {
+            let mut rng = test_rng();
+            let n = 3;
+            let scalars = vec![Fr::rand(&mut rng); n];
+            let rand_base = G1Affine::rand(&mut rng);
+            let bases = vec![rand_base, (rand_base + rand_base).into(), (rand_base + rand_base + rand_base).into()];
+            icicle_test::<G1Projective>(&bases, &scalars)
+        }
     }
 
 }
