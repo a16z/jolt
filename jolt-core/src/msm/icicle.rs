@@ -141,7 +141,7 @@ mod tests {
     use super::*;
     use crate::msm::{map_field_elements_to_u64, msm_bigint, msm_binary, msm_u64_wnaf};
     use ark_bn254::{Fr, G1Affine, G1Projective};
-    use ark_std::{test_rng, UniformRand, Zero, rand::{distributions::Uniform, Rng}};
+    use ark_std::{test_rng, UniformRand, Zero, One, rand::{distributions::Uniform, Rng}};
     use icicle_bn254::curve::{CurveCfg, ScalarCfg};
     use icicle_core::traits::GenerateRandom;
 
@@ -289,6 +289,7 @@ mod tests {
         assert_ne!(msm_bigint_res, msm_binary);
     }
 
+    //TODO: rework to be inline with past test
     #[test]
     fn icicle_arkworks_conversion() {
         let mut rng = test_rng();
@@ -333,6 +334,84 @@ mod tests {
         let icicle_affine = G1Projective::from_ark_affine(&rand_affine);
         let affine_res = G1Projective::to_ark_affine(&icicle_affine);
         assert_eq!(affine_res, rand_affine);
+    }
+
+    #[test]
+    fn zero_pad() {
+        let mut rng = test_rng();
+        let n = 3;
+        let mut scalars = vec![Fr::rand(&mut rng); n];
+        //Pad scalars to length 4 with 0 vector 
+        scalars.push(Fr::zero());
+        let bases = vec![G1Affine::rand(&mut rng); n + 1];
+        let max_num_bits = scalars
+            .iter()
+            .map(|s| s.into_bigint().num_bits())
+            .max()
+            .unwrap();
+
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
+        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
+
+        assert_eq!(icicle_res, msm_res);
+        assert_eq!(icicle_res, arkworks_res);
+        assert_eq!(arkworks_res, msm_bigint_res);
+        assert_eq!(icicle_res, msm_bigint_res);
+    }
+
+    #[test]
+    fn point_doubling_1() {
+        let mut rng = test_rng();
+        let scalars = vec![Fr::rand(&mut rng); 3];
+        let rand_base = G1Affine::rand(&mut rng);
+        let bases = vec![rand_base, rand_base, (rand_base + rand_base).into()];
+        let max_num_bits = scalars
+            .iter()
+            .map(|s| s.into_bigint().num_bits())
+            .max()
+            .unwrap();
+
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
+        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
+
+        assert_eq!(icicle_res, msm_res);
+        assert_eq!(icicle_res, arkworks_res);
+        assert_eq!(arkworks_res, msm_bigint_res);
+        assert_eq!(icicle_res, msm_bigint_res);
+    }
+
+    #[test]
+    fn point_doubling_2() {
+        let mut rng = test_rng();
+        let n = 3;
+        let scalars = vec![Fr::rand(&mut rng); n];
+        let rand_base = G1Affine::rand(&mut rng);
+        let bases = vec![rand_base, (rand_base + rand_base).into(), (rand_base + rand_base + rand_base).into()];
+        let max_num_bits = scalars
+            .iter()
+            .map(|s| s.into_bigint().num_bits())
+            .max()
+            .unwrap();
+
+
+        let icicle_res = icicle_msm::<G1Projective>(&bases, &scalars);
+        let msm_res: G1Projective = VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let arkworks_res: G1Projective = ark_VariableBaseMSM::msm(&bases, &scalars).unwrap();
+        let scalars = scalars.iter().map(|s| s.into_bigint()).collect::<Vec<_>>();
+        let msm_bigint_res = msm_bigint::<G1Projective>(&bases, &scalars, max_num_bits as usize);
+
+        assert_eq!(icicle_res, msm_res);
+        assert_eq!(icicle_res, arkworks_res);
+        assert_eq!(arkworks_res, msm_bigint_res);
+        assert_eq!(icicle_res, msm_bigint_res);
     }
 
 }
