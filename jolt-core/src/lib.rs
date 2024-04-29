@@ -16,7 +16,7 @@ pub mod msm;
 pub mod poly;
 pub mod r1cs;
 mod subprotocols;
-mod utils;
+pub mod utils;
 
 // Benchmarks
 pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;
