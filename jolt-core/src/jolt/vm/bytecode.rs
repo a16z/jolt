@@ -393,11 +393,11 @@ where
         polynomials: &BytecodePolynomials<F, C>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
         let num_ops = polynomials.a_read_write.len();
         let bytecode_size = preprocessing.v_init_final[0].len();
 
-        let read_fingerprints = (0..num_ops)
+        let read_leaves = (0..num_ops)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -415,9 +415,8 @@ where
                 )
             })
             .collect();
-        let read_leaves = DensePolynomial::new(read_fingerprints);
 
-        let init_fingerprints = (0..bytecode_size)
+        let init_leaves = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -435,9 +434,9 @@ where
                 )
             })
             .collect();
-        let init_leaves = DensePolynomial::new(init_fingerprints);
 
-        let write_fingerprints = (0..num_ops)
+        // TODO(moodlezoup): Compute write_leaves from read_leaves
+        let write_leaves = (0..num_ops)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -455,9 +454,9 @@ where
                 )
             })
             .collect();
-        let write_leaves = DensePolynomial::new(write_fingerprints);
 
-        let final_fingerprints = (0..bytecode_size)
+        // TODO(moodlezoup): Compute final_leaves from init_leaves
+        let final_leaves = (0..bytecode_size)
             .into_par_iter()
             .map(|i| {
                 Self::fingerprint(
@@ -475,7 +474,6 @@ where
                 )
             })
             .collect();
-        let final_leaves = DensePolynomial::new(final_fingerprints);
 
         (
             vec![read_leaves, write_leaves],

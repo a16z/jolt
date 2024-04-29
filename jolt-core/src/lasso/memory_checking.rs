@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::subprotocols::grand_product::DefaultBatchedGrandProduct;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::ProofTranscript;
 use crate::{
@@ -75,8 +76,8 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F>;
+    type ReadWriteGrandProduct: BatchedGrandProduct<F> = DefaultBatchedGrandProduct<F>;
+    type InitFinalGrandProduct: BatchedGrandProduct<F> = DefaultBatchedGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<

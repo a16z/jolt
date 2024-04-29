@@ -1,15 +1,14 @@
 use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{
-    BatchedCubicSumcheck, BatchedGrandProduct, BatchedGrandProductProof,
+    BatchedCubicSumcheck, BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
+    DefaultBatchedGrandProduct,
 };
-use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
 use rayon::iter::{
-    IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelExtend,
-    ParallelIterator,
+    IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
 };
 #[cfg(test)]
 use std::collections::HashSet;
@@ -260,7 +259,7 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
-    type ReadWriteGrandProduct = TimestampValidityGrandProduct<F>;
+    // Init/final grand products are batched together with read/write grand products
     type InitFinalGrandProduct = NoopGrandProduct;
 
     type ReadWriteOpenings = RangeCheckOpenings<F, C>;
@@ -553,87 +552,6 @@ where
     }
 }
 
-type SimpleGrandProductLayer<F> = Vec<F>;
-type BatchedGrandProductLayer<F> = Vec<SimpleGrandProductLayer<F>>;
-
-impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductLayer<F> {
-    fn num_rounds(&self) -> usize {
-        self[0].len().log_2() - 1
-    }
-
-    #[tracing::instrument(skip_all, name = "BatchedGrandProductLayer::bind")]
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
-        // TODO(moodlezoup): parallelize over chunks instead of over batch
-        rayon::join(
-            || {
-                self.par_iter_mut().for_each(|layer: &mut Vec<F>| {
-                    debug_assert!(layer.len() % 4 == 0);
-                    let n = layer.len() / 4;
-                    for i in 0..n {
-                        // left
-                        layer[2 * i] = layer[4 * i] + *r * (layer[4 * i + 2] - layer[4 * i]);
-                        // right
-                        layer[2 * i + 1] =
-                            layer[4 * i + 1] + *r * (layer[4 * i + 3] - layer[4 * i + 1]);
-                    }
-                    layer.truncate(layer.len() / 2);
-                })
-            },
-            || eq_poly.bound_poly_var_bot(r),
-        );
-    }
-
-    fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: (F, F, F)) -> (F, F, F) {
-        let mut evals = (F::zero(), F::zero(), F::zero());
-
-        self.iter().enumerate().for_each(|(batch_index, layer)| {
-            let left = (
-                coeffs[batch_index] * layer[4 * index],
-                coeffs[batch_index] * layer[4 * index + 2],
-            );
-            let right = (layer[4 * index + 1], layer[4 * index + 3]);
-
-            let m_left = left.1 - left.0;
-            let m_right = right.1 - right.0;
-
-            let point_2_left = left.1 + m_left;
-            let point_3_left = point_2_left + m_left;
-
-            let point_2_right = right.1 + m_right;
-            let point_3_right = point_2_right + m_right;
-
-            evals.0 += left.0 * right.0;
-            evals.1 += point_2_left * point_2_right;
-            evals.2 += point_3_left * point_3_right;
-        });
-
-        evals.0 *= eq_evals.0;
-        evals.1 *= eq_evals.1;
-        evals.2 *= eq_evals.2;
-        evals
-    }
-
-    fn final_claims(&self) -> (Vec<F>, Vec<F>) {
-        let left_claims = self
-            .iter()
-            .map(|layer| {
-                assert_eq!(layer.len(), 2);
-                layer[0]
-            })
-            .collect();
-        let right_claims = self.iter().map(|layer| layer[1]).collect();
-        (left_claims, right_claims)
-    }
-
-    fn drop(self) {
-        drop_in_background_thread(self);
-    }
-}
-
-struct TimestampValidityGrandProduct<F: JoltField> {
-    layers: Vec<BatchedGrandProductLayer<F>>,
-}
-
 struct NoopGrandProduct;
 impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
     type Leaves = ();
@@ -662,53 +580,6 @@ impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
         transcript: &mut ProofTranscript,
     ) -> (Vec<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
-    }
-}
-
-impl<F: JoltField> BatchedGrandProduct<F> for TimestampValidityGrandProduct<F> {
-    type Leaves = Vec<Vec<F>>;
-
-    #[tracing::instrument(skip_all, name = "TimestampValidityGrandProduct::construct")]
-    fn construct(leaves: Self::Leaves) -> Self {
-        let num_layers = leaves[0].len().log_2();
-        let mut layers: Vec<BatchedGrandProductLayer<F>> = Vec::with_capacity(num_layers);
-        layers.push(leaves);
-
-        for i in 0..num_layers - 1 {
-            let previous_layers = &layers[i];
-            let len = previous_layers[0].len() / 2;
-            let new_layers = previous_layers
-                .par_iter()
-                .map(|previous_layer| {
-                    (0..len)
-                        .into_iter()
-                        .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
-                        .collect()
-                })
-                .collect();
-            layers.push(new_layers);
-        }
-
-        Self { layers }
-    }
-
-    fn num_layers(&self) -> usize {
-        self.layers.len()
-    }
-
-    fn claims(&self) -> Vec<F> {
-        let last_layers = &self.layers[self.num_layers() - 1];
-        last_layers
-            .iter()
-            .map(|layer| {
-                assert_eq!(layer.len(), 2);
-                layer[0] * layer[1]
-            })
-            .collect()
-    }
-
-    fn layers(self) -> impl Iterator<Item = impl BatchedCubicSumcheck<F>> {
-        self.layers.into_iter().rev()
     }
 }
 
@@ -801,7 +672,7 @@ where
         let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        let batched_circuit = TimestampValidityGrandProduct::construct(leaves);
+        let batched_circuit = DefaultBatchedGrandProduct::construct(leaves);
 
         let hashes: Vec<F> = batched_circuit.claims();
         let (read_write_hashes, init_final_hashes) =
@@ -849,7 +720,7 @@ where
             );
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let (grand_product_claims, r_grand_product) =
-            TimestampValidityGrandProduct::verify_grand_product(
+            DefaultBatchedGrandProduct::verify_grand_product(
                 &self.batched_grand_product,
                 &concatenated_hashes,
                 transcript,
