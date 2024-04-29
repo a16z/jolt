@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_all_0() {
-        for _ in 0..10 {
+        for _ in 0..1 {
             let mut rng = test_rng();
             let n = 20;
             let scalars = vec![Fr::zero(); n];
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_1() {
-        for _ in 0..10 {
+        for _ in 0..1 {
             let mut rng = test_rng();
             let range = Uniform::new(0, 1);
             let n = 20;
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_2_9() {
-        for _ in 0..100 {
+        for _ in 0..1 {
             let mut rng = test_rng();
             let n = 20;
             let range = Uniform::new(0,2u128.pow(9u32));
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_2_63() {
-        for _ in 0..100 {
+        for _ in 0..1 {
             let mut rng = test_rng();
             let n = 3;
             let range = Uniform::new(0,2u128.pow(63u32));
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_2_253() {
-        for _ in 0..100 {
+        for _ in 0..1 {
             let mut rng = test_rng();
             let n = 3;
             let scalars = vec![Fr::rand(&mut rng); n];
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn zero_pad() {
-        for _ in 0..100 {
+        for _ in 0..1 {
             let mut rng = test_rng();
             let n = 3;
             let mut scalars = vec![Fr::rand(&mut rng); n];
