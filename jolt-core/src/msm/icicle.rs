@@ -1,6 +1,6 @@
 use ark_bn254::G1Projective;
 use ark_ec::{CurveGroup, ScalarMul, VariableBaseMSM as ark_VariableBaseMSM};
-use ark_ff::{BigInteger, Field, PrimeField};
+use ark_ff::{BigInteger, BigInt, Field, PrimeField};
 use icicle_bn254::curve::CurveCfg;
 use icicle_core::{
     curve::{Affine, Curve, Projective},
@@ -140,7 +140,7 @@ pub fn icicle_msm<V: VariableBaseMSM + Icicle>(
 mod tests {
     use super::*;
     use crate::msm::{map_field_elements_to_u64, msm_bigint, msm_binary, msm_u64_wnaf};
-    use ark_bn254::{Fr, G1Affine, G1Projective};
+    use ark_bn254::{Fr, Fq, G1Affine, G1Projective};
     use ark_std::{test_rng, UniformRand, Zero, One, rand::{distributions::Uniform, Rng}};
     use icicle_bn254::curve::{CurveCfg, ScalarCfg};
     use icicle_core::traits::GenerateRandom;
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_all_0() {
-        for _ in 0..1 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let n = 20;
             let scalars = vec![Fr::zero(); n];
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_1() {
-        for _ in 0..1 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let range = Uniform::new(0, 1);
             let n = 20;
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_2_9() {
-        for _ in 0..1 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let n = 20;
             let range = Uniform::new(0,2u128.pow(9u32));
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_2_63() {
-        for _ in 0..1 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let n = 3;
             let range = Uniform::new(0,2u128.pow(63u32));
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn msm_consistency_scalars_random_0_2_253() {
-        for _ in 0..1 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let n = 3;
             let scalars = vec![Fr::rand(&mut rng); n];
@@ -305,9 +305,8 @@ mod tests {
         }
     }
 
-    #[test]
     fn zero_pad() {
-        for _ in 0..1 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let n = 3;
             let mut scalars = vec![Fr::rand(&mut rng); n];
@@ -317,10 +316,10 @@ mod tests {
             icicle_test::<G1Projective>(&bases, &scalars)
         }
     }
-
+    
     #[test]
     fn point_doubling_1() {
-        for _ in 0..10 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let scalars = vec![Fr::rand(&mut rng); 4];
             let rand_base = G1Affine::rand(&mut rng);
@@ -331,7 +330,7 @@ mod tests {
 
     #[test]
     fn point_doubling_2() {
-        for _ in 0..10 {
+        for _ in 0..100 {
             let mut rng = test_rng();
             let n = 3;
             let scalars = vec![Fr::rand(&mut rng); n];
