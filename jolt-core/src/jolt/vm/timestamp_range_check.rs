@@ -8,12 +8,12 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
 use rayon::iter::{
-    IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
+    IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelExtend,
+    ParallelIterator,
 };
 #[cfg(test)]
 use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
-use tracing::trace_span;
 
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
@@ -260,6 +260,9 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
+    type ReadWriteGrandProduct = TimestampValidityGrandProduct<F>;
+    type InitFinalGrandProduct = NoopGrandProduct;
+
     type ReadWriteOpenings = RangeCheckOpenings<F, C>;
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
 
@@ -288,11 +291,11 @@ where
         polynomials: &RangeCheckPolynomials<F, C>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (Vec<Vec<F>>, ()) {
         let M = polynomials.read_timestamps[0].len();
         let gamma_squared = gamma.square();
 
-        let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
+        let read_write_leaves: Vec<Vec<F>> = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
             .flat_map(|i| {
                 let read_fingerprints_0: Vec<F> = (0..M)
@@ -328,15 +331,17 @@ where
                     .collect();
 
                 [
-                    DensePolynomial::new(read_fingerprints_0),
-                    DensePolynomial::new(write_fingeprints_0),
-                    DensePolynomial::new(read_fingerprints_1),
-                    DensePolynomial::new(write_fingeprints_1),
+                    read_fingerprints_0,
+                    write_fingeprints_0,
+                    read_fingerprints_1,
+                    write_fingeprints_1,
                 ]
             })
             .collect();
 
-        let init_fingerprints = (0..M)
+        let mut leaves = read_write_leaves;
+
+        let init_leaves: Vec<F> = (0..M)
             .into_par_iter()
             .map(|i| {
                 let index = F::from_u64(i as u64).unwrap();
@@ -344,42 +349,37 @@ where
                 index * gamma + index - tau
             })
             .collect();
-        let init_leaves = DensePolynomial::new(init_fingerprints);
 
-        let final_leaves: Vec<DensePolynomial<F>> = (0..MEMORY_OPS_PER_INSTRUCTION)
-            .into_par_iter()
-            .flat_map(|i| {
-                let final_fingerprints_0 = (0..M)
-                    .into_par_iter()
-                    .map(|j| {
-                        mul_0_1_optimized(
-                            &polynomials.final_cts_read_timestamp[i][j],
-                            &gamma_squared,
-                        ) + init_leaves[j]
-                    })
-                    .collect();
+        leaves.par_extend(
+            (0..MEMORY_OPS_PER_INSTRUCTION)
+                .into_par_iter()
+                .flat_map(|i| {
+                    let final_fingerprints_0 = (0..M)
+                        .into_par_iter()
+                        .map(|j| {
+                            mul_0_1_optimized(
+                                &polynomials.final_cts_read_timestamp[i][j],
+                                &gamma_squared,
+                            ) + init_leaves[j]
+                        })
+                        .collect();
 
-                let final_fingerprints_1 = (0..M)
-                    .into_par_iter()
-                    .map(|j| {
-                        mul_0_1_optimized(
-                            &polynomials.final_cts_global_minus_read[i][j],
-                            &gamma_squared,
-                        ) + init_leaves[j]
-                    })
-                    .collect();
+                    let final_fingerprints_1 = (0..M)
+                        .into_par_iter()
+                        .map(|j| {
+                            mul_0_1_optimized(
+                                &polynomials.final_cts_global_minus_read[i][j],
+                                &gamma_squared,
+                            ) + init_leaves[j]
+                        })
+                        .collect();
 
-                [
-                    DensePolynomial::new(final_fingerprints_0),
-                    DensePolynomial::new(final_fingerprints_1),
-                ]
-            })
-            .collect();
+                    [final_fingerprints_0, final_fingerprints_1]
+                }),
+        );
+        leaves.push(init_leaves);
 
-        let mut init_final_leaves = final_leaves;
-        init_final_leaves.push(init_leaves);
-
-        (read_write_leaves, init_final_leaves)
+        (leaves, ())
     }
 
     fn interleave_hashes(
@@ -634,16 +634,45 @@ struct TimestampValidityGrandProduct<F: JoltField> {
     layers: Vec<BatchedGrandProductLayer<F>>,
 }
 
+struct NoopGrandProduct;
+impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
+    type Leaves = ();
+
+    fn construct(leaves: Self::Leaves) -> Self {
+        NoopGrandProduct
+    }
+    fn num_layers(&self) -> usize {
+        0
+    }
+    fn claims(&self) -> Vec<F> {
+        vec![]
+    }
+    fn layers(self) -> impl Iterator<Item = impl BatchedCubicSumcheck<F>> {
+        Vec::<BatchedGrandProductLayer<F>>::with_capacity(0).into_iter()
+    }
+    fn prove_grand_product(
+        self,
+        transcript: &mut ProofTranscript,
+    ) -> (BatchedGrandProductProof<F>, Vec<F>) {
+        unimplemented!("init/final grand products are batched with read/write grand products")
+    }
+    fn verify_grand_product(
+        proof: &BatchedGrandProductProof<F>,
+        claims: &Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) -> (Vec<F>, Vec<F>) {
+        unimplemented!("init/final grand products are batched with read/write grand products")
+    }
+}
+
 impl<F: JoltField> BatchedGrandProduct<F> for TimestampValidityGrandProduct<F> {
-    type Leaves = (Vec<Vec<F>>, Vec<Vec<F>>);
+    type Leaves = Vec<Vec<F>>;
 
     #[tracing::instrument(skip_all, name = "TimestampValidityGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
-        let (read_write_leaves, init_final_leaves) = leaves;
-        let num_layers = read_write_leaves[0].len().log_2();
+        let num_layers = leaves[0].len().log_2();
         let mut layers: Vec<BatchedGrandProductLayer<F>> = Vec::with_capacity(num_layers);
-        // TODO(moodlezoup): avoid concat
-        layers.push([read_write_leaves, init_final_leaves].concat());
+        layers.push(leaves);
 
         for i in 0..num_layers - 1 {
             let previous_layers = &layers[i];
@@ -769,17 +798,14 @@ where
 
         transcript.append_protocol_name(Self::protocol_name());
 
-        let (read_write_leaves, init_final_leaves) =
+        let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        // TODO: avoid clones
-        let batched_circuit = TimestampValidityGrandProduct::construct((
-            read_write_leaves.iter().map(|poly| poly.evals()).collect(),
-            init_final_leaves.iter().map(|poly| poly.evals()).collect(),
-        ));
+        let batched_circuit = TimestampValidityGrandProduct::construct(leaves);
 
         let hashes: Vec<F> = batched_circuit.claims();
-        let (read_write_hashes, init_final_hashes) = hashes.split_at(read_write_leaves.len());
+        let (read_write_hashes, init_final_hashes) =
+            hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
         let multiset_hashes = TimestampValidityProof::<F, C>::uninterleave_hashes(
             &NoPreprocessing,
             read_write_hashes.to_vec(),
@@ -791,9 +817,8 @@ where
         let (batched_grand_product, r_grand_product) =
             batched_circuit.prove_grand_product(transcript);
 
-        drop_in_background_thread(read_write_leaves);
-        drop_in_background_thread(init_final_leaves);
-        
+        drop_in_background_thread(leaves);
+
         (batched_grand_product, multiset_hashes, r_grand_product)
     }
 
@@ -840,6 +865,7 @@ where
             .chain(self.openings.memory_t_read)
             .collect();
 
+        // TODO(moodlezoup): Make indexing less disgusting
         let t_read_commitments = &memory_commitment.trace_commitments
             [1 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
         let commitments: Vec<_> = range_check_commitment
