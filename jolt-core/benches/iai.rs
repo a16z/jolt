@@ -3,8 +3,9 @@ use ark_ec::CurveGroup;
 use ark_std::{test_rng, UniformRand};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use jolt_core::{
+    field::JoltField,
     msm::VariableBaseMSM,
-    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    poly::dense_mlpoly::DensePolynomial,
 };
 use std::hint::black_box;
 
