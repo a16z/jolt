@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};

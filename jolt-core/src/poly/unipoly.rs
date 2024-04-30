@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;

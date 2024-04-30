@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};

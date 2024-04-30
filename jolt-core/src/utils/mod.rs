@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 
 use ark_std::test_rng;
 #[cfg(feature = "multicore")]

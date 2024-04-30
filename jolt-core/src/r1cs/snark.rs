@@ -20,7 +20,7 @@ use super::{
     spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof},
 };
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;

@@ -2,7 +2,7 @@
 
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;

@@ -1,7 +1,7 @@
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;

@@ -2,7 +2,7 @@
 /// Its syntax is based on circom.
 /// As the constraint system involved in Jolt is very simple, it's easy to generate the matrices directly
 /// and avoids the need for using the circom library.
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use common::{constants::RAM_START_ADDRESS, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use smallvec::{smallvec, SmallVec};

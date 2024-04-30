@@ -3,7 +3,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::math::Math;
 use core::ops::Index;
 use rayon::prelude::*;

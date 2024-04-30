@@ -17,6 +17,7 @@ pub mod poly;
 pub mod r1cs;
 mod subprotocols;
 pub mod utils;
+pub mod field;
 
 // Benchmarks
 pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;

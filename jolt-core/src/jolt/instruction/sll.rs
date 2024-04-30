@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };

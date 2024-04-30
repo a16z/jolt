@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use rayon::prelude::*;
 
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};

@@ -89,3 +89,4 @@ impl JoltField for ark_bn254::Fr {
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
 }
+

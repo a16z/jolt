@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_ec::CurveGroup;
 use merlin::Transcript;
 

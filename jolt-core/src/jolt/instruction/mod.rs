@@ -7,7 +7,7 @@ use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::subtable::LassoSubtable;
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand;
 use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;

@@ -8,7 +8,7 @@ use crate::{
         instruction::SubtableIndices,
         subtable::{eq::EqSubtable, LassoSubtable},
     },
-    poly::field::JoltField,
+    field::JoltField,
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 

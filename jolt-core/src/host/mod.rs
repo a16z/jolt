@@ -23,7 +23,7 @@ use tracer::ELFInstruction;
 
 use crate::{
     jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
-    poly::field::JoltField,
+    field::JoltField,
     utils::thread::unsafe_allocate_zero_vec,
 };
 

@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 
 pub fn assert_valid_parameters(word_size: usize, C: usize, log_M: usize) {
     assert!(C * log_M >= word_size);

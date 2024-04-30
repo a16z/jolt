@@ -6,7 +6,7 @@ use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{
     sign_extend::SignExtendSubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]

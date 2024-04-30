@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{truncate_overflow::TruncateOverflowSubtable, LassoSubtable};
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]

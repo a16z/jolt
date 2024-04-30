@@ -12,7 +12,7 @@ use crate::subprotocols::grand_product::{
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::ProofTranscript;
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};

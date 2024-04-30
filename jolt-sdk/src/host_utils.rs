@@ -7,7 +7,7 @@ use eyre::Result;
 pub use ark_bn254::{Fr as F, G1Projective as G};
 pub use ark_ec::CurveGroup;
 use jolt_core::poly::commitment::hyrax::HyraxScheme;
-pub use jolt_core::poly::field::JoltField;
+pub use jolt_core::field::JoltField;
 
 pub use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,

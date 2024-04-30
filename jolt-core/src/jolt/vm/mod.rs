@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
