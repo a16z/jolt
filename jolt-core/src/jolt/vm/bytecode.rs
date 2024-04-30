@@ -382,9 +382,9 @@ where
         let mut gamma_term = F::one();
         for input in inputs {
             result += *input * gamma_term;
-            gamma_term *= gamma;
+            gamma_term *= *gamma;
         }
-        result - tau
+        result - *tau
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]

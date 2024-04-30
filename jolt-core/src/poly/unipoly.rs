@@ -71,7 +71,7 @@ impl<F: JoltField> UniPoly<F> {
         let mut power = *r;
         for i in 1..self.coeffs.len() {
             eval += power * self.coeffs[i];
-            power *= r;
+            power *= *r;
         }
         eval
     }

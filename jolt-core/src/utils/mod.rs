@@ -65,7 +65,7 @@ pub fn ff_bitvector_dbg<F: JoltField>(f: &Vec<F>) -> String {
 pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
     a.par_iter()
         .zip_eq(b.par_iter())
-        .map(|(a_i, b_i)| *a_i * b_i)
+        .map(|(a_i, b_i)| *a_i * *b_i)
         .sum()
 }
 
@@ -87,7 +87,7 @@ pub fn mul_0_1_optimized<F: JoltField>(a: &F, b: &F) -> F {
     } else if b.is_one() {
         *a
     } else {
-        *a * b
+        *a * *b
     }
 }
 
@@ -96,7 +96,7 @@ pub fn mul_0_optimized<F: JoltField>(likely_zero: &F, x: &F) -> F {
     if likely_zero.is_zero() {
         F::zero()
     } else {
-        *likely_zero * x
+        *likely_zero * *x
     }
 }
 

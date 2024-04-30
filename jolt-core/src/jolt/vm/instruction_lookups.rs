@@ -429,8 +429,8 @@ where
     fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
         let (a, v, t, flag) = *inputs;
         match flag {
-            Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + F::one() - val,
-            None => t * gamma.square() + v * *gamma + a - tau,
+            Some(val) => val * (t * gamma.square() + v * *gamma + a - *tau) + F::one() - val,
+            None => t * gamma.square() + v * *gamma + a - *tau,
         }
     }
 
@@ -454,7 +454,7 @@ where
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a - *tau
                     })
                     .collect();
                 let write_fingerprints = read_fingerprints
@@ -479,7 +479,7 @@ where
                         let v = &subtable[i];
                         // let t = F::zero();
                         // Compute h(a,v,t) where t == 0
-                        mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(v, gamma) + *a - *tau
                     })
                     .collect();
 
@@ -1300,7 +1300,7 @@ where
                     running
                         .iter()
                         .zip(new.iter())
-                        .map(|(r, n)| *r + n)
+                        .map(|(r, n)| *r + *n)
                         .collect()
                 },
             );

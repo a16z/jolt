@@ -307,7 +307,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]

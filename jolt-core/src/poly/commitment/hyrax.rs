@@ -370,7 +370,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
             rlc_coefficients
                 .par_iter()
                 .zip(polynomials.par_iter())
-                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * eval).collect())
+                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect())
                 .reduce(
                     || vec![G::ScalarField::zero(); poly_len],
                     |running, new| {
@@ -378,7 +378,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
                         running
                             .iter()
                             .zip(new.iter())
-                            .map(|(r, n)| *r + n)
+                            .map(|(r, n)| *r + *n)
                             .collect()
                     },
                 )

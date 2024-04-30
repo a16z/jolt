@@ -65,8 +65,8 @@ impl<F: JoltField> EqPolynomial<F> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r;
-                    *x -= &*y;
+                    *y = *x * *r;
+                    *x -= *y;
                 });
 
             size *= 2;

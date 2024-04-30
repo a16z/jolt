@@ -100,11 +100,11 @@ impl<F: JoltField> CubicSumcheckParams<F> {
         if *l == F::one() && *r == F::one() {
             *eq
         } else if *l == F::one() {
-            *r * eq
+            *r * *eq
         } else if *r == F::one() {
-            *l * eq
+            *l * *eq
         } else {
-            *l * r * eq
+            *l * *r * *eq
         }
     }
 
@@ -115,7 +115,7 @@ impl<F: JoltField> CubicSumcheckParams<F> {
         } else if *flag == F::one() {
             *eq * *h
         } else {
-            *eq * (*flag * h + (F::one() + flag.neg()))
+            *eq * (*flag * *h + (F::one() + flag.neg()))
         }
     }
 

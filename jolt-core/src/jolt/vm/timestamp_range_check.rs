@@ -275,7 +275,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
@@ -297,9 +297,9 @@ where
                         let read_timestamp =
                             F::from_u64(polynomials.read_timestamps[i][j]).unwrap();
                         polynomials.read_cts_read_timestamp[i][j] * gamma_squared
-                            + read_timestamp * gamma
+                            + read_timestamp * *gamma
                             + read_timestamp
-                            - tau
+                            - *tau
                     })
                     .collect();
                 let write_fingeprints_0 = read_fingerprints_0
@@ -313,9 +313,9 @@ where
                         let global_minus_read =
                             F::from_u64(j as u64 - polynomials.read_timestamps[i][j]).unwrap();
                         polynomials.read_cts_global_minus_read[i][j] * gamma_squared
-                            + global_minus_read * gamma
+                            + global_minus_read * *gamma
                             + global_minus_read
-                            - tau
+                            - *tau
                     })
                     .collect();
                 let write_fingeprints_1 = read_fingerprints_1
@@ -337,7 +337,7 @@ where
             .map(|i| {
                 let index = F::from_u64(i as u64).unwrap();
                 // 0 * gamma^2 +
-                index * gamma + index - tau
+                index * *gamma + index - *tau
             })
             .collect();
         let init_leaves = DensePolynomial::new(init_fingerprints);
