@@ -8,37 +8,6 @@ pub struct BiniusField<F: binius_field::TowerField>(F);
 
 impl<F: binius_field::TowerField> BiniusField<F> {}
 
-impl<F: binius_field::TowerField> CanonicalSerialize for BiniusField<F> {
-    fn serialize_with_mode<W: std::io::prelude::Write>(
-        &self,
-        writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        todo!()
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        todo!()
-    }
-}
-
-impl<F: binius_field::TowerField> CanonicalDeserialize for BiniusField<F> {
-    // Required method
-    fn deserialize_with_mode<R: std::io::prelude::Read>(
-        reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        todo!()
-    }
-}
-
-impl<F: binius_field::TowerField> ark_serialize::Valid for BiniusField<F> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        todo!()
-    }
-}
-
 impl<F: binius_field::TowerField> JoltField for BiniusField<F> {
     const NUM_BYTES: usize = 16;
 
@@ -155,5 +124,36 @@ impl<F: binius_field::TowerField> core::iter::Product for BiniusField<F> {
 impl<'a, F: binius_field::TowerField> core::iter::Product<&'a Self> for BiniusField<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| BiniusField(acc.0.mul(x.0)))
+    }
+}
+
+impl<F: binius_field::TowerField> CanonicalSerialize for BiniusField<F> {
+    fn serialize_with_mode<W: std::io::prelude::Write>(
+        &self,
+        writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        todo!()
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        todo!()
+    }
+}
+
+impl<F: binius_field::TowerField> CanonicalDeserialize for BiniusField<F> {
+    // Required method
+    fn deserialize_with_mode<R: std::io::prelude::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        todo!()
+    }
+}
+
+impl<F: binius_field::TowerField> ark_serialize::Valid for BiniusField<F> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        todo!()
     }
 }
