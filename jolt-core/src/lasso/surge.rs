@@ -1,5 +1,5 @@
-use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::BatchType;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};

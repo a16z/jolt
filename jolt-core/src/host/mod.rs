@@ -22,8 +22,8 @@ use common::{
 use tracer::ELFInstruction;
 
 use crate::{
-    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
     field::JoltField,
+    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
     utils::thread::unsafe_allocate_zero_vec,
 };
 

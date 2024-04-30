@@ -1,16 +1,12 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use super::JoltField;
-
-
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub struct BiniusField<F: binius_field::TowerField>(F);
 
-impl<F: binius_field::TowerField> BiniusField<F> {
-
-}
+impl<F: binius_field::TowerField> BiniusField<F> {}
 
 impl<F: binius_field::TowerField> CanonicalSerialize for BiniusField<F> {
     fn serialize_with_mode<W: std::io::prelude::Write>(
@@ -27,14 +23,14 @@ impl<F: binius_field::TowerField> CanonicalSerialize for BiniusField<F> {
 }
 
 impl<F: binius_field::TowerField> CanonicalDeserialize for BiniusField<F> {
-        // Required method
-        fn deserialize_with_mode<R: std::io::prelude::Read>(
-            reader: R,
-            compress: ark_serialize::Compress,
-            validate: ark_serialize::Validate
-        ) -> Result<Self, ark_serialize::SerializationError> {
-            todo!()
-        }
+    // Required method
+    fn deserialize_with_mode<R: std::io::prelude::Read>(
+        reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        todo!()
+    }
 }
 
 impl<F: binius_field::TowerField> ark_serialize::Valid for BiniusField<F> {
@@ -43,10 +39,7 @@ impl<F: binius_field::TowerField> ark_serialize::Valid for BiniusField<F> {
     }
 }
 
-
-
-
-impl<F: binius_field::TowerField> JoltField for BiniusField<F>{
+impl<F: binius_field::TowerField> JoltField for BiniusField<F> {
     const NUM_BYTES: usize = 16;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {

@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
 use crate::{
+    field::JoltField,
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
         lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
     },
-    field::JoltField,
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 

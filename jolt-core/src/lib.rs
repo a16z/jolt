@@ -9,6 +9,7 @@
 #![allow(long_running_const_eval)]
 
 pub mod benches;
+pub mod field;
 pub mod host;
 pub mod jolt;
 pub mod lasso;
@@ -17,7 +18,6 @@ pub mod poly;
 pub mod r1cs;
 mod subprotocols;
 pub mod utils;
-pub mod field;
 
 // Benchmarks
 pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;

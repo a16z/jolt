@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
+use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::field::JoltField;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
