@@ -2,7 +2,10 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use rand::rngs::StdRng;
 use rand_core::RngCore;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
+    IntoParallelRefMutIterator, ParallelIterator,
+};
 #[cfg(test)]
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -257,6 +260,10 @@ fn remap_address(a: u64, memory_layout: &MemoryLayout) -> u64 {
     }
 }
 
+fn remap_address_index(remapped_a: u64) -> usize {
+    (remapped_a - REGISTER_COUNT) as usize
+}
+
 const RS1: usize = 0;
 const RS2: usize = 1;
 const RD: usize = 2;
@@ -297,6 +304,26 @@ where
     pub t_final: DensePolynomial<F>,
 }
 
+fn merge_vec_array(
+    reg_arr: [Vec<u64>; REG_OPS_PER_INSTRUCTION],
+    ram_arr: [Vec<u64>; RAM_OPS_PER_INSTRUCTION],
+    memory_trace_len: usize,
+) -> [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] {
+    assert!(MEMORY_OPS_PER_INSTRUCTION == REG_OPS_PER_INSTRUCTION + RAM_OPS_PER_INSTRUCTION);
+    let mut merged_arr: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
+        std::array::from_fn(|_| Vec::with_capacity(memory_trace_len));
+
+    merged_arr.par_iter_mut().enumerate().for_each(|(i, v)| {
+        if i < REG_OPS_PER_INSTRUCTION {
+            *v = reg_arr[i].clone();
+        } else {
+            *v = ram_arr[i - REG_OPS_PER_INSTRUCTION].clone();
+        }
+    });
+
+    merged_arr
+}
+
 fn map_to_polys<F: PrimeField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePolynomial<F>; N] {
     vals.par_iter()
         .map(|vals| DensePolynomial::from_u64(vals))
@@ -318,9 +345,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
 
         let m = memory_trace.len();
         assert!(m.is_power_of_two());
-
-        let load_store_flags = load_store_flags.to_owned();
-        let memory_layout = program_io.memory_layout.to_owned();
 
         let max_trace_address = memory_trace
             .iter()
@@ -370,25 +394,20 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let write_tuples: Arc<Mutex<HashSet<(u64, u64, u64)>>> =
             Arc::new(Mutex::new(HashSet::new()));
 
-        let memory_trace_reg: Vec<[MemoryOp; 3]> = memory_trace
-            .par_iter()
-            .map(|item| [item[0].clone(), item[1].clone(), item[2].clone()])
-            .collect();
-        let memory_trace_ram: Vec<[MemoryOp; 4]> = memory_trace
-            .par_iter()
-            .map(|item| {
-                [
-                    item[3].clone(),
-                    item[4].clone(),
-                    item[5].clone(),
-                    item[6].clone(),
-                ]
-            })
-            .collect();
-        let mut v_final_reg = v_init[..32].to_vec();
-        let mut v_final_ram = v_init[32..].to_vec();
-        let mut t_final_reg = vec![0; 32];
-        let mut t_final_ram = vec![0; memory_size - 32];
+        let (memory_trace_reg, memory_trace_ram): (Vec<Vec<MemoryOp>>, Vec<Vec<MemoryOp>>) =
+            memory_trace
+                .into_par_iter()
+                .map(|item| {
+                    let (reg, ram) = item.split_at(3);
+                    (reg.to_vec(), ram.to_vec())
+                })
+                .unzip();
+
+        let reg_count = REGISTER_COUNT as usize;
+        let mut v_final_reg = v_init[..reg_count].to_vec();
+        let mut v_final_ram = v_init[reg_count..].to_vec();
+        let mut t_final_reg = vec![0; reg_count];
+        let mut t_final_ram = vec![0; memory_size - reg_count];
 
         let mut v_read_reg: [Vec<u64>; REG_OPS_PER_INSTRUCTION] =
             std::array::from_fn(|_| Vec::with_capacity(m));
@@ -407,9 +426,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         let mut v_write_ram: [Vec<u64>; 4] = std::array::from_fn(|_| Vec::with_capacity(m));
         let mut t_write_ram: [Vec<u64>; 4] = std::array::from_fn(|_| Vec::with_capacity(m));
 
-        let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
-        let _enter = span.enter();
-
         #[cfg(test)]
         let r_tuples_ram = read_tuples.clone();
         #[cfg(test)]
@@ -419,9 +435,12 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
         #[cfg(test)]
         let w_tuples_reg = write_tuples.clone();
 
+        let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_processing");
+        let _enter = span.enter();
+
         let result = rayon::join(
             move || {
-                let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_ram");
+                let span = tracing::span!(tracing::Level::DEBUG, "ram_trace_processing");
                 let _enter = span.enter();
 
                 let lb_flag = &load_store_flags[0];
@@ -446,9 +465,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                     {
                         match step[RAM_1_INDEX] {
                             MemoryOp::Read(a, v) => {
-                                assert!(a >= memory_layout.input_start);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                assert!(a >= program_io.memory_layout.input_start);
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 debug_assert_eq!(v, v_final_ram[remapped_a_index]);
 
                                 #[cfg(test)]
@@ -476,9 +495,9 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                                 ram_word_address = a;
                             }
                             MemoryOp::Write(a, v_new) => {
-                                assert!(a >= memory_layout.input_start);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                assert!(a >= program_io.memory_layout.input_start);
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 let v_old = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
@@ -540,8 +559,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                             MemoryOp::Read(a, v) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 1);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 debug_assert_eq!(v, v_final_ram[remapped_a_index]);
 
                                 #[cfg(test)]
@@ -569,8 +588,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                             MemoryOp::Write(a, v_new) => {
                                 assert!(is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 1);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 let v_old = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
@@ -629,8 +648,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                             MemoryOp::Read(a, v) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 2);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 debug_assert_eq!(v, v_final_ram[remapped_a_index]);
 
                                 #[cfg(test)]
@@ -658,8 +677,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                             MemoryOp::Write(a, v_new) => {
                                 assert!(is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 2);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 let v_old = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
@@ -691,8 +710,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                             MemoryOp::Read(a, v) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 3);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 debug_assert_eq!(v, v_final_ram[remapped_a_index]);
 
                                 #[cfg(test)]
@@ -720,8 +739,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                             MemoryOp::Write(a, v_new) => {
                                 assert!(is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 3);
-                                let remapped_a = remap_address(a, &memory_layout);
-                                let remapped_a_index = (remapped_a - 32) as usize;
+                                let remapped_a = remap_address(a, &program_io.memory_layout);
+                                let remapped_a_index = remap_address_index(remapped_a);
                                 let v_old = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
@@ -787,7 +806,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 )
             },
             move || {
-                let span = tracing::span!(tracing::Level::DEBUG, "memory_trace_register");
+                let span = tracing::span!(tracing::Level::DEBUG, "register_trace_processing");
                 let _enter = span.enter();
 
                 for (i, step) in memory_trace_reg.iter().enumerate() {
@@ -886,6 +905,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
                 (v_final_reg, t_final_reg, v_read_reg, t_read_reg, v_write_rd)
             },
         );
+        drop(_enter);
+        drop(span);
 
         let (mut v_final_reg, mut t_final_reg, v_read_reg, t_read_reg, v_write_rd) = result.1;
         let (v_final_ram, t_final_ram, v_read_ram, t_read_ram, v_write_ram, t_write_ram, a_ram) =
@@ -899,28 +920,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             t_final_reg.extend(t_final_ram);
             t_final_reg
         };
-        // TODO: avoid cloning
-        let v_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] = [
-            v_read_reg[RS1].clone(),
-            v_read_reg[RS2].clone(),
-            v_read_reg[RD].clone(),
-            v_read_ram[RAM_1_INDEX].clone(),
-            v_read_ram[RAM_2_INDEX].clone(),
-            v_read_ram[RAM_3_INDEX].clone(),
-            v_read_ram[RAM_4_INDEX].clone(),
-        ];
-        let t_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] = [
-            t_read_reg[RS1].clone(),
-            t_read_reg[RS2].clone(),
-            t_read_reg[RD].clone(),
-            t_read_ram[RAM_1_INDEX].clone(),
-            t_read_ram[RAM_2_INDEX].clone(),
-            t_read_ram[RAM_3_INDEX].clone(),
-            t_read_ram[RAM_4_INDEX].clone(),
-        ];
-
-        drop(_enter);
-        drop(span);
+        let v_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
+            merge_vec_array(v_read_reg, v_read_ram, m);
+        let t_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
+            merge_vec_array(t_read_reg, t_read_ram, m);
 
         #[cfg(test)]
         {
@@ -957,7 +960,6 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> ReadWriteMemory<F, G> {
             || map_to_polys(&t_read),
             || map_to_polys(&t_write_ram)
         );
-
         (
             Self {
                 _group: PhantomData,
