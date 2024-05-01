@@ -1,10 +1,7 @@
 use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-    IntoParallelRefMutIterator, ParallelIterator,
-};
 use rand::RngCore;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(test)]
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -28,8 +25,7 @@ use crate::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION,
-    NUM_R1CS_POLYS, RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT,
-    REG_OPS_PER_INSTRUCTION,
+    RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryLayout, MemoryOp, RV32IM};
 use common::to_ram_address;
@@ -301,19 +297,18 @@ where
 }
 
 fn merge_vec_array(
-    reg_arr: [Vec<u64>; REG_OPS_PER_INSTRUCTION],
-    ram_arr: [Vec<u64>; RAM_OPS_PER_INSTRUCTION],
+    mut reg_arr: [Vec<u64>; REG_OPS_PER_INSTRUCTION],
+    mut ram_arr: [Vec<u64>; RAM_OPS_PER_INSTRUCTION],
     memory_trace_len: usize,
 ) -> [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] {
-    assert!(MEMORY_OPS_PER_INSTRUCTION == REG_OPS_PER_INSTRUCTION + RAM_OPS_PER_INSTRUCTION);
     let mut merged_arr: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
         std::array::from_fn(|_| Vec::with_capacity(memory_trace_len));
 
-    merged_arr.par_iter_mut().enumerate().for_each(|(i, v)| {
+    merged_arr.iter_mut().enumerate().for_each(|(i, v)| {
         if i < REG_OPS_PER_INSTRUCTION {
-            *v = reg_arr[i].clone();
+            *v = std::mem::take(&mut reg_arr[i]);
         } else {
-            *v = ram_arr[i - REG_OPS_PER_INSTRUCTION].clone();
+            *v = std::mem::take(&mut ram_arr[i - REG_OPS_PER_INSTRUCTION]);
         }
     });
 
@@ -473,9 +468,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram
                                         .lock()
                                         .unwrap()
@@ -503,9 +495,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram.lock().unwrap().insert((
                                         remapped_a,
                                         v_new,
@@ -566,9 +555,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram
                                         .lock()
                                         .unwrap()
@@ -595,9 +581,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram.lock().unwrap().insert((
                                         remapped_a,
                                         v_new,
@@ -655,9 +638,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram
                                         .lock()
                                         .unwrap()
@@ -684,9 +664,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram.lock().unwrap().insert((
                                         remapped_a,
                                         v_new,
@@ -717,9 +694,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram
                                         .lock()
                                         .unwrap()
@@ -746,9 +720,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                         v_old,
                                         t_final_ram[remapped_a_index],
                                     ));
-                                }
-                                #[cfg(test)]
-                                {
                                     w_tuples_ram.lock().unwrap().insert((
                                         remapped_a,
                                         v_new,
@@ -820,9 +791,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                     v,
                                     t_final_reg[a as usize],
                                 ));
-                            }
-                            #[cfg(test)]
-                            {
                                 w_tuples_reg.lock().unwrap().insert((a, v, timestamp));
                             }
 
@@ -847,9 +815,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                     v,
                                     t_final_reg[a as usize],
                                 ));
-                            }
-                            #[cfg(test)]
-                            {
                                 w_tuples_reg.lock().unwrap().insert((a, v, timestamp));
                             }
 
@@ -877,9 +842,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                     v_old,
                                     t_final_reg[a as usize],
                                 ));
-                            }
-                            #[cfg(test)]
-                            {
                                 w_tuples_reg
                                     .lock()
                                     .unwrap()
