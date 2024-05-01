@@ -755,8 +755,8 @@ mod tests {
         let write_leaves = &read_write_leaves[1];
         let final_leaves = &init_final_leaves[1];
 
-        let read_final_leaves = [read_leaves.evals(), final_leaves.evals()].concat();
-        let init_write_leaves = [init_leaves.evals(), write_leaves.evals()].concat();
+        let read_final_leaves = [read_leaves.clone(), final_leaves.clone()].concat();
+        let init_write_leaves = [init_leaves.clone(), write_leaves.clone()].concat();
         let difference: Vec<Fr> = get_difference(&read_final_leaves, &init_write_leaves);
         assert_eq!(difference.len(), 0);
     }

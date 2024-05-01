@@ -1,9 +1,8 @@
 use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{
-    BatchedCubicSumcheck, BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
+    BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
     DefaultBatchedGrandProduct,
 };
-use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
@@ -552,11 +551,11 @@ where
     }
 }
 
-struct NoopGrandProduct;
+pub struct NoopGrandProduct;
 impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
     type Leaves = ();
 
-    fn construct(leaves: Self::Leaves) -> Self {
+    fn construct(_leaves: Self::Leaves) -> Self {
         NoopGrandProduct
     }
     fn num_layers(&self) -> usize {
@@ -565,19 +564,21 @@ impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
     fn claims(&self) -> Vec<F> {
         vec![]
     }
-    fn layers(self) -> impl Iterator<Item = impl BatchedCubicSumcheck<F>> {
-        Vec::<BatchedGrandProductLayer<F>>::with_capacity(0).into_iter()
+
+    fn layers<'a>(&'a mut self) -> impl Iterator<Item = &'a mut dyn BatchedGrandProductLayer<F>> {
+        vec![].into_iter()
     }
+
     fn prove_grand_product(
         self,
-        transcript: &mut ProofTranscript,
+        _transcript: &mut ProofTranscript,
     ) -> (BatchedGrandProductProof<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
     fn verify_grand_product(
-        proof: &BatchedGrandProductProof<F>,
-        claims: &Vec<F>,
-        transcript: &mut ProofTranscript,
+        _proof: &BatchedGrandProductProof<F>,
+        _claims: &Vec<F>,
+        _transcript: &mut ProofTranscript,
     ) -> (Vec<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
@@ -687,8 +688,6 @@ where
 
         let (batched_grand_product, r_grand_product) =
             batched_circuit.prove_grand_product(transcript);
-
-        drop_in_background_thread(leaves);
 
         (batched_grand_product, multiset_hashes, r_grand_product)
     }

@@ -1107,7 +1107,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             let r_i = transcript.challenge_scalar(b"challenge_nextround");
 
             r.push(r_i);
-            
+
             // evaluate the claimed degree-ell polynomial at r_i
             e = poly.evaluate(&r_i);
         }

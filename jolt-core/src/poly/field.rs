@@ -49,6 +49,7 @@ pub trait JoltField:
     fn zero() -> Self;
     fn one() -> Self;
     fn from_u64(n: u64) -> Option<Self>;
+    fn double(&self) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
 }
@@ -78,6 +79,10 @@ impl JoltField for ark_bn254::Fr {
 
     fn from_u64(n: u64) -> Option<Self> {
         <Self as ark_ff::PrimeField>::from_u64(n)
+    }
+
+    fn double(&self) -> Self {
+        <Self as ark_ff::Field>::double(self)
     }
 
     fn square(&self) -> Self {

@@ -191,7 +191,8 @@ where
         read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
-        (batched_circuit, batched_circuit.claims())
+        let claims = batched_circuit.claims();
+        (batched_circuit, claims)
     }
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
@@ -203,7 +204,8 @@ where
         init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
-        (batched_circuit, batched_circuit.claims())
+        let claims = batched_circuit.claims();
+        (batched_circuit, claims)
     }
 
     fn interleave_hashes(
