@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -7,11 +7,11 @@ use crate::utils::math::Math;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct SrlSubtable<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> {
+pub struct SrlSubtable<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize>
+impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize>
     SrlSubtable<F, CHUNK_INDEX, WORD_SIZE>
 {
     pub fn new() -> Self {
@@ -21,7 +21,7 @@ impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize>
     }
 }
 
-impl<F: PrimeField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtable<F>
+impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtable<F>
     for SrlSubtable<F, CHUNK_INDEX, WORD_SIZE>
 {
     fn materialize(&self, M: usize) -> Vec<F> {

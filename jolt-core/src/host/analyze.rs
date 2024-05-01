@@ -1,10 +1,12 @@
 use std::{collections::HashMap, fs::File, io, path::PathBuf};
 
-use ark_ff::PrimeField;
 use serde::{Deserialize, Serialize};
 use tracer::{ELFInstruction, JoltDevice, RVTraceRow, RV32IM};
 
-use crate::jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I};
+use crate::{
+    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+    poly::field::JoltField,
+};
 
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
 
@@ -27,7 +29,7 @@ impl ProgramSummary {
         self.memory_trace.len()
     }
 
-    pub fn analyze<F: PrimeField>(&self) -> Vec<(RV32IM, usize)> {
+    pub fn analyze<F: JoltField>(&self) -> Vec<(RV32IM, usize)> {
         let mut counts = HashMap::<RV32IM, usize>::new();
         for row in self.raw_trace.iter() {
             let op = row.instruction.opcode;

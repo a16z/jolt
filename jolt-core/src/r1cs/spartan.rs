@@ -1,13 +1,12 @@
 #![allow(clippy::len_without_is_empty)]
 
-use crate::poly::hyrax::BatchedHyraxOpeningProof;
-use crate::poly::pedersen::PedersenGenerators;
+use crate::poly::commitment::commitment_scheme::BatchType;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::transcript::ProofTranscript;
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
@@ -17,13 +16,12 @@ use thiserror::Error;
 
 use super::r1cs_shape::R1CSShape;
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, hyrax::HyraxCommitment},
+    poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
-use common::constants::NUM_R1CS_POLYS;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<F: PrimeField> {
+pub struct UniformSpartanKey<F: JoltField> {
     shape_single_step: R1CSShape<F>, // Single step shape
     num_cons_total: usize,           // Number of constraints
     num_vars_total: usize,           // Number of variables
@@ -31,7 +29,7 @@ pub struct UniformSpartanKey<F: PrimeField> {
     pub(crate) vk_digest: F,         // digest of the verifier's key
 }
 
-impl<F: PrimeField> UniformSpartanKey<F> {
+impl<F: JoltField> UniformSpartanKey<F> {
     /// Returns the digest of the r1cs shape
     pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
         let mut compressed_bytes = Vec::new();
@@ -50,8 +48,8 @@ impl<F: PrimeField> UniformSpartanKey<F> {
             });
 
             // turn the bit vector into a scalar
-            let mut digest = F::ZERO;
-            let mut coeff = F::ONE;
+            let mut digest = F::zero();
+            let mut coeff = F::one();
             for bit in bv {
                 if bit {
                     digest += coeff;
@@ -94,26 +92,26 @@ pub enum SpartanError {
     #[error("InvalidWitnessLength")]
     InvalidWitnessLength,
 
-    /// returned when an invalid Hyrax proof is provided
-    #[error("InvalidHyraxProof")]
-    InvalidHyraxProof,
+    /// returned when an invalid PCS proof is provided
+    #[error("InvalidPCSProof")]
+    InvalidPCSProof,
 }
 
 // Trait which will kick out a small and big R1CS shape
-pub trait UniformShapeBuilder<F: PrimeField> {
+pub trait UniformShapeBuilder<F: JoltField> {
     fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F>;
 }
 
 // TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
 // and can run all the normal DensePolynomial ops.
-pub struct SegmentedPaddedWitness<F: PrimeField> {
+pub struct SegmentedPaddedWitness<F: JoltField> {
     total_len: usize,
     segments: Vec<Vec<F>>,
     segment_len: usize,
     zero: F,
 }
 
-impl<F: PrimeField> SegmentedPaddedWitness<F> {
+impl<F: JoltField> SegmentedPaddedWitness<F> {
     pub fn new(total_len: usize, segments: Vec<Vec<F>>) -> Self {
         let segment_len = segments[0].len();
         for segment in &segments {
@@ -127,7 +125,7 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
             total_len,
             segments,
             segment_len,
-            zero: F::ZERO,
+            zero: F::zero(),
         }
     }
 
@@ -137,10 +135,13 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
 
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::new(point).evals();
-        self.segments
+        let evals = self
+            .segments
             .par_iter()
             .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
-            .collect()
+            .collect();
+        drop_in_background_thread(chi);
+        evals
     }
 
     pub fn into_dense_polys(self) -> Vec<DensePolynomial<F>> {
@@ -151,7 +152,7 @@ impl<F: PrimeField> SegmentedPaddedWitness<F> {
     }
 }
 
-impl<F: PrimeField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
+impl<F: JoltField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
     type Output = F;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -167,11 +168,11 @@ impl<F: PrimeField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
     }
 }
 
-pub trait IndexablePoly<F: PrimeField>: std::ops::Index<usize, Output = F> + Sync {
+pub trait IndexablePoly<F: JoltField>: std::ops::Index<usize, Output = F> + Sync {
     fn len(&self) -> usize;
 }
 
-impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
+impl<F: JoltField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
     fn len(&self) -> usize {
         self.total_len
     }
@@ -181,19 +182,19 @@ impl<F: PrimeField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
 /// The proof is produced using Spartan's combination of the sum-check and
 /// the commitment to a vector viewed as a polynomial commitment
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
     eval_arg: Vec<F>, // TODO(arasuarun / sragss): better name
     claimed_witnesss_evals: Vec<F>,
-    opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
+    opening_proof: C::BatchedProof,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
-    pub fn setup_precommitted<C: UniformShapeBuilder<F>>(
-        circuit: &C,
+    pub fn setup_precommitted<ShapeBuilder: UniformShapeBuilder<F>>(
+        circuit: &ShapeBuilder,
         padded_num_steps: usize,
         memory_start: u64,
     ) -> Result<UniformSpartanKey<F>, SpartanError> {
@@ -261,6 +262,25 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         let mut poly_Bz = DensePolynomial::new(B_z);
         let mut poly_Cz = DensePolynomial::new(C_z);
 
+        #[cfg(test)]
+        {
+            // Check that Z is a satisfying assignment
+            for (i, ((az, bz), cz)) in poly_Az
+                .evals_ref()
+                .iter()
+                .zip(poly_Bz.evals_ref())
+                .zip(poly_Cz.evals_ref())
+                .enumerate()
+            {
+                if *az * bz != *cz {
+                    let padded_segment_len = segmented_padded_witness.segment_len;
+                    let error_segment_index = i / padded_segment_len;
+                    let error_step_index = i % padded_segment_len;
+                    panic!("witness is not a satisfying assignment. Failed on segment {error_segment_index} at step {error_step_index}");
+                }
+            }
+        }
+
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
             if B.is_zero() || C.is_zero() {
@@ -275,7 +295,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         };
 
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
-            SumcheckInstanceProof::prove_spartan_cubic::<G, _>(
+            SumcheckInstanceProof::prove_spartan_cubic::<_>(
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
@@ -401,7 +421,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
 
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<G, _>(
+            SumcheckInstanceProof::prove_spartan_quadratic::<_>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
@@ -426,10 +446,11 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
             segmented_padded_witness.into_dense_polys();
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
             witness_segment_polys.iter().collect();
-        let opening_proof = BatchedHyraxOpeningProof::prove(
+        let opening_proof = C::batch_prove(
             &witness_segment_polys_ref,
             r_y_point,
             &witness_evals,
+            BatchType::Big,
             transcript,
         );
 
@@ -455,10 +476,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
     pub fn verify_precommitted(
         &self,
-        witness_segment_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>>,
+        witness_segment_commitments: Vec<&C::Commitment>,
         key: &UniformSpartanKey<F>,
         io: &[F],
-        generators: &PedersenGenerators<G>,
+        generators: &C::Setup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         assert_eq!(io.len(), 0); // Currently not using io
@@ -559,8 +580,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         That is, it ignores the case where x is all 1s, outputting 0.
         Assumes x and y are provided big-endian. */
         let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
-            let one = F::from(1_u64);
-            let _two = F::from(2_u64);
+            let one = F::from_u64(1_u64).unwrap();
+            let _two = F::from_u64(2_u64).unwrap();
 
             /* If y+1 = x, then the two bit vectors are of the following form.
                 Let k be the longest suffix of 1s in x.
@@ -630,26 +651,26 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> UniformSpartanProof<F, G> {
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        self.opening_proof
-            .verify(
-                generators,
-                r_y_point,
-                &self.claimed_witnesss_evals,
-                &witness_segment_commitments,
-                transcript,
-            )
-            .map_err(|_| SpartanError::InvalidHyraxProof)?;
+        C::batch_verify(
+            &self.opening_proof,
+            generators,
+            r_y_point,
+            &self.claimed_witnesss_evals,
+            &witness_segment_commitments,
+            transcript,
+        )
+        .map_err(|_| SpartanError::InvalidPCSProof)?;
 
         Ok(())
     }
 }
 
-struct SparsePolynomial<F: PrimeField> {
+struct SparsePolynomial<F: JoltField> {
     num_vars: usize,
     Z: Vec<(usize, F)>,
 }
 
-impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
+impl<Scalar: JoltField> SparsePolynomial<Scalar> {
     pub fn new(num_vars: usize, Z: Vec<(usize, Scalar)>) -> Self {
         SparsePolynomial { num_vars, Z }
     }
@@ -658,12 +679,12 @@ impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
     /// return 1 when a == r, otherwise return 0.
     fn compute_chi(a: &[bool], r: &[Scalar]) -> Scalar {
         assert_eq!(a.len(), r.len());
-        let mut chi_i = Scalar::ONE;
+        let mut chi_i = Scalar::one();
         for j in 0..r.len() {
             if a[j] {
                 chi_i *= r[j];
             } else {
-                chi_i *= Scalar::ONE - r[j];
+                chi_i *= Scalar::one() - r[j];
             }
         }
         chi_i

@@ -1,6 +1,7 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::JoltInstruction;
@@ -16,7 +17,7 @@ impl JoltInstruction for XORInstruction {
         (self.0, self.1)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         concatenate_lookups(vals, C, log2(M) as usize / 2)
     }
 
@@ -24,7 +25,7 @@ impl JoltInstruction for XORInstruction {
         1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         _: usize,
@@ -41,7 +42,6 @@ impl JoltInstruction for XORInstruction {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }

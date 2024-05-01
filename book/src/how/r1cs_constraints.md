@@ -44,7 +44,7 @@ The inputs required for the constraint system for a single CPU step are:
 
 #### Constraint system 
 
-The constraints for a CPU step are detailed in the `get_jolt_matrices()` function in [`constraints.rs`](../../../jolt-core/src/r1cs/constraints.rs). 
+The constraints for a CPU step are detailed in the `get_jolt_matrices()` function in [`constraints.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/constraints.rs). 
 
 ### Reusing commitments 
 
@@ -68,4 +68,4 @@ The main changes involved in making this happen are:
 - The inputs and witnesses are provided to the constraint system as segments. 
 - Additional constraints are used to enforce consistency of the state transferred between CPU steps. 
 
-These changes and their impact on the code are visible in [`spartan.rs`](../../../jolt-core/src/r1cs/spartan.rs).
+These changes and their impact on the code are visible in [`spartan.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/r1cs/spartan.rs).

@@ -1,10 +1,11 @@
-use ark_ff::PrimeField;
 use ark_std::log2;
 use rand::prelude::StdRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{sll::SllSubtable, LassoSubtable};
+use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
@@ -17,7 +18,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         (self.0, self.1)
     }
 
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F {
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         assert!(C <= 10);
         concatenate_lookups(vals, C, (log2(M) / 2) as usize)
     }
@@ -26,7 +27,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
         1
     }
 
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         _: usize,
@@ -64,7 +65,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        use rand_core::RngCore;
         Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }

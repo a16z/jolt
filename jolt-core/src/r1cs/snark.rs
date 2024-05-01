@@ -4,10 +4,10 @@
     clippy::too_many_arguments
 )]
 
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    poly::{hyrax::HyraxCommitment, pedersen::PedersenGenerators},
     r1cs::r1cs_shape::R1CSShape,
     utils::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
@@ -20,20 +20,16 @@ use super::{
     spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof},
 };
 
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{
-    constants::{MEMORY_OPS_PER_INSTRUCTION, NUM_R1CS_POLYS},
-    rv_trace::NUM_CIRCUIT_FLAGS,
-};
+use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use strum::EnumCount;
 
 #[tracing::instrument(name = "synthesize_witnesses", skip_all)]
 /// Returns (io, aux) = (pc_out, pc, aux)
-fn synthesize_witnesses<F: PrimeField>(
+fn synthesize_witnesses<F: JoltField>(
     inputs: &R1CSInputs<F>,
     num_aux: usize,
 ) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
@@ -90,7 +86,7 @@ fn synthesize_witnesses<F: PrimeField>(
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct R1CSInputs<'a, F: PrimeField> {
+pub struct R1CSInputs<'a, F: JoltField> {
     padded_trace_len: usize,
     bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
@@ -106,7 +102,7 @@ pub struct R1CSInputs<'a, F: PrimeField> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct R1CSStepInputs<F: PrimeField> {
+pub struct R1CSStepInputs<F: JoltField> {
     pub padded_trace_len: usize,
     pub input_pc: F,
     pub bytecode_v: Vec<F>,
@@ -119,7 +115,7 @@ pub struct R1CSStepInputs<F: PrimeField> {
     pub instruction_flags_bits: Vec<F>,
 }
 
-impl<'a, F: PrimeField> R1CSInputs<'a, F> {
+impl<'a, F: JoltField> R1CSInputs<'a, F> {
     #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
     pub fn new(
         padded_trace_len: usize,
@@ -172,7 +168,7 @@ impl<'a, F: PrimeField> R1CSInputs<'a, F> {
 
     pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
         let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
-            F::ZERO
+            F::zero()
         } else {
             self.bytecode_a[step_index]
         };
@@ -297,15 +293,15 @@ impl<'a, F: PrimeField> R1CSInputs<'a, F> {
 
 /// Commitments unique to R1CS.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSCommitment<G: CurveGroup> {
-    io: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    aux: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    chunks_x: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    chunks_y: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
-    circuit_flags: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+pub struct R1CSCommitment<C: CommitmentScheme> {
+    io: Vec<C::Commitment>,
+    aux: Vec<C::Commitment>,
+    /// Operand chunks { x, y }
+    chunks: Vec<C::Commitment>,
+    circuit_flags: Vec<C::Commitment>,
 }
 
-impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
+impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
     fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"R1CSCommitment_begin");
         for commitment in &self.io {
@@ -314,11 +310,8 @@ impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
         for commitment in &self.aux {
             commitment.append_to_transcript(b"aux", transcript);
         }
-        for commitment in &self.chunks_x {
-            commitment.append_to_transcript(b"chunks_x", transcript);
-        }
-        for commitment in &self.chunks_y {
-            commitment.append_to_transcript(b"chunks_y", transcript);
+        for commitment in &self.chunks {
+            commitment.append_to_transcript(b"chunks_s", transcript);
         }
         for commitment in &self.circuit_flags {
             commitment.append_to_transcript(b"circuit_flags", transcript);
@@ -328,12 +321,12 @@ impl<G: CurveGroup> AppendToTranscript for R1CSCommitment<G> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct R1CSProof<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     pub key: UniformSpartanKey<F>,
-    proof: UniformSpartanProof<F, G>,
+    proof: UniformSpartanProof<F, C>,
 }
 
-impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
     /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
     #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
     pub fn compute_witness_commit(
@@ -342,13 +335,13 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         padded_trace_len: usize,
         memory_start: u64,
         inputs: &R1CSInputs<F>,
-        generators: &PedersenGenerators<G>,
-    ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<G>), SpartanError> {
+        generators: &C::Setup,
+    ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<C>), SpartanError> {
         let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
         let _enter = span.enter();
         let mut jolt_shape = R1CSBuilder::default();
         R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);
-        let key = UniformSpartanProof::<F, G>::setup_precommitted(
+        let key = UniformSpartanProof::<F, C>::setup_precommitted(
             &jolt_shape,
             padded_trace_len,
             memory_start,
@@ -356,32 +349,35 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
         drop(_enter);
         drop(span);
 
-        // let (io_segments, aux_segments) = synthesize_state_aux_segments(&inputs, 2, jolt_shape.num_internal);
         let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
         let io_segments = vec![pc_out, pc];
-        let io_comms = HyraxCommitment::batch_commit(&io_segments, generators);
-        let aux_comms = HyraxCommitment::batch_commit(&aux, generators);
-
-        // Commit to R1CS specific items
-        let commit_to_chunks = |data: &Vec<F>| -> Vec<HyraxCommitment<NUM_R1CS_POLYS, G>> {
-            data.par_chunks(padded_trace_len)
-                .map(|chunk| HyraxCommitment::commit_slice(chunk, generators))
-                .collect()
-        };
+        let io_segments_ref = vec![io_segments[0].as_slice(), io_segments[1].as_slice()];
+        let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
+        let io_comms = C::batch_commit(io_segments_ref.as_slice(), generators, BatchType::Big);
+        let aux_comms = C::batch_commit(aux_ref.as_slice(), generators, BatchType::Big);
 
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
         let _guard = span.enter();
-        let chunks_x_comms = commit_to_chunks(&inputs.chunks_x);
-        let chunks_y_comms = commit_to_chunks(&inputs.chunks_y);
-        let circuit_flags_comm = commit_to_chunks(&inputs.circuit_flags_bits);
+        let chunk_batch_size =
+            inputs.chunks_x.len() / padded_trace_len + inputs.chunks_y.len() / padded_trace_len;
+        let mut chunk_batch_slices: Vec<&[F]> = Vec::with_capacity(chunk_batch_size);
+        for batchee in [&inputs.chunks_x, &inputs.chunks_y].iter() {
+            chunk_batch_slices.extend(batchee.chunks(padded_trace_len));
+        }
+        let chunks_comms =
+            C::batch_commit(chunk_batch_slices.as_slice(), generators, BatchType::Big);
+
+        let circuit_flag_slices: Vec<&[F]> =
+            inputs.circuit_flags_bits.chunks(padded_trace_len).collect();
+        let circuit_flags_comms =
+            C::batch_commit(circuit_flag_slices.as_slice(), generators, BatchType::Big);
         drop(_guard);
 
         let r1cs_commitments = R1CSCommitment {
             io: io_comms,
             aux: aux_comms,
-            chunks_x: chunks_x_comms,
-            chunks_y: chunks_y_comms,
-            circuit_flags: circuit_flags_comm,
+            chunks: chunks_comms,
+            circuit_flags: circuit_flags_comms,
         };
 
         let cloning_stuff_span =
@@ -391,8 +387,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
         let mut w_segments: Vec<Vec<F>> =
             Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux.len());
-        // TODO(sragss / arasuarun): rm clones in favor of references -- can be removed when HyraxCommitment can take Vec<Vec<F>>.
-        w_segments.par_extend(io_segments.into_par_iter());
+        w_segments.extend(io_segments.into_iter());
         w_segments.par_extend(inputs_segments.into_par_iter());
         w_segments.par_extend(aux.into_par_iter());
 
@@ -410,13 +405,10 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
     ) -> Result<Self, SpartanError> {
         // TODO(sragss): Fiat shamir (relevant) commitments
         let proof = UniformSpartanProof::prove_precommitted(&key, witness_segments, transcript)?;
-        Ok(R1CSProof::<F, G> { proof, key })
+        Ok(R1CSProof::<F, C> { proof, key })
     }
 
-    fn format_commitments(
-        jolt_commitments: &JoltCommitments<G>,
-        C: usize,
-    ) -> Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> {
+    fn format_commitments(jolt_commitments: &JoltCommitments<C>, C: usize) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
@@ -427,7 +419,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
             [jolt_commitments.instruction_lookups.trace_commitment.len() - RV32I::COUNT - 1
                 ..jolt_commitments.instruction_lookups.trace_commitment.len() - 1];
 
-        let mut combined_commitments: Vec<&HyraxCommitment<NUM_R1CS_POLYS, G>> = Vec::new();
+        let mut combined_commitments: Vec<&C::Commitment> = Vec::new();
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
 
         combined_commitments.push(&bytecode_trace_commitments[0]); // a
@@ -439,8 +431,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
         combined_commitments.extend(memory_trace_commitments.iter());
 
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks_x.iter());
-        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks_y.iter());
+        combined_commitments.extend(r1cs_commitments.as_ref().unwrap().chunks.iter());
 
         combined_commitments.extend(instruction_lookup_indices_commitments.iter());
 
@@ -463,8 +454,8 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
 
     pub fn verify(
         &self,
-        generators: &PedersenGenerators<G>,
-        jolt_commitments: JoltCommitments<G>,
+        generators: &C::Setup,
+        jolt_commitments: JoltCommitments<C>,
         C: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
@@ -480,7 +471,7 @@ impl<F: PrimeField, G: CurveGroup<ScalarField = F>> R1CSProof<F, G> {
     }
 }
 
-impl<F: PrimeField> UniformShapeBuilder<F> for R1CSBuilder {
+impl<F: JoltField> UniformShapeBuilder<F> for R1CSBuilder {
     fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F> {
         let mut jolt_shape = R1CSBuilder::default();
         R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);

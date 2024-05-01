@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -7,11 +7,11 @@ use crate::utils::math::Math;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct SraSignSubtable<F: PrimeField, const WORD_SIZE: usize> {
+pub struct SraSignSubtable<F: JoltField, const WORD_SIZE: usize> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField, const WORD_SIZE: usize> SraSignSubtable<F, WORD_SIZE> {
+impl<F: JoltField, const WORD_SIZE: usize> SraSignSubtable<F, WORD_SIZE> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -19,7 +19,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> SraSignSubtable<F, WORD_SIZE> {
     }
 }
 
-impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<F, WORD_SIZE> {
+impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<F, WORD_SIZE> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = Vec::with_capacity(M);
 

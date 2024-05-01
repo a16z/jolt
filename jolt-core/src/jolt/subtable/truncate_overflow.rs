@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -10,11 +10,11 @@ use super::LassoSubtable;
 /// Input z is of 65 bits, which is split into 20-bit chunks.
 /// This subtable is used to remove the overflow bit from the 4th chunk.
 #[derive(Default)]
-pub struct TruncateOverflowSubtable<F: PrimeField, const WORD_SIZE: usize> {
+pub struct TruncateOverflowSubtable<F: JoltField, const WORD_SIZE: usize> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZE> {
+impl<F: JoltField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZE> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -22,7 +22,7 @@ impl<F: PrimeField, const WORD_SIZE: usize> TruncateOverflowSubtable<F, WORD_SIZ
     }
 }
 
-impl<F: PrimeField, const WORD_SIZE: usize> LassoSubtable<F>
+impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F>
     for TruncateOverflowSubtable<F, WORD_SIZE>
 {
     fn materialize(&self, M: usize) -> Vec<F> {

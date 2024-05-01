@@ -2,7 +2,7 @@
 /// Its syntax is based on circom.
 /// As the constraint system involved in Jolt is very simple, it's easy to generate the matrices directly
 /// and avoids the need for using the circom library.
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use common::{constants::RAM_START_ADDRESS, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use smallvec::{smallvec, SmallVec};
@@ -150,7 +150,7 @@ fn concat_constraint_vecs(
     x
 }
 
-fn i64_to_f<F: PrimeField>(num: i64) -> F {
+fn i64_to_f<F: JoltField>(num: i64) -> F {
     if num < 0 {
         F::zero() - F::from_u64((-num) as u64).unwrap()
     } else {
@@ -642,7 +642,7 @@ impl R1CSBuilder {
        "auxiliary" wires values.
        The wires are built sequentially, indicating the constraint that creates it in the comments.
     */
-    pub fn calculate_jolt_aux<F: PrimeField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> Vec<F> {
+    pub fn calculate_jolt_aux<F: JoltField>(inputs: R1CSStepInputs<F>, num_aux: usize) -> Vec<F> {
         let four = F::from_u64(4).unwrap();
 
         // Indices of values within their respective input vector variables.
@@ -775,7 +775,7 @@ impl R1CSBuilder {
     /* Converts the i64 coefficients to field elements. */
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "Shape::convert_to_field")]
-    pub fn convert_to_field<F: PrimeField>(
+    pub fn convert_to_field<F: JoltField>(
         &self,
     ) -> (
         Vec<(usize, usize, F)>,

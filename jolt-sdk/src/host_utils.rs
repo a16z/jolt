@@ -6,7 +6,8 @@ use eyre::Result;
 
 pub use ark_bn254::{Fr as F, G1Projective as G};
 pub use ark_ec::CurveGroup;
-pub use ark_ff::PrimeField;
+use jolt_core::poly::commitment::hyrax::HyraxScheme;
+pub use jolt_core::poly::field::JoltField;
 
 pub use common::{
     constants::MEMORY_OPS_PER_INSTRUCTION,
@@ -21,10 +22,12 @@ pub use jolt_core::jolt::vm::{
 };
 pub use tracer;
 
+pub type CommitmentScheme = HyraxScheme<G>;
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct Proof {
-    pub proof: RV32IJoltProof<F, G>,
-    pub commitments: JoltCommitments<G>,
+    pub proof: RV32IJoltProof<F, CommitmentScheme>,
+    pub commitments: JoltCommitments<CommitmentScheme>,
 }
 
 impl Proof {

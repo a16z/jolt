@@ -1,4 +1,3 @@
-use ark_ff::PrimeField;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
 use rand::prelude::StdRng;
@@ -8,6 +7,7 @@ use std::ops::Range;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::jolt::subtable::LassoSubtable;
+use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand;
 use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;
@@ -29,12 +29,12 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     /// - `M`: The size of each subtable/memory.
     ///
     /// Returns: The combined value g(vals).
-    fn combine_lookups<F: PrimeField>(&self, vals: &[F], C: usize, M: usize) -> F;
+    fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F;
     /// The degree of the `g` polynomial described by `combine_lookups`
     fn g_poly_degree(&self, C: usize) -> usize;
     /// Returns a Vec of the unique subtable types used by this instruction. For some instructions,
     /// e.g. SLL, the list of subtables depends on the dimension `C`.
-    fn subtables<F: PrimeField>(
+    fn subtables<F: JoltField>(
         &self,
         C: usize,
         M: usize,
@@ -57,7 +57,7 @@ pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
     }
     fn random(&self, rng: &mut StdRng) -> Self;
 
-    fn slice_values<'a, F: PrimeField>(&self, vals: &'a [F], C: usize, M: usize) -> Vec<&'a [F]> {
+    fn slice_values<'a, F: JoltField>(&self, vals: &'a [F], C: usize, M: usize) -> Vec<&'a [F]> {
         let mut offset = 0;
         let mut slices = vec![];
         for (_, indices) in self.subtables::<F>(C, M) {

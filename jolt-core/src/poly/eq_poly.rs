@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use rayon::prelude::*;
 
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
@@ -9,7 +9,7 @@ pub struct EqPolynomial<F> {
 
 const PARALLEL_THRESHOLD: usize = 16;
 
-impl<F: PrimeField> EqPolynomial<F> {
+impl<F: JoltField> EqPolynomial<F> {
     pub fn new(r: Vec<F>) -> Self {
         EqPolynomial { r }
     }

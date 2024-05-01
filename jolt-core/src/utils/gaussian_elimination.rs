@@ -4,9 +4,9 @@
 // Wikipedia reference: augmented matrix: https://en.wikipedia.org/wiki/Augmented_matrix
 // Wikipedia reference: algorithm: https://en.wikipedia.org/wiki/Gaussian_elimination
 
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 
-pub fn gaussian_elimination<F: PrimeField>(matrix: &mut [Vec<F>]) -> Vec<F> {
+pub fn gaussian_elimination<F: JoltField>(matrix: &mut [Vec<F>]) -> Vec<F> {
     let size = matrix.len();
     assert_eq!(size, matrix[0].len() - 1);
 
@@ -36,7 +36,7 @@ pub fn gaussian_elimination<F: PrimeField>(matrix: &mut [Vec<F>]) -> Vec<F> {
     result
 }
 
-fn echelon<F: PrimeField>(matrix: &mut [Vec<F>], i: usize, j: usize) {
+fn echelon<F: JoltField>(matrix: &mut [Vec<F>], i: usize, j: usize) {
     let size = matrix.len();
     if matrix[i][i] == F::zero() {
     } else {
@@ -48,7 +48,7 @@ fn echelon<F: PrimeField>(matrix: &mut [Vec<F>], i: usize, j: usize) {
     }
 }
 
-fn eliminate<F: PrimeField>(matrix: &mut [Vec<F>], i: usize) {
+fn eliminate<F: JoltField>(matrix: &mut [Vec<F>], i: usize) {
     let size = matrix.len();
     if matrix[i][i] == F::zero() {
     } else {

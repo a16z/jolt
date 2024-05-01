@@ -1,21 +1,20 @@
 use super::sumcheck::{CubicSumcheckParams, SumcheckInstanceProof};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
+use crate::poly::field::JoltField;
 use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_serialize::*;
 
 #[derive(Debug, Clone)]
-pub struct GrandProductCircuit<F: PrimeField> {
+pub struct GrandProductCircuit<F: JoltField> {
     left_vec: Vec<DensePolynomial<F>>,
     right_vec: Vec<DensePolynomial<F>>,
 }
 
-impl<F: PrimeField> GrandProductCircuit<F> {
+impl<F: JoltField> GrandProductCircuit<F> {
     fn compute_layer(
         inp_left: &DensePolynomial<F>,
         inp_right: &DensePolynomial<F>,
@@ -105,7 +104,7 @@ impl<F: PrimeField> GrandProductCircuit<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct LayerProofBatched<F: PrimeField> {
+pub struct LayerProofBatched<F: JoltField> {
     pub proof: SumcheckInstanceProof<F>,
     pub claims_poly_A: Vec<F>,
     pub claims_poly_B: Vec<F>,
@@ -113,7 +112,7 @@ pub struct LayerProofBatched<F: PrimeField> {
 }
 
 #[allow(dead_code)]
-impl<F: PrimeField> LayerProofBatched<F> {
+impl<F: JoltField> LayerProofBatched<F> {
     pub fn verify(
         &self,
         claim: F,
@@ -127,7 +126,7 @@ impl<F: PrimeField> LayerProofBatched<F> {
     }
 }
 
-pub struct BatchedGrandProductCircuit<F: PrimeField> {
+pub struct BatchedGrandProductCircuit<F: JoltField> {
     pub circuits: Vec<GrandProductCircuit<F>>,
 
     flags_present: bool,
@@ -135,7 +134,7 @@ pub struct BatchedGrandProductCircuit<F: PrimeField> {
     fingerprint_polys: Option<Vec<DensePolynomial<F>>>,
 }
 
-impl<F: PrimeField> BatchedGrandProductCircuit<F> {
+impl<F: JoltField> BatchedGrandProductCircuit<F> {
     pub fn new_batch(circuits: Vec<GrandProductCircuit<F>>) -> Self {
         Self {
             circuits,
@@ -211,19 +210,16 @@ impl<F: PrimeField> BatchedGrandProductCircuit<F> {
 }
 
 #[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductArgument<F: PrimeField> {
+pub struct BatchedGrandProductArgument<F: JoltField> {
     proof: Vec<LayerProofBatched<F>>,
 }
 
-impl<F: PrimeField> BatchedGrandProductArgument<F> {
+impl<F: JoltField> BatchedGrandProductArgument<F> {
     #[tracing::instrument(skip_all, name = "BatchedGrandProductArgument.prove")]
-    pub fn prove<G>(
+    pub fn prove(
         mut batch: BatchedGrandProductCircuit<F>,
         transcript: &mut ProofTranscript,
-    ) -> (Self, Vec<F>)
-    where
-        G: CurveGroup<ScalarField = F>,
-    {
+    ) -> (Self, Vec<F>) {
         let mut proof_layers: Vec<LayerProofBatched<F>> = Vec::new();
         let mut claims_to_verify = (0..batch.circuits.len())
             .map(|i| batch.circuits[i].evaluate())
@@ -244,9 +240,8 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
             let eq = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
             let params = batch.sumcheck_layer_params(layer_id, eq);
             let sumcheck_type = params.sumcheck_type.clone();
-            let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::prove_cubic_batched::<G>(
-                &claim, params, &coeff_vec, transcript,
-            );
+            let (proof, rand_prod, claims_prod) =
+                SumcheckInstanceProof::prove_cubic_batched(&claim, params, &coeff_vec, transcript);
 
             let (claims_poly_A, claims_poly_B, _claim_eq) = claims_prod;
             for i in 0..batch.circuits.len() {
@@ -402,8 +397,7 @@ impl<F: PrimeField> BatchedGrandProductArgument<F> {
 #[cfg(test)]
 mod grand_product_circuit_tests {
     use super::*;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_std::{One, Zero};
+    use ark_bn254::Fr;
 
     #[test]
     fn prove_verify() {
@@ -416,7 +410,7 @@ mod grand_product_circuit_tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let circuits_vec = vec![factorial_circuit];
         let batch = BatchedGrandProductCircuit::new_batch(circuits_vec);
-        let (proof, _) = BatchedGrandProductArgument::prove::<G1Projective>(batch, &mut transcript);
+        let (proof, _) = BatchedGrandProductArgument::prove(batch, &mut transcript);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         proof.verify(&expected_eval, &mut transcript);
@@ -438,8 +432,7 @@ mod grand_product_circuit_tests {
         let batch = BatchedGrandProductCircuit::new_batch(vec![read_gpc, write_gpc]);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_rand) =
-            BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(batch, &mut transcript);
+        let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read = Fr::from(10) * Fr::from(20);
         let expected_eval_write = Fr::from(100) * Fr::from(200);
@@ -491,8 +484,7 @@ mod grand_product_circuit_tests {
         );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
-        let (proof, prove_rand) =
-            BatchedGrandProductArgument::<Fr>::prove::<G1Projective>(batch, &mut transcript);
+        let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
 
         let expected_eval_read: Fr = Fr::from(10) * Fr::from(20) * Fr::from(40);
         let expected_eval_write: Fr = Fr::from(100) * Fr::from(200) * Fr::from(400);

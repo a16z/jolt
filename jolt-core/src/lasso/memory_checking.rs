@@ -2,8 +2,8 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::{
+    commitment::commitment_scheme::CommitmentScheme,
     dense_mlpoly::DensePolynomial,
-    pedersen::PedersenGenerators,
     structured_poly::{StructuredCommitment, StructuredOpeningProof},
 };
 use crate::subprotocols::grand_product::{
@@ -12,8 +12,7 @@ use crate::subprotocols::grand_product::{
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::ProofTranscript;
 
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -21,7 +20,7 @@ use std::iter::zip;
 use std::marker::PhantomData;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MultisetHashes<F: PrimeField> {
+pub struct MultisetHashes<F: JoltField> {
     /// Multiset hash of "read" tuples
     pub read_hashes: Vec<F>,
     /// Multiset hash of "write" tuples
@@ -32,11 +31,8 @@ pub struct MultisetHashes<F: PrimeField> {
     pub final_hashes: Vec<F>,
 }
 
-impl<F: PrimeField> MultisetHashes<F> {
-    pub fn append_to_transcript<G: CurveGroup<ScalarField = F>>(
-        &self,
-        transcript: &mut ProofTranscript,
-    ) {
+impl<F: JoltField> MultisetHashes<F> {
+    pub fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
         transcript.append_scalars(b"Read multiset hashes", &self.read_hashes);
         transcript.append_scalars(b"Write multiset hashes", &self.write_hashes);
         transcript.append_scalars(b"Init multiset hashes", &self.init_hashes);
@@ -45,22 +41,23 @@ impl<F: PrimeField> MultisetHashes<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MemoryCheckingProof<G, Polynomials, ReadWriteOpenings, InitFinalOpenings>
+pub struct MemoryCheckingProof<F, C, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
-    G: CurveGroup,
-    Polynomials: StructuredCommitment<G>,
-    ReadWriteOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
-    InitFinalOpenings: StructuredOpeningProof<G::ScalarField, G, Polynomials>,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+    Polynomials: StructuredCommitment<C>,
+    ReadWriteOpenings: StructuredOpeningProof<F, C, Polynomials>,
+    InitFinalOpenings: StructuredOpeningProof<F, C, Polynomials>,
 {
     pub _polys: PhantomData<Polynomials>,
     /// Read/write/init/final multiset hashes for each memory
-    pub multiset_hashes: MultisetHashes<G::ScalarField>,
+    pub multiset_hashes: MultisetHashes<F>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+    pub read_write_grand_product: BatchedGrandProductArgument<F>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductArgument<G::ScalarField>,
+    pub init_final_grand_product: BatchedGrandProductArgument<F>,
     /// The opening proofs associated with the read/write grand product.
     pub read_write_openings: ReadWriteOpenings,
     pub read_write_opening_proof: ReadWriteOpenings::Proof,
@@ -72,23 +69,23 @@ where
 // Empty struct to represent that no preprocessing data is used.
 pub struct NoPreprocessing;
 
-pub trait MemoryCheckingProver<F, G, Polynomials>
+pub trait MemoryCheckingProver<F, C, Polynomials>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Polynomials: StructuredCommitment<G> + std::marker::Sync,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+    Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<
         F,
-        G,
+        C,
         Polynomials,
         Preprocessing = NoPreprocessing,
     >;
     type InitFinalOpenings: StructuredOpeningProof<
         F,
-        G,
+        C,
         Polynomials,
         Preprocessing = Self::Preprocessing,
     >;
@@ -101,7 +98,8 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
-    ) -> MemoryCheckingProof<G, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings> {
+    ) -> MemoryCheckingProof<F, C, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>
+    {
         // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
 
         // fka "ProductLayerProof"
@@ -170,12 +168,12 @@ where
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
-        multiset_hashes.append_to_transcript::<G>(transcript);
+        multiset_hashes.append_to_transcript(transcript);
 
         let (read_write_grand_product, r_read_write) =
-            BatchedGrandProductArgument::prove::<G>(read_write_circuit, transcript);
+            BatchedGrandProductArgument::prove(read_write_circuit, transcript);
         let (init_final_grand_product, r_init_final) =
-            BatchedGrandProductArgument::prove::<G>(init_final_circuit, transcript);
+            BatchedGrandProductArgument::prove(init_final_circuit, transcript);
         (
             read_write_grand_product,
             init_final_grand_product,
@@ -319,19 +317,20 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait MemoryCheckingVerifier<F, G, Polynomials>:
-    MemoryCheckingProver<F, G, Polynomials>
+pub trait MemoryCheckingVerifier<F, C, Polynomials>:
+    MemoryCheckingProver<F, C, Polynomials>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-    Polynomials: StructuredCommitment<G> + std::marker::Sync,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
+    Polynomials: StructuredCommitment<C> + std::marker::Sync,
 {
     /// Verifies a memory checking proof, given its associated polynomial `commitment`.
     fn verify_memory_checking(
         preprocessing: &Self::Preprocessing,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Setup,
         mut proof: MemoryCheckingProof<
-            G,
+            F,
+            C,
             Polynomials,
             Self::ReadWriteOpenings,
             Self::InitFinalOpenings,
@@ -346,7 +345,7 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         Self::check_multiset_equality(preprocessing, &proof.multiset_hashes);
-        proof.multiset_hashes.append_to_transcript::<G>(transcript);
+        proof.multiset_hashes.append_to_transcript(transcript);
 
         let (read_write_hashes, init_final_hashes) =
             Self::interleave_hashes(preprocessing, &proof.multiset_hashes);

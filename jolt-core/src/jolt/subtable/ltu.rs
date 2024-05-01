@@ -1,4 +1,4 @@
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -6,11 +6,11 @@ use super::LassoSubtable;
 use crate::utils::split_bits;
 
 #[derive(Default)]
-pub struct LtuSubtable<F: PrimeField> {
+pub struct LtuSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: PrimeField> LtuSubtable<F> {
+impl<F: JoltField> LtuSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -18,7 +18,7 @@ impl<F: PrimeField> LtuSubtable<F> {
     }
 }
 
-impl<F: PrimeField> LassoSubtable<F> for LtuSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for LtuSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = Vec::with_capacity(M);
         let bits_per_operand = (log2(M) / 2) as usize;

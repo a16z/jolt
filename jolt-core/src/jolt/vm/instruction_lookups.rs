@@ -1,7 +1,5 @@
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::NUM_R1CS_POLYS;
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::prelude::*;
@@ -11,8 +9,7 @@ use tracing::trace_span;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
-use crate::poly::hyrax::{matrix_dimensions, BatchedHyraxOpeningProof, HyraxCommitment};
-use crate::poly::pedersen::PedersenGenerators;
+use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::{mul_0_1_optimized, split_poly_flagged};
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
@@ -35,12 +32,12 @@ use crate::{
 };
 
 /// All polynomials associated with Jolt instruction lookups.
-pub struct InstructionPolynomials<F, G>
+pub struct InstructionPolynomials<F, C>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
 {
-    _group: PhantomData<G>,
+    _marker: PhantomData<C>,
     /// `C` sized vector of `DensePolynomials` whose evaluations correspond to
     /// indices at which the memories will be evaluated. Each `DensePolynomial` has size
     /// `m` (# lookups).
@@ -75,13 +72,13 @@ where
 
 /// Commitments to BatchedInstructionPolynomials.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct InstructionCommitment<G: CurveGroup> {
-    pub trace_commitment: Vec<HyraxCommitment<NUM_R1CS_POLYS, G>>,
+pub struct InstructionCommitment<C: CommitmentScheme> {
+    pub trace_commitment: Vec<C::Commitment>,
     /// Commitment to final_cts_i polynomials.
-    pub final_commitment: Vec<HyraxCommitment<64, G>>,
+    pub final_commitment: Vec<C::Commitment>,
 }
 
-impl<G: CurveGroup> AppendToTranscript for InstructionCommitment<G> {
+impl<C: CommitmentScheme> AppendToTranscript for InstructionCommitment<C> {
     fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_message(label, b"InstructionCommitment_begin");
         for commitment in &self.trace_commitment {
@@ -94,15 +91,15 @@ impl<G: CurveGroup> AppendToTranscript for InstructionCommitment<G> {
     }
 }
 
-impl<F, G> StructuredCommitment<G> for InstructionPolynomials<F, G>
+impl<F, C> StructuredCommitment<C> for InstructionPolynomials<F, C>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
 {
-    type Commitment = InstructionCommitment<G>;
+    type Commitment = InstructionCommitment<C>;
 
     #[tracing::instrument(skip_all, name = "InstructionPolynomials::commit")]
-    fn commit(&self, generators: &PedersenGenerators<G>) -> Self::Commitment {
+    fn commit(&self, generators: &C::Setup) -> Self::Commitment {
         let trace_polys: Vec<&DensePolynomial<F>> = self
             .dim
             .iter()
@@ -111,10 +108,9 @@ where
             .chain(self.instruction_flag_polys.iter())
             .chain([&self.lookup_outputs].into_iter())
             .collect();
-        let trace_commitment = HyraxCommitment::batch_commit_polys(trace_polys, generators);
+        let trace_commitment = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
 
-        let final_commitment =
-            HyraxCommitment::batch_commit_polys(self.final_cts.iter().collect(), generators);
+        let final_commitment = C::batch_commit_polys(&self.final_cts, generators, BatchType::Big);
 
         Self::Commitment {
             trace_commitment,
@@ -127,7 +123,7 @@ where
 /// Polynomial openings associated with the "primary sumcheck" of Jolt instruction lookups.
 struct PrimarySumcheckOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluations of the E_i polynomials at the opening point. Vector is of length NUM_MEMORIES.
     E_poly_openings: Vec<F>,
@@ -137,20 +133,20 @@ where
     lookup_outputs_opening: F,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>> for PrimarySumcheckOpenings<F>
+impl<F, C> StructuredOpeningProof<F, C, InstructionPolynomials<F, C>> for PrimarySumcheckOpenings<F>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
 {
-    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
+    type Proof = C::BatchedProof;
 
-    fn open(_polynomials: &InstructionPolynomials<F, G>, _opening_point: &[F]) -> Self {
+    fn open(_polynomials: &InstructionPolynomials<F, C>, _opening_point: &[F]) -> Self {
         unimplemented!("Openings are output by sumcheck protocol");
     }
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &InstructionPolynomials<F, G>,
+        polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
@@ -168,19 +164,20 @@ where
         .concat();
         primary_sumcheck_openings.push(openings.lookup_outputs_opening);
 
-        BatchedHyraxOpeningProof::prove(
+        C::batch_prove(
             &primary_sumcheck_polys,
             opening_point,
             &primary_sumcheck_openings,
+            BatchType::Big,
             transcript,
         )
     }
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
-        commitment: &InstructionCommitment<G>,
+        commitment: &InstructionCommitment<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -195,7 +192,8 @@ where
             .iter()
             .collect::<Vec<_>>();
 
-        opening_proof.verify(
+        C::batch_verify(
+            opening_proof,
             generators,
             opening_point,
             &primary_sumcheck_openings,
@@ -208,7 +206,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionReadWriteOpenings<F>
 where
-    F: PrimeField,
+    F: JoltField,
 {
     /// Evaluations of the dim_i polynomials at the opening point. Vector is of length C.
     dim_openings: Vec<F>,
@@ -220,16 +218,16 @@ where
     flag_openings: Vec<F>,
 }
 
-impl<F, G> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+impl<F, C> StructuredOpeningProof<F, C, InstructionPolynomials<F, C>>
     for InstructionReadWriteOpenings<F>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
 {
-    type Proof = BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>;
+    type Proof = C::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &InstructionPolynomials<F, C>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
 
@@ -264,7 +262,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &InstructionPolynomials<F, G>,
+        polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
@@ -285,19 +283,20 @@ where
         ]
         .concat();
 
-        BatchedHyraxOpeningProof::prove(
+        C::batch_prove(
             &read_write_polys,
             opening_point,
             &read_write_openings,
+            BatchType::Big,
             transcript,
         )
     }
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
-        commitment: &InstructionCommitment<G>,
+        commitment: &InstructionCommitment<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
@@ -308,7 +307,8 @@ where
             self.flag_openings.as_slice(),
         ]
         .concat();
-        opening_proof.verify(
+        C::batch_verify(
+            opening_proof,
             generators,
             opening_point,
             &read_write_openings,
@@ -323,7 +323,7 @@ where
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct InstructionFinalOpenings<F, Subtables>
 where
-    F: PrimeField,
+    F: JoltField,
     Subtables: JoltSubtableSet<F>,
 {
     _subtables: PhantomData<Subtables>,
@@ -335,18 +335,18 @@ where
     v_init_final: Option<Vec<F>>,
 }
 
-impl<F, G, Subtables> StructuredOpeningProof<F, G, InstructionPolynomials<F, G>>
+impl<F, C, Subtables> StructuredOpeningProof<F, C, InstructionPolynomials<F, C>>
     for InstructionFinalOpenings<F, Subtables>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    C: CommitmentScheme<Field = F>,
     Subtables: JoltSubtableSet<F>,
 {
     type Preprocessing = InstructionLookupsPreprocessing<F>;
-    type Proof = BatchedHyraxOpeningProof<64, G>;
+    type Proof = C::BatchedProof;
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
-    fn open(polynomials: &InstructionPolynomials<F, G>, opening_point: &[F]) -> Self {
+    fn open(polynomials: &InstructionPolynomials<F, C>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
         let chis = EqPolynomial::new(opening_point.to_vec()).evals();
         let final_openings = polynomials
@@ -364,15 +364,16 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
-        polynomials: &InstructionPolynomials<F, G>,
+        polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        BatchedHyraxOpeningProof::prove(
+        C::batch_prove(
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
+            BatchType::Big,
             transcript,
         )
     }
@@ -393,13 +394,14 @@ where
 
     fn verify_openings(
         &self,
-        generators: &PedersenGenerators<G>,
+        generators: &C::Setup,
         opening_proof: &Self::Proof,
-        commitment: &InstructionCommitment<G>,
+        commitment: &InstructionCommitment<C>,
         opening_point: &[F],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        opening_proof.verify(
+        C::batch_verify(
+            opening_proof,
             generators,
             opening_point,
             &self.final_openings,
@@ -409,12 +411,12 @@ where
     }
 }
 
-impl<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
-    MemoryCheckingProver<F, G, InstructionPolynomials<F, G>>
-    for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
+impl<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
+    MemoryCheckingProver<F, CS, InstructionPolynomials<F, CS>>
+    for InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
@@ -435,7 +437,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::compute_leaves")]
     fn compute_leaves(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        polynomials: &InstructionPolynomials<F, G>,
+        polynomials: &InstructionPolynomials<F, CS>,
         gamma: &F,
         tau: &F,
     ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
@@ -609,7 +611,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
     fn read_write_grand_product(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        polynomials: &InstructionPolynomials<F, G>,
+        polynomials: &InstructionPolynomials<F, CS>,
         read_write_leaves: Vec<DensePolynomial<F>>,
     ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
         assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
@@ -670,12 +672,12 @@ where
     }
 }
 
-impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    MemoryCheckingVerifier<F, G, InstructionPolynomials<F, G>>
-    for InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
+impl<F, CS, InstructionSet, Subtables, const C: usize, const M: usize>
+    MemoryCheckingVerifier<F, CS, InstructionPolynomials<F, CS>>
+    for InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
@@ -738,33 +740,34 @@ where
 
 /// Proof of instruction lookups for a single Jolt program execution.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct InstructionLookupsProof<const C: usize, const M: usize, F, G, InstructionSet, Subtables>
+pub struct InstructionLookupsProof<const C: usize, const M: usize, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    CS: CommitmentScheme<Field = F>,
     Subtables: JoltSubtableSet<F>,
     InstructionSet: JoltInstructionSet,
 {
     _instructions: PhantomData<InstructionSet>,
-    primary_sumcheck: PrimarySumcheck<F, G>,
+    primary_sumcheck: PrimarySumcheck<F, CS>,
     memory_checking: MemoryCheckingProof<
-        G,
-        InstructionPolynomials<F, G>,
+        F,
+        CS,
+        InstructionPolynomials<F, CS>,
         InstructionReadWriteOpenings<F>,
         InstructionFinalOpenings<F, Subtables>,
     >,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct PrimarySumcheck<F: PrimeField, G: CurveGroup<ScalarField = F>> {
+pub struct PrimarySumcheck<F: JoltField, CS: CommitmentScheme<Field = F>> {
     sumcheck_proof: SumcheckInstanceProof<F>,
     num_rounds: usize,
     openings: PrimarySumcheckOpenings<F>,
-    opening_proof: BatchedHyraxOpeningProof<NUM_R1CS_POLYS, G>,
+    opening_proof: CS::BatchedProof,
 }
 
 #[derive(Clone)]
-pub struct InstructionLookupsPreprocessing<F: PrimeField> {
+pub struct InstructionLookupsPreprocessing<F: JoltField> {
     subtable_to_memory_indices: Vec<Vec<usize>>, // Vec<Range<usize>>?
     instruction_to_memory_indices: Vec<Vec<usize>>,
     memory_to_subtable_index: Vec<usize>,
@@ -773,7 +776,7 @@ pub struct InstructionLookupsPreprocessing<F: PrimeField> {
     num_memories: usize,
 }
 
-impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
+impl<F: JoltField> InstructionLookupsPreprocessing<F> {
     #[tracing::instrument(skip_all, name = "InstructionLookups::preprocess")]
     pub fn preprocess<const C: usize, const M: usize, InstructionSet, Subtables>() -> Self
     where
@@ -844,11 +847,11 @@ impl<F: PrimeField> InstructionLookupsPreprocessing<F> {
     }
 }
 
-impl<F, G, InstructionSet, Subtables, const C: usize, const M: usize>
-    InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>
+impl<F, CS, InstructionSet, Subtables, const C: usize, const M: usize>
+    InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>
 where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
+    F: JoltField,
+    CS: CommitmentScheme<Field = F>,
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
@@ -857,10 +860,10 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
     pub fn prove(
-        polynomials: &InstructionPolynomials<F, G>,
+        polynomials: &InstructionPolynomials<F, CS>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
         transcript: &mut ProofTranscript,
-    ) -> InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables> {
+    ) -> InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables> {
         transcript.append_protocol_name(Self::protocol_name());
 
         let trace_length = polynomials.dim[0].len();
@@ -914,9 +917,9 @@ where
 
     pub fn verify(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        generators: &PedersenGenerators<G>,
-        proof: InstructionLookupsProof<C, M, F, G, InstructionSet, Subtables>,
-        commitment: &InstructionCommitment<G>,
+        generators: &CS::Setup,
+        proof: InstructionLookupsProof<C, M, F, CS, InstructionSet, Subtables>,
+        commitment: &InstructionCommitment<CS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
@@ -971,7 +974,7 @@ where
     pub fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         ops: &Vec<Option<InstructionSet>>,
-    ) -> InstructionPolynomials<F, G> {
+    ) -> InstructionPolynomials<F, CS> {
         let m: usize = ops.len().next_power_of_two();
 
         let subtable_lookup_indices: Vec<Vec<usize>> = Self::subtable_lookup_indices(ops);
@@ -1054,7 +1057,7 @@ where
         let lookup_outputs = DensePolynomial::new(lookup_outputs);
 
         InstructionPolynomials {
-            _group: PhantomData,
+            _marker: PhantomData,
             dim,
             read_cts,
             final_cts,
@@ -1422,21 +1425,20 @@ where
         subtable_lookup_indices
     }
 
-    /// Computes the maximum number of group generators needed to commit to instruction
-    /// lookup polynomials using Hyrax, given the maximum trace length.
-    pub fn num_generators(
+    /// Computes the shape of all commitments.
+    pub fn commitment_shapes(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         max_trace_length: usize,
-    ) -> usize {
+    ) -> Vec<CommitShape> {
         let max_trace_length = max_trace_length.next_power_of_two();
-        let num_read_write_generators =
-            matrix_dimensions(max_trace_length.log_2(), NUM_R1CS_POLYS).1;
-        let num_init_final_generators = matrix_dimensions(
-            (M * preprocessing.num_memories).next_power_of_two().log_2(),
-            1,
-        )
-        .1;
-        std::cmp::max(num_read_write_generators, num_init_final_generators)
+        // { dim, read_cts, E_polys, instruction_flag_polys, lookup_outputs }
+        let read_write_generator_shape = CommitShape::new(max_trace_length, BatchType::Big);
+        let init_final_generator_shape = CommitShape::new(
+            M * preprocessing.num_memories.next_power_of_two(),
+            BatchType::Small,
+        );
+
+        vec![read_write_generator_shape, init_final_generator_shape]
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
