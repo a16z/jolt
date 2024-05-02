@@ -50,6 +50,49 @@ impl<F: JoltField> UniPoly<F> {
         gaussian_elimination(&mut vandermonde)
     }
 
+    /// Divide self by another polynomial, and returns the
+    /// quotient and remainder.
+    pub fn divide_with_q_and_r(&self, divisor: &Self) -> Option<(Self, Self)> {
+        if self.is_zero() {
+            Some((Self::zero(), Self::zero()))
+        } else if divisor.is_zero() {
+            None
+        } else if self.degree() < divisor.degree() {
+            Some((Self::zero(), self.clone()))
+        } else {
+            // Now we know that self.degree() >= divisor.degree();
+            let mut quotient = vec![F::zero(); self.degree() - divisor.degree() + 1];
+            let mut remainder: Self = self.clone();
+            // Can unwrap here because we know self is not zero.
+            let divisor_leading_inv = divisor.leading_coefficient().unwrap().inverse().unwrap();
+            while !remainder.is_zero() && remainder.degree() >= divisor.degree() {
+                let cur_q_coeff = *remainder.leading_coefficient().unwrap() * divisor_leading_inv;
+                let cur_q_degree = remainder.degree() - divisor.degree();
+                quotient[cur_q_degree] = cur_q_coeff;
+
+                for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
+                    remainder.coeffs[cur_q_degree + i] -= &(cur_q_coeff * div_coeff);
+                }
+                while let Some(true) = remainder.coeffs.last().map(|c| c == &F::zero()) {
+                    remainder.coeffs.pop();
+                }
+            }
+            Some((Self::from_coeff(quotient), remainder))
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.coeffs.is_empty() || self.coeffs.iter().all(|c| c == &F::zero())
+    }
+
+    fn leading_coefficient(&self) -> Option<&F> {
+        self.coeffs.last()
+    }
+
+    fn zero() -> Self {
+        Self::from_coeff(Vec::new())
+    }
+
     pub fn degree(&self) -> usize {
         self.coeffs.len() - 1
     }

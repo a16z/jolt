@@ -52,6 +52,7 @@ pub trait JoltField:
     fn double(&self) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+    fn inverse(&self) -> Option<Self>;
     #[inline(always)]
     fn mul_0_optimized(self, other: Self) -> Self {
         if self.is_zero() || other.is_zero() {
@@ -117,6 +118,10 @@ impl JoltField for ark_bn254::Fr {
 
     fn square(&self) -> Self {
         <Self as ark_ff::Field>::square(self)
+    }
+
+    fn inverse(&self) -> Option<Self> {
+        <Self as ark_ff::Field>::inverse(&self)
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
