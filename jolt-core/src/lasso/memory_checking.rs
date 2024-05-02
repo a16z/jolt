@@ -3,6 +3,7 @@
 
 use crate::subprotocols::grand_product::DefaultBatchedGrandProduct;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
 use crate::{
     poly::{
@@ -76,8 +77,10 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F> = DefaultBatchedGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F> = DefaultBatchedGrandProduct<F>;
+    type ReadWriteGrandProduct: BatchedGrandProduct<F> + Send + 'static =
+        DefaultBatchedGrandProduct<F>;
+    type InitFinalGrandProduct: BatchedGrandProduct<F> + Send + 'static =
+        DefaultBatchedGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<
@@ -159,9 +162,9 @@ where
 
         let (read_write_leaves, init_final_leaves) =
             Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
-        let (read_write_circuit, read_write_hashes) =
+        let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
-        let (init_final_circuit, init_final_hashes) =
+        let (mut init_final_circuit, init_final_hashes) =
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves);
 
         let multiset_hashes =
@@ -173,6 +176,10 @@ where
             read_write_circuit.prove_grand_product(transcript);
         let (init_final_grand_product, r_init_final) =
             init_final_circuit.prove_grand_product(transcript);
+
+        drop_in_background_thread(read_write_circuit);
+        drop_in_background_thread(init_final_circuit);
+
         (
             read_write_grand_product,
             init_final_grand_product,

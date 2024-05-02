@@ -46,7 +46,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
 
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
-        mut self,
+        &mut self,
         transcript: &mut ProofTranscript,
     ) -> (BatchedGrandProductProof<F>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
@@ -198,7 +198,6 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
     fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: (F, F, F)) -> (F, F, F);
     fn final_claims(&self) -> (Vec<F>, Vec<F>);
-    fn drop(self);
 
     #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
     fn prove_sumcheck(
@@ -335,10 +334,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
             .collect();
         let right_claims = self.iter().map(|layer| layer[1]).collect();
         (left_claims, right_claims)
-    }
-
-    fn drop(self) {
-        drop_in_background_thread(self);
     }
 }
 

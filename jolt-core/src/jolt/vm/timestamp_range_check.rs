@@ -3,6 +3,7 @@ use crate::subprotocols::grand_product::{
     BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
     DefaultBatchedGrandProduct,
 };
+use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
@@ -570,7 +571,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
     }
 
     fn prove_grand_product(
-        self,
+        &mut self,
         _transcript: &mut ProofTranscript,
     ) -> (BatchedGrandProductProof<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
@@ -673,7 +674,7 @@ where
         let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        let batched_circuit = DefaultBatchedGrandProduct::construct(leaves);
+        let mut batched_circuit = DefaultBatchedGrandProduct::construct(leaves);
 
         let hashes: Vec<F> = batched_circuit.claims();
         let (read_write_hashes, init_final_hashes) =
@@ -688,6 +689,8 @@ where
 
         let (batched_grand_product, r_grand_product) =
             batched_circuit.prove_grand_product(transcript);
+
+        drop_in_background_thread(batched_circuit);
 
         (batched_grand_product, multiset_hashes, r_grand_product)
     }

@@ -253,7 +253,6 @@ where
             .par_iter()
             .map(|poly| poly.evaluate_at_chi_low_optimized(&chis))
             .collect();
-        println!("after");
 
         Self {
             dim_openings,
@@ -455,7 +454,6 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
     fn num_rounds(&self) -> usize {
-        println!("Toggle layer");
         self.flags[0].len().log_2()
     }
 
@@ -674,10 +672,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
             })
             .collect();
         (flag_claims, fingerprint_claims)
-    }
-
-    fn drop(self) {
-        drop_in_background_thread(self);
     }
 }
 
