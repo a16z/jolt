@@ -1,7 +1,8 @@
 use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{
-    BatchedCubicSumcheck, BatchedDenseGrandProductLayer, BatchedGrandProduct,
-    BatchedGrandProductLayer, BatchedGrandProductLayerProof, BatchedGrandProductProof,
+    BatchedCubicSumcheck, BatchedGrandProduct, BatchedGrandProductLayer,
+    BatchedGrandProductLayerProof, BatchedGrandProductProof, BatchedSparseGrandProductLayer,
+    DynamicDensityGrandProductLayer,
 };
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -414,6 +415,7 @@ where
 }
 
 struct BatchedGrandProductToggleLayer<F: JoltField> {
+    // TODO: sparse representation of flags?
     flags: Vec<Vec<bool>>,
     bound_flags: Vec<Vec<F>>,
     fingerprints: Vec<Vec<F>>,
@@ -428,27 +430,26 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
         }
     }
 
-    fn layer_output(&self) -> BatchedDenseGrandProductLayer<F> {
-        self.fingerprints
+    fn layer_output(&self) -> BatchedSparseGrandProductLayer<F> {
+        let output_layers = self
+            .fingerprints
             .par_iter()
             .enumerate()
             .map(|(batch_index, fingerprints)| {
                 let flags = &self.flags[batch_index / 2];
-                flags
-                    .iter()
-                    .zip(fingerprints.iter())
-                    .map(
-                        |(flag, fingerprint)| {
-                            if *flag {
-                                *fingerprint
-                            } else {
-                                F::one()
-                            }
-                        },
-                    )
-                    .collect()
+                let mut sparse_layer = Vec::with_capacity(flags.len());
+                for (i, (flag, fingerprint)) in flags.iter().zip(fingerprints.iter()).enumerate() {
+                    if *flag {
+                        sparse_layer.push((i, *fingerprint));
+                    }
+                }
+                DynamicDensityGrandProductLayer::Sparse(sparse_layer)
             })
-            .collect()
+            .collect();
+        BatchedSparseGrandProductLayer {
+            layer_len: self.fingerprints[0].len(),
+            layers: output_layers,
+        }
     }
 }
 
@@ -500,6 +501,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                             debug_assert!(flags.len() % 2 == 0);
                             let n = flags.len() / 2;
                             for i in 0..n {
+                                // TODO: bound flags will still often be 0/1
                                 flags[i] = flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i]);
                             }
                             // TODO(moodlezoup): avoid truncate
@@ -511,7 +513,8 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
         );
     }
 
-    fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: (F, F, F)) -> (F, F, F) {
+    fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: &[(F, F, F)]) -> (F, F, F) {
+        let eq_evals = eq_evals[0];
         let mut evals = (F::zero(), F::zero(), F::zero());
 
         if self.bound_flags.is_empty() {
@@ -727,7 +730,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
 
 pub struct ToggledBatchedGrandProduct<F: JoltField> {
     toggle_layer: BatchedGrandProductToggleLayer<F>,
-    layers: Vec<BatchedDenseGrandProductLayer<F>>,
+    sparse_layers: Vec<BatchedSparseGrandProductLayer<F>>,
 }
 
 impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
@@ -738,51 +741,40 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
         let num_layers = fingerprints[0].len().log_2();
 
         let toggle_layer = BatchedGrandProductToggleLayer::new(flags, fingerprints);
-        let mut layers: Vec<BatchedDenseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
+        let mut layers: Vec<BatchedSparseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
         layers.push(toggle_layer.layer_output());
 
         for i in 0..num_layers - 1 {
             let previous_layers = &layers[i];
-            let len = previous_layers[0].len() / 2;
+            let len = previous_layers.layer_len / 2;
             let new_layers = previous_layers
+                .layers
                 .par_iter()
-                .map(|previous_layer| {
-                    (0..len)
-                        .into_iter()
-                        .map(|i| {
-                            let (left, right) = (previous_layer[2 * i], previous_layer[2 * i + 1]);
-                            if left.is_one() {
-                                right
-                            } else if right.is_one() {
-                                left
-                            } else {
-                                left * right
-                            }
-                        })
-                        .collect()
-                })
+                .map(|previous_layer| previous_layer.layer_output(len))
                 .collect();
-            layers.push(new_layers);
+            layers.push(BatchedSparseGrandProductLayer {
+                layer_len: len,
+                layers: new_layers,
+            });
         }
 
         Self {
             toggle_layer,
-            layers,
+            sparse_layers: layers,
         }
     }
 
     fn num_layers(&self) -> usize {
-        self.layers.len() + 1
+        self.sparse_layers.len() + 1
     }
 
     fn claims(&self) -> Vec<F> {
-        let last_layers = &self.layers.last().unwrap();
-        last_layers
+        let last_layers = &self.sparse_layers.last().unwrap();
+        let (left_claims, right_claims) = last_layers.final_claims();
+        left_claims
             .iter()
-            .map(|layer| {
-                assert_eq!(layer.len(), 2);
-                layer[0] * layer[1]
-            })
+            .zip(right_claims.iter())
+            .map(|(left_claim, right_claim)| *left_claim * right_claim)
             .collect()
     }
 
@@ -790,7 +782,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
         [&mut self.toggle_layer as &mut dyn BatchedGrandProductLayer<F>]
             .into_iter()
             .chain(
-                self.layers
+                self.sparse_layers
                     .iter_mut()
                     .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F>),
             )
