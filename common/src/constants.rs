@@ -1,7 +1,9 @@
 pub const XLEN: usize = 32;
 pub const REGISTER_COUNT: u64 = 32;
 pub const BYTES_PER_INSTRUCTION: usize = 4;
-pub const MEMORY_OPS_PER_INSTRUCTION: usize = 7;
+pub const REG_OPS_PER_INSTRUCTION: usize = 3;
+pub const RAM_OPS_PER_INSTRUCTION: usize = 4;
+pub const MEMORY_OPS_PER_INSTRUCTION: usize = REG_OPS_PER_INSTRUCTION + RAM_OPS_PER_INSTRUCTION;
 
 pub const RAM_START_ADDRESS: u64 = 0x80000000;
 pub const DEFAULT_MEMORY_SIZE: u64 = 10 * 1024 * 1024;
