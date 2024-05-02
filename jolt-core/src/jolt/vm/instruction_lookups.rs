@@ -471,40 +471,44 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                 layer.truncate(layer.len() / 2);
             });
 
-        if self.bound_flags.is_empty() {
-            self.bound_flags = self
-                .flags
-                .par_iter()
-                .map(|flags| {
-                    debug_assert!(flags.len() % 2 == 0);
-                    let n = flags.len() / 2;
-                    let mut bound_flags = Vec::with_capacity(n);
-                    for i in 0..n {
-                        // flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i])
-                        match (flags[2 * i], flags[2 * i + 1]) {
-                            (true, true) => bound_flags.push(F::one()),
-                            (true, false) => bound_flags.push(F::one() - r),
-                            (false, true) => bound_flags.push(*r),
-                            (false, false) => bound_flags.push(F::zero()),
-                        }
-                    }
-                    bound_flags
-                })
-                .collect();
-        } else {
-            self.bound_flags
-                .par_iter_mut()
-                .for_each(|flags: &mut Vec<F>| {
-                    debug_assert!(flags.len() % 2 == 0);
-                    let n = flags.len() / 2;
-                    for i in 0..n {
-                        flags[i] = flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i]);
-                    }
-                    // TODO(moodlezoup): avoid truncate
-                    flags.truncate(flags.len() / 2);
-                });
-        }
-        eq_poly.bound_poly_var_bot(r);
+        rayon::join(
+            || {
+                if self.bound_flags.is_empty() {
+                    self.bound_flags = self
+                        .flags
+                        .par_iter()
+                        .map(|flags| {
+                            debug_assert!(flags.len() % 2 == 0);
+                            let n = flags.len() / 2;
+                            let mut bound_flags = Vec::with_capacity(n);
+                            for i in 0..n {
+                                // flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i])
+                                match (flags[2 * i], flags[2 * i + 1]) {
+                                    (true, true) => bound_flags.push(F::one()),
+                                    (true, false) => bound_flags.push(F::one() - r),
+                                    (false, true) => bound_flags.push(*r),
+                                    (false, false) => bound_flags.push(F::zero()),
+                                }
+                            }
+                            bound_flags
+                        })
+                        .collect();
+                } else {
+                    self.bound_flags
+                        .par_iter_mut()
+                        .for_each(|flags: &mut Vec<F>| {
+                            debug_assert!(flags.len() % 2 == 0);
+                            let n = flags.len() / 2;
+                            for i in 0..n {
+                                flags[i] = flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i]);
+                            }
+                            // TODO(moodlezoup): avoid truncate
+                            flags.truncate(flags.len() / 2);
+                        });
+                }
+            },
+            || eq_poly.bound_poly_var_bot(r),
+        );
     }
 
     fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: (F, F, F)) -> (F, F, F) {
@@ -745,7 +749,16 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
                 .map(|previous_layer| {
                     (0..len)
                         .into_iter()
-                        .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
+                        .map(|i| {
+                            let (left, right) = (previous_layer[2 * i], previous_layer[2 * i + 1]);
+                            if left.is_one() {
+                                right
+                            } else if right.is_one() {
+                                left
+                            } else {
+                                left * right
+                            }
+                        })
                         .collect()
                 })
                 .collect();
