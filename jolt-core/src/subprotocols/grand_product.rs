@@ -346,6 +346,8 @@ pub enum DynamicDensityGrandProductLayer<F: JoltField> {
     Dense(DenseGrandProductLayer<F>),
 }
 
+const DENSIFICATION_THRESHOLD: f64 = 0.8;
+
 impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
     pub fn layer_output(&self, output_len: usize) -> Self {
         match self {
@@ -353,8 +355,7 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                 #[cfg(test)]
                 let product: F = sparse_layer.iter().map(|(_, value)| value).product();
 
-                // TODO: tune density switching threshold
-                if sparse_layer.len() > output_len / 3 {
+                if (sparse_layer.len() as f64 / (output_len * 2) as f64) > DENSIFICATION_THRESHOLD {
                     let mut output_layer: DenseGrandProductLayer<F> = vec![F::one(); output_len];
                     let mut next_index_to_process = 0usize;
                     for (j, (index, value)) in sparse_layer.iter().enumerate() {
@@ -468,7 +469,28 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             || {
                 self.layers.par_iter_mut().for_each(|layer| match layer {
                     DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
-                        let mut bound_layer: SparseGrandProductLayer<F> = vec![];
+                        let mut bound_layer: DynamicDensityGrandProductLayer<F> =
+                            if (sparse_layer.len() as f64 / self.layer_len as f64)
+                                > DENSIFICATION_THRESHOLD
+                            {
+                                DynamicDensityGrandProductLayer::Dense(vec![
+                                    F::one();
+                                    self.layer_len / 2
+                                ])
+                            } else {
+                                DynamicDensityGrandProductLayer::Sparse(vec![])
+                            };
+                        let mut push_to_bound_layer = |index: usize, value: F| {
+                            match &mut bound_layer {
+                                DynamicDensityGrandProductLayer::Sparse(ref mut sparse_vec) => {
+                                    sparse_vec.push((index, value));
+                                }
+                                DynamicDensityGrandProductLayer::Dense(ref mut dense_vec) => {
+                                    debug_assert_eq!(dense_vec[index], F::one());
+                                    dense_vec[index] = value;
+                                }
+                            };
+                        };
 
                         let mut next_left_node_to_process = 0usize;
                         let mut next_right_node_to_process = 0usize;
@@ -511,62 +533,57 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                 0 => {
                                     // Find sibling left node
                                     let sibling_value: F = find_neighbor(index + 2);
-                                    bound_layer
-                                        .push((index / 2, *value + *r * (sibling_value - value)));
+                                    push_to_bound_layer(
+                                        index / 2,
+                                        *value + *r * (sibling_value - value),
+                                    );
                                     next_left_node_to_process = index + 4;
                                 }
                                 1 => {
-                                    // Edge case: If this right node's neighbor is not one and has _not_
+                                    // Edge case: If this right node's neighbor is not 1 and has _not_
                                     // been bound yet, we need to bind the neighbor first to preserve
                                     // the monotonic ordering of the bound layer.
                                     if next_left_node_to_process <= index + 1 {
                                         let left_neighbor: F = find_neighbor(index + 1);
                                         if !left_neighbor.is_one() {
-                                            bound_layer.push((
+                                            push_to_bound_layer(
                                                 index / 2,
                                                 F::one() + *r * (left_neighbor - F::one()),
-                                            ));
+                                            );
                                         }
                                         next_left_node_to_process = index + 3;
                                     }
 
                                     // Find sibling right node
                                     let sibling_value: F = find_neighbor(index + 2);
-                                    bound_layer.push((
+                                    push_to_bound_layer(
                                         index / 2 + 1,
                                         *value + *r * (sibling_value - value),
-                                    ));
+                                    );
                                     next_right_node_to_process = index + 4;
                                 }
                                 2 => {
                                     // Sibling left node wasn't encountered in previous iteration,
                                     // so sibling must have value 1.
-                                    bound_layer
-                                        .push((index / 2 - 1, F::one() + *r * (*value - F::one())));
+                                    push_to_bound_layer(
+                                        index / 2 - 1,
+                                        F::one() + *r * (*value - F::one()),
+                                    );
                                     next_left_node_to_process = index + 2;
                                 }
                                 3 => {
                                     // Sibling right node wasn't encountered in previous iteration,
                                     // so sibling must have value 1.
-                                    bound_layer
-                                        .push((index / 2, F::one() + *r * (*value - F::one())));
+                                    push_to_bound_layer(
+                                        index / 2,
+                                        F::one() + *r * (*value - F::one()),
+                                    );
                                     next_right_node_to_process = index + 2;
                                 }
                                 _ => unreachable!("?_?"),
                             }
                         }
-
-                        // TODO: tune density switching threshold
-                        if bound_layer.len() > self.layer_len / 3 {
-                            // Switch to dense representation
-                            let mut dense_layer = vec![F::one(); self.layer_len / 2];
-                            for (index, value) in bound_layer {
-                                dense_layer[index] = value;
-                            }
-                            *layer = DynamicDensityGrandProductLayer::Dense(dense_layer);
-                        } else {
-                            *sparse_layer = bound_layer;
-                        }
+                        *layer = bound_layer;
                     }
                     DynamicDensityGrandProductLayer::Dense(dense_layer) => {
                         let n = self.layer_len / 4;
