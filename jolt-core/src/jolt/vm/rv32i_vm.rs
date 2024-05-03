@@ -155,10 +155,13 @@ mod tests {
 
     use std::collections::HashSet;
 
+    use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
+    use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyrax::HyraxScheme;
+    use crate::poly::commitment::mock::MockCommitScheme;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -190,8 +193,24 @@ mod tests {
     }
 
     #[test]
-    fn fib_e2e() {
-        let _guard = FIB_FILE_LOCK.lock().unwrap();
+    fn fib_e2e_mock() {
+        type Field = ark_bn254::Fr;
+        fib_e2e::<Field, MockCommitScheme<Field>>();
+    }
+
+    #[test]
+    fn fib_e2e_hyrax() {
+        fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
+    }
+
+    #[test]
+    fn fib_e2e_binius() {
+        type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
+        fib_e2e::<Field, MockCommitScheme<Field>>();
+    }
+
+    fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
+        // let _guard = FIB_FILE_LOCK.lock().unwrap(); // TODO(sragss): Fix
 
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
@@ -202,7 +221,7 @@ mod tests {
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) =
-            <RV32IJoltVM as Jolt<Fr, HyraxScheme<G1Projective>, C, M>>::prove(
+            <RV32IJoltVM as Jolt<F, PCS, C, M>>::prove(
                 io_device,
                 bytecode_trace,
                 memory_trace,
