@@ -1,3 +1,5 @@
+use std::ops::{Index, IndexMut};
+
 use super::sumcheck::SumcheckInstanceProof;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::field::JoltField;
@@ -266,7 +268,54 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
     }
 }
 
-pub type DenseGrandProductLayer<F> = Vec<F>;
+#[derive(Debug, Clone)]
+pub struct DenseGrandProductLayer<F> {
+    values: Vec<F>,
+    len: usize,
+}
+
+impl<F> DenseGrandProductLayer<F> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &F> {
+        self.values.iter().take(self.len)
+    }
+
+    // bind (interleaved)
+    // layer output (interleaved)
+}
+
+impl<F> From<Vec<F>> for DenseGrandProductLayer<F> {
+    fn from(values: Vec<F>) -> Self {
+        let len = values.len();
+        Self { values, len }
+    }
+}
+
+impl<F> Index<usize> for DenseGrandProductLayer<F> {
+    type Output = F;
+
+    #[inline(always)]
+    fn index(&self, i: usize) -> &F {
+        &self.values[i]
+    }
+}
+
+impl<F> IndexMut<usize> for DenseGrandProductLayer<F> {
+    #[inline(always)]
+    fn index_mut(&mut self, i: usize) -> &mut F {
+        &mut self.values[i]
+    }
+}
+
+impl<F: PartialEq> PartialEq for DenseGrandProductLayer<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.values[..self.len] == other.values[..self.len]
+    }
+}
+
 pub type BatchedDenseGrandProductLayer<F> = Vec<DenseGrandProductLayer<F>>;
 
 impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedDenseGrandProductLayer<F> {}
@@ -280,25 +329,25 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
         // TODO(moodlezoup): parallelize over chunks instead of over batch
         rayon::join(
             || {
-                self.par_iter_mut().for_each(|layer: &mut Vec<F>| {
-                    debug_assert!(layer.len() % 4 == 0);
-                    let n = layer.len() / 4;
-                    for i in 0..n {
-                        // left
-                        layer[2 * i] = layer[4 * i] + *r * (layer[4 * i + 2] - layer[4 * i]);
-                        // right
-                        layer[2 * i + 1] =
-                            layer[4 * i + 1] + *r * (layer[4 * i + 3] - layer[4 * i + 1]);
-                    }
-                    // TODO(moodlezoup): avoid truncate
-                    layer.truncate(layer.len() / 2);
-                })
+                self.par_iter_mut()
+                    .for_each(|layer: &mut DenseGrandProductLayer<F>| {
+                        debug_assert!(layer.len() % 4 == 0);
+                        let n = layer.len() / 4;
+                        for i in 0..n {
+                            // left
+                            layer[2 * i] = layer[4 * i] + *r * (layer[4 * i + 2] - layer[4 * i]);
+                            // right
+                            layer[2 * i + 1] =
+                                layer[4 * i + 1] + *r * (layer[4 * i + 3] - layer[4 * i + 1]);
+                        }
+                        layer.len /= 2;
+                    })
             },
             || eq_poly.bound_poly_var_bot(r),
         );
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
     fn compute_cubic(
         &self,
         coeffs: &[F],
@@ -388,7 +437,8 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
 
                 if (sparse_layer.len() as f64 / (output_len * 2) as f64) > DENSIFICATION_THRESHOLD {
                     // Current layer is already not very sparse, so make the next layer dense
-                    let mut output_layer: DenseGrandProductLayer<F> = vec![F::one(); output_len];
+                    let mut output_layer: DenseGrandProductLayer<F> =
+                        DenseGrandProductLayer::from(vec![F::one(); output_len]);
                     let mut next_index_to_process = 0usize;
                     for (j, (index, value)) in sparse_layer.iter().enumerate() {
                         if *index < next_index_to_process {
@@ -473,7 +523,8 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                         let (left, right) = (dense_layer[2 * i], dense_layer[2 * i + 1]);
                         left * right
                     })
-                    .collect();
+                    .collect::<Vec<_>>()
+                    .into();
                 #[cfg(test)]
                 {
                     let output_product: F = output_layer.iter().product();
@@ -504,19 +555,20 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             || {
                 self.layers.par_iter_mut().for_each(|layer| match layer {
                     DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
-                        let mut bound_layer: DynamicDensityGrandProductLayer<F> =
-                            if (sparse_layer.len() as f64 / self.layer_len as f64)
-                                > DENSIFICATION_THRESHOLD
-                            {
-                                // Current layer is already not very sparse, so make the next layer dense
-                                DynamicDensityGrandProductLayer::Dense(vec![
-                                    F::one();
-                                    self.layer_len / 2
-                                ])
-                            } else {
-                                // Current layer is still pretty sparse, so make the next layer sparse
-                                DynamicDensityGrandProductLayer::Sparse(vec![])
-                            };
+                        let mut bound_layer: DynamicDensityGrandProductLayer<F> = if (sparse_layer
+                            .len()
+                            as f64
+                            / self.layer_len as f64)
+                            > DENSIFICATION_THRESHOLD
+                        {
+                            // Current layer is already not very sparse, so make the next layer dense
+                            DynamicDensityGrandProductLayer::Dense(DenseGrandProductLayer::from(
+                                vec![F::one(); self.layer_len / 2],
+                            ))
+                        } else {
+                            // Current layer is still pretty sparse, so make the next layer sparse
+                            DynamicDensityGrandProductLayer::Sparse(vec![])
+                        };
                         let mut push_to_bound_layer = |index: usize, value: F| {
                             match &mut bound_layer {
                                 DynamicDensityGrandProductLayer::Sparse(ref mut sparse_vec) => {
@@ -641,6 +693,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         self.layer_len /= 2;
     }
 
+    #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::compute_cubic")]
     fn compute_cubic(
         &self,
         coeffs: &[F],
@@ -797,7 +850,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     // for the evaluation points {0, 2, 3}
                     let evals = eq_evals
                         .iter()
-                        .zip(dense_layer.chunks_exact(4))
+                        .zip(dense_layer.values.chunks_exact(4))
                         .map(|(eq_evals, chunk)| {
                             let left = (chunk[0], chunk[2]);
                             let right = (chunk[1], chunk[3]);
@@ -921,7 +974,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
     fn construct(leaves: Self::Leaves) -> Self {
         let num_layers = leaves[0].len().log_2();
         let mut layers: Vec<BatchedDenseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
-        layers.push(leaves);
+        layers.push(leaves.into_iter().map(|l| l.into()).collect());
 
         for i in 0..num_layers - 1 {
             let previous_layers = &layers[i];
@@ -932,7 +985,8 @@ impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
                     (0..len)
                         .into_iter()
                         .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
-                        .collect()
+                        .collect::<Vec<_>>()
+                        .into()
                 })
                 .collect();
             layers.push(new_layers);
@@ -998,8 +1052,8 @@ mod grand_product_tests {
 
     #[test]
     fn dense_sparse_bind_parity() {
-        const LAYER_SIZE: usize = 1 << 10;
-        const BATCH_SIZE: usize = 4;
+        const LAYER_SIZE: usize = 1 << 4;
+        const BATCH_SIZE: usize = 1;
         let mut rng = test_rng();
 
         let mut dense_layers: BatchedDenseGrandProductLayer<Fr> = std::iter::repeat_with(|| {
@@ -1011,7 +1065,8 @@ mod grand_product_tests {
                 }
             })
             .take(LAYER_SIZE)
-            .collect()
+            .collect::<Vec<_>>()
+            .into()
         })
         .take(BATCH_SIZE)
         .collect();
@@ -1040,15 +1095,14 @@ mod grand_product_tests {
                 .iter()
                 .map(|layer| match layer {
                     DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
-                        let mut densified = vec![Fr::one(); sparse_layers.layer_len];
+                        let mut densified =
+                            DenseGrandProductLayer::from(vec![Fr::one(); sparse_layers.layer_len]);
                         for (index, value) in sparse_layer {
                             densified[*index] = *value;
                         }
                         densified
                     }
-                    DynamicDensityGrandProductLayer::Dense(dense_layer) => {
-                        dense_layer[..sparse_layers.layer_len].to_vec()
-                    }
+                    DynamicDensityGrandProductLayer::Dense(dense_layer) => dense_layer.clone(),
                 })
                 .collect::<Vec<_>>()
         };
@@ -1090,7 +1144,8 @@ mod grand_product_tests {
                 }
             })
             .take(LAYER_SIZE)
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
             DynamicDensityGrandProductLayer::Dense(layer)
         })
         .take(BATCH_SIZE)

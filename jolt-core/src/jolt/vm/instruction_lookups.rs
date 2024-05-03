@@ -418,14 +418,17 @@ struct BatchedGrandProductToggleLayer<F: JoltField> {
     flags: Vec<Vec<bool>>,
     bound_flags: Vec<Vec<F>>,
     fingerprints: Vec<Vec<F>>,
+    layer_len: usize,
 }
 
 impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
     fn new(flags: Vec<Vec<bool>>, fingerprints: Vec<Vec<F>>) -> Self {
+        let layer_len = fingerprints[0].len();
         Self {
             flags,
             bound_flags: vec![],
             fingerprints,
+            layer_len,
         }
     }
 
@@ -436,7 +439,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             .enumerate()
             .map(|(batch_index, fingerprints)| {
                 let flags = &self.flags[batch_index / 2];
-                let mut sparse_layer = Vec::with_capacity(flags.len());
+                let mut sparse_layer = Vec::with_capacity(self.layer_len);
                 for (i, (flag, fingerprint)) in flags.iter().zip(fingerprints.iter()).enumerate() {
                     if *flag {
                         sparse_layer.push((i, *fingerprint));
@@ -446,7 +449,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
             })
             .collect();
         BatchedSparseGrandProductLayer {
-            layer_len: self.fingerprints[0].len(),
+            layer_len: self.layer_len,
             layers: output_layers,
         }
     }
@@ -454,7 +457,7 @@ impl<F: JoltField> BatchedGrandProductToggleLayer<F> {
 
 impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F> {
     fn num_rounds(&self) -> usize {
-        self.flags[0].len().log_2()
+        self.layer_len.log_2()
     }
 
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::bind")]
@@ -462,13 +465,11 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
         self.fingerprints
             .par_iter_mut()
             .for_each(|layer: &mut Vec<F>| {
-                debug_assert!(layer.len() % 2 == 0);
-                let n = layer.len() / 2;
+                debug_assert!(self.layer_len % 2 == 0);
+                let n = self.layer_len / 2;
                 for i in 0..n {
                     layer[i] = layer[2 * i] + *r * (layer[2 * i + 1] - layer[2 * i]);
                 }
-                // TODO(moodlezoup): avoid truncate
-                layer.truncate(layer.len() / 2);
             });
 
         rayon::join(
@@ -478,8 +479,8 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         .flags
                         .par_iter()
                         .map(|flags| {
-                            debug_assert!(flags.len() % 2 == 0);
-                            let n = flags.len() / 2;
+                            debug_assert!(self.layer_len % 2 == 0);
+                            let n = self.layer_len / 2;
                             let mut bound_flags = Vec::with_capacity(n);
                             for i in 0..n {
                                 // flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i])
@@ -497,21 +498,21 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     self.bound_flags
                         .par_iter_mut()
                         .for_each(|flags: &mut Vec<F>| {
-                            debug_assert!(flags.len() % 2 == 0);
-                            let n = flags.len() / 2;
+                            debug_assert!(self.layer_len % 2 == 0);
+                            let n = self.layer_len / 2;
                             for i in 0..n {
                                 // TODO: bound flags will still often be 0/1
                                 flags[i] = flags[2 * i] + *r * (flags[2 * i + 1] - flags[2 * i]);
                             }
-                            // TODO(moodlezoup): avoid truncate
-                            flags.truncate(flags.len() / 2);
                         });
                 }
             },
             || eq_poly.bound_poly_var_bot(r),
         );
+        self.layer_len /= 2;
     }
 
+    #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
     fn compute_cubic(
         &self,
         coeffs: &[F],
@@ -689,22 +690,13 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
     }
 
     fn final_claims(&self) -> (Vec<F>, Vec<F>) {
+        assert_eq!(self.layer_len, 1);
         let flag_claims = self
             .bound_flags
             .iter()
-            .flat_map(|layer| {
-                assert_eq!(layer.len(), 1);
-                [layer[0], layer[0]]
-            })
+            .flat_map(|layer| [layer[0], layer[0]])
             .collect();
-        let fingerprint_claims = self
-            .fingerprints
-            .iter()
-            .map(|layer| {
-                assert_eq!(layer.len(), 1);
-                layer[0]
-            })
-            .collect();
+        let fingerprint_claims = self.fingerprints.iter().map(|layer| layer[0]).collect();
         (flag_claims, fingerprint_claims)
     }
 }
