@@ -6,11 +6,12 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 use crate::field::JoltField;
 use crate::utils::math::Math;
 use core::ops::Index;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::ops::AddAssign;
 
-#[derive(Debug, PartialEq)]
-pub struct DensePolynomial<F> {
+#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct DensePolynomial<F: JoltField> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,
     Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
@@ -280,7 +281,7 @@ impl<F: JoltField> Clone for DensePolynomial<F> {
     }
 }
 
-impl<F> Index<usize> for DensePolynomial<F> {
+impl<F: JoltField> Index<usize> for DensePolynomial<F> {
     type Output = F;
 
     #[inline(always)]
@@ -289,7 +290,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
     }
 }
 
-impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
+impl<F: JoltField> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
     fn as_ref(&self) -> &DensePolynomial<F> {
         self
     }
