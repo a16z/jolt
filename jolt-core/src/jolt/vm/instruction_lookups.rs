@@ -1,8 +1,7 @@
 use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{
     BatchedCubicSumcheck, BatchedGrandProduct, BatchedGrandProductLayer,
-    BatchedGrandProductLayerProof, BatchedGrandProductProof, BatchedSparseGrandProductLayer,
-    DynamicDensityGrandProductLayer,
+    BatchedGrandProductLayerProof, BatchedSparseGrandProductLayer, DynamicDensityGrandProductLayer,
 };
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -790,95 +789,63 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
             .rev()
     }
 
-    fn verify_grand_product(
-        proof: &BatchedGrandProductProof<F>,
-        claims: &Vec<F>,
+    fn verify_sumcheck_claim(
+        layer_proofs: &Vec<BatchedGrandProductLayerProof<F>>,
+        layer_index: usize,
+        coeffs: &Vec<F>,
+        sumcheck_claim: F,
+        eq_eval: F,
+        grand_product_claims: &mut Vec<F>,
+        r_grand_product: &mut Vec<F>,
         transcript: &mut ProofTranscript,
-    ) -> (Vec<F>, Vec<F>) {
-        let mut r_grand_product: Vec<F> = Vec::new();
-        let mut claims_to_verify = claims.to_owned();
-
-        for (num_rounds, layer_proof) in proof.layers.iter().enumerate() {
-            // produce a fresh set of coeffs
-            let coeffs: Vec<F> =
-                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
-            // produce a joint claim
-            let claim = claims_to_verify
-                .iter()
-                .zip(coeffs.iter())
-                .map(|(&claim, &coeff)| claim * coeff)
+    ) {
+        let layer_proof = &layer_proofs[layer_index];
+        if layer_index != layer_proofs.len() - 1 {
+            // Normal grand product layer (multiplication gates)
+            let expected_sumcheck_claim: F = (0..grand_product_claims.len())
+                .map(|i| {
+                    coeffs[i] * layer_proof.left_claims[i] * layer_proof.right_claims[i] * eq_eval
+                })
                 .sum();
 
-            let (sumcheck_claim, r_sumcheck) = layer_proof.verify(claim, num_rounds, 3, transcript);
-            assert_eq!(claims.len(), layer_proof.left_claims.len());
-            assert_eq!(claims.len(), layer_proof.right_claims.len());
+            assert_eq!(expected_sumcheck_claim, sumcheck_claim);
 
-            for (left, right) in layer_proof
+            // produce a random challenge to condense two claims into a single claim
+            let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+
+            *grand_product_claims = layer_proof
                 .left_claims
                 .iter()
                 .zip(layer_proof.right_claims.iter())
-            {
-                transcript.append_scalar(b"sumcheck left claim", left);
-                transcript.append_scalar(b"sumcheck right claim", right);
-            }
+                .map(|(&left_claim, &right_claim)| {
+                    left_claim + r_layer * (right_claim - left_claim)
+                })
+                .collect();
 
-            assert_eq!(r_grand_product.len(), r_sumcheck.len());
+            r_grand_product.push(r_layer);
+        } else {
+            // Grand product toggle layer: layer_proof.left_claims are flags,
+            // layer_proof.right_claims are fingerprints
+            let expected_sumcheck_claim: F = (0..grand_product_claims.len())
+                .map(|i| {
+                    coeffs[i]
+                        * eq_eval
+                        * (layer_proof.left_claims[i] * layer_proof.right_claims[i] + F::one()
+                            - layer_proof.left_claims[i])
+                })
+                .sum();
 
-            let eq: F = r_grand_product
+            assert_eq!(expected_sumcheck_claim, sumcheck_claim);
+
+            *grand_product_claims = layer_proof
+                .left_claims
                 .iter()
-                .zip_eq(r_sumcheck.iter().rev())
-                .map(|(&r_gp, &r_sc)| r_gp * r_sc + (F::one() - r_gp) * (F::one() - r_sc))
-                .product();
-
-            // TODO: avoid collect
-            r_grand_product = r_sumcheck.into_iter().rev().collect();
-
-            if num_rounds != proof.layers.len() - 1 {
-                let expected_sumcheck_claim: F = (0..claims.len())
-                    .map(|i| {
-                        coeffs[i] * layer_proof.left_claims[i] * layer_proof.right_claims[i] * eq
-                    })
-                    .sum();
-
-                assert_eq!(expected_sumcheck_claim, sumcheck_claim);
-
-                // produce a random challenge to condense two claims into a single claim
-                let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
-
-                claims_to_verify = layer_proof
-                    .left_claims
-                    .iter()
-                    .zip(layer_proof.right_claims.iter())
-                    .map(|(&left_claim, &right_claim)| {
-                        left_claim + r_layer * (right_claim - left_claim)
-                    })
-                    .collect();
-
-                r_grand_product.push(r_layer);
-            } else {
-                let expected_sumcheck_claim: F = (0..claims.len())
-                    .map(|i| {
-                        coeffs[i]
-                            * eq
-                            * (layer_proof.left_claims[i] * layer_proof.right_claims[i] + F::one()
-                                - layer_proof.left_claims[i])
-                    })
-                    .sum();
-
-                assert_eq!(expected_sumcheck_claim, sumcheck_claim);
-
-                claims_to_verify = layer_proof
-                    .left_claims
-                    .iter()
-                    .zip(layer_proof.right_claims.iter())
-                    .map(|(&flag_claim, &fingerprint_claim)| {
-                        flag_claim * fingerprint_claim + F::one() - flag_claim
-                    })
-                    .collect();
-            }
+                .zip(layer_proof.right_claims.iter())
+                .map(|(&flag_claim, &fingerprint_claim)| {
+                    flag_claim * fingerprint_claim + F::one() - flag_claim
+                })
+                .collect();
         }
-
-        (claims_to_verify, r_grand_product)
     }
 }
 

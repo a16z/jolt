@@ -70,6 +70,36 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         )
     }
 
+    fn verify_sumcheck_claim(
+        layer_proofs: &Vec<BatchedGrandProductLayerProof<F>>,
+        layer_index: usize,
+        coeffs: &Vec<F>,
+        sumcheck_claim: F,
+        eq_eval: F,
+        grand_product_claims: &mut Vec<F>,
+        r_grand_product: &mut Vec<F>,
+        transcript: &mut ProofTranscript,
+    ) {
+        let layer_proof = &layer_proofs[layer_index];
+        let expected_sumcheck_claim: F = (0..grand_product_claims.len())
+            .map(|i| coeffs[i] * layer_proof.left_claims[i] * layer_proof.right_claims[i] * eq_eval)
+            .sum();
+
+        assert_eq!(expected_sumcheck_claim, sumcheck_claim);
+
+        // produce a random challenge to condense two claims into a single claim
+        let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+
+        *grand_product_claims = layer_proof
+            .left_claims
+            .iter()
+            .zip(layer_proof.right_claims.iter())
+            .map(|(&left_claim, &right_claim)| left_claim + r_layer * (right_claim - left_claim))
+            .collect();
+
+        r_grand_product.push(r_layer);
+    }
+
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<F>,
         claims: &Vec<F>,
@@ -78,7 +108,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         let mut r_grand_product: Vec<F> = Vec::new();
         let mut claims_to_verify = claims.to_owned();
 
-        for (num_rounds, layer_proof) in proof.layers.iter().enumerate() {
+        for (layer_index, layer_proof) in proof.layers.iter().enumerate() {
             // produce a fresh set of coeffs
             let coeffs: Vec<F> =
                 transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
@@ -89,7 +119,8 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
                 .map(|(&claim, &coeff)| claim * coeff)
                 .sum();
 
-            let (sumcheck_claim, r_sumcheck) = layer_proof.verify(claim, num_rounds, 3, transcript);
+            let (sumcheck_claim, r_sumcheck) =
+                layer_proof.verify(claim, layer_index, 3, transcript);
             assert_eq!(claims.len(), layer_proof.left_claims.len());
             assert_eq!(claims.len(), layer_proof.right_claims.len());
 
@@ -104,34 +135,25 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
 
             assert_eq!(r_grand_product.len(), r_sumcheck.len());
 
-            let eq: F = r_grand_product
+            let eq_eval: F = r_grand_product
                 .iter()
                 .zip_eq(r_sumcheck.iter().rev())
                 .map(|(&r_gp, &r_sc)| r_gp * r_sc + (F::one() - r_gp) * (F::one() - r_sc))
                 .product();
 
-            let expected_sumcheck_claim: F = (0..claims.len())
-                .map(|i| coeffs[i] * layer_proof.left_claims[i] * layer_proof.right_claims[i] * eq)
-                .sum();
-
-            assert_eq!(expected_sumcheck_claim, sumcheck_claim);
-
-            // produce a random challenge to condense two claims into a single claim
-            let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
-
-            claims_to_verify = layer_proof
-                .left_claims
-                .iter()
-                .zip(layer_proof.right_claims.iter())
-                .map(|(&left_claim, &right_claim)| {
-                    left_claim + r_layer * (right_claim - left_claim)
-                })
-                .collect();
-
             // TODO: avoid collect
-            let mut ext: Vec<_> = r_sumcheck.into_iter().rev().collect();
-            ext.push(r_layer);
-            r_grand_product = ext;
+            r_grand_product = r_sumcheck.into_iter().rev().collect();
+
+            Self::verify_sumcheck_claim(
+                &proof.layers,
+                layer_index,
+                &coeffs,
+                sumcheck_claim,
+                eq_eval,
+                &mut claims_to_verify,
+                &mut r_grand_product,
+                transcript,
+            );
         }
 
         (claims_to_verify, r_grand_product)
@@ -1006,4 +1028,6 @@ mod grand_product_tests {
             assert_eq!(dense_layers, condense(sparse_layers.clone()));
         }
     }
+
+    // TODO: dense_sparse_cubic_evals_parity test
 }
