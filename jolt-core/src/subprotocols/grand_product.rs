@@ -642,6 +642,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         let layer = &self.layers[batch_index];
         match layer {
             DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
+                // Computes:
+                //     ∆ := Σ eq_evals[j] * (left[j] * right[j] - 1)    ∀j where left[j] ≠ 0 or right[j] ≠ 0
+                // for the evaluation points {0, 2, 3}
                 let mut delta = (F::zero(), F::zero(), F::zero());
 
                 let mut next_index_to_process = 0usize;
@@ -730,6 +733,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 delta
             }
             DynamicDensityGrandProductLayer::Dense(dense_layer) => {
+                // Computes:
+                //     coeff[batch_index] * (Σ eq_evals[i] * left[i] * right[i])
+                // for the evaluation points {0, 2, 3}
                 let evals = eq_evals
                     .iter()
                     .zip(dense_layer.chunks_exact(4))
