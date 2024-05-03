@@ -230,7 +230,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         eq_poly: &mut DensePolynomial<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
-        // TODO(moodlezoup): check lengths of self, coeffs, eq_poly
+        debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
 
         let mut e = *claim;
         let mut r: Vec<F> = Vec::new();
@@ -323,6 +323,12 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
         let mut evals = (F::zero(), F::zero(), F::zero());
 
         self.iter().enumerate().for_each(|(batch_index, layer)| {
+            // We want to compute:
+            //     evals.0 += coeff * left.0 * right.0
+            //     evals.1 += coeff * (2 * left.1 - left.0) * (2 * right.1 - right.0)
+            //     evals.0 += coeff * (3 * left.1 - 2 * left.0) * (3 * right.1 - 2 * right.0)
+            // which naively requires 3 multiplications by `coeff`.
+            // By multiplying by the coefficient early, we only use 2 multiplications by `coeff`.
             let left = (
                 coeffs[batch_index] * layer[4 * index],
                 coeffs[batch_index] * layer[4 * index + 2],
@@ -378,26 +384,31 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                 let product: F = sparse_layer.iter().map(|(_, value)| value).product();
 
                 if (sparse_layer.len() as f64 / (output_len * 2) as f64) > DENSIFICATION_THRESHOLD {
+                    // Current layer is already not very sparse, so make the next layer dense
                     let mut output_layer: DenseGrandProductLayer<F> = vec![F::one(); output_len];
                     let mut next_index_to_process = 0usize;
                     for (j, (index, value)) in sparse_layer.iter().enumerate() {
                         if *index < next_index_to_process {
+                            // Node was already multiplied with its sibling in a previous iteration
                             continue;
                         }
                         if index % 2 == 0 {
-                            // Left node
+                            // Left node; try to find correspoding right node
                             let right = sparse_layer
                                 .get(j + 1)
                                 .cloned()
                                 .unwrap_or((index + 1, F::one()));
                             if right.0 == index + 1 {
+                                // Corresponding right node was found; multiply them together
                                 output_layer[index / 2] = right.1 * value;
                             } else {
+                                // Corresponding right node not found, so it must be 1
                                 output_layer[index / 2] = *value;
                             }
                             next_index_to_process = index + 2;
                         } else {
-                            // Right node
+                            // Right node; corresponding left node was not encountered in
+                            // previous iteration, so it must have value 1
                             output_layer[index / 2] = *value;
                             next_index_to_process = index + 1;
                         }
@@ -409,27 +420,32 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                     }
                     DynamicDensityGrandProductLayer::Dense(output_layer)
                 } else {
+                    // Current layer is still pretty sparse, so make the next layer sparse
                     let mut output_layer: SparseGrandProductLayer<F> =
                         Vec::with_capacity(output_len);
                     let mut next_index_to_process = 0usize;
                     for (j, (index, value)) in sparse_layer.iter().enumerate() {
                         if *index < next_index_to_process {
+                            // Node was already multiplied with its sibling in a previous iteration
                             continue;
                         }
                         if index % 2 == 0 {
-                            // Left node
+                            // Left node; try to find correspoding right node
                             let right = sparse_layer
                                 .get(j + 1)
                                 .cloned()
                                 .unwrap_or((index + 1, F::one()));
                             if right.0 == index + 1 {
+                                // Corresponding right node was found; multiply them together
                                 output_layer.push((index / 2, right.1 * value));
                             } else {
+                                // Corresponding right node not found, so it must be 1
                                 output_layer.push((index / 2, *value));
                             }
                             next_index_to_process = index + 2;
                         } else {
-                            // Right node
+                            // Right node; corresponding left node was not encountered in
+                            // previous iteration, so it must have value 1
                             output_layer.push((index / 2, *value));
                             next_index_to_process = index + 1;
                         }
@@ -447,17 +463,12 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                 #[cfg(test)]
                 let product: F = dense_layer.iter().product();
 
+                // If current layer is dense, next layer should also be dense.
                 let output_layer: DenseGrandProductLayer<F> = (0..output_len)
                     .into_iter()
                     .map(|i| {
                         let (left, right) = (dense_layer[2 * i], dense_layer[2 * i + 1]);
-                        if left.is_one() {
-                            right
-                        } else if right.is_one() {
-                            left
-                        } else {
-                            left * right
-                        }
+                        left * right
                     })
                     .collect();
                 #[cfg(test)]
@@ -471,7 +482,6 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
     }
 }
 
-// TODO: implement len() and iter()
 #[derive(Debug, Clone)]
 pub struct BatchedSparseGrandProductLayer<F: JoltField> {
     pub layer_len: usize,
@@ -495,11 +505,13 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                             if (sparse_layer.len() as f64 / self.layer_len as f64)
                                 > DENSIFICATION_THRESHOLD
                             {
+                                // Current layer is already not very sparse, so make the next layer dense
                                 DynamicDensityGrandProductLayer::Dense(vec![
                                     F::one();
                                     self.layer_len / 2
                                 ])
                             } else {
+                                // Current layer is still pretty sparse, so make the next layer sparse
                                 DynamicDensityGrandProductLayer::Sparse(vec![])
                             };
                         let mut push_to_bound_layer = |index: usize, value: F| {
@@ -608,6 +620,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                         *layer = bound_layer;
                     }
                     DynamicDensityGrandProductLayer::Dense(dense_layer) => {
+                        // If current layer is dense, next layer should also be dense.
                         let n = self.layer_len / 4;
                         for i in 0..n {
                             // left
@@ -634,6 +647,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 let mut next_index_to_process = 0usize;
                 for (j, (index, value)) in sparse_layer.iter().enumerate() {
                     if *index < next_index_to_process {
+                        // This node was already processed in a previous iteration
                         continue;
                     }
                     let neighbors = [
@@ -715,7 +729,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     .iter()
                     .zip(dense_layer.chunks_exact(4))
                     .map(|(eq_evals, chunk)| {
-                        // TODO: there may still be a lot of ones even in a dense layer
                         let left = (chunk[0], chunk[2]);
                         let right = (chunk[1], chunk[3]);
 
@@ -753,15 +766,17 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             .iter()
             .map(|layer| match layer {
                 DynamicDensityGrandProductLayer::Sparse(layer) => match layer.len() {
-                    0 => (F::one(), F::one()),
+                    0 => (F::one(), F::one()), // Neither left nor right claim is present, so they must both be 1
                     1 => {
                         if layer[0].0.is_zero() {
+                            // Only left claim is present, so right claim must be 1
                             (layer[0].1, F::one())
                         } else {
+                            // Only right claim is present, so left claim must be 1
                             (F::one(), layer[0].1)
                         }
                     }
-                    2 => (layer[0].1, layer[1].1),
+                    2 => (layer[0].1, layer[1].1), // Both left and right claim are present
                     _ => panic!("Sparse layer length > 2"),
                 },
                 DynamicDensityGrandProductLayer::Dense(layer) => (layer[0], layer[1]),
@@ -777,7 +792,10 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         eq_poly: &mut DensePolynomial<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
-        // TODO(moodlezoup): check lengths of self, coeffs, eq_poly
+        #[cfg(test)] {
+            assert_eq!(coeffs.len(), self.layers.len());
+            assert_eq!(self.layer_len / 2, eq_poly.len());
+        }
 
         let mut e = *claim;
         let mut r: Vec<F> = Vec::new();
@@ -802,15 +820,19 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 .collect_into_vec(&mut eq_evals);
             drop(_enter);
 
-            let span = tracing::span!(tracing::Level::TRACE, "eq eval sums");
-            let _enter = span.enter();
-            // TODO: skip if all layers are dense
-            let eq_eval_sums: (F, F, F) = (
-                eq_evals.par_iter().map(|evals| evals.0).sum(),
-                eq_evals.par_iter().map(|evals| evals.1).sum(),
-                eq_evals.par_iter().map(|evals| evals.2).sum(),
-            );
-            drop(_enter);
+            // This is what `self.cubic_evals` would be if a layer were *all 1s*
+            // We pre-emptively compute these sums to speed up `cubic_evals` for
+            // sparse layers; see below.
+            let eq_eval_sums: (F, F, F) = eq_evals
+                .par_iter()
+                .fold(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                )
+                .reduce(
+                    || (F::zero(), F::zero(), F::zero()),
+                    |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+                );
 
             let span = tracing::span!(tracing::Level::TRACE, "cubic evals");
             let _enter = span.enter();
@@ -818,6 +840,23 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 .par_iter()
                 .enumerate()
                 .map(|(batch_index, coeff)| match self.layers[batch_index] {
+                    // NOTE: `self.cubic_evals` has different behavior depending on whether the
+                    // given layer is sparse or dense.
+
+                    // If it's sparse, we use the pre-emptively computed `eq_eval_sums` as a starting
+                    // point:
+                    //     eq_eval_sum := Σ eq_evals[i]
+                    // What we ultimately want to compute for `cubic_evals`:
+                    //     Σ coeff[batch_index] * (Σ eq_evals[i] * left[i] * right[i])
+                    // Note that if left[i] and right[i] are all 1s, the inner sum is:
+                    //     Σ eq_evals[i] = eq_eval_sum
+                    // To get recover the actual inner sum, `self.cubic_evals` finds all the
+                    // non-1 left[i] and right[i] terms and computes the delta:
+                    //     ∆ := Σ eq_evals[j] * (left[j] * right[j] - 1)    ∀j where left[j] ≠ 0 or right[j] ≠ 0
+                    // Then we can compute:
+                    //    coeff[batch_index] * (eq_eval_sum + ∆) = coeff[batch_index] * (Σ eq_evals[i] + Σ eq_evals[j] * (left[j] * right[j] - 1))
+                    //                                           = coeff[batch_index] * (Σ eq_evals[j] * left[j] * right[j])
+                    // ...which is exactly the summand we want.
                     DynamicDensityGrandProductLayer::Sparse(_) => {
                         let delta = self.cubic_evals(batch_index, coeffs, &eq_evals);
                         (
@@ -826,6 +865,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                             *coeff * (eq_eval_sums.2 + delta.2),
                         )
                     }
+                    // If it's dense, we just compute
+                    //     Σ coeff[batch_index] * (Σ eq_evals[i] * left[i] * right[i])
+                    // directly in `self.cubic_evals`, without using `eq_eval_sums`.
                     DynamicDensityGrandProductLayer::Dense(_) => {
                         self.cubic_evals(batch_index, coeffs, &eq_evals)
                     }
@@ -833,9 +875,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 .collect();
             drop(_enter);
 
-            let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0).sum();
-            let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1).sum();
-            let evals_combined_3 = (0..evals.len()).map(|i| evals[i].2).sum();
+            let evals_combined_0 = evals.iter().map(|eval| eval.0).sum();
+            let evals_combined_2 = evals.iter().map(|eval| eval.1).sum();
+            let evals_combined_3 = evals.iter().map(|eval| eval.2).sum();
 
             let cubic_evals = [
                 evals_combined_0,
