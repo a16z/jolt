@@ -6,10 +6,11 @@ use std::{iter, marker::PhantomData};
 use crate::poly::unipoly::UniPoly;
 use crate::poly::{self, dense_mlpoly::DensePolynomial};
 use crate::utils::errors::ProofVerifyError;
-use crate::utils::transcript::ProofTranscript;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_bn254::Bn254;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{iterable::Iterable, ops::Neg, One, Zero};
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -28,6 +29,7 @@ use ark_ec::VariableBaseMSM;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
+use super::commitment_scheme::{BatchType, CommitShape};
 use super::{
     commitment_scheme::CommitmentScheme,
     kzg::{UnivariateKZG, UniversalKzgSrs},
@@ -79,6 +81,17 @@ impl<P: Pairing> ZeromorphSRS<P> {
     }
 }
 
+pub struct ZeromorphCommitment<P: Pairing>(P::G1);
+
+impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P> 
+where
+  Self: CurveGroup
+{
+  fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
+      transcript.append_point(b"poly_commitment_share", self);
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct ZeromorphProverKey<P: Pairing> {
     pub g1_powers: Vec<P::G1Affine>,
@@ -93,7 +106,8 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
     pub tau_N_max_sub_2_N: P::G2Affine,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, CanonicalSerialize,
+  CanonicalDeserialize, Debug)]
 pub struct ZeromorphProof<P: Pairing> {
     pub pi: P::G1Affine,
     pub q_hat_com: P::G1Affine,
@@ -132,7 +146,7 @@ where
             quotient_iter
                 .zip_eq(&*g_lo)
                 .zip_eq(&*g_hi)
-                .for_each(|((q, g_lo), g_hi)| {
+                .for_each(|((mut q, g_lo), g_hi)| {
                     *q = *g_hi - *g_lo;
                 });
 
@@ -250,7 +264,6 @@ where
     (-vs[0] * z_challenge, q_scalars)
 }
 
-/*
 #[derive(Clone)]
 pub struct Zeromorph<P: Pairing> {
     _phantom: PhantomData<P>,
@@ -259,19 +272,20 @@ pub struct Zeromorph<P: Pairing> {
 impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: poly::field::JoltField,
+    ZeromorphCommitment<P>: CurveGroup
 {
     type Field =  P::ScalarField;
     type Setup = ZeromorphSRS<P>;
-    type Commitment =  P::G1Affine;
+    type Commitment =  ZeromorphCommitment<P>;
     type Proof = ZeromorphProof<P>;
     type BatchedProof = ZeromorphProof<P>;
 
     fn setup(shapes: &[CommitShape]) -> Self::Setup {
-
+      todo!()
     }
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-
+      todo!()
     }
 
     fn batch_commit(
@@ -279,18 +293,21 @@ where
         gens: &Self::Setup,
         batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-
+      todo!()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
-
+      todo!()
     }
 
     fn prove(
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
-    ) -> Self::Proof;
+    ) -> Self::Proof {
+      todo!()
+    }
+
     fn batch_prove(
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
@@ -298,7 +315,7 @@ where
         batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-
+      todo!()
     }
 
     fn verify(
@@ -309,7 +326,7 @@ where
         opening: &Self::Field,         // evaluation \widetilde{Z}(r)
         commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
-
+      todo!()
     }
 
     fn batch_verify(
@@ -320,32 +337,13 @@ where
         commitments: &[&Self::Commitment],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-
+      todo!()
     }
 
     fn protocol_name() -> &'static [u8] {
         b"zeromorph"
     }
-
-    fn batch_commit_polys(
-        polys: &[DensePolynomial<Self::Field>],
-        setup: &Self::Setup,
-        batch_type: super::commitment_scheme::BatchType,
-    ) -> Vec<Self::Commitment> {
-        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
-        Self::batch_commit(&slices, setup, batch_type)
-    }
-
-    fn batch_commit_polys_ref(
-        polys: &[&DensePolynomial<Self::Field>],
-        setup: &Self::Setup,
-        batch_type: super::commitment_scheme::BatchType,
-    ) -> Vec<Self::Commitment> {
-        let slices: Vec<&[Self::Field]> = polys.iter().map(|poly| poly.evals_ref()).collect();
-        Self::batch_commit(&slices, setup, batch_type)
-    }
 }
-*/
 
 #[cfg(test)]
 mod test {
