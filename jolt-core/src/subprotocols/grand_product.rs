@@ -219,6 +219,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
 }
 
 pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
+    // TODO: batch_size?
     fn num_rounds(&self) -> usize;
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
     fn compute_cubic(
@@ -282,9 +283,6 @@ impl<F> DenseGrandProductLayer<F> {
     pub fn iter(&self) -> impl Iterator<Item = &F> {
         self.values.iter().take(self.len)
     }
-
-    // bind (interleaved)
-    // layer output (interleaved)
 }
 
 impl<F> From<Vec<F>> for DenseGrandProductLayer<F> {
@@ -918,48 +916,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                 DynamicDensityGrandProductLayer::Dense(layer) => (layer[0], layer[1]),
             })
             .unzip()
-    }
-
-    #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::prove_sumcheck")]
-    fn prove_sumcheck(
-        &mut self,
-        claim: &F,
-        coeffs: &[F],
-        eq_poly: &mut DensePolynomial<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
-        #[cfg(test)]
-        {
-            assert_eq!(coeffs.len(), self.layers.len());
-            assert_eq!(self.layer_len / 2, eq_poly.len());
-        }
-
-        let mut previous_claim = *claim;
-        let mut r: Vec<F> = Vec::new();
-        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-
-        for _round in 0..self.num_rounds() {
-            let cubic_poly = self.compute_cubic(coeffs, eq_poly, previous_claim);
-            // append the prover's message to the transcript
-            cubic_poly.append_to_transcript(b"poly", transcript);
-            //derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar(b"challenge_nextround");
-
-            r.push(r_j);
-            // bind polynomials to verifier's challenge
-            self.bind(eq_poly, &r_j);
-
-            previous_claim = cubic_poly.evaluate(&r_j);
-            cubic_polys.push(cubic_poly.compress());
-        }
-
-        debug_assert_eq!(eq_poly.len(), 1);
-
-        (
-            SumcheckInstanceProof::new(cubic_polys),
-            r,
-            self.final_claims(),
-        )
     }
 }
 
