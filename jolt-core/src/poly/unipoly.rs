@@ -1,8 +1,13 @@
 #![allow(dead_code)]
+use std::cmp::Ordering;
+use std::ops::{AddAssign, Mul};
+
+use crate::jolt::vm::Jolt;
 use crate::poly::field::JoltField;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
@@ -125,6 +130,54 @@ impl<F: JoltField> UniPoly<F> {
         CompressedUniPoly {
             coeffs_except_linear_term,
         }
+    }
+}
+
+impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
+    fn add_assign(&mut self, rhs: &F) {
+        #[cfg(feature = "multicore")]
+        let iter = self.coeffs.par_iter_mut();
+        #[cfg(not(feature = "multicore"))]
+        let iter = self.coeffs.iter_mut();
+        iter.for_each(|c| *c += rhs);
+    }
+}
+
+impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
+    fn add_assign(&mut self, rhs: &Self) {
+        let ordering = self.coeffs.len().cmp(&rhs.coeffs.len());
+        #[allow(clippy::disallowed_methods)]
+        for (lhs, rhs) in self.coeffs.iter_mut().zip(&rhs.coeffs) {
+            *lhs += rhs;
+        }
+        if matches!(ordering, Ordering::Less) {
+            self.coeffs
+                .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
+        }
+    }
+}
+
+impl<F: JoltField> Mul<F> for UniPoly<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: F) -> Self {
+        #[cfg(feature = "multicore")]
+        let iter = self.coeffs.into_par_iter();
+        #[cfg(not(feature = "multicore"))]
+        let iter = self.coeffs.iter();
+        Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
+    }
+}
+
+impl<F: JoltField> Mul<&F> for UniPoly<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: &F) -> Self {
+        #[cfg(feature = "multicore")]
+        let iter = self.coeffs.into_par_iter();
+        #[cfg(not(feature = "multicore"))]
+        let iter = self.coeffs.iter();
+        Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
     }
 }
 

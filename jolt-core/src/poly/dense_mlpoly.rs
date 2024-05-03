@@ -13,7 +13,7 @@ use std::ops::AddAssign;
 pub struct DensePolynomial<F> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,
-    Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
+    pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 
 impl<F: JoltField> DensePolynomial<F> {

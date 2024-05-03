@@ -1,4 +1,3 @@
-use ark_bn254::g1;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use std::{borrow::Borrow, marker::PhantomData};
 
