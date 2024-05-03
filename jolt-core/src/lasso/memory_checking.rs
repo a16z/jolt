@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::subprotocols::grand_product::DefaultBatchedGrandProduct;
+use crate::subprotocols::grand_product::BatchedDenseGrandProduct;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
@@ -78,9 +78,9 @@ where
     Self: std::marker::Sync,
 {
     type ReadWriteGrandProduct: BatchedGrandProduct<F> + Send + 'static =
-        DefaultBatchedGrandProduct<F>;
+        BatchedDenseGrandProduct<F>;
     type InitFinalGrandProduct: BatchedGrandProduct<F> + Send + 'static =
-        DefaultBatchedGrandProduct<F>;
+        BatchedDenseGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<

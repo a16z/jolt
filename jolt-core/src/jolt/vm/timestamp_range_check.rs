@@ -1,7 +1,7 @@
 use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{
     BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
-    DefaultBatchedGrandProduct,
+    BatchedDenseGrandProduct,
 };
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -674,7 +674,7 @@ where
         let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        let mut batched_circuit = DefaultBatchedGrandProduct::construct(leaves);
+        let mut batched_circuit = BatchedDenseGrandProduct::construct(leaves);
 
         let hashes: Vec<F> = batched_circuit.claims();
         let (read_write_hashes, init_final_hashes) =
@@ -722,7 +722,7 @@ where
             );
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
         let (grand_product_claims, r_grand_product) =
-            DefaultBatchedGrandProduct::verify_grand_product(
+            BatchedDenseGrandProduct::verify_grand_product(
                 &self.batched_grand_product,
                 &concatenated_hashes,
                 transcript,

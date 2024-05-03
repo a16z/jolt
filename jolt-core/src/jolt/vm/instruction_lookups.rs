@@ -512,152 +512,180 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
         );
     }
 
-    fn cubic_evals(&self, index: usize, coeffs: &[F], eq_evals: &[(F, F, F)]) -> (F, F, F) {
-        let eq_evals = eq_evals[0];
-        let mut evals = (F::zero(), F::zero(), F::zero());
+    fn compute_cubic(
+        &self,
+        coeffs: &[F],
+        eq_poly: &DensePolynomial<F>,
+        previous_round_claim: F,
+    ) -> UniPoly<F> {
+        let evals = (0..eq_poly.len() / 2)
+            .into_par_iter()
+            .map(|i| {
+                let eq_evals = {
+                    let eval_point_0 = eq_poly[2 * i];
+                    let m_eq = eq_poly[2 * i + 1] - eq_poly[2 * i];
+                    let eval_point_2 = eq_poly[2 * i + 1] + m_eq;
+                    let eval_point_3 = eval_point_2 + m_eq;
+                    (eval_point_0, eval_point_2, eval_point_3)
+                };
+                let mut evals = (F::zero(), F::zero(), F::zero());
 
-        if self.bound_flags.is_empty() {
-            self.fingerprints
-                .iter()
-                .enumerate()
-                .for_each(|(batch_index, fingerprints)| {
-                    let memory_flags = &self.flags[batch_index / 2];
-                    match (memory_flags[2 * index], memory_flags[2 * index + 1]) {
-                        (true, true) => {
-                            // flag_evals = (1, 1, 1)
-                            let fingerprints = (
-                                coeffs[batch_index] * fingerprints[2 * index],
-                                coeffs[batch_index] * fingerprints[2 * index + 1],
-                            );
+                if self.bound_flags.is_empty() {
+                    self.fingerprints
+                        .iter()
+                        .enumerate()
+                        .for_each(|(batch_index, fingerprints)| {
+                            let memory_flags = &self.flags[batch_index / 2];
+                            match (memory_flags[2 * i], memory_flags[2 * i + 1]) {
+                                (true, true) => {
+                                    // flag_evals = (1, 1, 1)
+                                    let fingerprints = (
+                                        coeffs[batch_index] * fingerprints[2 * i],
+                                        coeffs[batch_index] * fingerprints[2 * i + 1],
+                                    );
 
-                            let m = fingerprints.1 - fingerprints.0;
-                            let eval_2 = fingerprints.1 + m;
-                            let eval_3 = eval_2 + m;
+                                    let m = fingerprints.1 - fingerprints.0;
+                                    let eval_2 = fingerprints.1 + m;
+                                    let eval_3 = eval_2 + m;
 
-                            evals.0 += fingerprints.0;
-                            evals.1 += eval_2;
-                            evals.2 += eval_3;
-                        }
-                        (true, false) => {
-                            // flag_evals = (1, -1, -2)
-                            let fingerprints =
-                                (fingerprints[2 * index], fingerprints[2 * index + 1]);
-                            let m = fingerprints.1 - fingerprints.0;
-                            let eval_2 = fingerprints.1 + m;
-                            let eval_3 = eval_2 + m;
+                                    evals.0 += fingerprints.0;
+                                    evals.1 += eval_2;
+                                    evals.2 += eval_3;
+                                }
+                                (true, false) => {
+                                    // flag_evals = (1, -1, -2)
+                                    let fingerprints =
+                                        (fingerprints[2 * i], fingerprints[2 * i + 1]);
+                                    let m = fingerprints.1 - fingerprints.0;
+                                    let eval_2 = fingerprints.1 + m;
+                                    let eval_3 = eval_2 + m;
 
-                            evals.0 += coeffs[batch_index] * fingerprints.0;
-                            evals.1 += coeffs[batch_index] * (F::from_u64(2).unwrap() - eval_2);
-                            evals.2 +=
-                                coeffs[batch_index] * (F::from_u64(3).unwrap() - eval_3.double());
-                        }
-                        (false, true) => {
-                            // flag_evals = (0, 2, 3)
-                            let fingerprints =
-                                (fingerprints[2 * index], fingerprints[2 * index + 1]);
-                            let m = fingerprints.1 - fingerprints.0;
-                            let eval_2 = fingerprints.1 + m;
-                            let eval_3 = eval_2 + m;
+                                    evals.0 += coeffs[batch_index] * fingerprints.0;
+                                    evals.1 +=
+                                        coeffs[batch_index] * (F::from_u64(2).unwrap() - eval_2);
+                                    evals.2 += coeffs[batch_index]
+                                        * (F::from_u64(3).unwrap() - eval_3.double());
+                                }
+                                (false, true) => {
+                                    // flag_evals = (0, 2, 3)
+                                    let fingerprints =
+                                        (fingerprints[2 * i], fingerprints[2 * i + 1]);
+                                    let m = fingerprints.1 - fingerprints.0;
+                                    let eval_2 = fingerprints.1 + m;
+                                    let eval_3 = eval_2 + m;
 
-                            evals.0 += coeffs[batch_index];
-                            evals.1 += coeffs[batch_index] * (eval_2.double() - F::one());
-                            evals.2 += coeffs[batch_index]
-                                * (F::from_u64(3).unwrap() * eval_3 - F::from_u64(2).unwrap());
-                        }
-                        (false, false) => {
-                            // flag_evals = (0, 0, 0)
-                            evals.0 += coeffs[batch_index];
-                            evals.1 += coeffs[batch_index];
-                            evals.2 += coeffs[batch_index];
-                        }
-                    }
-                });
-        } else {
-            self.fingerprints
-                .iter()
-                .enumerate()
-                .for_each(|(batch_index, fingerprints)| {
-                    let memory_flags = &self.bound_flags[batch_index / 2];
-                    match (memory_flags[2 * index], memory_flags[2 * index + 1]) {
-                        _flags if _flags == (F::one(), F::one()) => {
-                            // flag_evals = (1, 1, 1)
-                            let fingerprints = (
-                                coeffs[batch_index] * fingerprints[2 * index],
-                                coeffs[batch_index] * fingerprints[2 * index + 1],
-                            );
-
-                            let m = fingerprints.1 - fingerprints.0;
-                            let eval_2 = fingerprints.1 + m;
-                            let eval_3 = eval_2 + m;
-
-                            evals.0 += fingerprints.0;
-                            evals.1 += eval_2;
-                            evals.2 += eval_3;
-                        }
-                        _flags if _flags == (F::one(), F::zero()) => {
-                            // flag_evals = (1, -1, -2)
-                            let fingerprints =
-                                (fingerprints[2 * index], fingerprints[2 * index + 1]);
-                            let m = fingerprints.1 - fingerprints.0;
-                            let eval_2 = fingerprints.1 + m;
-                            let eval_3 = eval_2 + m;
-
-                            evals.0 += coeffs[batch_index] * fingerprints.0;
-                            evals.1 += coeffs[batch_index] * (F::from_u64(2).unwrap() - eval_2);
-                            evals.2 +=
-                                coeffs[batch_index] * (F::from_u64(3).unwrap() - eval_3.double());
-                        }
-                        _flags if _flags == (F::zero(), F::one()) => {
-                            // flag_evals = (0, 2, 3)
-                            let fingerprints =
-                                (fingerprints[2 * index], fingerprints[2 * index + 1]);
-                            let m = fingerprints.1 - fingerprints.0;
-                            let eval_2 = fingerprints.1 + m;
-                            let eval_3 = eval_2 + m;
-
-                            evals.0 += coeffs[batch_index];
-                            evals.1 += coeffs[batch_index] * (eval_2.double() - F::one());
-                            evals.2 += coeffs[batch_index]
-                                * (F::from_u64(3).unwrap() * eval_3 - F::from_u64(2).unwrap());
-                        }
-                        _flags if _flags == (F::zero(), F::zero()) => {
-                            // flag_evals = (0, 0, 0)
-                            evals.0 += coeffs[batch_index];
-                            evals.1 += coeffs[batch_index];
-                            evals.2 += coeffs[batch_index];
-                        }
-                        flags => {
-                            let flag_m = flags.1 - flags.0;
-                            let flag_eval_2 = flags.1 + flag_m;
-                            let flag_eval_3 = flag_eval_2 + flag_m;
-
-                            let fingerprints =
-                                (fingerprints[2 * index], fingerprints[2 * index + 1]);
-                            let fingerprint_m = fingerprints.1 - fingerprints.0;
-                            let fingerprint_eval_2 = fingerprints.1 + fingerprint_m;
-                            let fingerprint_eval_3 = fingerprint_eval_2 + fingerprint_m;
-
-                            if flags.0.is_zero() {
-                                evals.0 += coeffs[batch_index];
-                            } else if flags.0.is_one() {
-                                evals.0 += coeffs[batch_index] * fingerprints.0;
-                            } else {
-                                evals.0 += coeffs[batch_index]
-                                    * (flags.0 * fingerprints.0 + F::one() - flags.0);
+                                    evals.0 += coeffs[batch_index];
+                                    evals.1 += coeffs[batch_index] * (eval_2.double() - F::one());
+                                    evals.2 += coeffs[batch_index]
+                                        * (F::from_u64(3).unwrap() * eval_3
+                                            - F::from_u64(2).unwrap());
+                                }
+                                (false, false) => {
+                                    // flag_evals = (0, 0, 0)
+                                    evals.0 += coeffs[batch_index];
+                                    evals.1 += coeffs[batch_index];
+                                    evals.2 += coeffs[batch_index];
+                                }
                             }
-                            evals.1 += coeffs[batch_index]
-                                * (flag_eval_2 * fingerprint_eval_2 + F::one() - flag_eval_2);
-                            evals.2 += coeffs[batch_index]
-                                * (flag_eval_3 * fingerprint_eval_3 + F::one() - flag_eval_3);
-                        }
-                    }
-                });
-        }
+                        });
+                } else {
+                    self.fingerprints
+                        .iter()
+                        .enumerate()
+                        .for_each(|(batch_index, fingerprints)| {
+                            let memory_flags = &self.bound_flags[batch_index / 2];
+                            match (memory_flags[2 * i], memory_flags[2 * i + 1]) {
+                                _flags if _flags == (F::one(), F::one()) => {
+                                    // flag_evals = (1, 1, 1)
+                                    let fingerprints = (
+                                        coeffs[batch_index] * fingerprints[2 * i],
+                                        coeffs[batch_index] * fingerprints[2 * i + 1],
+                                    );
 
-        evals.0 *= eq_evals.0;
-        evals.1 *= eq_evals.1;
-        evals.2 *= eq_evals.2;
-        evals
+                                    let m = fingerprints.1 - fingerprints.0;
+                                    let eval_2 = fingerprints.1 + m;
+                                    let eval_3 = eval_2 + m;
+
+                                    evals.0 += fingerprints.0;
+                                    evals.1 += eval_2;
+                                    evals.2 += eval_3;
+                                }
+                                _flags if _flags == (F::one(), F::zero()) => {
+                                    // flag_evals = (1, -1, -2)
+                                    let fingerprints =
+                                        (fingerprints[2 * i], fingerprints[2 * i + 1]);
+                                    let m = fingerprints.1 - fingerprints.0;
+                                    let eval_2 = fingerprints.1 + m;
+                                    let eval_3 = eval_2 + m;
+
+                                    evals.0 += coeffs[batch_index] * fingerprints.0;
+                                    evals.1 +=
+                                        coeffs[batch_index] * (F::from_u64(2).unwrap() - eval_2);
+                                    evals.2 += coeffs[batch_index]
+                                        * (F::from_u64(3).unwrap() - eval_3.double());
+                                }
+                                _flags if _flags == (F::zero(), F::one()) => {
+                                    // flag_evals = (0, 2, 3)
+                                    let fingerprints =
+                                        (fingerprints[2 * i], fingerprints[2 * i + 1]);
+                                    let m = fingerprints.1 - fingerprints.0;
+                                    let eval_2 = fingerprints.1 + m;
+                                    let eval_3 = eval_2 + m;
+
+                                    evals.0 += coeffs[batch_index];
+                                    evals.1 += coeffs[batch_index] * (eval_2.double() - F::one());
+                                    evals.2 += coeffs[batch_index]
+                                        * (F::from_u64(3).unwrap() * eval_3
+                                            - F::from_u64(2).unwrap());
+                                }
+                                _flags if _flags == (F::zero(), F::zero()) => {
+                                    // flag_evals = (0, 0, 0)
+                                    evals.0 += coeffs[batch_index];
+                                    evals.1 += coeffs[batch_index];
+                                    evals.2 += coeffs[batch_index];
+                                }
+                                flags => {
+                                    let flag_m = flags.1 - flags.0;
+                                    let flag_eval_2 = flags.1 + flag_m;
+                                    let flag_eval_3 = flag_eval_2 + flag_m;
+
+                                    let fingerprints =
+                                        (fingerprints[2 * i], fingerprints[2 * i + 1]);
+                                    let fingerprint_m = fingerprints.1 - fingerprints.0;
+                                    let fingerprint_eval_2 = fingerprints.1 + fingerprint_m;
+                                    let fingerprint_eval_3 = fingerprint_eval_2 + fingerprint_m;
+
+                                    if flags.0.is_zero() {
+                                        evals.0 += coeffs[batch_index];
+                                    } else if flags.0.is_one() {
+                                        evals.0 += coeffs[batch_index] * fingerprints.0;
+                                    } else {
+                                        evals.0 += coeffs[batch_index]
+                                            * (flags.0 * fingerprints.0 + F::one() - flags.0);
+                                    }
+                                    evals.1 += coeffs[batch_index]
+                                        * (flag_eval_2 * fingerprint_eval_2 + F::one()
+                                            - flag_eval_2);
+                                    evals.2 += coeffs[batch_index]
+                                        * (flag_eval_3 * fingerprint_eval_3 + F::one()
+                                            - flag_eval_3);
+                                }
+                            }
+                        });
+                }
+
+                evals.0 *= eq_evals.0;
+                evals.1 *= eq_evals.1;
+                evals.2 *= eq_evals.2;
+                evals
+            })
+            .reduce(
+                || (F::zero(), F::zero(), F::zero()),
+                |sum, evals| (sum.0 + evals.0, sum.1 + evals.1, sum.2 + evals.2),
+            );
+
+        let evals = [evals.0, previous_round_claim - evals.0, evals.1, evals.2];
+        UniPoly::from_evals(&evals)
     }
 
     fn final_claims(&self) -> (Vec<F>, Vec<F>) {
