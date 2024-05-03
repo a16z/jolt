@@ -354,7 +354,7 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                 let product: F = sparse_layer.iter().map(|(_, value)| value).product();
 
                 // TODO: tune density switching threshold
-                if sparse_layer.len() > output_len / 4 {
+                if sparse_layer.len() > output_len / 3 {
                     let mut output_layer: DenseGrandProductLayer<F> = vec![F::one(); output_len];
                     let mut next_index_to_process = 0usize;
                     for (j, (index, value)) in sparse_layer.iter().enumerate() {
@@ -557,7 +557,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                         }
 
                         // TODO: tune density switching threshold
-                        if bound_layer.len() > self.layer_len / 4 {
+                        if bound_layer.len() > self.layer_len / 3 {
                             // Switch to dense representation
                             let mut dense_layer = vec![F::one(); self.layer_len / 2];
                             for (index, value) in bound_layer {
@@ -749,6 +749,8 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             let eq = &eq_poly;
             let half = eq.len() / 2;
 
+            let span = tracing::span!(tracing::Level::TRACE, "eq evals");
+            let _enter = span.enter();
             (0..half)
                 .into_par_iter()
                 .map(|i| {
@@ -759,14 +761,20 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     (eval_point_0, eval_point_2, eval_point_3)
                 })
                 .collect_into_vec(&mut eq_evals);
+            drop(_enter);
 
+            let span = tracing::span!(tracing::Level::TRACE, "eq eval sums");
+            let _enter = span.enter();
             // TODO: skip if all layers are dense
             let eq_eval_sums: (F, F, F) = (
                 eq_evals.par_iter().map(|evals| evals.0).sum(),
                 eq_evals.par_iter().map(|evals| evals.1).sum(),
                 eq_evals.par_iter().map(|evals| evals.2).sum(),
             );
+            drop(_enter);
 
+            let span = tracing::span!(tracing::Level::TRACE, "cubic evals");
+            let _enter = span.enter();
             let evals: Vec<(F, F, F)> = coeffs
                 .par_iter()
                 .enumerate()
@@ -784,6 +792,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     }
                 })
                 .collect();
+            drop(_enter);
 
             let evals_combined_0 = (0..evals.len()).map(|i| evals[i].0).sum();
             let evals_combined_2 = (0..evals.len()).map(|i| evals[i].1).sum();
@@ -981,138 +990,3 @@ mod grand_product_tests {
         }
     }
 }
-
-// #[cfg(test)]
-// mod grand_product_circuit_tests {
-//     use super::*;
-//     use ark_bn254::Fr;
-
-//     #[test]
-//     fn prove_verify() {
-//         let factorial =
-//             DensePolynomial::new(vec![Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]);
-//         let factorial_circuit = GrandProductCircuit::new(&factorial);
-//         let expected_eval = vec![Fr::from(24)];
-//         assert_eq!(factorial_circuit.evaluate(), Fr::from(24));
-
-//         let mut transcript = ProofTranscript::new(b"test_transcript");
-//         let circuits_vec = vec![factorial_circuit];
-//         let batch = BatchedGrandProductCircuit::new_batch(circuits_vec);
-//         let (proof, _) = BatchedGrandProductArgument::prove(batch, &mut transcript);
-
-//         let mut transcript = ProofTranscript::new(b"test_transcript");
-//         proof.verify(&expected_eval, &mut transcript);
-//     }
-
-//     #[test]
-//     fn gp_unflagged() {
-//         // Fundamentally grand products performs a multi-set check, so skip fingerprinting and all that, construct GP circuits directly
-//         let read_leaves = vec![Fr::from(10), Fr::from(20)];
-//         let write_leaves = vec![Fr::from(100), Fr::from(200)];
-
-//         let read_poly = DensePolynomial::new(read_leaves);
-//         let write_poly = DensePolynomial::new(write_leaves);
-
-//         let (read_gpc, write_gpc) = (
-//             GrandProductCircuit::new(&read_poly),
-//             GrandProductCircuit::new(&write_poly),
-//         );
-//         let batch = BatchedGrandProductCircuit::new_batch(vec![read_gpc, write_gpc]);
-
-//         let mut transcript = ProofTranscript::new(b"test_transcript");
-//         let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
-
-//         let expected_eval_read = Fr::from(10) * Fr::from(20);
-//         let expected_eval_write = Fr::from(100) * Fr::from(200);
-//         let mut transcript = ProofTranscript::new(b"test_transcript");
-//         let (verify_claims, verify_rand) = proof.verify(
-//             &vec![expected_eval_read, expected_eval_write],
-//             &mut transcript,
-//         );
-
-//         assert_eq!(prove_rand, verify_rand);
-//         assert_eq!(verify_claims.len(), 2);
-//         assert_eq!(verify_claims[0], read_poly.evaluate(&verify_rand));
-//         assert_eq!(verify_claims[1], write_poly.evaluate(&verify_rand));
-//     }
-
-//     #[test]
-//     fn gp_flagged() {
-//         let read_fingerprints = vec![Fr::from(10), Fr::from(20), Fr::from(30), Fr::from(40)];
-//         let write_fingerprints = vec![Fr::from(100), Fr::from(200), Fr::from(300), Fr::from(400)];
-
-//         // toggle off index '2'
-//         let flag_poly = DensePolynomial::new(vec![Fr::one(), Fr::one(), Fr::zero(), Fr::one()]);
-
-//         // Grand Product Circuit leaves are those that are toggled
-//         let mut read_leaves = read_fingerprints.clone();
-//         read_leaves[2] = Fr::one();
-//         let mut write_leaves = write_fingerprints.clone();
-//         write_leaves[2] = Fr::one();
-
-//         let read_leaf_poly = DensePolynomial::new(read_leaves);
-//         let write_leaf_poly = DensePolynomial::new(write_leaves);
-
-//         let fingerprint_polys = vec![
-//             DensePolynomial::new(read_fingerprints),
-//             DensePolynomial::new(write_fingerprints),
-//         ];
-
-//         // Construct the GPCs not from the raw fingerprints, but from the flagged fingerprints!
-//         let (read_gpc, write_gpc) = (
-//             GrandProductCircuit::new(&read_leaf_poly),
-//             GrandProductCircuit::new(&write_leaf_poly),
-//         );
-
-//         // Batch takes reference to the "untoggled" fingerprint_polys for the final flag layer that feeds into the leaves, which have been flagged (set to 1 if the flag is not 1)
-//         let batch = BatchedGrandProductCircuit::new_batch_flags(
-//             vec![read_gpc, write_gpc],
-//             vec![flag_poly.clone()],
-//             fingerprint_polys.clone(),
-//         );
-
-//         let mut transcript = ProofTranscript::new(b"test_transcript");
-//         let (proof, prove_rand) = BatchedGrandProductArgument::<Fr>::prove(batch, &mut transcript);
-
-//         let expected_eval_read: Fr = Fr::from(10) * Fr::from(20) * Fr::from(40);
-//         let expected_eval_write: Fr = Fr::from(100) * Fr::from(200) * Fr::from(400);
-//         let expected_evals = vec![expected_eval_read, expected_eval_write];
-
-//         let mut transcript = ProofTranscript::new(b"test_transcript");
-//         let (verify_claims, verify_rand) = proof.verify(&expected_evals, &mut transcript);
-
-//         assert_eq!(prove_rand, verify_rand);
-//         assert_eq!(verify_claims.len(), 2);
-
-//         assert_eq!(proof.proof.len(), 3);
-//         // Claims about raw fingerprints bound to r_z
-//         assert_eq!(
-//             proof.proof[2].claims_poly_A[0],
-//             fingerprint_polys[0].evaluate(&verify_rand)
-//         );
-//         assert_eq!(
-//             proof.proof[2].claims_poly_A[1],
-//             fingerprint_polys[1].evaluate(&verify_rand)
-//         );
-
-//         // Claims about flags bound to r_z
-//         assert_eq!(
-//             proof.proof[2].claims_poly_B[0],
-//             flag_poly.evaluate(&verify_rand)
-//         );
-//         assert_eq!(
-//             proof.proof[2].claims_poly_B[1],
-//             flag_poly.evaluate(&verify_rand)
-//         );
-
-//         let verifier_flag_eval = flag_poly.evaluate(&verify_rand);
-//         let verifier_read_eval = verifier_flag_eval * fingerprint_polys[0].evaluate(&verify_rand)
-//             + Fr::one()
-//             - verifier_flag_eval;
-//         let verifier_write_eval = verifier_flag_eval * fingerprint_polys[1].evaluate(&verify_rand)
-//             + Fr::one()
-//             - verifier_flag_eval;
-//         assert_eq!(verify_claims[0], verifier_read_eval);
-//         assert_eq!(verify_claims[1], verifier_write_eval);
-//     }
-// }

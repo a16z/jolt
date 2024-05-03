@@ -736,6 +736,7 @@ pub struct ToggledBatchedGrandProduct<F: JoltField> {
 impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
     type Leaves = (Vec<Vec<bool>>, Vec<Vec<F>>); // (flags, fingerprints)
 
+    #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
     fn construct(leaves: Self::Leaves) -> Self {
         let (flags, fingerprints) = leaves;
         let num_layers = fingerprints[0].len().log_2();
