@@ -707,7 +707,6 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                         _ => unreachable!("?_?"),
                     };
 
-                    // TODO: optimize for ones
                     let m_left = left.1 - left.0;
                     let m_right = right.1 - right.0;
 
@@ -717,9 +716,15 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                     let point_2_right = right.1 + m_right;
                     let point_3_right = point_2_right + m_right;
 
-                    delta.0 += eq_evals[index / 4].0 * (left.0 * right.0 - F::one());
-                    delta.1 += eq_evals[index / 4].1 * (point_2_left * point_2_right - F::one());
-                    delta.2 += eq_evals[index / 4].2 * (point_3_left * point_3_right - F::one());
+                    delta.0 += eq_evals[index / 4]
+                        .0
+                        .mul_0_optimized(left.0.mul_1_optimized(right.0) - F::one());
+                    delta.1 += eq_evals[index / 4]
+                        .1
+                        .mul_0_optimized(point_2_left.mul_1_optimized(point_2_right) - F::one());
+                    delta.2 += eq_evals[index / 4]
+                        .2
+                        .mul_0_optimized(point_3_left.mul_1_optimized(point_3_right) - F::one());
                 }
 
                 delta
@@ -792,7 +797,8 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         eq_poly: &mut DensePolynomial<F>,
         transcript: &mut ProofTranscript,
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
-        #[cfg(test)] {
+        #[cfg(test)]
+        {
             assert_eq!(coeffs.len(), self.layers.len());
             assert_eq!(self.layer_len / 2, eq_poly.len());
         }
