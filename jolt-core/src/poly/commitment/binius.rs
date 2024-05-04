@@ -1,10 +1,10 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use crate::utils::transcript::{ProofTranscript, AppendToTranscript};
-use crate::utils::errors::ProofVerifyError;
 use crate::poly::commitment::commitment_scheme::BatchType;
-use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::CommitShape;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::dense_mlpoly::DensePolynomial;
+use crate::utils::errors::ProofVerifyError;
+use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 #[derive(Clone)]
 pub struct Binius128Scheme {}
@@ -18,7 +18,6 @@ impl AppendToTranscript for BiniusCommitment {
     }
 }
 
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BiniusProof {}
 
@@ -27,7 +26,6 @@ pub struct BiniusBatchedProof {}
 
 #[derive(Clone)]
 pub struct None {}
-
 
 impl CommitmentScheme for Binius128Scheme {
     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128bPolyval>;

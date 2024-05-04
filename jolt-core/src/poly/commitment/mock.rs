@@ -2,19 +2,25 @@ use std::marker::PhantomData;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::{field::JoltField, poly::dense_mlpoly::DensePolynomial, utils::{errors::ProofVerifyError, transcript::{AppendToTranscript, ProofTranscript}}};
+use crate::{
+    field::JoltField,
+    poly::dense_mlpoly::DensePolynomial,
+    utils::{
+        errors::ProofVerifyError,
+        transcript::{AppendToTranscript, ProofTranscript},
+    },
+};
 
 use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 
-
 #[derive(Clone)]
-pub struct MockCommitScheme<F:  JoltField> {
-    _marker: PhantomData<F>
+pub struct MockCommitScheme<F: JoltField> {
+    _marker: PhantomData<F>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MockCommitment<F: JoltField> {
-    poly: DensePolynomial<F>
+    poly: DensePolynomial<F>,
 }
 
 impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
@@ -23,10 +29,9 @@ impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
     }
 }
 
-
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MockProof<F: JoltField> {
-    opening_point: Vec<F>
+    opening_point: Vec<F>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -34,7 +39,6 @@ pub struct MockBatchedProof {}
 
 #[derive(Clone)]
 pub struct None {}
-
 
 impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
     type Field = F;
@@ -48,7 +52,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
     }
     fn commit(poly: &DensePolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {
-            poly: poly.to_owned()
+            poly: poly.to_owned(),
         }
     }
     fn batch_commit(
@@ -56,13 +60,19 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         _gens: &Self::Setup,
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
-        let polys: Vec<DensePolynomial<F>> = evals.iter().map(|poly_evals| DensePolynomial::new(poly_evals.to_vec())).collect();
-        let commits = polys.into_iter().map(|poly| MockCommitment {poly}).collect();
+        let polys: Vec<DensePolynomial<F>> = evals
+            .iter()
+            .map(|poly_evals| DensePolynomial::new(poly_evals.to_vec()))
+            .collect();
+        let commits = polys
+            .into_iter()
+            .map(|poly| MockCommitment { poly })
+            .collect();
         commits
     }
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {
-            poly: DensePolynomial::new(evals.to_owned())
+            poly: DensePolynomial::new(evals.to_owned()),
         }
     }
     fn prove(
@@ -70,7 +80,9 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         opening_point: &[Self::Field],
         _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        MockProof { opening_point: opening_point.to_owned() }
+        MockProof {
+            opening_point: opening_point.to_owned(),
+        }
     }
     fn batch_prove(
         _polynomials: &[&DensePolynomial<Self::Field>],
@@ -79,7 +91,9 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         _batch_type: BatchType,
         _transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        MockProof { opening_point: opening_point.to_owned() }
+        MockProof {
+            opening_point: opening_point.to_owned(),
+        }
     }
 
     fn verify(

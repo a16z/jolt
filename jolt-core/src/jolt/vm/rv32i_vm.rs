@@ -220,15 +220,14 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) =
-            <RV32IJoltVM as Jolt<F, PCS, C, M>>::prove(
-                io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
-                circuit_flags,
-                preprocessing.clone(),
-            );
+        let (proof, commitments) = <RV32IJoltVM as Jolt<F, PCS, C, M>>::prove(
+            io_device,
+            bytecode_trace,
+            memory_trace,
+            instruction_trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
         let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
         assert!(
             verification_result.is_ok(),
