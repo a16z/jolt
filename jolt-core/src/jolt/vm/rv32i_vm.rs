@@ -211,7 +211,7 @@ mod tests {
     // }
 
     fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
-        // let _guard = FIB_FILE_LOCK.lock().unwrap(); // TODO(sragss): Fix
+        let _guard = FIB_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);

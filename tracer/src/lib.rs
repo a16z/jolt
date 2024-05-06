@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(clippy::legacy_numeric_constants)]
 
 use std::{fs::File, io::Read, path::PathBuf};
 
