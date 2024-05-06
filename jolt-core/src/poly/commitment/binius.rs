@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
@@ -13,7 +15,7 @@ pub struct Binius128Scheme {}
 pub struct BiniusCommitment {}
 
 impl AppendToTranscript for BiniusCommitment {
-    fn append_to_transcript(&self, label: &[u8], transcript: &mut ProofTranscript) {
+    fn append_to_transcript(&self, _label: &[u8], _transcript: &mut ProofTranscript) {
         todo!()
     }
 }
@@ -34,57 +36,57 @@ impl CommitmentScheme for Binius128Scheme {
     type Proof = BiniusProof;
     type BatchedProof = BiniusBatchedProof;
 
-    fn setup(shapes: &[CommitShape]) -> Self::Setup {
+    fn setup(_shapes: &[CommitShape]) -> Self::Setup {
         None {}
     }
-    fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
+    fn commit(_poly: &DensePolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         todo!()
     }
     fn batch_commit(
-        evals: &[&[Self::Field]],
-        gens: &Self::Setup,
-        batch_type: BatchType,
+        _evals: &[&[Self::Field]],
+        _gens: &Self::Setup,
+        _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         todo!()
     }
-    fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
+    fn commit_slice(_evals: &[Self::Field], _setup: &Self::Setup) -> Self::Commitment {
         todo!()
     }
     fn prove(
-        poly: &DensePolynomial<Self::Field>,
-        opening_point: &[Self::Field],
-        transcript: &mut ProofTranscript,
+        _poly: &DensePolynomial<Self::Field>,
+        _opening_point: &[Self::Field],
+        _transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         todo!()
     }
     fn batch_prove(
-        polynomials: &[&DensePolynomial<Self::Field>],
-        opening_point: &[Self::Field],
-        openings: &[Self::Field],
-        batch_type: BatchType,
-        transcript: &mut ProofTranscript,
+        _polynomials: &[&DensePolynomial<Self::Field>],
+        _opening_point: &[Self::Field],
+        _openings: &[Self::Field],
+        _batch_type: BatchType,
+        _transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
         todo!()
     }
 
     fn verify(
-        proof: &Self::Proof,
-        setup: &Self::Setup,
-        transcript: &mut ProofTranscript,
-        opening_point: &[Self::Field],
-        opening: &Self::Field,
-        commitment: &Self::Commitment,
+        _proof: &Self::Proof,
+        _setup: &Self::Setup,
+        _transcript: &mut ProofTranscript,
+        _opening_point: &[Self::Field],
+        _opening: &Self::Field,
+        _commitment: &Self::Commitment,
     ) -> Result<(), ProofVerifyError> {
         todo!()
     }
 
     fn batch_verify(
-        batch_proof: &Self::BatchedProof,
-        setup: &Self::Setup,
-        opening_point: &[Self::Field],
-        openings: &[Self::Field],
-        commitments: &[&Self::Commitment],
-        transcript: &mut ProofTranscript,
+        _batch_proof: &Self::BatchedProof,
+        _setup: &Self::Setup,
+        _opening_point: &[Self::Field],
+        _openings: &[Self::Field],
+        _commitments: &[&Self::Commitment],
+        _transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         todo!()
     }

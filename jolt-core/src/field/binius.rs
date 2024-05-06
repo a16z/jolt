@@ -105,8 +105,7 @@ impl<F: BiniusSpecific> Div for BiniusField<F> {
     type Output = Self;
 
     fn div(self, other: Self) -> Self {
-        todo!()
-        // BiniusField(self.0.div(other.0))
+        Self(self.0 * other.0.invert().unwrap())
     }
 }
 
@@ -171,9 +170,9 @@ impl<F: BiniusSpecific> CanonicalSerialize for BiniusField<F> {
 impl<F: BiniusSpecific> CanonicalDeserialize for BiniusField<F> {
     // Required method
     fn deserialize_with_mode<R: std::io::prelude::Read>(
-        reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
         todo!()
     }

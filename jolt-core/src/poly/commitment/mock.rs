@@ -70,7 +70,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
             .collect();
         commits
     }
-    fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
+    fn commit_slice(evals: &[Self::Field], _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {
             poly: DensePolynomial::new(evals.to_owned()),
         }
