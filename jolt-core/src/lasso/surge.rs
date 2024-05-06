@@ -680,7 +680,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
     fn construct_polys(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        ops: &Vec<Instruction>,
+        ops: &[Instruction],
     ) -> SurgePolys<F, PCS> {
         let num_lookups = ops.len().next_power_of_two();
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];

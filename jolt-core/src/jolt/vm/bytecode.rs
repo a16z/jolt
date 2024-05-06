@@ -127,7 +127,7 @@ impl BytecodeRow {
 }
 
 pub fn random_bytecode_trace(
-    bytecode: &Vec<BytecodeRow>,
+    bytecode: &[BytecodeRow],
     num_ops: usize,
     rng: &mut StdRng,
 ) -> Vec<BytecodeRow> {

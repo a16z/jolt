@@ -1402,7 +1402,7 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &Vec<Option<InstructionSet>>) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &[Option<InstructionSet>]) -> Vec<Vec<usize>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<usize>> = ops

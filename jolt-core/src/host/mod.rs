@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use core::{str::FromStr, u8};
+use core::str::FromStr;
 use std::{
     fs::{self, File},
     io::{self, Write},

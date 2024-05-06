@@ -105,7 +105,7 @@ impl<F: BiniusSpecific> Div for BiniusField<F> {
     type Output = Self;
 
     fn div(self, other: Self) -> Self {
-        Self(self.0 * other.0.invert().unwrap())
+        Self(self.0.mul(other.0.invert().unwrap()))
     }
 }
 
