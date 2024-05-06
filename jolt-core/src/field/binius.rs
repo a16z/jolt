@@ -4,10 +4,6 @@ use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use super::JoltField;
 
-// TODO(sragss): Likely don't need both Pod and BiniusConstructable. Most of the binius types
-// already implement pod: https://gitlab.com/search?search=pod&nav_source=navbar&project_id=52331778&group_id=78402358&search_code=true&repository_ref=main
-
-
 impl BiniusConstructable for BinaryField128b {
     fn new(n: u64) -> Self {
         Self::new(n as u128)
@@ -58,8 +54,6 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
     }
 
     fn from_u64(n: u64) -> Option<Self> {
-        // let field_element = bytemuck::cast::<u64, F>(n);
-        // Some(Self(field_element))
         Some(Self(F::new(n)))
     }
 

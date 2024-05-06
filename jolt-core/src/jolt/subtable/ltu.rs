@@ -40,7 +40,7 @@ impl<F: JoltField> LassoSubtable<F> for LtuSubtable<F> {
 
         let mut result = F::zero();
         let mut eq_term = F::one();
-        for i in 0..b {
+    for i in 0..b {
             result += (F::one() - x[i]) * y[i] * eq_term;
             eq_term *= F::one() - x[i] - y[i] + x[i] * y[i] + x[i] * y[i];
         }
