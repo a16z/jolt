@@ -161,7 +161,6 @@ mod tests {
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyrax::HyraxScheme;
-    use crate::poly::commitment::mock::MockCommitScheme;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 

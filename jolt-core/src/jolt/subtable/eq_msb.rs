@@ -45,10 +45,10 @@ impl<F: JoltField> LassoSubtable<F> for EqMSBSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
-        jolt::subtable::{eq_msb::EqMSBSubtable, LassoSubtable},
-        subtable_materialize_mle_parity_test,
+        field::binius::BiniusField, jolt::subtable::{eq_msb::EqMSBSubtable, LassoSubtable}, subtable_materialize_mle_parity_test
     };
 
     subtable_materialize_mle_parity_test!(
@@ -56,5 +56,11 @@ mod test {
         EqMSBSubtable<Fr>,
         Fr,
         256
+    );
+    subtable_materialize_mle_parity_test!(
+        eq_binius_msb_materialize_mle_parity,
+        EqMSBSubtable<BiniusField<BinaryField128b>>,
+        BiniusField<BinaryField128b>,
+        1 << 16
     );
 }

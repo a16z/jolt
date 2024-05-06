@@ -45,10 +45,10 @@ impl<F: JoltField> LassoSubtable<F> for GtMSBSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
-        jolt::subtable::{gt_msb::GtMSBSubtable, LassoSubtable},
-        subtable_materialize_mle_parity_test,
+        field::binius::BiniusField, jolt::subtable::{gt_msb::GtMSBSubtable, LassoSubtable}, subtable_materialize_mle_parity_test
     };
 
     subtable_materialize_mle_parity_test!(
@@ -56,5 +56,11 @@ mod test {
         GtMSBSubtable<Fr>,
         Fr,
         256
+    );
+    subtable_materialize_mle_parity_test!(
+        gt_msb_binius_materialize_mle_parity,
+        GtMSBSubtable<BiniusField<BinaryField128b>>,
+        BiniusField<BinaryField128b>,
+        1 << 16
     );
 }
