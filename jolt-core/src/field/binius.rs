@@ -20,19 +20,21 @@ impl BiniusConstructable for BinaryField128bPolyval {
     }
 }
 
-impl BiniusGeneric for BinaryField128b {}
-impl BiniusGeneric for BinaryField128bPolyval {}
+impl BiniusSpecific for BinaryField128b {}
+impl BiniusSpecific for BinaryField128bPolyval {}
 
-pub trait BiniusGeneric: binius_field::TowerField + BiniusConstructable + bytemuck::Pod {}
+/// Trait for BiniusField functionality specific to each impl.
+pub trait BiniusSpecific: binius_field::TowerField + BiniusConstructable + bytemuck::Pod {}
 
 pub trait BiniusConstructable {
     fn new(n: u64) -> Self;
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
-pub struct BiniusField<F: BiniusGeneric>(F);
+pub struct BiniusField<F: BiniusSpecific>(F);
 
-impl<F: BiniusGeneric> JoltField for BiniusField<F> {
+/// Wrapper for all generic BiniusField functionality.
+impl<F: BiniusSpecific> JoltField for BiniusField<F> {
     const NUM_BYTES: usize = 16;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
@@ -73,7 +75,7 @@ impl<F: BiniusGeneric> JoltField for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> Neg for BiniusField<F> {
+impl<F: BiniusSpecific> Neg for BiniusField<F> {
     type Output = Self;
 
     fn neg(self) -> Self {
@@ -81,7 +83,7 @@ impl<F: BiniusGeneric> Neg for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> Add for BiniusField<F> {
+impl<F: BiniusSpecific> Add for BiniusField<F> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -89,7 +91,7 @@ impl<F: BiniusGeneric> Add for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> Sub for BiniusField<F> {
+impl<F: BiniusSpecific> Sub for BiniusField<F> {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self {
@@ -97,7 +99,7 @@ impl<F: BiniusGeneric> Sub for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> Mul for BiniusField<F> {
+impl<F: BiniusSpecific> Mul for BiniusField<F> {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
@@ -105,7 +107,7 @@ impl<F: BiniusGeneric> Mul for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> Div for BiniusField<F> {
+impl<F: BiniusSpecific> Div for BiniusField<F> {
     type Output = Self;
 
     fn div(self, other: Self) -> Self {
@@ -114,49 +116,49 @@ impl<F: BiniusGeneric> Div for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> AddAssign for BiniusField<F> {
+impl<F: BiniusSpecific> AddAssign for BiniusField<F> {
     fn add_assign(&mut self, other: Self) {
         self.0.add_assign(other.0);
     }
 }
 
-impl<F: BiniusGeneric> SubAssign for BiniusField<F> {
+impl<F: BiniusSpecific> SubAssign for BiniusField<F> {
     fn sub_assign(&mut self, other: Self) {
         self.0.sub_assign(other.0);
     }
 }
 
-impl<F: BiniusGeneric> MulAssign for BiniusField<F> {
+impl<F: BiniusSpecific> MulAssign for BiniusField<F> {
     fn mul_assign(&mut self, other: Self) {
         self.0.mul_assign(other.0);
     }
 }
 
-impl<F: BiniusGeneric> core::iter::Sum for BiniusField<F> {
+impl<F: BiniusSpecific> core::iter::Sum for BiniusField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| BiniusField(acc.0.add(x.0)))
     }
 }
 
-impl<'a, F: BiniusGeneric> core::iter::Sum<&'a Self> for BiniusField<F> {
+impl<'a, F: BiniusSpecific> core::iter::Sum<&'a Self> for BiniusField<F> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |acc, x| BiniusField(acc.0.add(x.0)))
     }
 }
 
-impl<F: BiniusGeneric> core::iter::Product for BiniusField<F> {
+impl<F: BiniusSpecific> core::iter::Product for BiniusField<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| BiniusField(acc.0.mul(x.0)))
     }
 }
 
-impl<'a, F: BiniusGeneric> core::iter::Product<&'a Self> for BiniusField<F> {
+impl<'a, F: BiniusSpecific> core::iter::Product<&'a Self> for BiniusField<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| BiniusField(acc.0.mul(x.0)))
     }
 }
 
-impl<F: BiniusGeneric> CanonicalSerialize for BiniusField<F> {
+impl<F: BiniusSpecific> CanonicalSerialize for BiniusField<F> {
     fn serialize_with_mode<W: ark_std::io::Write>(
         &self,
         mut writer: W,
@@ -172,7 +174,7 @@ impl<F: BiniusGeneric> CanonicalSerialize for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> CanonicalDeserialize for BiniusField<F> {
+impl<F: BiniusSpecific> CanonicalDeserialize for BiniusField<F> {
     // Required method
     fn deserialize_with_mode<R: std::io::prelude::Read>(
         reader: R,
@@ -183,7 +185,7 @@ impl<F: BiniusGeneric> CanonicalDeserialize for BiniusField<F> {
     }
 }
 
-impl<F: BiniusGeneric> ark_serialize::Valid for BiniusField<F> {
+impl<F: BiniusSpecific> ark_serialize::Valid for BiniusField<F> {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         todo!()
     }
