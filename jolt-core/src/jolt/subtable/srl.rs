@@ -85,9 +85,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             };
 
             let shift_x_by_k = (m..chunk_length)
-                .map(|j| {
-                    F::from_u64(1_u64 << (b * CHUNK_INDEX + j - k)).unwrap() * x[b - 1 - j]
-                })
+                .map(|j| F::from_u64(1_u64 << (b * CHUNK_INDEX + j - k)).unwrap() * x[b - 1 - j])
                 .fold(F::zero(), |acc, val: F| acc + val);
 
             result += eq_term * shift_x_by_k;

@@ -64,7 +64,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
             .iter()
             .map(|poly_evals| DensePolynomial::new(poly_evals.to_vec()))
             .collect();
-        
+
         polys
             .into_iter()
             .map(|poly| MockCommitment { poly })
