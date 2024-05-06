@@ -1034,10 +1034,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                     .par_iter_mut()
                     .zip(self.flag_values.par_iter_mut())
                     .for_each(|(flag_indices, flag_values)| {
-                        // TODO(moodlezoup): Can do binding in place
-                        let mut bound_flag_values = vec![];
                         let mut next_index_to_process = 0usize;
 
+                        let mut bound_index = 0usize;
                         for j in 0..flag_indices.len() {
                             let index = flag_indices[j];
                             if index < next_index_to_process {
@@ -1046,63 +1045,64 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                             }
 
                             // Bind indices in place
-                            flag_indices[bound_flag_values.len()] = index / 2;
+                            flag_indices[bound_index] = index / 2;
 
                             if index % 2 == 0 {
                                 let neighbor = flag_indices.get(j + 1).cloned().unwrap_or(0);
                                 if neighbor == index + 1 {
                                     // Neighbor is flag's sibling
 
-                                    let bound_value = if is_first_bind {
+                                    if is_first_bind {
                                         // For first bind, all non-zero flag values are 1.
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = 1 - r * (1 - 1)
                                         //                = 1
-                                        F::one()
+                                        flag_values.push(F::one());
                                     } else {
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
-                                        flag_values[j] + *r * (flag_values[j + 1] - flag_values[j])
+                                        flag_values[bound_index] = flag_values[j]
+                                            + *r * (flag_values[j + 1] - flag_values[j]);
                                     };
-                                    bound_flag_values.push(bound_value);
                                 } else {
                                     // This flag's sibling wasn't found, so it must have value 0.
 
-                                    let bound_value = if is_first_bind {
+                                    if is_first_bind {
                                         // For first bind, all non-zero flag values are 1.
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = flags[2 * i] - r * flags[2 * i]
                                         //                = 1 - r
-                                        F::one() - r
+                                        flag_values.push(F::one() - r);
                                     } else {
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = flags[2 * i] - r * flags[2 * i]
-                                        flag_values[j] - *r * flag_values[j]
+                                        flag_values[bound_index] =
+                                            flag_values[j] - *r * flag_values[j];
                                     };
-                                    bound_flag_values.push(bound_value);
                                 }
                                 next_index_to_process = index + 2;
                             } else {
                                 // This flag's sibling wasn't encountered in a previous iteration,
                                 // so it must have had value 0.
 
-                                let bound_value = if is_first_bind {
+                                if is_first_bind {
                                     // For first bind, all non-zero flag values are 1.
                                     // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                     //                = r * flags[2 * i + 1]
                                     //                = r
-                                    *r
+                                    flag_values.push(*r);
                                 } else {
                                     // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                     //                = r * flags[2 * i + 1]
-                                    *r * flag_values[j]
+                                    flag_values[bound_index] = *r * flag_values[j];
                                 };
-                                bound_flag_values.push(bound_value);
                                 next_index_to_process = index + 1;
                             }
+
+                            bound_index += 1;
                         }
 
-                        flag_indices.truncate(bound_flag_values.len());
-                        *flag_values = bound_flag_values;
+                        flag_indices.truncate(bound_index);
+                        flag_values.truncate(bound_index);
                     });
             },
             || eq_poly.bound_poly_var_bot(r),
