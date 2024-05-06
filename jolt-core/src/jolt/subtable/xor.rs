@@ -51,11 +51,12 @@ impl<F: JoltField> LassoSubtable<F> for XorSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
-        jolt::subtable::{xor::XorSubtable, LassoSubtable},
-        subtable_materialize_mle_parity_test,
+        field::binius::BiniusField, jolt::subtable::{xor::XorSubtable, LassoSubtable}, subtable_materialize_mle_parity_test
     };
 
     subtable_materialize_mle_parity_test!(xor_materialize_mle_parity, XorSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(xor_binius_materialize_mle_parity, XorSubtable<BiniusField<BinaryField128b>>, BiniusField<BinaryField128b>, 1 << 16);
 }

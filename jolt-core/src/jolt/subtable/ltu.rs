@@ -42,7 +42,7 @@ impl<F: JoltField> LassoSubtable<F> for LtuSubtable<F> {
         let mut eq_term = F::one();
         for i in 0..b {
             result += (F::one() - x[i]) * y[i] * eq_term;
-            eq_term *= F::one() - x[i] - y[i] + F::from_u64(2u64).unwrap() * x[i] * y[i];
+            eq_term *= F::one() - x[i] - y[i] + x[i] * y[i] + x[i] * y[i];
         }
         result
     }
@@ -51,11 +51,12 @@ impl<F: JoltField> LassoSubtable<F> for LtuSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
-        jolt::subtable::{ltu::LtuSubtable, LassoSubtable},
-        subtable_materialize_mle_parity_test,
+        field::binius::BiniusField, jolt::subtable::{ltu::LtuSubtable, LassoSubtable}, subtable_materialize_mle_parity_test
     };
 
-    subtable_materialize_mle_parity_test!(ltu_materialize_mle_parity, LtuSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(ltu_ark_materialize_mle_parity, LtuSubtable<Fr>, Fr, 256);
+    subtable_materialize_mle_parity_test!(ltu_binius_materialize_mle_parity, LtuSubtable<BiniusField<BinaryField128b>>, BiniusField<BinaryField128b>, 1 << 16);
 }
