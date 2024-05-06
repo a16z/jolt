@@ -70,6 +70,18 @@ pub trait JoltField:
             self * other
         }
     }
+    #[inline(always)]
+    fn mul_01_optimized(self, other: Self) -> Self {
+        if self.is_zero() || other.is_zero() {
+            Self::zero()
+        } else if self.is_one() {
+            other
+        } else if other.is_one() {
+            self
+        } else {
+            self * other
+        }
+    }
 }
 
 impl JoltField for ark_bn254::Fr {
