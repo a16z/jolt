@@ -64,11 +64,11 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
             .iter()
             .map(|poly_evals| DensePolynomial::new(poly_evals.to_vec()))
             .collect();
-        let commits = polys
+        
+        polys
             .into_iter()
             .map(|poly| MockCommitment { poly })
-            .collect();
-        commits
+            .collect()
     }
     fn commit_slice(evals: &[Self::Field], _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {

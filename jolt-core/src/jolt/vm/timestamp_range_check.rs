@@ -91,7 +91,7 @@ where
                             &final_cts_read_timestamp,
                         ),
                         (
-                            &global_minus_read_timestamps,
+                            global_minus_read_timestamps,
                             &read_cts_global_minus_read,
                             &final_cts_global_minus_read,
                         ),
