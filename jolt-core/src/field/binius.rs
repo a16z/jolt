@@ -158,9 +158,9 @@ impl<F: BiniusSpecific> CanonicalSerialize for BiniusField<F> {
         mut writer: W,
         _compress: ark_serialize::Compress,
     ) -> Result<(), ark_serialize::SerializationError> {
-            let bytes = bytemuck::bytes_of(&self.0);
-            writer.write_all(&bytes)?;
-            Ok(())
+        let bytes = bytemuck::bytes_of(&self.0);
+        writer.write_all(&bytes)?;
+        Ok(())
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {

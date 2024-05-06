@@ -54,9 +54,16 @@ mod test {
     use binius_field::BinaryField128b;
 
     use crate::{
-        field::binius::BiniusField, jolt::subtable::{and::AndSubtable, LassoSubtable}, subtable_materialize_mle_parity_test
+        field::binius::BiniusField,
+        jolt::subtable::{and::AndSubtable, LassoSubtable},
+        subtable_materialize_mle_parity_test,
     };
 
     subtable_materialize_mle_parity_test!(and_materialize_mle_parity, AndSubtable<Fr>, Fr, 256);
-    subtable_materialize_mle_parity_test!(and_binius_materialize_mle_parity, AndSubtable<BiniusField<BinaryField128b>>, BiniusField<BinaryField128b>, 1 << 16);
+    subtable_materialize_mle_parity_test!(
+        and_binius_materialize_mle_parity,
+        AndSubtable<BiniusField<BinaryField128b>>,
+        BiniusField<BinaryField128b>,
+        1 << 16
+    );
 }
