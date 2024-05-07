@@ -1113,7 +1113,8 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                         }
 
                         flag_indices.truncate(bound_index);
-                        flag_values.truncate(bound_index);
+                        // We only ever use `flag_indices.len()`, so no need to truncate `flag_values`
+                        // flag_values.truncate(bound_index);
                     });
             },
             || eq_poly.bound_poly_var_bot(r),
