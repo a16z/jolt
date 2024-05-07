@@ -553,42 +553,44 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
             || {
                 self.layers.par_iter_mut().for_each(|layer| match layer {
                     DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
-                        let mut bound_layer: DynamicDensityGrandProductLayer<F> = if (sparse_layer
-                            .len()
-                            as f64
+                        let mut dense_bound_layer = if (sparse_layer.len() as f64
                             / self.layer_len as f64)
                             > DENSIFICATION_THRESHOLD
                         {
                             // Current layer is already not very sparse, so make the next layer dense
-                            DynamicDensityGrandProductLayer::Dense(DenseGrandProductLayer::from(
-                                vec![F::one(); self.layer_len / 2],
-                            ))
+                            Some(DenseGrandProductLayer::from(vec![
+                                F::one();
+                                self.layer_len / 2
+                            ]))
                         } else {
-                            // Current layer is still pretty sparse, so make the next layer sparse
-                            DynamicDensityGrandProductLayer::Sparse(vec![])
+                            None
                         };
-                        // TODO(moodlezoup): Bind sparse_vec in place
-                        let mut push_to_bound_layer = |index: usize, value: F| {
-                            match &mut bound_layer {
-                                DynamicDensityGrandProductLayer::Sparse(ref mut sparse_vec) => {
-                                    sparse_vec.push((index, value));
-                                }
-                                DynamicDensityGrandProductLayer::Dense(ref mut dense_vec) => {
-                                    debug_assert_eq!(dense_vec[index], F::one());
-                                    dense_vec[index] = value;
-                                }
+
+                        let mut num_bound = 0usize;
+                        let mut push_to_bound_layer =
+                            |sparse_layer: &mut Vec<(usize, F)>, dense_index: usize, value: F| {
+                                match &mut dense_bound_layer {
+                                    Some(ref mut dense_vec) => {
+                                        debug_assert_eq!(dense_vec[dense_index], F::one());
+                                        dense_vec[dense_index] = value;
+                                    }
+                                    None => {
+                                        sparse_layer[num_bound] = (dense_index, value);
+                                    }
+                                };
+                                num_bound += 1;
                             };
-                        };
 
                         let mut next_left_node_to_process = 0usize;
                         let mut next_right_node_to_process = 0usize;
 
-                        for (j, (index, value)) in sparse_layer.iter().enumerate() {
-                            if *index % 2 == 0 && *index < next_left_node_to_process {
+                        for j in 0..sparse_layer.len() {
+                            let (index, value) = sparse_layer[j];
+                            if index % 2 == 0 && index < next_left_node_to_process {
                                 // This left node was already bound with its sibling in a previous iteration
                                 continue;
                             }
-                            if *index % 2 == 1 && *index < next_right_node_to_process {
+                            if index % 2 == 1 && index < next_right_node_to_process {
                                 // This right node was already bound with its sibling in a previous iteration
                                 continue;
                             }
@@ -622,8 +624,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                     // Find sibling left node
                                     let sibling_value: F = find_neighbor(index + 2);
                                     push_to_bound_layer(
+                                        sparse_layer,
                                         index / 2,
-                                        *value + *r * (sibling_value - value),
+                                        value + *r * (sibling_value - value),
                                     );
                                     next_left_node_to_process = index + 4;
                                 }
@@ -635,6 +638,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                         let left_neighbor: F = find_neighbor(index + 1);
                                         if !left_neighbor.is_one() {
                                             push_to_bound_layer(
+                                                sparse_layer,
                                                 index / 2,
                                                 F::one() + *r * (left_neighbor - F::one()),
                                             );
@@ -645,8 +649,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                     // Find sibling right node
                                     let sibling_value: F = find_neighbor(index + 2);
                                     push_to_bound_layer(
+                                        sparse_layer,
                                         index / 2 + 1,
-                                        *value + *r * (sibling_value - value),
+                                        value + *r * (sibling_value - value),
                                     );
                                     next_right_node_to_process = index + 4;
                                 }
@@ -654,8 +659,9 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                     // Sibling left node wasn't encountered in previous iteration,
                                     // so sibling must have value 1.
                                     push_to_bound_layer(
+                                        sparse_layer,
                                         index / 2 - 1,
-                                        F::one() + *r * (*value - F::one()),
+                                        F::one() + *r * (value - F::one()),
                                     );
                                     next_left_node_to_process = index + 2;
                                 }
@@ -663,15 +669,20 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                     // Sibling right node wasn't encountered in previous iteration,
                                     // so sibling must have value 1.
                                     push_to_bound_layer(
+                                        sparse_layer,
                                         index / 2,
-                                        F::one() + *r * (*value - F::one()),
+                                        F::one() + *r * (value - F::one()),
                                     );
                                     next_right_node_to_process = index + 2;
                                 }
                                 _ => unreachable!("?_?"),
                             }
                         }
-                        *layer = bound_layer;
+                        if let Some(dense_vec) = dense_bound_layer {
+                            *layer = DynamicDensityGrandProductLayer::Dense(dense_vec);
+                        } else {
+                            sparse_layer.truncate(num_bound);
+                        }
                     }
                     DynamicDensityGrandProductLayer::Dense(dense_layer) => {
                         // If current layer is dense, next layer should also be dense.
