@@ -37,13 +37,21 @@ pub struct BatchedGrandProductProof<F: JoltField> {
 }
 
 pub trait BatchedGrandProduct<F: JoltField>: Sized {
+    /// The bottom/input layer of the grand products
     type Leaves;
 
+    /// Constructs the grand product circuit(s) from `leaves`
     fn construct(leaves: Self::Leaves) -> Self;
+    /// The number of layers in the grand product.
     fn num_layers(&self) -> usize;
+    /// The claimed outputs of the grand products.
     fn claims(&self) -> Vec<F>;
+    /// Returns an iterator over the layers of this batched grand product circuit.
+    /// Each layer is mutable so that its polynomials can be bound over the course
+    /// of proving.
     fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>>;
 
+    /// Computes a batched grand product proof, layer by layer.
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
         &mut self,
@@ -69,6 +77,10 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         )
     }
 
+    /// Verifies that the `sumcheck_claim` output by sumcheck verification is consistent
+    /// with the `left_claims` and `right_claims` of corresponding `BatchedGrandProductLayerProof`.
+    /// This function may be overridden if the layer isn't just multiplication gates, e.g. in the
+    /// case of `ToggledBatchedGrandProduct`.
     fn verify_sumcheck_claim(
         layer_proofs: &[BatchedGrandProductLayerProof<F>],
         layer_index: usize,
@@ -99,6 +111,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         r_grand_product.push(r_layer);
     }
 
+    /// Verifies the given grand product proof.
     fn verify_grand_product(
         proof: &BatchedGrandProductProof<F>,
         claims: &Vec<F>,
@@ -160,6 +173,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
 }
 
 pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
+    /// Proves a single layer of a batched grand product circuit
     fn prove_layer(
         &mut self,
         claims: &mut Vec<F>,
@@ -215,8 +229,16 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
     }
 }
 
+/// Represents a single layer of a single grand product circuit.
+/// A layer is assumed to be arranged in "interleaved" order, i.e. the natural
+/// order in the visual representation of the circuit:
+///      Λ        Λ        Λ        Λ
+///     / \      / \      / \      / \
+///   L0   R0  L1   R1  L2   R2  L3   R3   <- This is layer would be represented as [L0, R0, L1, R1, L2, R2, L3, R3]
+///                                           (as opposed to e.g. [L0, L1, L2, L3, R0, R1, R2, R3])
 pub type DenseGrandProductLayer<F> = Vec<F>;
 
+/// Represents a batch of `DenseGrandProductLayer`, all of the same length `layer_len`.
 #[derive(Debug, Clone)]
 pub struct BatchedDenseGrandProductLayer<F: JoltField> {
     layers: Vec<DenseGrandProductLayer<F>>,
@@ -239,7 +261,19 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
         self.layer_len.log_2() - 1
     }
 
-    #[tracing::instrument(skip_all)]
+    /// Incrementally binds a variable of this batched layer's polynomials.
+    /// Even though each layer is backed by a single Vec<F>, it represents two polynomials
+    /// one for the left nodes in the circuit, one for the right nodes in the circuit.
+    /// These two polynomials' coefficients are interleaved into one Vec<F>. To preserve
+    /// this interleaved order, we bind values like this:
+    ///   0'  1'     2'  3'
+    ///   |\ |\      |\ |\
+    ///   | \| \     | \| \
+    ///   |  \  \    |  \  \
+    ///   |  |\  \   |  |\  \
+    ///   0  1 2  3  4  5 6  7
+    /// Left nodes have even indices, right nodes have odd indices.
+    #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::bind")]
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
         debug_assert!(self.layer_len % 4 == 0);
         let n = self.layer_len / 4;
@@ -263,6 +297,20 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
         self.layer_len /= 2;
     }
 
+    /// We want to compute the evaluations of the following univariate cubic polynomial at
+    /// points {0, 1, 2, 3}:
+    ///     Σ coeff[batch_index] * (Σ eq(r, x) * left(x) * right(x))
+    /// where the inner summation is over all but the "least significant bit" of the multilinear
+    /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
+    ///
+    /// Computing these evaluations requires processing pairs of adjacent coefficients of
+    /// `eq`, `left`, and `right`.
+    /// Recall that the `left` and `right` polynomials are interleaved in each layer of `self.layers`,
+    /// so we process each layer 4 values at a time:
+    ///                  layer = [L, R, L, R, L, R, ...]
+    ///                           |  |  |  |
+    ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
+    ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProductLayer::compute_cubic")]
     fn compute_cubic(
         &self,
@@ -289,7 +337,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
                         // We want to compute:
                         //     evals.0 += coeff * left.0 * right.0
                         //     evals.1 += coeff * (2 * left.1 - left.0) * (2 * right.1 - right.0)
-                        //     evals.0 += coeff * (3 * left.1 - 2 * left.0) * (3 * right.1 - 2 * right.0)
+                        //     evals.2 += coeff * (3 * left.1 - 2 * left.0) * (3 * right.1 - 2 * right.0)
                         // which naively requires 3 multiplications by `coeff`.
                         // By multiplying by the coefficient early, we only use 2 multiplications by `coeff`.
                         let left = (
@@ -334,16 +382,102 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedDenseGrandProductLayer<F> 
     }
 }
 
+/// A batched grand product circuit.
+/// Note that the circuit roots are not included in `self.layers`
+///        o
+///      /   \
+///     o     o  <- layers[layers.len() - 1]
+///    / \   / \
+///   o   o o   o  <- layers[layers.len() - 2]
+///       ...
+pub struct BatchedDenseGrandProduct<F: JoltField> {
+    layers: Vec<BatchedDenseGrandProductLayer<F>>,
+}
+
+impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
+    type Leaves = Vec<Vec<F>>;
+
+    #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct")]
+    fn construct(leaves: Self::Leaves) -> Self {
+        let num_layers = leaves[0].len().log_2();
+        let mut layers: Vec<BatchedDenseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
+        layers.push(BatchedDenseGrandProductLayer::new(leaves));
+
+        for i in 0..num_layers - 1 {
+            let previous_layers = &layers[i];
+            let len = previous_layers.layer_len / 2;
+            // TODO(moodlezoup): parallelize over chunks instead of over batch
+            let new_layers = previous_layers
+                .layers
+                .par_iter()
+                .map(|previous_layer| {
+                    (0..len)
+                        .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            layers.push(BatchedDenseGrandProductLayer::new(new_layers));
+        }
+
+        Self { layers }
+    }
+
+    fn num_layers(&self) -> usize {
+        self.layers.len()
+    }
+
+    fn claims(&self) -> Vec<F> {
+        let last_layers = &self.layers[self.num_layers() - 1];
+        assert_eq!(last_layers.layer_len, 2);
+        last_layers
+            .layers
+            .iter()
+            .map(|layer| layer[0] * layer[1])
+            .collect()
+    }
+
+    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
+        self.layers
+            .iter_mut()
+            .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F>)
+            .rev()
+    }
+}
+
+/// Represents a single layer of a single grand product circuit using a sparse vector,
+/// i.e. a vector containing (index, value) pairs.
+/// Nodes with value 1 are omitted from the sparse vector.
+/// Like `DenseGrandProductLayer`, a `SparseGrandProductLayer` is assumed to be
+/// arranged in "interleaved" order:
+///      Λ        Λ        Λ        Λ
+///     / \      / \      / \      / \
+///   L0   1   L1   R1   1   1   L3   1   <- This is layer would be represented as [(0, L0), (2, L1), (3, R1), (6, L3)]
 pub type SparseGrandProductLayer<F> = Vec<(usize, F)>;
+
+/// A "dynamic density" grand product layer can switch from sparse representation
+/// to dense representation once it's no longer sparse (after binding).
 #[derive(Debug, Clone, PartialEq)]
 pub enum DynamicDensityGrandProductLayer<F: JoltField> {
     Sparse(SparseGrandProductLayer<F>),
     Dense(DenseGrandProductLayer<F>),
 }
 
+/// The threshold at which a `DynamicDensityGrandProductLayer` switches from sparse to
+/// dense representation. If the layer has >DENSIFICATION_THRESHOLD fraction of non-1
+/// values, it'll switch to the dense representation.
 const DENSIFICATION_THRESHOLD: f64 = 0.8;
 
 impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
+    /// Computes the grand product layer that is output by this layer.
+    ///     L0'      R0'      L1'      R1'     <- output layer
+    ///      Λ        Λ        Λ        Λ
+    ///     / \      / \      / \      / \
+    ///   L0   R0  L1   R1  L2   R2  L3   R3   <- this layer
+    ///
+    /// If the current layer is dense, the output layer will be dense.
+    /// If the current layer is sparse, but already not very sparse (as parametrized by
+    /// `DENSIFICATION_THRESHOLD`), the output layer will be dense.
+    /// Otherwise, the output layer will be sparse.
     pub fn layer_output(&self, output_len: usize) -> Self {
         match self {
             DynamicDensityGrandProductLayer::Sparse(sparse_layer) => {
@@ -448,6 +582,9 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
     }
 }
 
+/// Represents a batch of `DynamicDensityGrandProductLayer`, all of which have the same
+/// size `layer_len`. Note that within a single batch, some layers may be represented by
+/// sparse vectors and others by dense vectors.
 #[derive(Debug, Clone)]
 pub struct BatchedSparseGrandProductLayer<F: JoltField> {
     pub layer_len: usize,
@@ -460,6 +597,18 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         self.layer_len.log_2() - 1
     }
 
+    /// Incrementally binds a variable of this batched layer's polynomials.
+    /// If `self` is dense, we bind as in `BatchedDenseGrandProductLayer`,
+    /// processing nodes 4 at a time to preserve the interleaved order:
+    ///   0'  1'     2'  3'
+    ///   |\ |\      |\ |\
+    ///   | \| \     | \| \
+    ///   |  \  \    |  \  \
+    ///   |  |\  \   |  |\  \
+    ///   0  1 2  3  4  5 6  7
+    /// Left nodes have even indices, right nodes have odd indices.
+    /// If `self` is sparse, we basically do the same thing but with more
+    /// cases to check 😬
     #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::bind")]
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
         debug_assert!(self.layer_len % 4 == 0);
@@ -614,6 +763,21 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
         self.layer_len /= 2;
     }
 
+    /// We want to compute the evaluations of the following univariate cubic polynomial at
+    /// points {0, 1, 2, 3}:
+    ///     Σ coeff[batch_index] * (Σ eq(r, x) * left(x) * right(x))
+    /// where the inner summation is over all but the "least significant bit" of the multilinear
+    /// polynomials `eq`, `left`, and `right`. We denote this "least significant" variable x_b.
+    ///
+    /// Computing these evaluations requires processing pairs of adjacent coefficients of
+    /// `eq`, `left`, and `right`.
+    /// If `self` is dense, we process each layer 4 values at a time:
+    ///                  layer = [L, R, L, R, L, R, ...]
+    ///                           |  |  |  |
+    ///    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
+    ///     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
+    /// If `self` is sparse, we basically do the same thing but with some fancy optimizations and
+    /// more cases to check 😬
     #[tracing::instrument(skip_all, name = "BatchedSparseGrandProductLayer::compute_cubic")]
     fn compute_cubic(
         &self,
@@ -833,61 +997,22 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
     }
 }
 
-pub struct BatchedDenseGrandProduct<F: JoltField> {
-    layers: Vec<BatchedDenseGrandProductLayer<F>>,
-}
-
-impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
-    type Leaves = Vec<Vec<F>>;
-
-    #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct")]
-    fn construct(leaves: Self::Leaves) -> Self {
-        let num_layers = leaves[0].len().log_2();
-        let mut layers: Vec<BatchedDenseGrandProductLayer<F>> = Vec::with_capacity(num_layers);
-        layers.push(BatchedDenseGrandProductLayer::new(leaves));
-
-        for i in 0..num_layers - 1 {
-            let previous_layers = &layers[i];
-            let len = previous_layers.layer_len / 2;
-            let new_layers = previous_layers
-                .layers
-                .par_iter()
-                .map(|previous_layer| {
-                    (0..len)
-                        .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-            layers.push(BatchedDenseGrandProductLayer::new(new_layers));
-        }
-
-        Self { layers }
-    }
-
-    fn num_layers(&self) -> usize {
-        self.layers.len()
-    }
-
-    fn claims(&self) -> Vec<F> {
-        let last_layers = &self.layers[self.num_layers() - 1];
-        assert_eq!(last_layers.layer_len, 2);
-        last_layers
-            .layers
-            .iter()
-            .map(|layer| layer[0] * layer[1])
-            .collect()
-    }
-
-    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
-        self.layers
-            .iter_mut()
-            .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F>)
-            .rev()
-    }
-}
-
+/// A special bottom layer of a grand product, where boolean flags are used to
+/// toggle the other inputs (fingerprints) going into the rest of the tree.
+/// Note that the gates for this layer are *not* simple multiplication gates.
+/// ```ignore
+///
+///      …           …
+///    /    \       /    \     the rest of the tree, which is now sparse (lots of 1s)
+///   o      o     o      o                          ↑
+///  / \    / \   / \    / \    –––––––––––––––––––––––––––––––––––––––––––
+/// 🏴  o  🏳️ o  🏳️ o  🏴  o    toggle layer        ↓
 struct BatchedGrandProductToggleLayer<F: JoltField> {
+    /// The list of non-zero flag indices for each layer in the batch.
     flag_indices: Vec<Vec<usize>>,
+    /// The list of non-zero flag values for each layer in the batch.
+    /// Before the first binding iteration of sumcheck, this will be empty
+    /// (we know that all non-zero, unbound flag values are 1).
     flag_values: Vec<Vec<F>>,
     fingerprints: Vec<Vec<F>>,
     layer_len: usize,
@@ -931,6 +1056,18 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
         self.layer_len.log_2()
     }
 
+    /// Incrementally binds a variable of this batched layer's polynomials.
+    /// Similar to `BatchedSparseGrandProductLayer::bind`, in that fingerprints use
+    /// a sparse representation, but different in a couple of key ways:
+    /// - flags use two separate vectors (for indices and values) rather than
+    ///   a single vector of (index, value) pairs
+    /// - The left and right nodes in this layer are flags and fingerprints, respectively.
+    ///   They are represented by *separate* vectors, so they are *not* interleaved. This
+    ///   means we process 2 flag values at a time, rather than 4.
+    /// - In `BatchedSparseGrandProductLayer`, the absence of a node implies that it has
+    ///   value 1. For our sparse representation of flags, the absence of a node implies
+    ///   that it has value 0. In other words, a flag with value 1 will be present in both
+    ///   `self.flag_indices` and `self.flag_values`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::bind")]
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F) {
         self.fingerprints
@@ -1031,6 +1168,10 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
         self.layer_len /= 2;
     }
 
+    /// Similar to `BatchedSparseGrandProductLayer::compute_cubic`, but with changes to
+    /// accomodate the differences between `BatchedSparseGrandProductLayer` and
+    /// `BatchedGrandProductToggleLayer`. These differences are described in the doc comments
+    /// for `BatchedGrandProductToggleLayer::bind`.
     #[tracing::instrument(skip_all, name = "BatchedGrandProductToggleLayer::compute_cubic")]
     fn compute_cubic(
         &self,

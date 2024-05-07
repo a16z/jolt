@@ -12,8 +12,8 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use rayon::prelude::*;
 
+/// Batched cubic sumcheck used in grand products
 pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
-    // TODO: batch_size?
     fn num_rounds(&self) -> usize;
     fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
     fn compute_cubic(
