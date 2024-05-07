@@ -27,6 +27,6 @@
     - [Dev](./dev/README.md)
         - [Install](./dev/install.md)
         - [Tools](./dev/tools.md)
-    - [Future Plans](./opts.md)
+    - [Roadmap](./tasks.md)
+        - [Optimizations](./future/opts.md)
         - [Zero Knowledge](./future/zk.md)
-    - [Other tasks](./tasks.md)
