@@ -1,13 +1,12 @@
 use std::ops::{Index, IndexMut};
 
-use super::sumcheck::SumcheckInstanceProof;
+use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::field::JoltField;
-use crate::poly::unipoly::CompressedUniPoly;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::ProofTranscript;
 use ark_ff::Zero;
 use ark_serialize::*;
 use itertools::Itertools;
@@ -215,57 +214,6 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             left_claims,
             right_claims,
         }
-    }
-}
-
-pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
-    // TODO: batch_size?
-    fn num_rounds(&self) -> usize;
-    fn bind(&mut self, eq_poly: &mut DensePolynomial<F>, r: &F);
-    fn compute_cubic(
-        &self,
-        coeffs: &[F],
-        eq_poly: &DensePolynomial<F>,
-        previous_round_claim: F,
-    ) -> UniPoly<F>;
-    fn final_claims(&self) -> (Vec<F>, Vec<F>);
-
-    #[tracing::instrument(skip_all, name = "BatchedCubicSumcheck::prove_sumcheck")]
-    fn prove_sumcheck(
-        &mut self,
-        claim: &F,
-        coeffs: &[F],
-        eq_poly: &mut DensePolynomial<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
-        debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
-
-        let mut previous_claim = *claim;
-        let mut r: Vec<F> = Vec::new();
-        let mut cubic_polys: Vec<CompressedUniPoly<F>> = Vec::new();
-
-        for _round in 0..self.num_rounds() {
-            let cubic_poly = self.compute_cubic(coeffs, eq_poly, previous_claim);
-            // append the prover's message to the transcript
-            cubic_poly.append_to_transcript(b"poly", transcript);
-            //derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar(b"challenge_nextround");
-
-            r.push(r_j);
-            // bind polynomials to verifier's challenge
-            self.bind(eq_poly, &r_j);
-
-            previous_claim = cubic_poly.evaluate(&r_j);
-            cubic_polys.push(cubic_poly.compress());
-        }
-
-        debug_assert_eq!(eq_poly.len(), 1);
-
-        (
-            SumcheckInstanceProof::new(cubic_polys),
-            r,
-            self.final_claims(),
-        )
     }
 }
 
