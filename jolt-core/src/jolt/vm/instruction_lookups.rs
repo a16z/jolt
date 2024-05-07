@@ -1310,7 +1310,6 @@ where
             .into_par_iter()
             .map(|memory_index| {
                 let instruction_indices: Vec<_> = (0..Self::NUM_INSTRUCTIONS)
-                    .into_iter()
                     .filter(|instruction_index| {
                         preprocessing.instruction_to_memory_indices[*instruction_index]
                             .contains(&memory_index)

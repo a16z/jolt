@@ -42,7 +42,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
     fn construct(leaves: Self::Leaves) -> Self;
     fn num_layers(&self) -> usize;
     fn claims(&self) -> Vec<F>;
-    fn layers<'a>(&'a mut self) -> impl Iterator<Item = &'a mut dyn BatchedGrandProductLayer<F>>;
+    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>>;
 
     #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
     fn prove_grand_product(
@@ -70,9 +70,9 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
     }
 
     fn verify_sumcheck_claim(
-        layer_proofs: &Vec<BatchedGrandProductLayerProof<F>>,
+        layer_proofs: &[BatchedGrandProductLayerProof<F>],
         layer_index: usize,
-        coeffs: &Vec<F>,
+        coeffs: &[F],
         sumcheck_claim: F,
         eq_eval: F,
         grand_product_claims: &mut Vec<F>,
@@ -432,7 +432,6 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
 
                 // If current layer is dense, next layer should also be dense.
                 let output_layer: DenseGrandProductLayer<F> = (0..output_len)
-                    .into_iter()
                     .map(|i| {
                         let (left, right) = (dense_layer[2 * i], dense_layer[2 * i + 1]);
                         left * right
@@ -855,10 +854,8 @@ impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
                 .par_iter()
                 .map(|previous_layer| {
                     (0..len)
-                        .into_iter()
                         .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
                         .collect::<Vec<_>>()
-                        .into()
                 })
                 .collect();
             layers.push(BatchedDenseGrandProductLayer::new(new_layers));
@@ -881,7 +878,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
             .collect()
     }
 
-    fn layers<'a>(&'a mut self) -> impl Iterator<Item = &'a mut dyn BatchedGrandProductLayer<F>> {
+    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
         self.layers
             .iter_mut()
             .map(|layer| layer as &mut dyn BatchedGrandProductLayer<F>)
@@ -1296,7 +1293,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
             .collect()
     }
 
-    fn layers<'a>(&'a mut self) -> impl Iterator<Item = &'a mut dyn BatchedGrandProductLayer<F>> {
+    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
         [&mut self.toggle_layer as &mut dyn BatchedGrandProductLayer<F>]
             .into_iter()
             .chain(
@@ -1308,9 +1305,9 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
     }
 
     fn verify_sumcheck_claim(
-        layer_proofs: &Vec<BatchedGrandProductLayerProof<F>>,
+        layer_proofs: &[BatchedGrandProductLayerProof<F>],
         layer_index: usize,
-        coeffs: &Vec<F>,
+        coeffs: &[F],
         sumcheck_claim: F,
         eq_eval: F,
         grand_product_claims: &mut Vec<F>,

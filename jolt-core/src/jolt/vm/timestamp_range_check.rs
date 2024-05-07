@@ -1,7 +1,7 @@
 use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{
-    BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
-    BatchedDenseGrandProduct,
+    BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
+    BatchedGrandProductProof,
 };
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -566,7 +566,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
         vec![]
     }
 
-    fn layers<'a>(&'a mut self) -> impl Iterator<Item = &'a mut dyn BatchedGrandProductLayer<F>> {
+    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
         vec![].into_iter()
     }
 
