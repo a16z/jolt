@@ -2,49 +2,37 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use binius_field::{BinaryField, BinaryField128b, BinaryField128bPolyval};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use super::JoltField;
+use super::precomputed;
+use super::{
+    precomputed::{
+        PRECOMPUTED_HIGH_128B, PRECOMPUTED_HIGH_128B_POLYVAL, PRECOMPUTED_LOW_128B,
+        PRECOMPUTED_LOW_128B_POLYVAL,
+    },
+    JoltField,
+};
 
-use once_cell::sync::Lazy;
-
-static PRECOMPUTED_LOW_128B: Lazy<[BinaryField128b; TABLE_SIZE]> = Lazy::new(|| {
-    compute_powers::<BinaryField128b, TABLE_SIZE>(BinaryField128b::MULTIPLICATIVE_GENERATOR)
-});
-static PRECOMPUTED_HIGH_128B: Lazy<[BinaryField128b; TABLE_SIZE]> = Lazy::new(|| {
-    compute_powers_starting_from::<BinaryField128b, TABLE_SIZE>(
-        BinaryField128b::MULTIPLICATIVE_GENERATOR,
-        16,
-    )
-});
 impl BiniusConstructable for BinaryField128b {
     fn new(n: u64) -> Self {
         Self::new(n as u128)
     }
 
-    fn precomputed_generator_multiples(
-    ) -> (&'static [Self; TABLE_SIZE], &'static [Self; TABLE_SIZE]) {
+    fn precomputed_generator_multiples() -> (
+        &'static [Self; precomputed::TABLE_SIZE],
+        &'static [Self; precomputed::TABLE_SIZE],
+    ) {
         (&PRECOMPUTED_LOW_128B, &PRECOMPUTED_HIGH_128B)
     }
 }
 
-static PRECOMPUTED_LOW_128B_POLYVAL: Lazy<[BinaryField128bPolyval; TABLE_SIZE]> = Lazy::new(|| {
-    compute_powers::<BinaryField128bPolyval, TABLE_SIZE>(
-        BinaryField128bPolyval::MULTIPLICATIVE_GENERATOR,
-    )
-});
-static PRECOMPUTED_HIGH_128B_POLYVAL: Lazy<[BinaryField128bPolyval; TABLE_SIZE]> =
-    Lazy::new(|| {
-        compute_powers_starting_from::<BinaryField128bPolyval, TABLE_SIZE>(
-            BinaryField128bPolyval::MULTIPLICATIVE_GENERATOR,
-            16,
-        )
-    });
 impl BiniusConstructable for BinaryField128bPolyval {
     fn new(n: u64) -> Self {
         Self::new(n as u128)
     }
 
-    fn precomputed_generator_multiples(
-    ) -> (&'static [Self; TABLE_SIZE], &'static [Self; TABLE_SIZE]) {
+    fn precomputed_generator_multiples() -> (
+        &'static [Self; precomputed::TABLE_SIZE],
+        &'static [Self; precomputed::TABLE_SIZE],
+    ) {
         (
             &PRECOMPUTED_LOW_128B_POLYVAL,
             &PRECOMPUTED_HIGH_128B_POLYVAL,
@@ -57,9 +45,6 @@ impl BiniusSpecific for BinaryField128bPolyval {}
 
 /// Trait for BiniusField functionality specific to each impl.
 pub trait BiniusSpecific: binius_field::TowerField + BiniusConstructable + bytemuck::Pod {}
-
-const LOG_TABLE_SIZE: usize = 16;
-const TABLE_SIZE: usize = 1 << LOG_TABLE_SIZE;
 
 pub trait BiniusConstructable: BinaryField {
     fn new(n: u64) -> Self;
@@ -76,23 +61,23 @@ pub trait BiniusConstructable: BinaryField {
     /// This is achieved with two lookups (one from each table) and a single multiplication.
     ///
     /// `precomputed_generator_multiples() -> (&low_table, &high_table)`
-    fn precomputed_generator_multiples(
-    ) -> (&'static [Self; TABLE_SIZE], &'static [Self; TABLE_SIZE]);
+    fn precomputed_generator_multiples() -> (
+        &'static [Self; precomputed::TABLE_SIZE],
+        &'static [Self; precomputed::TABLE_SIZE],
+    );
 
     fn from_count_index(n: u64) -> Self {
-        const MAX_COUNTS: usize = 1 << (2 * LOG_TABLE_SIZE);
+        const MAX_COUNTS: usize = 1 << (2 * precomputed::LOG_TABLE_SIZE);
         let n = (n) as usize;
         assert!(n <= MAX_COUNTS);
         assert!(n != 0);
 
-        let high_index = (n >> LOG_TABLE_SIZE) as usize;
-        let low_index = (n & ((1 << LOG_TABLE_SIZE) - 1)) as usize;
+        let high_index = (n >> precomputed::LOG_TABLE_SIZE) as usize;
+        let low_index = (n & ((1 << precomputed::LOG_TABLE_SIZE) - 1)) as usize;
         let (precomputed_low, precomputed_high) = Self::precomputed_generator_multiples();
-        // TODO(sragss): mul_0_optimized
-        if n < TABLE_SIZE {
+        if n < precomputed::TABLE_SIZE {
             precomputed_low[n]
         } else {
-            println!("low[{low_index}] * high[{high_index}]");
             precomputed_low[low_index] * precomputed_high[high_index]
         }
     }
@@ -260,70 +245,10 @@ impl<F: BiniusSpecific> ark_serialize::Valid for BiniusField<F> {
     }
 }
 
-/// Computes `N` sequential powers of base^{[0, ... N]}
-const fn compute_powers<F: binius_field::BinaryField, const N: usize>(base: F) -> [F; N] {
-    let mut powers = [F::ZERO; N];
-    powers[0] = F::ONE;
-    powers[1] = base;
-    let mut i = 2;
-    while i < N {
-        powers[i] = powers[i - 1] * base;
-        i += 1;
-    }
-    powers
-}
-
-/// Computes `N` sequential powers of base^{2^starting_power}: {base^{2^starting_power}}^{[1, ... N]}
-const fn compute_powers_starting_from<F: binius_field::BinaryField, const N: usize>(
-    base: F,
-    starting_power: usize,
-) -> [F; N] {
-    let mut starting = base;
-    let mut count = 0;
-    // // Repeated squaring
-    while count < starting_power {
-        starting = starting.mul(starting);
-        count += 1;
-    }
-    compute_powers::<F, N>(starting)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use binius_field::Field;
-
-    #[test]
-    fn test_compute_powers() {
-        let base = BinaryField128b::MULTIPLICATIVE_GENERATOR;
-        let powers = compute_powers::<BinaryField128b, 5>(base);
-        let expected_powers = [
-            BinaryField128b::ONE,
-            base,
-            base * base,
-            base * base * base,
-            base * base * base * base,
-        ];
-        assert_eq!(powers, expected_powers);
-    }
-
-    #[test]
-    fn test_compute_powers_starting_from() {
-        let base = BinaryField128b::MULTIPLICATIVE_GENERATOR;
-        let powers = compute_powers_starting_from::<BinaryField128b, 5>(base, 2);
-        let expected_starting_base = base * base * base * base;
-        let expected_powers = [
-            BinaryField128b::ONE,
-            expected_starting_base,
-            expected_starting_base * expected_starting_base,
-            expected_starting_base * expected_starting_base * expected_starting_base,
-            expected_starting_base
-                * expected_starting_base
-                * expected_starting_base
-                * expected_starting_base,
-        ];
-        assert_eq!(powers, expected_powers);
-    }
 
     #[test]
     fn test_from_count_index() {

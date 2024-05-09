@@ -42,3 +42,4 @@ pub trait JoltField:
 
 pub mod ark;
 pub mod binius;
+mod precomputed;
