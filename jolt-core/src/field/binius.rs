@@ -1,5 +1,5 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use binius_field::{BinaryField128b, BinaryField128bPolyval};
+use binius_field::{BinaryField, BinaryField128b, BinaryField128bPolyval, TowerField};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use super::JoltField;
@@ -22,8 +22,37 @@ impl BiniusSpecific for BinaryField128bPolyval {}
 /// Trait for BiniusField functionality specific to each impl.
 pub trait BiniusSpecific: binius_field::TowerField + BiniusConstructable + bytemuck::Pod {}
 
-pub trait BiniusConstructable {
+const LOG_TABLE_SIZE: usize = 16;
+const TABLE_SIZE: usize = 1 << LOG_TABLE_SIZE;
+
+pub trait BiniusConstructable: BinaryField {
     fn new(n: u64) -> Self;
+
+
+    /// Binius counts are constructed from multiplicities of a Binary Field multiplicative generator. 
+    /// Precomputing all required counts [0, 2^32] is prohibitively expensive and using iterative multiplication
+    /// or square and multiply is still excessively costly.
+    /// Utilizes a two-table lookup method to handle counts up to `2^32` efficiently:
+    /// - Decompose count `x` as `x = a * 2^16 + b` where `a` and `b` are within the range `[0, 2^16]`.
+    /// - Two Precomptued Lookup Tables:
+    ///   - One table stores `2^16` powers of `g^{2^16}`.
+    ///   - Another table stores `2^16` powers of `g`.
+    /// - Computes any count up to `2^32` using:
+    ///   ```
+    ///   g^x = (g^{2^16})^a * g^b
+    ///   ```
+    ///   This is achieved with two lookups (one from each table) and a single multiplication.
+    const PRECOMPUTED_GENERATOR_MULTIPLES_LOW: [Self; TABLE_SIZE] = compute_powers::<Self, TABLE_SIZE>(Self::MULTIPLICATIVE_GENERATOR);
+    const PRECOMPUTED_GENERATOR_MULTIPLES_HIGH: [Self; TABLE_SIZE] = compute_powers_starting_from::<Self, TABLE_SIZE>(Self::MULTIPLICATIVE_GENERATOR, 16);
+
+    fn from_count_index(n: u64) -> Self {
+        const MAX_COUNTS: usize = 1 << (2 * LOG_TABLE_SIZE);
+        assert!(n <= MAX_COUNTS as u64);
+        let high_index = (n >> LOG_TABLE_SIZE) as usize;
+        let low_index = (n & ((1 << LOG_TABLE_SIZE) - 1)) as usize;
+        // TODO(sragss): mul_0_optimized
+        Self::PRECOMPUTED_GENERATOR_MULTIPLES_HIGH[high_index] * Self::PRECOMPUTED_GENERATOR_MULTIPLES_LOW[low_index]
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
@@ -66,6 +95,10 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
 
         let field_element = bytemuck::try_from_bytes::<F>(bytes).unwrap();
         Self(field_element.to_owned())
+    }
+
+    fn from_count_index(index: u64) -> Self {
+        Self(<F as BiniusConstructable>::from_count_index(index))
     }
 }
 
@@ -183,3 +216,70 @@ impl<F: BiniusSpecific> ark_serialize::Valid for BiniusField<F> {
         todo!()
     }
 }
+
+/// Computes `N` sequential powers of base^{[0, ... N]}
+const fn compute_powers<F: binius_field::BinaryField, const N: usize>(base: F) -> [F; N] {
+    let mut powers = [F::ZERO; N];
+    powers[0] = base;
+    let mut i = 1;
+    while i < N {
+        powers[i] = powers[i - 1] * base;
+        i += 1;
+    }
+    powers
+}
+
+/// Computes `N` sequential powers of base^{2^starting_power}: {base^{2^starting_power}}^{[1, ... N]}
+const fn compute_powers_starting_from<F: binius_field::BinaryField, const N: usize>(base: F, starting_power: usize) -> [F; N] {
+    let mut starting = base;
+    let mut count = 0;
+    // // Repeated squaring
+    while count < starting_power {
+        starting = starting.mul(starting);
+        count += 1;
+    }
+    compute_powers::<F, N>(starting)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_powers() {
+        let base = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        let powers = compute_powers::<BinaryField128b, 5>(base);
+        let expected_powers = [
+            base,
+            base * base,
+            base * base * base,
+            base * base * base * base,
+            base * base * base * base * base
+        ];
+        assert_eq!(powers, expected_powers);
+    }
+
+    #[test]
+    fn test_compute_powers_starting_from() {
+        let base = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        let powers = compute_powers_starting_from::<BinaryField128b, 5>(base, 2);
+        let expected_starting_base = base * base * base * base;
+        let expected_powers = [
+            expected_starting_base,
+            expected_starting_base * expected_starting_base,
+            expected_starting_base * expected_starting_base * expected_starting_base,
+            expected_starting_base * expected_starting_base * expected_starting_base * expected_starting_base,
+            expected_starting_base * expected_starting_base * expected_starting_base * expected_starting_base * expected_starting_base,
+        ];
+        assert_eq!(powers, expected_powers);
+    }
+
+    #[test]
+    fn test_from_count_index() {
+        let actual = BiniusField::<BinaryField128b>::from_count_index(0);
+        let expected = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        assert_eq!(actual.0, expected);
+    }
+}
+

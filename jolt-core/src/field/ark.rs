@@ -37,4 +37,8 @@ impl JoltField for ark_bn254::Fr {
         assert_eq!(bytes.len(), Self::NUM_BYTES);
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
     }
+
+    fn from_count_index(index: u64) -> Self {
+        <Self as JoltField>::from_u64(index).unwrap()
+    }
 }

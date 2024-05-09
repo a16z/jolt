@@ -8,6 +8,12 @@
 #![feature(iter_next_chunk)]
 #![allow(long_running_const_eval)]
 
+// Note: Used exclusively by const fn BiniusConstructable::compute_powers. 
+// Can be removed with a manual const fn for BinaryField multiplication.
+#![feature(const_trait_impl)]
+#![feature(effects)]
+#![feature(const_refs_to_cell)]
+
 pub mod benches;
 pub mod field;
 pub mod host;
