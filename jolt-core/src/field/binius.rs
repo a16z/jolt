@@ -1,18 +1,42 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use binius_field::{BinaryField128b, BinaryField128bPolyval};
+use binius_field::{BinaryField, BinaryField128b, BinaryField128bPolyval};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use super::JoltField;
+use super::precomputed;
+use super::{
+    precomputed::{
+        PRECOMPUTED_HIGH_128B, PRECOMPUTED_HIGH_128B_POLYVAL, PRECOMPUTED_LOW_128B,
+        PRECOMPUTED_LOW_128B_POLYVAL,
+    },
+    JoltField,
+};
 
 impl BiniusConstructable for BinaryField128b {
     fn new(n: u64) -> Self {
         Self::new(n as u128)
+    }
+
+    fn precomputed_generator_multiples() -> (
+        &'static [Self; precomputed::TABLE_SIZE],
+        &'static [Self; precomputed::TABLE_SIZE],
+    ) {
+        (&PRECOMPUTED_LOW_128B, &PRECOMPUTED_HIGH_128B)
     }
 }
 
 impl BiniusConstructable for BinaryField128bPolyval {
     fn new(n: u64) -> Self {
         Self::new(n as u128)
+    }
+
+    fn precomputed_generator_multiples() -> (
+        &'static [Self; precomputed::TABLE_SIZE],
+        &'static [Self; precomputed::TABLE_SIZE],
+    ) {
+        (
+            &PRECOMPUTED_LOW_128B_POLYVAL,
+            &PRECOMPUTED_HIGH_128B_POLYVAL,
+        )
     }
 }
 
@@ -22,8 +46,41 @@ impl BiniusSpecific for BinaryField128bPolyval {}
 /// Trait for BiniusField functionality specific to each impl.
 pub trait BiniusSpecific: binius_field::TowerField + BiniusConstructable + bytemuck::Pod {}
 
-pub trait BiniusConstructable {
+pub trait BiniusConstructable: BinaryField {
     fn new(n: u64) -> Self;
+
+    /// Binius counts are constructed from multiplicities of a Binary Field multiplicative generator.
+    /// Precomputing all required counts [0, 2^32] is prohibitively expensive and using iterative multiplication
+    /// or square and multiply is still excessively costly.
+    /// Utilizes a two-table lookup method to handle counts up to `2^32` efficiently:
+    /// - Decompose count `x` as `x = a * 2^16 + b` where `a` and `b` are within the range `[0, 2^16]`.
+    /// - Two Precomptued Lookup Tables:
+    ///   - One table stores `2^16` powers of `g^{2^16}`.
+    ///   - Another table stores `2^16` powers of `g`.
+    /// - Computes any count up to `2^32` using: `g^x = (g^{2^16})^a * g^b`
+    /// This is achieved with two lookups (one from each table) and a single multiplication.
+    ///
+    /// `precomputed_generator_multiples() -> (&low_table, &high_table)`
+    fn precomputed_generator_multiples() -> (
+        &'static [Self; precomputed::TABLE_SIZE],
+        &'static [Self; precomputed::TABLE_SIZE],
+    );
+
+    fn from_count_index(n: u64) -> Self {
+        const MAX_COUNTS: usize = 1 << (2 * precomputed::LOG_TABLE_SIZE);
+        let n = (n) as usize;
+        assert!(n <= MAX_COUNTS);
+        assert!(n != 0);
+
+        let high_index = (n >> precomputed::LOG_TABLE_SIZE) as usize;
+        let low_index = (n & ((1 << precomputed::LOG_TABLE_SIZE) - 1)) as usize;
+        let (precomputed_low, precomputed_high) = Self::precomputed_generator_multiples();
+        if n < precomputed::TABLE_SIZE {
+            precomputed_low[n]
+        } else {
+            precomputed_low[low_index] * precomputed_high[high_index]
+        }
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
@@ -66,6 +123,10 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
 
         let field_element = bytemuck::try_from_bytes::<F>(bytes).unwrap();
         Self(field_element.to_owned())
+    }
+
+    fn from_count_index(index: u64) -> Self {
+        Self(<F as BiniusConstructable>::from_count_index(index))
     }
 }
 
@@ -181,5 +242,53 @@ impl<F: BiniusSpecific> CanonicalDeserialize for BiniusField<F> {
 impl<F: BiniusSpecific> ark_serialize::Valid for BiniusField<F> {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use binius_field::Field;
+
+    #[test]
+    fn test_from_count_index() {
+        let actual = BiniusField::<BinaryField128b>::from_count_index(1);
+        let expected = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        assert_eq!(actual.0, expected);
+
+        let actual = BiniusField::<BinaryField128b>::from_count_index(2);
+        let expected =
+            BinaryField128b::MULTIPLICATIVE_GENERATOR * BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        assert_eq!(actual.0, expected);
+
+        let actual = BiniusField::<BinaryField128b>::from_count_index(3);
+        let expected = BinaryField128b::MULTIPLICATIVE_GENERATOR
+            * BinaryField128b::MULTIPLICATIVE_GENERATOR
+            * BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        assert_eq!(actual.0, expected);
+
+        let actual = BiniusField::<BinaryField128b>::from_count_index(1 << 17);
+        let mut expected = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        for _ in 0..17 {
+            expected = expected.square();
+        }
+        assert_eq!(actual.0, expected);
+
+        let actual = BiniusField::<BinaryField128b>::from_count_index((1 << 17) + 1);
+        let mut expected = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        for _ in 0..17 {
+            expected = expected.square();
+        }
+        expected *= BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        assert_eq!(actual.0, expected);
+
+        let actual = BiniusField::<BinaryField128b>::from_count_index((1 << 18) + 2);
+        let mut expected = BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        for _ in 0..18 {
+            expected = expected.square();
+        }
+        expected *= BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        expected *= BinaryField128b::MULTIPLICATIVE_GENERATOR;
+        assert_eq!(actual.0, expected);
     }
 }

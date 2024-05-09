@@ -37,7 +37,9 @@ pub trait JoltField:
     fn from_u64(n: u64) -> Option<Self>;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+    fn from_count_index(index: u64) -> Self;
 }
 
 pub mod ark;
 pub mod binius;
+mod precomputed;

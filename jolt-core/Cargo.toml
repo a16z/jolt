@@ -69,6 +69,7 @@ common = { path = "../common" }
 tracer = { path = "../tracer" }
 bincode = "1.3.3"
 bytemuck = "1.15.0"
+once_cell = "1.19.0"
 
 [build-dependencies]
 common = { path = "../common" }
