@@ -1289,7 +1289,7 @@ where
         polynomials: &JoltPolynomials<F, C>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
         let gamma_squared = gamma.square();
         let num_ops = polynomials.read_write_memory.a_ram.len();
 
@@ -1350,10 +1350,7 @@ where
                         }
                     })
                     .collect();
-                [
-                    DensePolynomial::new(read_fingerprints),
-                    DensePolynomial::new(write_fingerprints),
-                ]
+                [read_fingerprints, write_fingerprints]
             })
             .collect();
 
@@ -1373,10 +1370,7 @@ where
 
         (
             read_write_leaves,
-            vec![
-                DensePolynomial::new(init_fingerprints),
-                DensePolynomial::new(final_fingerprints),
-            ],
+            vec![init_fingerprints, final_fingerprints],
         )
     }
 

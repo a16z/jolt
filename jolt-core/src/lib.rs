@@ -7,6 +7,7 @@
 #![feature(generic_const_exprs)]
 #![feature(iter_next_chunk)]
 #![allow(long_running_const_eval)]
+#![feature(return_position_impl_trait_in_trait)]
 
 pub mod benches;
 pub mod host;
@@ -17,6 +18,3 @@ pub mod poly;
 pub mod r1cs;
 mod subprotocols;
 pub mod utils;
-
-// Benchmarks
-pub use crate::subprotocols::sumcheck::bench::sumcheck_bench;
