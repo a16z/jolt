@@ -1,0 +1,2 @@
+# Binius
+[Binius](https://eprint.iacr.org/2023/1784.pdf) was written by Ben Diamond and Jim Posen of Irreducible (fka Ulvetanna). It's a new commitment scheme that allows Jolt to use smaller fields more efficiently.
