@@ -43,8 +43,7 @@ This also motivates the zero-padding between the "Program I/O" and "RAM" section
 
 Registers and RAM are *writable* memory, which introduces additional requirements compared to offline memory checking in a read-only context.
 
-The multiset equality check, typically expressed as $I \cdot W = R \cdot F$, is not adequate for ensuring the accuracy of read values. 
-It is essential to also verify that each read operation retrieves a value that was written in a *previous* step (not a future step).
+The multiset equality check for read-only memory, typically expressed as $I \cdot W = R \cdot F$, is not adequate for ensuring the accuracy of read values. It is essential to also verify that each read operation retrieves a value that was written in a *previous* step (not a future step). (Here, $I$ denotes the tuples capturing initialization of memory and $W$ the tuples capturing all of the writes to memory following initialization. $R$ denotes the tuples capturing all read operations, and $F$ denotes tuples capturing a final read pass over all memory cells). 
 
 To formalize this, we assert that the timestamp of each read operation, denoted as $\text{read\_timestamp}$, must not exceed the global timestamp at that particular step. 
 The global timestamp starts at 0 and is incremented once per step.
@@ -52,3 +51,5 @@ The global timestamp starts at 0 and is incremented once per step.
 The verification of $\text{read\_timestamp} \leq \text{global\_timestamp}$ is equivalent to confirming that $\text{read\_timestamp}$ falls within the range $[0, \text{TRACE\_LENGTH})$ and that the difference $(\text{global\_timestamp} - \text{read\_timestamp})$ is also within the same range.
 
 The process of ensuring that both $\text{read\_timestamp}$ and $(\text{global\_timestamp} - \text{read\_timestamp})$ lie within the specified range is known as range-checking. This is the procedure implemented in [`timestamp_range_check.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/jolt/vm/timestamp_range_check.rs), using a modified version of Lasso.
+
+Intuitively, checking that each read timestamp does not exceed the global timestamp prevents an attacker from answering all read operations to a given cell with "the right set of values, but out of order". Such an attack requires the attacker to "jump forward and backward in time". That is, for this attack to succeed, at some timestamp t when the cell is read, the attacker would have to return a value that will be written to that cell in the future (and at some later timestamp t' when the same cell is read the attacker would have to return a value that was written to that cell much earlier). This attack is prevented by confirming that all values returned have a timestamp that does not exceed the current global timestamp.  
