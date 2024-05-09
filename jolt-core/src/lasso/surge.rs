@@ -315,7 +315,7 @@ where
         polynomials: &SurgePolys<F, PCS>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
 
@@ -336,10 +336,7 @@ where
                     .map(|read_fingerprint| *read_fingerprint + gamma_squared)
                     .collect();
 
-                vec![
-                    DensePolynomial::new(read_fingerprints),
-                    DensePolynomial::new(write_fingerprints),
-                ]
+                vec![read_fingerprints, write_fingerprints]
             })
             .collect();
 
@@ -371,10 +368,7 @@ where
                     })
                     .collect();
 
-                vec![
-                    DensePolynomial::new(init_fingerprints),
-                    DensePolynomial::new(final_fingerprints),
-                ]
+                vec![init_fingerprints, final_fingerprints]
             })
             .collect();
 

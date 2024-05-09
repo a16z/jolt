@@ -1,12 +1,8 @@
-#![allow(dead_code)]
-
 use crate::poly::field::JoltField;
 
 use ark_std::test_rng;
 #[cfg(feature = "multicore")]
 use rayon::prelude::*;
-
-use crate::poly::dense_mlpoly::DensePolynomial;
 
 pub mod errors;
 pub mod gaussian_elimination;
@@ -44,21 +40,6 @@ pub fn index_to_field_bitvector<F: JoltField>(value: usize, bits: usize) -> Vec<
         }
     }
     bitvector
-}
-
-/// Convert Vec<F> which should represent a bitvector to a packed string of bits {0, 1, ?}
-pub fn ff_bitvector_dbg<F: JoltField>(f: &Vec<F>) -> String {
-    let mut result = "".to_owned();
-    for bit in f {
-        if *bit == F::one() {
-            result.push('1');
-        } else if *bit == F::zero() {
-            result.push('0');
-        } else {
-            result.push('?');
-        }
-    }
-    result
 }
 
 #[tracing::instrument(skip_all)]
@@ -123,44 +104,6 @@ pub fn gen_random_point<F: JoltField>(memory_bits: usize) -> Vec<F> {
         r_i.push(F::random(&mut rng));
     }
     r_i
-}
-
-#[inline]
-#[tracing::instrument(skip_all, name = "split_poly_flagged")]
-pub fn split_poly_flagged<F: JoltField>(
-    poly: &DensePolynomial<F>,
-    flags: &DensePolynomial<F>,
-) -> (Vec<F>, Vec<F>) {
-    let poly_evals: &[F] = poly.evals_ref();
-    let len = poly_evals.len();
-    let half = len / 2;
-    let mut left: Vec<F> = Vec::with_capacity(half);
-    let mut right: Vec<F> = Vec::with_capacity(half);
-
-    for i in 0..len {
-        if flags[i].is_zero() {
-            if i < half {
-                left.push(F::one());
-            } else {
-                right.push(F::one());
-            }
-        } else if i < half {
-            left.push(poly_evals[i]);
-        } else {
-            right.push(poly_evals[i]);
-        }
-    }
-    (left, right)
-}
-
-pub fn count_poly_zeros<F: JoltField>(poly: &DensePolynomial<F>) -> usize {
-    let mut count = 0;
-    for i in 0..poly.len() {
-        if poly[i].is_zero() {
-            count += 1;
-        }
-    }
-    count
 }
 
 #[cfg(test)]

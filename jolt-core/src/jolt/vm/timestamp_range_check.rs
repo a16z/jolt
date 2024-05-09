@@ -1,12 +1,18 @@
 use crate::poly::field::JoltField;
+use crate::subprotocols::grand_product::{
+    BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
+    BatchedGrandProductProof,
+};
+use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use itertools::interleave;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
+};
 #[cfg(test)]
 use std::collections::HashSet;
 use std::{iter::zip, marker::PhantomData};
-use tracing::trace_span;
 
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
@@ -20,9 +26,6 @@ use crate::{
         eq_poly::EqPolynomial,
         identity_poly::IdentityPolynomial,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
-    },
-    subprotocols::grand_product::{
-        BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
     },
     utils::{errors::ProofVerifyError, mul_0_1_optimized, transcript::ProofTranscript},
 };
@@ -256,6 +259,9 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
+    // Init/final grand products are batched together with read/write grand products
+    type InitFinalGrandProduct = NoopGrandProduct;
+
     type ReadWriteOpenings = RangeCheckOpenings<F, C>;
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
 
@@ -279,16 +285,23 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
+    /// For these timestamp range check polynomials, the init/final polynomials are the
+    /// the same length as the read/write polynomials. This is because the init/final polynomials
+    /// are determined by the range (0..N) that we are checking for, which in this case is
+    /// determined by the length of the execution trace.
+    /// Because all the polynomials are of the same length, the init/final grand products can be
+    /// batched together with the read/write grand products. So, we only return one `Vec<Vec<F>>`
+    /// from this `compute_leaves` function.
     fn compute_leaves(
         _: &NoPreprocessing,
         polynomials: &RangeCheckPolynomials<F, C>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (Vec<Vec<F>>, ()) {
         let M = polynomials.read_timestamps[0].len();
         let gamma_squared = gamma.square();
 
-        let read_write_leaves = (0..MEMORY_OPS_PER_INSTRUCTION)
+        let read_write_leaves: Vec<Vec<F>> = (0..MEMORY_OPS_PER_INSTRUCTION)
             .into_par_iter()
             .flat_map(|i| {
                 let read_fingerprints_0: Vec<F> = (0..M)
@@ -324,15 +337,17 @@ where
                     .collect();
 
                 [
-                    DensePolynomial::new(read_fingerprints_0),
-                    DensePolynomial::new(write_fingeprints_0),
-                    DensePolynomial::new(read_fingerprints_1),
-                    DensePolynomial::new(write_fingeprints_1),
+                    read_fingerprints_0,
+                    write_fingeprints_0,
+                    read_fingerprints_1,
+                    write_fingeprints_1,
                 ]
             })
             .collect();
 
-        let init_fingerprints = (0..M)
+        let mut leaves = read_write_leaves;
+
+        let init_leaves: Vec<F> = (0..M)
             .into_par_iter()
             .map(|i| {
                 let index = F::from_u64(i as u64).unwrap();
@@ -340,42 +355,37 @@ where
                 index * gamma + index - tau
             })
             .collect();
-        let init_leaves = DensePolynomial::new(init_fingerprints);
 
-        let final_leaves: Vec<DensePolynomial<F>> = (0..MEMORY_OPS_PER_INSTRUCTION)
-            .into_par_iter()
-            .flat_map(|i| {
-                let final_fingerprints_0 = (0..M)
-                    .into_par_iter()
-                    .map(|j| {
-                        mul_0_1_optimized(
-                            &polynomials.final_cts_read_timestamp[i][j],
-                            &gamma_squared,
-                        ) + init_leaves[j]
-                    })
-                    .collect();
+        leaves.par_extend(
+            (0..MEMORY_OPS_PER_INSTRUCTION)
+                .into_par_iter()
+                .flat_map(|i| {
+                    let final_fingerprints_0 = (0..M)
+                        .into_par_iter()
+                        .map(|j| {
+                            mul_0_1_optimized(
+                                &polynomials.final_cts_read_timestamp[i][j],
+                                &gamma_squared,
+                            ) + init_leaves[j]
+                        })
+                        .collect();
 
-                let final_fingerprints_1 = (0..M)
-                    .into_par_iter()
-                    .map(|j| {
-                        mul_0_1_optimized(
-                            &polynomials.final_cts_global_minus_read[i][j],
-                            &gamma_squared,
-                        ) + init_leaves[j]
-                    })
-                    .collect();
+                    let final_fingerprints_1 = (0..M)
+                        .into_par_iter()
+                        .map(|j| {
+                            mul_0_1_optimized(
+                                &polynomials.final_cts_global_minus_read[i][j],
+                                &gamma_squared,
+                            ) + init_leaves[j]
+                        })
+                        .collect();
 
-                [
-                    DensePolynomial::new(final_fingerprints_0),
-                    DensePolynomial::new(final_fingerprints_1),
-                ]
-            })
-            .collect();
+                    [final_fingerprints_0, final_fingerprints_1]
+                }),
+        );
+        leaves.push(init_leaves);
 
-        let mut init_final_leaves = final_leaves;
-        init_final_leaves.push(init_leaves);
-
-        (read_write_leaves, init_final_leaves)
+        (leaves, ())
     }
 
     fn interleave_hashes(
@@ -549,6 +559,39 @@ where
     }
 }
 
+pub struct NoopGrandProduct;
+impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
+    type Leaves = ();
+
+    fn construct(_leaves: Self::Leaves) -> Self {
+        unimplemented!("init/final grand products are batched with read/write grand products");
+    }
+    fn num_layers(&self) -> usize {
+        unimplemented!("init/final grand products are batched with read/write grand products");
+    }
+    fn claims(&self) -> Vec<F> {
+        unimplemented!("init/final grand products are batched with read/write grand products");
+    }
+
+    fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
+        vec![].into_iter() // Needed to compile
+    }
+
+    fn prove_grand_product(
+        &mut self,
+        _transcript: &mut ProofTranscript,
+    ) -> (BatchedGrandProductProof<F>, Vec<F>) {
+        unimplemented!("init/final grand products are batched with read/write grand products")
+    }
+    fn verify_grand_product(
+        _proof: &BatchedGrandProductProof<F>,
+        _claims: &Vec<F>,
+        _transcript: &mut ProofTranscript,
+    ) -> (Vec<F>, Vec<F>) {
+        unimplemented!("init/final grand products are batched with read/write grand products")
+    }
+}
+
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct TimestampValidityProof<F, C>
 where
@@ -558,7 +601,7 @@ where
     multiset_hashes: MultisetHashes<F>,
     openings: RangeCheckOpenings<F, C>,
     opening_proof: C::BatchedProof,
-    batched_grand_product: BatchedGrandProductArgument<F>,
+    batched_grand_product: BatchedGrandProductProof<F>,
 }
 
 impl<F, C> TimestampValidityProof<F, C>
@@ -624,37 +667,25 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove_grand_products")]
     fn prove_grand_products(
         polynomials: &RangeCheckPolynomials<F, C>,
         transcript: &mut ProofTranscript,
-    ) -> (BatchedGrandProductArgument<F>, MultisetHashes<F>, Vec<F>) {
+    ) -> (BatchedGrandProductProof<F>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
         let tau: F = transcript.challenge_scalar(b"Memory checking tau");
 
         transcript.append_protocol_name(Self::protocol_name());
 
-        let (read_write_leaves, init_final_leaves) =
+        let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        let _span = trace_span!("TimestampValidityProof: construct grand product circuits");
-        let _enter = _span.enter();
+        let mut batched_circuit = BatchedDenseGrandProduct::construct(leaves);
 
-        // R1, W1, R2, W2, ... R14, W14, F1, F2, ... F14, I
-        let circuits: Vec<GrandProductCircuit<F>> = read_write_leaves
-            .par_iter()
-            .chain(init_final_leaves.par_iter())
-            .map(|leaves_poly| GrandProductCircuit::new(leaves_poly))
-            .collect();
-
-        drop(_enter);
-        drop(_span);
-
-        let hashes: Vec<F> = circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-        let (read_write_hashes, init_final_hashes) = hashes.split_at(read_write_leaves.len());
+        let hashes: Vec<F> = batched_circuit.claims();
+        let (read_write_hashes, init_final_hashes) =
+            hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
         let multiset_hashes = TimestampValidityProof::<F, C>::uninterleave_hashes(
             &NoPreprocessing,
             read_write_hashes.to_vec(),
@@ -663,14 +694,10 @@ where
         TimestampValidityProof::<F, C>::check_multiset_equality(&NoPreprocessing, &multiset_hashes);
         multiset_hashes.append_to_transcript(transcript);
 
-        let batched_circuit = BatchedGrandProductCircuit::new_batch(circuits);
-
-        let _span = trace_span!("TimestampValidityProof: prove grand products");
-        let _enter = _span.enter();
         let (batched_grand_product, r_grand_product) =
-            BatchedGrandProductArgument::prove(batched_circuit, transcript);
-        drop(_enter);
-        drop(_span);
+            batched_circuit.prove_grand_product(transcript);
+
+        drop_in_background_thread(batched_circuit);
 
         (batched_grand_product, multiset_hashes, r_grand_product)
     }
@@ -701,9 +728,12 @@ where
                 &self.multiset_hashes,
             );
         let concatenated_hashes = [read_write_hashes, init_final_hashes].concat();
-        let (grand_product_claims, r_grand_product) = self
-            .batched_grand_product
-            .verify(&concatenated_hashes, transcript);
+        let (grand_product_claims, r_grand_product) =
+            BatchedDenseGrandProduct::verify_grand_product(
+                &self.batched_grand_product,
+                &concatenated_hashes,
+                transcript,
+            );
 
         let openings: Vec<_> = self
             .openings
@@ -715,6 +745,7 @@ where
             .chain(self.openings.memory_t_read)
             .collect();
 
+        // TODO(moodlezoup): Make indexing less disgusting
         let t_read_commitments = &memory_commitment.trace_commitments
             [1 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
         let commitments: Vec<_> = range_check_commitment
