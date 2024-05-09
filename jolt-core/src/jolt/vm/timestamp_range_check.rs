@@ -285,6 +285,13 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
+    /// For these timestamp range check polynomials, the init/final polynomials are the
+    /// the same length as the read/write polynomials. This is because the init/final polynomials
+    /// are determined by the range (0..N) that we are checking for, which in this case is
+    /// determined by the length of the execution trace.
+    /// Because all the polynomials are of the same length, the init/final grand products can be
+    /// batched together with the read/write grand products. So, we only return one `Vec<Vec<F>>`
+    /// from this `compute_leaves` function.
     fn compute_leaves(
         _: &NoPreprocessing,
         polynomials: &RangeCheckPolynomials<F, C>,
@@ -557,17 +564,17 @@ impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
     type Leaves = ();
 
     fn construct(_leaves: Self::Leaves) -> Self {
-        NoopGrandProduct
+        unimplemented!("init/final grand products are batched with read/write grand products");
     }
     fn num_layers(&self) -> usize {
-        0
+        unimplemented!("init/final grand products are batched with read/write grand products");
     }
     fn claims(&self) -> Vec<F> {
-        vec![]
+        unimplemented!("init/final grand products are batched with read/write grand products");
     }
 
     fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
-        vec![].into_iter()
+        vec![].into_iter() // Needed to compile
     }
 
     fn prove_grand_product(

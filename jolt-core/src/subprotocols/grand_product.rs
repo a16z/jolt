@@ -153,7 +153,6 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
                 .map(|(&r_gp, &r_sc)| r_gp * r_sc + (F::one() - r_gp) * (F::one() - r_sc))
                 .product();
 
-            // TODO: avoid collect
             r_grand_product = r_sumcheck.into_iter().rev().collect();
 
             Self::verify_sumcheck_claim(
@@ -189,7 +188,6 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             .map(|(&claim, &coeff)| claim * coeff)
             .sum();
 
-        // TODO: directly compute eq evals to avoid clone
         let mut eq_poly =
             DensePolynomial::new(EqPolynomial::<F>::new(r_grand_product.clone()).evals());
 
@@ -204,7 +202,6 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             transcript.append_scalar(b"sumcheck right claim", right);
         }
 
-        // TODO: avoid collect
         r_sumcheck
             .into_par_iter()
             .rev()
@@ -462,9 +459,13 @@ pub enum DynamicDensityGrandProductLayer<F: JoltField> {
     Dense(DenseGrandProductLayer<F>),
 }
 
-/// The threshold at which a `DynamicDensityGrandProductLayer` switches from sparse to
-/// dense representation. If the layer has >DENSIFICATION_THRESHOLD fraction of non-1
-/// values, it'll switch to the dense representation.
+/// This constant determines:
+///     - whether the `layer_output` of a `DynamicDensityGrandProductLayer` is dense
+///       or sparse
+///     - when to switch from sparse to dense representation during the binding of a
+///       `DynamicDensityGrandProductLayer`
+/// If the layer has >DENSIFICATION_THRESHOLD fraction of non-1 values, it'll switch
+/// to the dense representation. Value tuned experimentally.
 const DENSIFICATION_THRESHOLD: f64 = 0.8;
 
 impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
@@ -867,6 +868,16 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedSparseGrandProductLayer<F>
                                 .unwrap_or(F::one())
                         };
 
+                        // Recall that in the dense case, we process four values at a time:
+                        //                  layer = [L, R, L, R, L, R, ...]
+                        //                           |  |  |  |
+                        //    left(0, 0, 0, ..., x_b=0) |  |  right(0, 0, 0, ..., x_b=1)
+                        //     right(0, 0, 0, ..., x_b=0)  left(0, 0, 0, ..., x_b=1)
+                        //
+                        // In the sparse case, we do something similar, but some of the four
+                        // values may be omitted from the sparse vector.
+                        // We match on `index % 4` to determine which of the four values are
+                        // present in the sparse vector, and infer the rest are 1.
                         let (left, right) = match index % 4 {
                             0 => {
                                 let left = (*value, find_neighbor(index + 2));
@@ -1354,7 +1365,6 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
             .map(|(&claim, &coeff)| claim * coeff)
             .sum();
 
-        // TODO: directly compute eq evals to avoid clone
         let mut eq_poly =
             DensePolynomial::new(EqPolynomial::<F>::new(r_grand_product.clone()).evals());
 
@@ -1369,7 +1379,6 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
             transcript.append_scalar(b"sumcheck right claim", right);
         }
 
-        // TODO: avoid collect
         r_sumcheck
             .into_par_iter()
             .rev()
