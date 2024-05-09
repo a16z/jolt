@@ -1,21 +1,22 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::poly::{
-    commitment::commitment_scheme::CommitmentScheme,
-    dense_mlpoly::DensePolynomial,
-    structured_poly::{StructuredCommitment, StructuredOpeningProof},
-};
-use crate::subprotocols::grand_product::{
-    BatchedGrandProductArgument, BatchedGrandProductCircuit, GrandProductCircuit,
-};
+use crate::subprotocols::grand_product::BatchedDenseGrandProduct;
 use crate::utils::errors::ProofVerifyError;
+use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
+use crate::{
+    poly::{
+        commitment::commitment_scheme::CommitmentScheme,
+        structured_poly::{StructuredCommitment, StructuredOpeningProof},
+    },
+    subprotocols::grand_product::{BatchedGrandProduct, BatchedGrandProductProof},
+};
 
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::iter::zip;
 use std::marker::PhantomData;
 
@@ -54,10 +55,10 @@ where
     pub multiset_hashes: MultisetHashes<F>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductArgument<F>,
+    pub read_write_grand_product: BatchedGrandProductProof<F>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductArgument<F>,
+    pub init_final_grand_product: BatchedGrandProductProof<F>,
     /// The opening proofs associated with the read/write grand product.
     pub read_write_openings: ReadWriteOpenings,
     pub read_write_opening_proof: ReadWriteOpenings::Proof,
@@ -76,6 +77,11 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
+    type ReadWriteGrandProduct: BatchedGrandProduct<F> + Send + 'static =
+        BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct: BatchedGrandProduct<F> + Send + 'static =
+        BatchedDenseGrandProduct<F>;
+
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<
         F,
@@ -100,9 +106,6 @@ where
         transcript: &mut ProofTranscript,
     ) -> MemoryCheckingProof<F, C, Polynomials, Self::ReadWriteOpenings, Self::InitFinalOpenings>
     {
-        // TODO(JOLT-62): Make sure Polynomials::Commitment have been posted to transcript.
-
-        // fka "ProductLayerProof"
         let (
             read_write_grand_product,
             init_final_grand_product,
@@ -145,8 +148,8 @@ where
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
     ) -> (
-        BatchedGrandProductArgument<F>,
-        BatchedGrandProductArgument<F>,
+        BatchedGrandProductProof<F>,
+        BatchedGrandProductProof<F>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
@@ -157,12 +160,11 @@ where
 
         transcript.append_protocol_name(Self::protocol_name());
 
-        // fka "ProductLayerProof"
         let (read_write_leaves, init_final_leaves) =
             Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
-        let (read_write_circuit, read_write_hashes) =
+        let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
-        let (init_final_circuit, init_final_hashes) =
+        let (mut init_final_circuit, init_final_hashes) =
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves);
 
         let multiset_hashes =
@@ -171,9 +173,13 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let (read_write_grand_product, r_read_write) =
-            BatchedGrandProductArgument::prove(read_write_circuit, transcript);
+            read_write_circuit.prove_grand_product(transcript);
         let (init_final_grand_product, r_init_final) =
-            BatchedGrandProductArgument::prove(init_final_circuit, transcript);
+            init_final_circuit.prove_grand_product(transcript);
+
+        drop_in_background_thread(read_write_circuit);
+        drop_in_background_thread(init_final_circuit);
+
         (
             read_write_grand_product,
             init_final_grand_product,
@@ -189,21 +195,11 @@ where
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
-        read_write_leaves: Vec<DensePolynomial<F>>,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
-        let read_write_circuits: Vec<GrandProductCircuit<F>> = read_write_leaves
-            .par_iter()
-            .map(|leaves| GrandProductCircuit::new(leaves))
-            .collect();
-        let read_write_hashes: Vec<F> = read_write_circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        (
-            BatchedGrandProductCircuit::new_batch(read_write_circuits),
-            read_write_hashes,
-        )
+        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
+    ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
+        let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
+        let claims = batched_circuit.claims();
+        (batched_circuit, claims)
     }
 
     /// Constructs a batched grand product circuit for the init and final multisets associated
@@ -212,21 +208,11 @@ where
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
-        init_final_leaves: Vec<DensePolynomial<F>>,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
-        let init_final_circuits: Vec<GrandProductCircuit<F>> = init_final_leaves
-            .par_iter()
-            .map(|leaves| GrandProductCircuit::new(leaves))
-            .collect();
-        let init_final_hashes: Vec<F> = init_final_circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        (
-            BatchedGrandProductCircuit::new_batch(init_final_circuits),
-            init_final_hashes,
-        )
+        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
+    ) -> (Self::InitFinalGrandProduct, Vec<F>) {
+        let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
+        let claims = batched_circuit.claims();
+        (batched_circuit, claims)
     }
 
     fn interleave_hashes(
@@ -307,7 +293,10 @@ where
         polynomials: &Polynomials,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>);
+    ) -> (
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
+    );
 
     /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.
     /// Each individual "leaf" of a grand product circuit (as computed by `read_leaves`, etc.) should be
@@ -350,12 +339,16 @@ where
         let (read_write_hashes, init_final_hashes) =
             Self::interleave_hashes(preprocessing, &proof.multiset_hashes);
 
-        let (claims_read_write, r_read_write) = proof
-            .read_write_grand_product
-            .verify(&read_write_hashes, transcript);
-        let (claims_init_final, r_init_final) = proof
-            .init_final_grand_product
-            .verify(&init_final_hashes, transcript);
+        let (claims_read_write, r_read_write) = Self::ReadWriteGrandProduct::verify_grand_product(
+            &proof.read_write_grand_product,
+            &read_write_hashes,
+            transcript,
+        );
+        let (claims_init_final, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
+            &proof.init_final_grand_product,
+            &init_final_hashes,
+            transcript,
+        );
 
         proof.read_write_openings.verify_openings(
             generators,

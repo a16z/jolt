@@ -49,8 +49,39 @@ pub trait JoltField:
     fn zero() -> Self;
     fn one() -> Self;
     fn from_u64(n: u64) -> Option<Self>;
+    fn double(&self) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+    #[inline(always)]
+    fn mul_0_optimized(self, other: Self) -> Self {
+        if self.is_zero() || other.is_zero() {
+            Self::zero()
+        } else {
+            self * other
+        }
+    }
+    #[inline(always)]
+    fn mul_1_optimized(self, other: Self) -> Self {
+        if self.is_one() {
+            other
+        } else if other.is_one() {
+            self
+        } else {
+            self * other
+        }
+    }
+    #[inline(always)]
+    fn mul_01_optimized(self, other: Self) -> Self {
+        if self.is_zero() || other.is_zero() {
+            Self::zero()
+        } else if self.is_one() {
+            other
+        } else if other.is_one() {
+            self
+        } else {
+            self * other
+        }
+    }
 }
 
 impl JoltField for ark_bn254::Fr {
@@ -78,6 +109,10 @@ impl JoltField for ark_bn254::Fr {
 
     fn from_u64(n: u64) -> Option<Self> {
         <Self as ark_ff::PrimeField>::from_u64(n)
+    }
+
+    fn double(&self) -> Self {
+        <Self as ark_ff::Field>::double(self)
     }
 
     fn square(&self) -> Self {
