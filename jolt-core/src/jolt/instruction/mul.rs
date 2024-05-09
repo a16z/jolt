@@ -100,7 +100,7 @@ mod test {
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
-            let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
+            let (x, y) = (rng.next_u64(), rng.next_u64());
             let instruction = MULInstruction::<64>(x, y);
             jolt_instruction_test!(instruction);
         }
