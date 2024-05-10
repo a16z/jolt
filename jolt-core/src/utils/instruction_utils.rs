@@ -89,6 +89,20 @@ pub fn add_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<u
         .collect()
 }
 
+/// Chunks `z` into `C` chunks bitwise where `z = x * y`.
+/// `log_M` is the number of bits for each of the `C` chunks of `z`.
+pub fn multiply_and_chunk_operands(x: u128, y: u128, C: usize, log_M: usize) -> Vec<usize> {
+    let product_chunk_bits: usize = log_M;
+    let product_chunk_bit_mask: usize = (1 << product_chunk_bits) - 1;
+    let z: u128 = x * y;
+    (0..C)
+        .map(|i| {
+            let shift = ((C - i - 1) * product_chunk_bits) as u32;
+            z.checked_shr(shift).unwrap_or(0) as usize & product_chunk_bit_mask
+        })
+        .collect()
+}
+
 /// Splits `x`, `y` into `C` chunks and writes [ x_{C-1} || y_0, ..., x_0 || y_0 ]
 /// where `x_{C-1}`` is the the big end of `x``, and `y_0`` is the small end of `y`.
 pub fn chunk_and_concatenate_for_shift(x: u64, y: u64, C: usize, log_M: usize) -> Vec<usize> {
