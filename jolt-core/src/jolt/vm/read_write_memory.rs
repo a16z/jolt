@@ -1621,21 +1621,30 @@ where
 
         let memory_layout = &preprocessing.program_io.as_ref().unwrap().memory_layout;
 
-        // TODO(moodlezoup): Compute openings without instantiating io_witness_range polynomial itself
-        let memory_size = proof.num_rounds.pow2();
-        let io_witness_range: Vec<_> = (0..memory_size as u64)
+        let nonzero_memory_size = memory_layout.ram_witness_offset as usize;
+        let log_nonzero_memory_size = nonzero_memory_size.trailing_zeros() as usize;
+        assert_eq!(
+            1 << log_nonzero_memory_size,
+            nonzero_memory_size,
+            "Ram witness offset must be a power of two"
+        );
+
+        let io_witness_range: Vec<_> = (0..nonzero_memory_size as u64)
             .map(|i| {
-                if i >= memory_layout.input_start && i < memory_layout.ram_witness_offset {
+                if i >= memory_layout.input_start {
                     F::one()
                 } else {
                     F::zero()
                 }
             })
             .collect();
-        let io_witness_range_eval = DensePolynomial::new(io_witness_range).evaluate(&r_sumcheck);
+        let mut io_witness_range_eval = DensePolynomial::new(io_witness_range)
+            .evaluate(&r_sumcheck[0..log_nonzero_memory_size]);
 
-        // TODO(moodlezoup): Compute openings without instantiating v_io polynomial itself
-        let mut v_io: Vec<u64> = vec![0; memory_size];
+        let r_prod: F = r_sumcheck[log_nonzero_memory_size..].iter().product();
+        io_witness_range_eval *= r_prod;
+
+        let mut v_io: Vec<u64> = vec![0; nonzero_memory_size];
         // Copy input bytes
         let mut input_index = memory_address_to_witness_index(
             memory_layout.input_start,
@@ -1659,7 +1668,9 @@ where
             memory_layout.panic,
             memory_layout.ram_witness_offset,
         )] = preprocessing.program_io.as_ref().unwrap().panic as u64;
-        let v_io_eval = DensePolynomial::from_u64(&v_io).evaluate(&r_sumcheck);
+        let mut v_io_eval =
+            DensePolynomial::from_u64(&v_io).evaluate(&r_sumcheck[..log_nonzero_memory_size]);
+        v_io_eval *= r_prod;
 
         assert_eq!(
             eq_eval * io_witness_range_eval * (proof.opening - v_io_eval),
