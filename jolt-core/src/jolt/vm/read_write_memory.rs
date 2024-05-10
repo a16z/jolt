@@ -1622,7 +1622,7 @@ where
         let memory_layout = &preprocessing.program_io.as_ref().unwrap().memory_layout;
 
         let nonzero_memory_size = memory_layout.ram_witness_offset as usize;
-        let log_nonzero_memory_size = nonzero_memory_size.log_2() as usize;
+        let log_nonzero_memory_size = nonzero_memory_size.log_2();
         assert!(
             nonzero_memory_size.is_power_of_two(),
             "Ram witness offset must be a power of two"
