@@ -1623,9 +1623,8 @@ where
 
         let nonzero_memory_size = memory_layout.ram_witness_offset as usize;
         let log_nonzero_memory_size = nonzero_memory_size.trailing_zeros() as usize;
-        assert_eq!(
-            1 << log_nonzero_memory_size,
-            nonzero_memory_size,
+        assert!(
+            nonzero_memory_size.is_power_of_two(),
             "Ram witness offset must be a power of two"
         );
 
