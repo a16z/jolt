@@ -227,7 +227,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, C>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
 
         let dim_openings = polynomials
             .dim
@@ -346,7 +346,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, C>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         let final_openings = polynomials
             .final_cts
             .par_iter()
@@ -809,7 +809,7 @@ where
         let trace_length = polynomials.dim[0].len();
         let r_eq = transcript.challenge_vector(b"Jolt instruction lookups", trace_length.log_2());
 
-        let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
+        let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq);
         let mut eq_poly = DensePolynomial::new(eq_evals);
         let num_rounds = trace_length.log_2();
 

@@ -1033,7 +1033,7 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::open")]
     fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         let mut openings = [
             &polynomials.bytecode.v_read_write[1],
             &polynomials.bytecode.v_read_write[2],
@@ -1172,7 +1172,7 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         let (v_final, t_final) = rayon::join(
             || polynomials.read_write_memory.v_final.evaluate_at_chi(&chis),
             || polynomials.read_write_memory.t_final.evaluate_at_chi(&chis),
@@ -1534,7 +1534,7 @@ where
     ) -> Self {
         let num_rounds = polynomials.memory_size.log_2();
         let r_eq = transcript.challenge_vector(b"output_sumcheck", num_rounds);
-        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::new(r_eq.to_vec()).evals());
+        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_eq));
 
         let io_witness_range: Vec<_> = (0..polynomials.memory_size as u64)
             .map(|i| {

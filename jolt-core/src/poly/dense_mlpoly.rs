@@ -212,7 +212,7 @@ impl<F: JoltField> DensePolynomial<F> {
     pub fn evaluate(&self, r: &[F]) -> F {
         // r must have a value for each variable
         assert_eq!(r.len(), self.get_num_vars());
-        let chis = EqPolynomial::new(r.to_vec()).evals();
+        let chis = EqPolynomial::evals(r);
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
     }
@@ -446,7 +446,7 @@ mod tests {
             r.push(F::random(&mut prng));
         }
         let chis = compute_chis_at_r::<F>(&r);
-        let chis_m = EqPolynomial::<F>::new(r).evals();
+        let chis_m = EqPolynomial::<F>::evals(&r);
         assert_eq!(chis, chis_m);
     }
 
@@ -463,7 +463,7 @@ mod tests {
         for _i in 0..s {
             r.push(F::random(&mut prng));
         }
-        let chis = EqPolynomial::new(r.clone()).evals();
+        let chis = EqPolynomial::evals(&r);
         let (L_size, _R_size) = matrix_dimensions(r.len(), 1);
         let (L, R) = EqPolynomial::new(r).compute_factored_evals(L_size);
         let O = compute_outerproduct(&L, &R);
