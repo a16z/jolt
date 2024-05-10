@@ -212,7 +212,7 @@ impl<F: JoltField> DensePolynomial<F> {
     pub fn evaluate(&self, r: &[F]) -> F {
         // r must have a value for each variable
         assert_eq!(r.len(), self.get_num_vars());
-        let chis = EqPolynomial::evals(&r);
+        let chis = EqPolynomial::evals(r);
         assert_eq!(chis.len(), self.Z.len());
         compute_dotproduct(&self.Z, &chis)
     }
