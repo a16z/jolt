@@ -628,7 +628,7 @@ where
 
         let polys: Vec<_> = polys_iter.clone().collect();
 
-        let chis = EqPolynomial::new(r_grand_product.to_vec()).evals();
+        let chis = EqPolynomial::evals(&r_grand_product);
         let openings = polys_iter
             .clone()
             .map(|poly| poly.evaluate_at_chi(&chis))

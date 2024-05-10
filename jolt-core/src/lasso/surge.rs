@@ -79,7 +79,7 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::open")]
     fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         polynomials
             .E_polys
             .par_iter()
@@ -141,7 +141,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::open")]
     fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         let evaluate = |poly: &DensePolynomial<F>| -> F { poly.evaluate_at_chi(&chis) };
         Self {
             dim_openings: polynomials.dim.par_iter().map(evaluate).collect(),
@@ -232,7 +232,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::open")]
     fn open(polynomials: &SurgePolys<F, PCS>, opening_point: &[F]) -> Self {
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         let final_openings = polynomials
             .final_cts
             .par_iter()
@@ -573,8 +573,7 @@ where
 
         // Primary sumcheck
         let r_primary_sumcheck = transcript.challenge_vector(b"primary_sumcheck", num_rounds);
-        let eq: DensePolynomial<F> =
-            DensePolynomial::new(EqPolynomial::new(r_primary_sumcheck.to_vec()).evals());
+        let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
 
         transcript.append_scalar(b"sumcheck_claim", &sumcheck_claim);

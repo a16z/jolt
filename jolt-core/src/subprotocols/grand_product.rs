@@ -188,8 +188,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             .map(|(&claim, &coeff)| claim * coeff)
             .sum();
 
-        let mut eq_poly =
-            DensePolynomial::new(EqPolynomial::<F>::new(r_grand_product.clone()).evals());
+        let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &coeffs, &mut eq_poly, transcript);
@@ -1365,8 +1364,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
             .map(|(&claim, &coeff)| claim * coeff)
             .sum();
 
-        let mut eq_poly =
-            DensePolynomial::new(EqPolynomial::<F>::new(r_grand_product.clone()).evals());
+        let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &coeffs, &mut eq_poly, transcript);
