@@ -1617,8 +1617,8 @@ mod grand_product_tests {
         for _ in 0..LAYER_SIZE.log_2() - 1 {
             let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
                 .take(4)
-                .collect();
-            let mut eq_poly_dense = DensePolynomial::new(EqPolynomial::<Fr>::new(r_eq).evals());
+                .collect::<Vec<_>>();
+            let mut eq_poly_dense = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_eq));
             let mut eq_poly_sparse = eq_poly_dense.clone();
 
             let r = Fr::random(&mut rng);
@@ -1695,8 +1695,8 @@ mod grand_product_tests {
 
         let r_eq = std::iter::repeat_with(|| Fr::random(&mut rng))
             .take(LAYER_SIZE.log_2() - 1)
-            .collect();
-        let eq_poly = DensePolynomial::new(EqPolynomial::<Fr>::new(r_eq).evals());
+            .collect::<Vec<_>>();
+        let eq_poly = DensePolynomial::new(EqPolynomial::<Fr>::evals(&r_eq));
         let claim = Fr::random(&mut rng);
 
         let dense_evals = dense_layers.compute_cubic(&coeffs, &eq_poly, claim);

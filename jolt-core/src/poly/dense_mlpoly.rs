@@ -446,7 +446,7 @@ mod tests {
             r.push(F::random(&mut prng));
         }
         let chis = compute_chis_at_r::<F>(&r);
-        let chis_m = EqPolynomial::<F>::new(r).evals();
+        let chis_m = EqPolynomial::<F>::evals(&r);
         assert_eq!(chis, chis_m);
     }
 
