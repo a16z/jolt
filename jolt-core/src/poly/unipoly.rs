@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 use std::cmp::Ordering;
-use std::ops::{AddAssign, Mul};
+use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
 
 use crate::jolt::vm::Jolt;
 use crate::poly::field::JoltField;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use rand_core::{CryptoRng, RngCore};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 // ax^2 + bx + c stored as vec![c,b,a]
@@ -131,6 +132,21 @@ impl<F: JoltField> UniPoly<F> {
             coeffs_except_linear_term,
         }
     }
+
+    pub fn divide_minus_u(&self, u: F) -> Self {
+        let d = self.coeffs.len();
+
+        // Compute h(x) = f(x)/(x - u)
+        let mut h = vec![F::zero(); d];
+        for i in (1..d).rev() {
+          h[i - 1] = self.coeffs[i] + h[i] * u;
+        }
+        Self::from_coeff(h)
+    }
+
+    pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
+        Self::from_coeff(std::iter::from_fn(|| Some(F::random(&mut rng))).take(num_vars).collect())
+    }
 }
 
 impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
@@ -181,6 +197,26 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     }
 }
 
+impl<F: JoltField> Index<usize> for UniPoly<F> {
+    type Output = F;
+  
+    fn index(&self, index: usize) -> &Self::Output {
+      &self.coeffs[index]
+    }
+}
+
+impl<F: JoltField> IndexMut<usize> for UniPoly<F> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+      &mut self.coeffs[index]
+    }
+  }
+
+impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
+    fn mul_assign(&mut self, rhs: &F) {
+        self.coeffs.par_iter_mut().for_each(|c| *c *= rhs);
+    }
+}
+  
 impl<F: JoltField> CompressedUniPoly<F> {
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
@@ -210,9 +246,10 @@ impl<F: JoltField> AppendToTranscript for UniPoly<F> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use ark_bn254::Fr;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
 
     #[test]
     fn test_from_evals_quad() {
@@ -275,5 +312,37 @@ mod tests {
 
         let e4 = F::from_u64(109u64).unwrap();
         assert_eq!(poly.evaluate(&F::from_u64(4u64).unwrap()), e4);
+    }
+
+    pub fn naive_mul<F: JoltField>(ours: &UniPoly<F>, other: &UniPoly<F>) -> UniPoly<F> {
+        if ours.is_zero() || other.is_zero() {
+          UniPoly::zero()
+        } else {
+          let mut result = vec![F::zero(); ours.degree() + other.degree() + 1];
+          for (i, self_coeff) in ours.coeffs.iter().enumerate() {
+            for (j, other_coeff) in other.coeffs.iter().enumerate() {
+              result[i + j] += &(*self_coeff * other_coeff);
+            }
+          }
+          UniPoly::from_coeff(result)
+        }
+      }
+
+    #[test]
+    fn test_divide_poly() {
+        let rng = &mut ChaCha20Rng::from_seed([0u8; 32]);
+
+        for a_degree in 0..50 {
+          for b_degree in 0..50 {
+            let dividend = UniPoly::<Fr>::random(a_degree, rng);
+            let divisor = UniPoly::<Fr>::random(b_degree, rng);
+    
+            if let Some((quotient, remainder)) = UniPoly::divide_with_q_and_r(&dividend, &divisor) {
+              let mut prod = naive_mul(&divisor, &quotient);
+              prod += &remainder;
+              assert_eq!(dividend, prod)
+            }
+          }
+        }
     }
 }

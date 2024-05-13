@@ -33,6 +33,8 @@ pub struct KZGProverKey<P: Pairing> {
     pub g1_powers: Vec<P::G1Affine>,
 }
 
+#[derive(Clone, Debug)]
+pub struct KZGCommitment<P: Pairing>(P::G1Affine);
 pub struct KZGVerifierKey<P: Pairing> {
     /// The generator of G1.
     pub g1: P::G1Affine,
@@ -139,7 +141,7 @@ where
     pub fn commit(
         g1_powers: &Vec<P::G1Affine>,
         poly: &UniPoly<P::ScalarField>,
-    ) -> Result<P::G1Affine, KZGError> {
+    ) -> Result<KZGCommitment<P>, KZGError> {
         if poly.degree() > g1_powers.len() {
             return Err(KZGError::CommitLengthError(poly.degree(), g1_powers.len()));
         }
@@ -148,7 +150,7 @@ where
             &poly.as_vec(),
         )
         .unwrap();
-        Ok(com.into_affine())
+        Ok(KZGCommitment(com.into_affine()))
     }
 
     pub fn open(
@@ -174,7 +176,7 @@ where
 
     fn verify(
         vk: impl Borrow<KZGVerifierKey<P>>,
-        commitment: &P::G1Affine,
+        commitment: &KZGCommitment<P>,
         point: &P::ScalarField,
         proof: &P::G1Affine,
         evaluation: &P::ScalarField,
@@ -182,7 +184,7 @@ where
         let vk = vk.borrow();
 
         let lhs = P::pairing(
-            commitment.into_group() - vk.g1.into_group() * evaluation,
+            commitment.0.into_group() - vk.g1.into_group() * evaluation,
             vk.g2,
         );
         let rhs = P::pairing(proof, vk.tau_2.into_group() - (vk.g2 * point));

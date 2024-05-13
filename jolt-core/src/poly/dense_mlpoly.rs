@@ -6,6 +6,7 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 use crate::poly::field::JoltField;
 use crate::utils::math::Math;
 use core::ops::Index;
+use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::ops::AddAssign;
 
@@ -271,6 +272,12 @@ impl<F: JoltField> DensePolynomial<F> {
                 .map(|i| F::from_u64(Z[i]).unwrap())
                 .collect::<Vec<F>>(),
         )
+    }
+
+    pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
+        Self::new(std::iter::from_fn(|| Some(F::random(&mut rng))).take(1 << num_vars).collect())
+
+
     }
 }
 
