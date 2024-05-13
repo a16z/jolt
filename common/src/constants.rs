@@ -1,5 +1,5 @@
 pub const XLEN: usize = 32;
-pub const REGISTER_COUNT: u64 = 32;
+pub const REGISTER_COUNT: u64 = 64; // 32 registers + 32 virtual registers (see Section 6.1 of Jolt paper)
 pub const BYTES_PER_INSTRUCTION: usize = 4;
 pub const REG_OPS_PER_INSTRUCTION: usize = 3;
 pub const RAM_OPS_PER_INSTRUCTION: usize = 4;
