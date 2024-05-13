@@ -75,10 +75,10 @@ pub fn random_memory_trace<F: JoltField>(
             std::array::from_fn(|_| MemoryOp::noop_read());
 
         let rs1 = rng.next_u64() % REGISTER_COUNT;
-        ops[RS1] = MemoryOp::Read(rs1, memory[rs1 as usize]);
+        ops[RS1] = MemoryOp::Read(rs1);
 
         let rs2 = rng.next_u64() % REGISTER_COUNT;
-        ops[RS2] = MemoryOp::Read(rs2, memory[rs2 as usize]);
+        ops[RS2] = MemoryOp::Read(rs2);
 
         // Don't write to the zero register
         let rd = rng.next_u64() % (REGISTER_COUNT - 1) + 1;
@@ -97,7 +97,7 @@ pub fn random_memory_trace<F: JoltField>(
             let load_rng = rng.next_u32();
             if load_rng % 3 == 0 {
                 // LB
-                ops[3] = MemoryOp::Read(ram_address, memory[remapped_address as usize]);
+                ops[3] = MemoryOp::Read(ram_address);
                 for i in 1..4 {
                     ops[i + 3] = MemoryOp::noop_read();
                 }
@@ -107,10 +107,7 @@ pub fn random_memory_trace<F: JoltField>(
             } else if load_rng % 3 == 1 {
                 // LH
                 for i in 0..2 {
-                    ops[i + 3] = MemoryOp::Read(
-                        ram_address + i as u64,
-                        memory[i + remapped_address as usize],
-                    );
+                    ops[i + 3] = MemoryOp::Read(ram_address + i as u64);
                 }
                 for i in 2..4 {
                     ops[i + 3] = MemoryOp::noop_read();
@@ -121,10 +118,7 @@ pub fn random_memory_trace<F: JoltField>(
             } else {
                 // LW
                 for i in 0..4 {
-                    ops[i + 3] = MemoryOp::Read(
-                        ram_address + i as u64,
-                        memory[i + remapped_address as usize],
-                    );
+                    ops[i + 3] = MemoryOp::Read(ram_address + i as u64);
                 }
                 for (i, flag) in load_store_flags.iter_mut().enumerate() {
                     flag.push(if i == 4 { 1 } else { 0 });
@@ -341,7 +335,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             .iter()
             .flat_map(|step| {
                 step.iter().map(|op| match op {
-                    MemoryOp::Read(a, _) => remap_address(*a, &program_io.memory_layout),
+                    MemoryOp::Read(a) => remap_address(*a, &program_io.memory_layout),
                     MemoryOp::Write(a, _) => remap_address(*a, &program_io.memory_layout),
                 })
             })
@@ -455,11 +449,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                         || sw_flag[i].is_one()
                     {
                         match step[RAM_1_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(a >= program_io.memory_layout.input_start);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -517,9 +511,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                         a_ram.push(0);
                         for ram_byte_index in [RAM_1_INDEX, RAM_2_INDEX, RAM_3_INDEX, RAM_4_INDEX] {
                             match step[ram_byte_index] {
-                                MemoryOp::Read(a, v) => {
+                                MemoryOp::Read(a) => {
                                     assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
                                 }
                                 MemoryOp::Write(a, v) => {
                                     assert_eq!(a, 0);
@@ -541,12 +534,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     // Only the LH/SH/LW/SW instructions access ≥2 byte of RAM
                     if lh_flag[i].is_one() || sh_flag[i].is_one() || sw_flag[i].is_one() {
                         match step[RAM_2_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 1);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -599,9 +592,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     } else {
                         for ram_byte_index in [RAM_2_INDEX, RAM_3_INDEX, RAM_4_INDEX] {
                             match step[ram_byte_index] {
-                                MemoryOp::Read(a, v) => {
+                                MemoryOp::Read(a) => {
                                     assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
                                 }
                                 MemoryOp::Write(a, v) => {
                                     assert_eq!(a, 0);
@@ -624,12 +616,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     // Both LW and SW are represented by `sw_flag` for the purpose of lookups
                     if sw_flag[i].is_one() {
                         match step[RAM_3_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 2);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -680,12 +672,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                             }
                         };
                         match step[RAM_4_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 3);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -738,9 +730,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     } else {
                         for ram_byte_index in [RAM_3_INDEX, RAM_4_INDEX] {
                             match step[ram_byte_index] {
-                                MemoryOp::Read(a, v) => {
+                                MemoryOp::Read(a) => {
                                     assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
                                 }
                                 MemoryOp::Write(a, v) => {
                                     assert_eq!(a, 0);
@@ -780,9 +771,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     let timestamp = i as u64;
 
                     match step[RS1] {
-                        MemoryOp::Read(a, v) => {
+                        MemoryOp::Read(a) => {
                             assert!(a < REGISTER_COUNT);
-                            debug_assert_eq!(v, v_final_reg[a as usize]);
+                            let v = v_final_reg[a as usize];
 
                             #[cfg(test)]
                             {
@@ -804,9 +795,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     };
 
                     match step[RS2] {
-                        MemoryOp::Read(a, v) => {
+                        MemoryOp::Read(a) => {
                             assert!(a < REGISTER_COUNT);
-                            debug_assert_eq!(v, v_final_reg[a as usize]);
+                            let v = v_final_reg[a as usize];
 
                             #[cfg(test)]
                             {
@@ -828,8 +819,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     };
 
                     match step[RD] {
-                        MemoryOp::Read(a, v) => {
-                            panic!("Unexpected rd MemoryOp::Read({}, {})", a, v)
+                        MemoryOp::Read(a) => {
+                            panic!("Unexpected rd MemoryOp::Read({})", a)
                         }
                         MemoryOp::Write(a, v_new) => {
                             assert!(a < REGISTER_COUNT);

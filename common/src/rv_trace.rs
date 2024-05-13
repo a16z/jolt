@@ -14,13 +14,13 @@ pub struct RVTraceRow {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum MemoryOp {
-    Read(u64, u64),  // (address, value)
+    Read(u64),       // (address)
     Write(u64, u64), // (address, new_value)
 }
 
 impl MemoryOp {
     pub fn noop_read() -> Self {
-        Self::Read(0, 0)
+        Self::Read(0)
     }
 
     pub fn noop_write() -> Self {
@@ -45,18 +45,8 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
     fn from(val: &RVTraceRow) -> Self {
         let instruction_type = val.instruction.opcode.instruction_type();
 
-        let rs1_read = || {
-            MemoryOp::Read(
-                val.instruction.rs1.unwrap(),
-                val.register_state.rs1_val.unwrap(),
-            )
-        };
-        let rs2_read = || {
-            MemoryOp::Read(
-                val.instruction.rs2.unwrap(),
-                val.register_state.rs2_val.unwrap(),
-            )
-        };
+        let rs1_read = || MemoryOp::Read(val.instruction.rs1.unwrap());
+        let rs2_read = || MemoryOp::Read(val.instruction.rs2.unwrap());
         let rd_write = || {
             MemoryOp::Write(
                 val.instruction.rd.unwrap(),
@@ -64,15 +54,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             )
         };
 
-        let ram_byte_read = |index: usize| match val.memory_state {
-            Some(MemoryState::Read { address: _, value }) => (value >> (index * 8)) as u8,
-            Some(MemoryState::Write {
-                address: _,
-                pre_value: _,
-                post_value: _,
-            }) => panic!("Unexpected MemoryState::Write"),
-            None => panic!("Memory state not found"),
-        };
         let ram_byte_written = |index: usize| match val.memory_state {
             Some(MemoryState::Read {
                 address: _,
@@ -144,7 +125,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
-                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
+                    MemoryOp::Read(rs1_offset()),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
@@ -153,8 +134,8 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
-                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
-                    MemoryOp::Read(rs1_offset() + 1, ram_byte_read(1) as u64),
+                    MemoryOp::Read(rs1_offset()),
+                    MemoryOp::Read(rs1_offset() + 1),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                 ],
@@ -162,10 +143,10 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
-                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
-                    MemoryOp::Read(rs1_offset() + 1, ram_byte_read(1) as u64),
-                    MemoryOp::Read(rs1_offset() + 2, ram_byte_read(2) as u64),
-                    MemoryOp::Read(rs1_offset() + 3, ram_byte_read(3) as u64),
+                    MemoryOp::Read(rs1_offset()),
+                    MemoryOp::Read(rs1_offset() + 1),
+                    MemoryOp::Read(rs1_offset() + 2),
+                    MemoryOp::Read(rs1_offset() + 3),
                 ],
                 RV32IM::JALR => [
                     rs1_read(),
