@@ -12,7 +12,22 @@ pub struct RVTraceRow {
     pub memory_state: Option<MemoryState>,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+impl RVTraceRow {
+    pub fn to_virtual(self) -> Vec<Self> {
+        match self.instruction.opcode {
+            // TODO: These M-extension instructions are replaced with virtual sequences
+            RV32IM::MULH => todo!(),
+            RV32IM::MULHSU => todo!(),
+            RV32IM::DIV => todo!(),
+            RV32IM::DIVU => todo!(),
+            RV32IM::REM => todo!(),
+            RV32IM::REMU => todo!(),
+            _ => vec![self],
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum MemoryOp {
     Read(u64),       // (address)
     Write(u64, u64), // (address, new_value)
@@ -61,7 +76,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             }) => panic!("Unexpected MemoryState::Read"),
             Some(MemoryState::Write {
                 address: _,
-                pre_value: _,
                 post_value,
             }) => (post_value >> (index * 8)) as u8,
             None => panic!("Memory state not found"),
@@ -344,21 +358,13 @@ impl ELFInstruction {
 pub struct RegisterState {
     pub rs1_val: Option<u64>,
     pub rs2_val: Option<u64>,
-    pub rd_pre_val: Option<u64>,
     pub rd_post_val: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
-    Read {
-        address: u64,
-        value: u64,
-    },
-    Write {
-        address: u64,
-        pre_value: u64,
-        post_value: u64,
-    },
+    Read { address: u64, value: u64 },
+    Write { address: u64, post_value: u64 },
 }
 
 impl RVTraceRow {
@@ -421,7 +427,8 @@ pub enum RV32IM {
     EBREAK,
     MUL,
     MULH,
-    MULSU,
+    MULHU,
+    MULHSU,
     MULU,
     DIV,
     DIVU,
@@ -477,7 +484,8 @@ impl FromStr for RV32IM {
             "EBREAK" => Ok(Self::EBREAK),
             "MUL" => Ok(Self::MUL),
             "MULH" => Ok(Self::MULH),
-            "MULSU" => Ok(Self::MULSU),
+            "MULHU" => Ok(Self::MULHU),
+            "MULHSU" => Ok(Self::MULHSU),
             "MULU" => Ok(Self::MULU),
             "DIV" => Ok(Self::DIV),
             "DIVU" => Ok(Self::DIVU),
@@ -516,7 +524,8 @@ impl RV32IM {
             RV32IM::SLTU  |
             RV32IM::MUL   |
             RV32IM::MULH  |
-            RV32IM::MULSU |
+            RV32IM::MULHU  |
+            RV32IM::MULHSU |
             RV32IM::MULU  |
             RV32IM::DIV   |
             RV32IM::DIVU  |

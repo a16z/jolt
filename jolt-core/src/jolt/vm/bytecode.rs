@@ -25,6 +25,8 @@ use crate::{
     utils::errors::ProofVerifyError,
 };
 
+use super::JoltTraceStep;
+
 pub type BytecodeProof<F, C> = MemoryCheckingProof<
     F,
     C,
@@ -38,7 +40,7 @@ pub struct BytecodeRow {
     /// Memory address as read from the ELF.
     address: usize,
     /// Packed instruction/circuit flags, used for r1cs
-    bitflags: u64,
+    pub bitflags: u64,
     /// Index of the destination register for this instruction (0 if register is unused).
     rd: u64,
     /// Index of the first source register for this instruction (0 if register is unused).
@@ -161,88 +163,71 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// the initial memory values. There are five values (bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_init_final` comprises five polynomials.
     v_init_final: [DensePolynomial<F>; 5],
+    /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
+    /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
+    /// is the one used to keep track of the next (potentially virtual) instruction to execute.
+    virtual_address_map: HashMap<usize, usize>,
 }
 
 impl<F: JoltField> BytecodePreprocessing<F> {
     #[tracing::instrument(skip_all, name = "BytecodePreprocessing::preprocess")]
     pub fn preprocess(mut bytecode: Vec<BytecodeRow>) -> Self {
-        for instruction in bytecode.iter_mut() {
+        let mut virtual_address_map = HashMap::new();
+        let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
+        for instruction in bytecode.iter() {
             assert!(instruction.address >= RAM_START_ADDRESS as usize);
             assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
-            instruction.address -= RAM_START_ADDRESS as usize;
-            instruction.address /= BYTES_PER_INSTRUCTION;
-
-            // Account for no-op instruction prepended to bytecode
-            instruction.address += 1;
+            assert_eq!(
+                virtual_address_map.insert(instruction.address, virtual_address),
+                None
+            );
+            virtual_address += 1;
         }
 
         // Bytecode: Prepend a single no-op instruction
         bytecode.insert(0, BytecodeRow::no_op(0));
+        virtual_address_map.insert(0, 0);
 
         // Bytecode: Pad to nearest power of 2
-        bytecode.resize(bytecode.len().next_power_of_two(), BytecodeRow::no_op(0));
+        let code_size = bytecode.len().next_power_of_two();
+        bytecode.resize(code_size, BytecodeRow::no_op(0));
 
-        let max_bytecode_address = bytecode.iter().map(|instr| instr.address).max().unwrap();
-        // Bytecode addresses are 0-indexed, so we add one to `max_bytecode_address`
-        let code_size = (max_bytecode_address + 1).next_power_of_two();
+        let mut bitflags = vec![];
+        let mut rd = vec![];
+        let mut rs1 = vec![];
+        let mut rs2 = vec![];
+        let mut imm = vec![];
 
-        let v_init_final = to_v_polys(&bytecode);
+        for row in bytecode {
+            bitflags.push(F::from_u64(row.bitflags).unwrap());
+            rd.push(F::from_u64(row.rd).unwrap());
+            rs1.push(F::from_u64(row.rs1).unwrap());
+            rs2.push(F::from_u64(row.rs2).unwrap());
+            imm.push(F::from_u64(row.imm).unwrap());
+        }
+
+        let v_init_final = [
+            DensePolynomial::new(bitflags),
+            DensePolynomial::new(rd),
+            DensePolynomial::new(rs1),
+            DensePolynomial::new(rs2),
+            DensePolynomial::new(imm),
+        ];
 
         Self {
             v_init_final,
             code_size,
+            virtual_address_map,
         }
     }
-}
-
-fn to_v_polys<F: JoltField>(rows: &Vec<BytecodeRow>) -> [DensePolynomial<F>; 5] {
-    let len = rows.len().next_power_of_two();
-    let mut bitflags = Vec::with_capacity(len);
-    let mut rd = Vec::with_capacity(len);
-    let mut rs1 = Vec::with_capacity(len);
-    let mut rs2 = Vec::with_capacity(len);
-    let mut imm = Vec::with_capacity(len);
-
-    for row in rows {
-        bitflags.push(F::from_u64(row.bitflags).unwrap());
-        rd.push(F::from_u64(row.rd).unwrap());
-        rs1.push(F::from_u64(row.rs1).unwrap());
-        rs2.push(F::from_u64(row.rs2).unwrap());
-        imm.push(F::from_u64(row.imm).unwrap());
-    }
-    // Padding
-    bitflags.resize(len, F::zero());
-    rd.resize(len, F::zero());
-    rs1.resize(len, F::zero());
-    rs2.resize(len, F::zero());
-    imm.resize(len, F::zero());
-
-    [
-        DensePolynomial::new(bitflags),
-        DensePolynomial::new(rd),
-        DensePolynomial::new(rs1),
-        DensePolynomial::new(rs2),
-        DensePolynomial::new(imm),
-    ]
 }
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::new")]
-    pub fn new(preprocessing: &BytecodePreprocessing<F>, mut trace: Vec<BytecodeRow>) -> Self {
-        // Remap trace addresses
-        for instruction in trace.iter_mut() {
-            assert!(instruction.address >= RAM_START_ADDRESS as usize);
-            assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
-            instruction.address -= RAM_START_ADDRESS as usize;
-            instruction.address /= BYTES_PER_INSTRUCTION;
-
-            // Account for no-op instruction prepended to bytecode
-            instruction.address += 1;
-        }
-
-        // Pad trace to nearest power of 2
-        trace.resize(trace.len().next_power_of_two(), BytecodeRow::no_op(0));
-
+    pub fn new<InstructionSet: JoltInstructionSet>(
+        preprocessing: &BytecodePreprocessing<F>,
+        trace: &mut Vec<JoltTraceStep<InstructionSet>>,
+    ) -> Self {
         let num_ops = trace.len();
 
         let mut a_read_write_usize: Vec<usize> = vec![0; num_ops];
@@ -250,16 +235,39 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         let mut final_cts: Vec<usize> = vec![0; preprocessing.code_size];
 
         for (trace_index, trace) in trace.iter().enumerate() {
-            let address = trace.address;
-            debug_assert!(address < preprocessing.code_size);
-            a_read_write_usize[trace_index] = address;
-            let counter = final_cts[address];
+            let address = preprocessing
+                .virtual_address_map
+                .get(&trace.bytecode_row.address)
+                .unwrap();
+            a_read_write_usize[trace_index] = *address;
+            let counter = final_cts[*address];
             read_cts[trace_index] = counter;
-            final_cts[address] = counter + 1;
+            final_cts[*address] = counter + 1;
         }
 
         let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
-        let v_read_write = to_v_polys(&trace);
+
+        let mut bitflags = vec![];
+        let mut rd = vec![];
+        let mut rs1 = vec![];
+        let mut rs2 = vec![];
+        let mut imm = vec![];
+
+        for step in trace {
+            bitflags.push(F::from_u64(step.bytecode_row.bitflags).unwrap());
+            rd.push(F::from_u64(step.bytecode_row.rd).unwrap());
+            rs1.push(F::from_u64(step.bytecode_row.rs1).unwrap());
+            rs2.push(F::from_u64(step.bytecode_row.rs2).unwrap());
+            imm.push(F::from_u64(step.bytecode_row.imm).unwrap());
+        }
+
+        let v_read_write = [
+            DensePolynomial::new(bitflags),
+            DensePolynomial::new(rd),
+            DensePolynomial::new(rs1),
+            DensePolynomial::new(rs2),
+            DensePolynomial::new(imm),
+        ];
         let t_read = DensePolynomial::from_usize(&read_cts);
         let t_final = DensePolynomial::from_usize(&final_cts);
 
@@ -717,16 +725,25 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::commitment::hyrax::HyraxScheme;
+    use crate::{jolt::vm::rv32i_vm::RV32I, poly::commitment::hyrax::HyraxScheme};
 
     use super::*;
     use ark_bn254::{Fr, G1Projective};
+    use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
     use std::collections::HashSet;
 
     fn get_difference<T: Clone + Eq + std::hash::Hash>(vec1: &[T], vec2: &[T]) -> Vec<T> {
         let set1: HashSet<_> = vec1.iter().cloned().collect();
         let set2: HashSet<_> = vec2.iter().cloned().collect();
         set1.symmetric_difference(&set2).cloned().collect()
+    }
+
+    fn trace_step(bytecode_row: BytecodeRow) -> JoltTraceStep<RV32I> {
+        JoltTraceStep {
+            instruction_lookup: None,
+            memory_ops: [MemoryOp::noop_read(); MEMORY_OPS_PER_INSTRUCTION],
+            bytecode_row,
+        }
     }
 
     #[test]
@@ -737,14 +754,28 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
         ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+        let mut trace = vec![
+            trace_step(BytecodeRow::new(
+                to_ram_address(3),
+                16u64,
+                16u64,
+                16u64,
+                16u64,
+                16u64,
+            )),
+            trace_step(BytecodeRow::new(
+                to_ram_address(2),
+                8u64,
+                8u64,
+                8u64,
+                8u64,
+                8u64,
+            )),
         ];
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-            BytecodePolynomials::new(&preprocessing, trace);
+            BytecodePolynomials::new::<RV32I>(&preprocessing, &mut trace);
 
         let (gamma, tau) = (&Fr::from(100), &Fr::from(35));
         let (read_write_leaves, init_final_leaves) =
@@ -768,9 +799,23 @@ mod tests {
             BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
         ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
+        let mut trace = vec![
+            trace_step(BytecodeRow::new(
+                to_ram_address(3),
+                16u64,
+                16u64,
+                16u64,
+                16u64,
+                16u64,
+            )),
+            trace_step(BytecodeRow::new(
+                to_ram_address(2),
+                8u64,
+                8u64,
+                8u64,
+                8u64,
+                8u64,
+            )),
         ];
         let commitment_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
             program.len(),
@@ -779,7 +824,7 @@ mod tests {
 
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-            BytecodePolynomials::new(&preprocessing, trace);
+            BytecodePolynomials::new(&preprocessing, &mut trace);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
@@ -807,11 +852,33 @@ mod tests {
             BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
             BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
         ];
-        let trace = vec![
-            BytecodeRow::new(to_ram_address(3), 16u64, 16u64, 16u64, 16u64, 16u64),
-            BytecodeRow::new(to_ram_address(2), 8u64, 8u64, 8u64, 8u64, 8u64),
-            BytecodeRow::new(to_ram_address(4), 32u64, 32u64, 32u64, 32u64, 32u64),
+        let mut trace = vec![
+            trace_step(BytecodeRow::new(
+                to_ram_address(3),
+                16u64,
+                16u64,
+                16u64,
+                16u64,
+                16u64,
+            )),
+            trace_step(BytecodeRow::new(
+                to_ram_address(2),
+                8u64,
+                8u64,
+                8u64,
+                8u64,
+                8u64,
+            )),
+            trace_step(BytecodeRow::new(
+                to_ram_address(4),
+                32u64,
+                32u64,
+                32u64,
+                32u64,
+                32u64,
+            )),
         ];
+        JoltTraceStep::pad(&mut trace);
 
         let commit_shapes = BytecodePolynomials::<Fr, HyraxScheme<G1Projective>>::commit_shapes(
             program.len(),
@@ -819,7 +886,7 @@ mod tests {
         );
         let preprocessing = BytecodePreprocessing::preprocess(program.clone());
         let polys: BytecodePolynomials<Fr, HyraxScheme<G1Projective>> =
-            BytecodePolynomials::new(&preprocessing, trace);
+            BytecodePolynomials::new(&preprocessing, &mut trace);
         let generators = HyraxScheme::<G1Projective>::setup(&commit_shapes);
         let commitments = polys.commit(&generators);
 

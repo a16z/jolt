@@ -1,3 +1,4 @@
+use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -30,6 +31,7 @@ use common::constants::{
 use common::rv_trace::{ELFInstruction, JoltDevice, MemoryLayout, MemoryOp, RV32IM};
 use common::to_ram_address;
 
+use super::JoltTraceStep;
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
 
 pub trait RandomInstruction {
@@ -319,22 +321,22 @@ fn map_to_polys<F: JoltField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePol
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
-    pub fn new(
+    pub fn new<InstructionSet: JoltInstructionSet>(
         program_io: &JoltDevice,
         load_store_flags: &[DensePolynomial<F>],
         preprocessing: &ReadWriteMemoryPreprocessing,
-        memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
+        trace: &Vec<JoltTraceStep<InstructionSet>>,
     ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
-        let m = memory_trace.len();
+        let m = trace.len();
         assert!(m.is_power_of_two());
 
-        let max_trace_address = memory_trace
+        let max_trace_address = trace
             .iter()
             .flat_map(|step| {
-                step.iter().map(|op| match op {
+                step.memory_ops.iter().map(|op| match op {
                     MemoryOp::Read(a) => remap_address(*a, &program_io.memory_layout),
                     MemoryOp::Write(a, _) => remap_address(*a, &program_io.memory_layout),
                 })
@@ -379,14 +381,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         let write_tuples: Arc<Mutex<HashSet<(u64, u64, u64)>>> =
             Arc::new(Mutex::new(HashSet::new()));
 
-        let (memory_trace_reg, memory_trace_ram): (Vec<Vec<MemoryOp>>, Vec<Vec<MemoryOp>>) =
-            memory_trace
-                .into_par_iter()
-                .map(|item| {
-                    let (reg, ram) = item.split_at(3);
-                    (reg.to_vec(), ram.to_vec())
-                })
-                .unzip();
+        let (memory_trace_reg, memory_trace_ram): (Vec<Vec<MemoryOp>>, Vec<Vec<MemoryOp>>) = trace
+            .into_par_iter()
+            .map(|step| {
+                let (reg, ram) = step.memory_ops.split_at(3);
+                (reg.to_vec(), ram.to_vec())
+            })
+            .unzip();
 
         let reg_count = REGISTER_COUNT as usize;
         let mut v_final_reg = v_init[..reg_count].to_vec();

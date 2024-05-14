@@ -29,6 +29,8 @@ use crate::{
     },
 };
 
+use super::JoltTraceStep;
+
 /// All polynomials associated with Jolt instruction lookups.
 pub struct InstructionPolynomials<F, C>
 where
@@ -913,7 +915,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
     pub fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<Option<InstructionSet>>,
+        ops: &Vec<JoltTraceStep<InstructionSet>>,
     ) -> InstructionPolynomials<F, CS> {
         let m: usize = ops.len().next_power_of_two();
 
@@ -932,9 +934,9 @@ where
                 let mut subtable_lookups = vec![F::zero(); m];
 
                 for (j, op) in ops.iter().enumerate() {
-                    if let Some(op) = op {
+                    if let Some(instr) = &op.instruction_lookup {
                         let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(op)];
+                            [InstructionSet::enum_index(&instr)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = access_sequence[j];
                             debug_assert!(memory_address < M);
@@ -982,8 +984,8 @@ where
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
-            if let Some(op) = op {
-                instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
+            if let Some(instr) = &op.instruction_lookup {
+                instruction_flag_bitvectors[InstructionSet::enum_index(&instr)][j] = 1;
             }
         }
 
@@ -1342,14 +1344,14 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &Vec<Option<InstructionSet>>) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<Vec<usize>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<usize>> = ops
             .iter()
             .map(|op| {
-                if let Some(op) = op {
-                    op.to_indices(C, log_M)
+                if let Some(instr) = &op.instruction_lookup {
+                    instr.to_indices(C, log_M)
                 } else {
                     vec![0; C]
                 }
@@ -1383,12 +1385,12 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<Option<InstructionSet>>) -> Vec<F> {
+    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<F> {
         instructions
             .par_iter()
             .map(|op| {
-                if let Some(op) = op {
-                    F::from_u64(op.lookup_entry()).unwrap()
+                if let Some(instr) = &op.instruction_lookup {
+                    F::from_u64(instr.lookup_entry()).unwrap()
                 } else {
                     F::zero()
                 }
