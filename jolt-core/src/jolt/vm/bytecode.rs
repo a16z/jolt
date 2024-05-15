@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use ark_ff::Zero;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -146,9 +147,9 @@ pub struct BytecodePolynomials<F: JoltField, C: CommitmentScheme<Field = F>> {
     /// so the read addresses and write addresses are the same.
     pub(super) a_read_write: DensePolynomial<F>,
     /// MLE of read/write values. For offline memory checking, each read is paired with a "virtual" write,
-    /// so the read values and write values are the same. There are five values (bitflags, rd, rs1, rs2, imm)
+    /// so the read values and write values are the same. There are six values (address, bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_read_write` comprises five polynomials.
-    pub(super) v_read_write: [DensePolynomial<F>; 5],
+    pub(super) v_read_write: [DensePolynomial<F>; 6],
     /// MLE of the read timestamps.
     pub(super) t_read: DensePolynomial<F>,
     /// MLE of the final timestamps.
@@ -160,9 +161,9 @@ pub struct BytecodePreprocessing<F: JoltField> {
     /// Size of the (padded) bytecode.
     code_size: usize,
     /// MLE of init/final values. Bytecode is read-only data, so the final memory values are unchanged from
-    /// the initial memory values. There are five values (bitflags, rd, rs1, rs2, imm)
+    /// the initial memory values. There are six values (address, bitflags, rd, rs1, rs2, imm)
     /// associated with each memory address, so `v_init_final` comprises five polynomials.
-    v_init_final: [DensePolynomial<F>; 5],
+    v_init_final: [DensePolynomial<F>; 6],
     /// Maps the memory address of each instruction in the bytecode to its "virtual" address.
     /// See Section 6.1 of the Jolt paper, "Reflecting the program counter". The virtual address
     /// is the one used to keep track of the next (potentially virtual) instruction to execute.
@@ -174,9 +175,12 @@ impl<F: JoltField> BytecodePreprocessing<F> {
     pub fn preprocess(mut bytecode: Vec<BytecodeRow>) -> Self {
         let mut virtual_address_map = HashMap::new();
         let mut virtual_address = 1; // Account for no-op instruction prepended to bytecode
-        for instruction in bytecode.iter() {
+        for instruction in bytecode.iter_mut() {
             assert!(instruction.address >= RAM_START_ADDRESS as usize);
             assert!(instruction.address % BYTES_PER_INSTRUCTION == 0);
+            // Compress instruction address for more efficient commitment:
+            instruction.address =
+                1 + (instruction.address - RAM_START_ADDRESS as usize) / BYTES_PER_INSTRUCTION;
             assert_eq!(
                 virtual_address_map.insert(instruction.address, virtual_address),
                 None
@@ -186,27 +190,30 @@ impl<F: JoltField> BytecodePreprocessing<F> {
 
         // Bytecode: Prepend a single no-op instruction
         bytecode.insert(0, BytecodeRow::no_op(0));
-        virtual_address_map.insert(0, 0);
+        assert_eq!(virtual_address_map.insert(0, 0), None);
 
         // Bytecode: Pad to nearest power of 2
         let code_size = bytecode.len().next_power_of_two();
         bytecode.resize(code_size, BytecodeRow::no_op(0));
 
+        let mut address = vec![];
         let mut bitflags = vec![];
         let mut rd = vec![];
         let mut rs1 = vec![];
         let mut rs2 = vec![];
         let mut imm = vec![];
 
-        for row in bytecode {
-            bitflags.push(F::from_u64(row.bitflags).unwrap());
-            rd.push(F::from_u64(row.rd).unwrap());
-            rs1.push(F::from_u64(row.rs1).unwrap());
-            rs2.push(F::from_u64(row.rs2).unwrap());
-            imm.push(F::from_u64(row.imm).unwrap());
+        for instruction in bytecode {
+            address.push(F::from_u64(instruction.address as u64).unwrap());
+            bitflags.push(F::from_u64(instruction.bitflags).unwrap());
+            rd.push(F::from_u64(instruction.rd).unwrap());
+            rs1.push(F::from_u64(instruction.rs1).unwrap());
+            rs2.push(F::from_u64(instruction.rs2).unwrap());
+            imm.push(F::from_u64(instruction.imm).unwrap());
         }
 
         let v_init_final = [
+            DensePolynomial::new(address),
             DensePolynomial::new(bitflags),
             DensePolynomial::new(rd),
             DensePolynomial::new(rs1),
@@ -234,19 +241,29 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         let mut read_cts: Vec<usize> = vec![0; num_ops];
         let mut final_cts: Vec<usize> = vec![0; preprocessing.code_size];
 
-        for (trace_index, trace) in trace.iter().enumerate() {
-            let address = preprocessing
+        for (step_index, step) in trace.iter_mut().enumerate() {
+            if !step.bytecode_row.address.is_zero() {
+                assert!(step.bytecode_row.address >= RAM_START_ADDRESS as usize);
+                assert!(step.bytecode_row.address % BYTES_PER_INSTRUCTION == 0);
+                // Compress instruction address for more efficient commitment:
+                step.bytecode_row.address = 1
+                    + (step.bytecode_row.address - RAM_START_ADDRESS as usize)
+                        / BYTES_PER_INSTRUCTION;
+            }
+
+            let virtual_address = preprocessing
                 .virtual_address_map
-                .get(&trace.bytecode_row.address)
+                .get(&step.bytecode_row.address)
                 .unwrap();
-            a_read_write_usize[trace_index] = *address;
-            let counter = final_cts[*address];
-            read_cts[trace_index] = counter;
-            final_cts[*address] = counter + 1;
+            a_read_write_usize[step_index] = *virtual_address;
+            let counter = final_cts[*virtual_address];
+            read_cts[step_index] = counter;
+            final_cts[*virtual_address] = counter + 1;
         }
 
         let a_read_write = DensePolynomial::from_usize(&a_read_write_usize);
 
+        let mut address = vec![];
         let mut bitflags = vec![];
         let mut rd = vec![];
         let mut rs1 = vec![];
@@ -254,6 +271,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         let mut imm = vec![];
 
         for step in trace {
+            address.push(F::from_u64(step.bytecode_row.address as u64).unwrap());
             bitflags.push(F::from_u64(step.bytecode_row.bitflags).unwrap());
             rd.push(F::from_u64(step.bytecode_row.rd).unwrap());
             rs1.push(F::from_u64(step.bytecode_row.rs1).unwrap());
@@ -262,6 +280,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         }
 
         let v_read_write = [
+            DensePolynomial::new(address),
             DensePolynomial::new(bitflags),
             DensePolynomial::new(rd),
             DensePolynomial::new(rs1),
@@ -314,7 +333,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
         let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
         let max_trace_length = max_trace_length.next_power_of_two();
 
-        // a_read_write, t_read, v_read_write (opcode, rs1, rs2, rd, imm)
+        // a_read_write, t_read, v_read_write (address, opcode, rs1, rs2, rd, imm)
         let read_write_gen_shape = CommitShape::new(max_trace_length, BatchType::Big);
 
         // t_final
@@ -360,6 +379,7 @@ where
             &self.v_read_write[2],
             &self.v_read_write[3],
             &self.v_read_write[4],
+            &self.v_read_write[5],
         ];
         let trace_commitments = C::batch_commit_polys_ref(&trace_polys, generators, BatchType::Big);
 
@@ -381,8 +401,8 @@ where
     type ReadWriteOpenings = BytecodeReadWriteOpenings<F>;
     type InitFinalOpenings = BytecodeInitFinalOpenings<F>;
 
-    // [a, opcode, rd, rs1, rs2, imm, t]
-    type MemoryTuple = [F; 7];
+    // [a, address, opcode, rd, rs1, rs2, imm, t]
+    type MemoryTuple = [F; 8];
 
     fn fingerprint(inputs: &Self::MemoryTuple, gamma: &F, tau: &F) -> F {
         let mut result = F::zero();
@@ -415,6 +435,7 @@ where
                         polynomials.v_read_write[2][i],
                         polynomials.v_read_write[3][i],
                         polynomials.v_read_write[4][i],
+                        polynomials.v_read_write[5][i],
                         polynomials.t_read[i],
                     ],
                     gamma,
@@ -434,6 +455,7 @@ where
                         preprocessing.v_init_final[2][i],
                         preprocessing.v_init_final[3][i],
                         preprocessing.v_init_final[4][i],
+                        preprocessing.v_init_final[5][i],
                         F::zero(),
                     ],
                     gamma,
@@ -454,6 +476,7 @@ where
                         polynomials.v_read_write[2][i],
                         polynomials.v_read_write[3][i],
                         polynomials.v_read_write[4][i],
+                        polynomials.v_read_write[5][i],
                         polynomials.t_read[i] + F::one(),
                     ],
                     gamma,
@@ -474,6 +497,7 @@ where
                         preprocessing.v_init_final[2][i],
                         preprocessing.v_init_final[3][i],
                         preprocessing.v_init_final[4][i],
+                        preprocessing.v_init_final[5][i],
                         polynomials.t_final[i],
                     ],
                     gamma,
@@ -504,11 +528,12 @@ where
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write_opening,
-            openings.v_read_write_openings[0], // opcode
-            openings.v_read_write_openings[1], // rd
-            openings.v_read_write_openings[2], // rs1
-            openings.v_read_write_openings[3], // rs2
-            openings.v_read_write_openings[4], // imm
+            openings.v_read_write_openings[0], // address
+            openings.v_read_write_openings[1], // opcode
+            openings.v_read_write_openings[2], // rd
+            openings.v_read_write_openings[3], // rs1
+            openings.v_read_write_openings[4], // rs2
+            openings.v_read_write_openings[5], // imm
             openings.t_read_opening,
         ]]
     }
@@ -518,11 +543,12 @@ where
     ) -> Vec<Self::MemoryTuple> {
         vec![[
             openings.a_read_write_opening,
-            openings.v_read_write_openings[0], // opcode
-            openings.v_read_write_openings[1], // rd
-            openings.v_read_write_openings[2], // rs1
-            openings.v_read_write_openings[3], // rs2
-            openings.v_read_write_openings[4], // imm
+            openings.v_read_write_openings[0], // address
+            openings.v_read_write_openings[1], // opcode
+            openings.v_read_write_openings[2], // rd
+            openings.v_read_write_openings[3], // rs1
+            openings.v_read_write_openings[4], // rs2
+            openings.v_read_write_openings[5], // imm
             openings.t_read_opening + F::one(),
         ]]
     }
@@ -533,11 +559,12 @@ where
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
             openings.a_init_final.unwrap(),
-            v_init_final[0], // opcode
-            v_init_final[1], // rd
-            v_init_final[2], // rs1
-            v_init_final[3], // rs2
-            v_init_final[4], // imm
+            v_init_final[0], // address
+            v_init_final[1], // opcode
+            v_init_final[2], // rd
+            v_init_final[3], // rs1
+            v_init_final[4], // rs2
+            v_init_final[5], // imm
             F::zero(),
         ]]
     }
@@ -548,11 +575,12 @@ where
         let v_init_final = openings.v_init_final.unwrap();
         vec![[
             openings.a_init_final.unwrap(),
-            v_init_final[0], // opcode
-            v_init_final[1], // rd
-            v_init_final[2], // rs1
-            v_init_final[3], // rs2
-            v_init_final[4], // imm
+            v_init_final[0], // address
+            v_init_final[1], // opcode
+            v_init_final[2], // rd
+            v_init_final[3], // rs1
+            v_init_final[4], // rs2
+            v_init_final[5], // imm
             openings.t_final,
         ]]
     }
@@ -566,7 +594,7 @@ where
     /// Evaluation of the a_read_write polynomial at the opening point.
     a_read_write_opening: F,
     /// Evaluation of the v_read_write polynomials at the opening point.
-    v_read_write_openings: [F; 5],
+    v_read_write_openings: [F; 6],
     /// Evaluation of the t_read polynomial at the opening point.
     t_read_opening: F,
 }
@@ -614,6 +642,7 @@ where
                 &polynomials.v_read_write[2],
                 &polynomials.v_read_write[3],
                 &polynomials.v_read_write[4],
+                &polynomials.v_read_write[5],
             ],
             opening_point,
             &combined_openings,
@@ -652,7 +681,7 @@ where
     /// Evaluation of the a_init_final polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     a_init_final: Option<F>,
     /// Evaluation of the v_init/final polynomials at the opening point. Computed by the verifier in `compute_verifier_openings`.
-    v_init_final: Option<[F; 5]>,
+    v_init_final: Option<[F; 6]>,
     /// Evaluation of the t_final polynomial at the opening point.
     t_final: F,
 }

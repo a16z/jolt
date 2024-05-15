@@ -1027,9 +1027,9 @@ where
     fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::evals(opening_point);
         let mut openings = [
-            &polynomials.bytecode.v_read_write[1],
-            &polynomials.bytecode.v_read_write[2],
-            &polynomials.bytecode.v_read_write[3],
+            &polynomials.bytecode.v_read_write[2], // rd
+            &polynomials.bytecode.v_read_write[3], // rs1
+            &polynomials.bytecode.v_read_write[4], // rs2
             &polynomials.read_write_memory.a_ram,
         ]
         .into_par_iter()
@@ -1066,9 +1066,9 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let read_write_polys = [
-            &polynomials.bytecode.v_read_write[1],
-            &polynomials.bytecode.v_read_write[2],
-            &polynomials.bytecode.v_read_write[3],
+            &polynomials.bytecode.v_read_write[2], // rd
+            &polynomials.bytecode.v_read_write[3], // rs1
+            &polynomials.bytecode.v_read_write[4], // rs2
             &polynomials.read_write_memory.a_ram,
         ]
         .into_iter()
@@ -1121,7 +1121,7 @@ where
             generators,
             opening_point,
             &openings,
-            &commitment.bytecode.trace_commitments[3..6]
+            &commitment.bytecode.trace_commitments[4..7]
                 .iter()
                 .chain(commitment.read_write_memory.trace_commitments.iter())
                 .collect::<Vec<_>>(),
@@ -1292,9 +1292,9 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let a = match i {
-                            RS1 => polynomials.bytecode.v_read_write[2][j],
-                            RS2 => polynomials.bytecode.v_read_write[3][j],
-                            RD => polynomials.bytecode.v_read_write[1][j],
+                            RS1 => polynomials.bytecode.v_read_write[3][j],
+                            RS2 => polynomials.bytecode.v_read_write[4][j],
+                            RD => polynomials.bytecode.v_read_write[2][j],
                             _ => {
                                 polynomials.read_write_memory.a_ram[j]
                                     + F::from_u64((i - RAM_1) as u64).unwrap()
@@ -1318,19 +1318,19 @@ where
                         RS1 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.bytecode.v_read_write[2][j]
+                                + polynomials.bytecode.v_read_write[3][j]
                                 - *tau
                         }
                         RS2 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.bytecode.v_read_write[3][j]
+                                + polynomials.bytecode.v_read_write[4][j]
                                 - *tau
                         }
                         RD => {
                             F::from_u64(j as u64 + 1).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.bytecode.v_read_write[1][j]
+                                + polynomials.bytecode.v_read_write[2][j]
                                 - *tau
                         }
                         _ => {

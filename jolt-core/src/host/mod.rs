@@ -190,7 +190,8 @@ impl Program {
             .for_each(|(flag_index, chunk)| {
                 chunk.iter_mut().zip(trace.iter()).for_each(|(flag, row)| {
                     let packed_circuit_flags = row.bytecode_row.bitflags >> RV32I::COUNT;
-                    if (packed_circuit_flags >> flag_index) & 1 != 0 {
+                    // if circuit_flags[flag_index] {
+                    if (packed_circuit_flags >> (NUM_CIRCUIT_FLAGS - flag_index - 1)) & 1 != 0 {
                         *flag = F::one();
                     }
                 });

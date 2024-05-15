@@ -153,6 +153,7 @@ where
             &self.bytecode.v_read_write[2],
             &self.bytecode.v_read_write[3],
             &self.bytecode.v_read_write[4],
+            &self.bytecode.v_read_write[5],
         ];
         let num_bytecode_trace_polys = bytecode_trace_polys.len();
 

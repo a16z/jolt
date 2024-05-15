@@ -57,7 +57,7 @@ const INPUT_SIZES: &[(InputType, usize)] = &[
     (InputType::InputState, STATE_LENGTH),
     (InputType::OutputState, STATE_LENGTH),
     (InputType::ProgARW, 1),
-    (InputType::ProgVRW, 5),
+    (InputType::ProgVRW, 6),
     (InputType::MemregARW, 1),
     (InputType::MemregVReads, 7),
     (InputType::MemregVWrites, 5),
@@ -322,11 +322,11 @@ impl R1CSBuilder {
     pub fn jolt_r1cs_matrices(instance: &mut R1CSBuilder, memory_start: u64) {
         // Obtain the indices of various inputs to the circuit.
         let PC_mapped = GET_INDEX(InputType::InputState, 0);
-        let op_flags_packed = GET_INDEX(InputType::ProgVRW, 0);
-        let rd = GET_INDEX(InputType::ProgVRW, 1);
-        let _rs1 = GET_INDEX(InputType::ProgVRW, 2);
-        let _rs2 = GET_INDEX(InputType::ProgVRW, 3);
-        let immediate = GET_INDEX(InputType::ProgVRW, 4);
+        let op_flags_packed = GET_INDEX(InputType::ProgVRW, 1);
+        let rd = GET_INDEX(InputType::ProgVRW, 2);
+        let _rs1 = GET_INDEX(InputType::ProgVRW, 3);
+        let _rs2 = GET_INDEX(InputType::ProgVRW, 4);
+        let immediate = GET_INDEX(InputType::ProgVRW, 5);
 
         // Indices of flags.
         let is_load_instr: usize = GET_INDEX(InputType::OpFlags, 2);
@@ -388,10 +388,10 @@ impl R1CSBuilder {
             );
         }
 
-        // Constraint: ensure that the bytecode read address (prog_a_rw) is the same as the input PC.
+        // Constraint: ensure that the bytecode read address (prog_v_rw) is the same as the input PC.
         R1CSBuilder::constr_abc(
             instance,
-            smallvec![(GET_INDEX(InputType::ProgARW, 0), 1), (PC_mapped, -1)],
+            smallvec![(GET_INDEX(InputType::ProgVRW, 0), 1), (PC_mapped, -1)],
             smallvec![(PC_mapped, 1)],
             smallvec![],
         );
@@ -646,8 +646,8 @@ impl R1CSBuilder {
         let four = F::from_u64(4).unwrap();
 
         // Indices of values within their respective input vector variables.
-        const RD: usize = 1;
-        const IMM: usize = 4;
+        const RD: usize = 2;
+        const IMM: usize = 5;
         const IS_JUMP: usize = 4;
         const IS_BRANCH: usize = 5;
         const IF_UPDATE_RD_WITH_LOOKUP_OUTPUT: usize = 6;
