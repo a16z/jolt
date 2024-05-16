@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -8,7 +9,7 @@ use crate::jolt::subtable::{and::AndSubtable, LassoSubtable};
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct ANDInstruction(pub u64, pub u64);
 
 impl JoltInstruction for ANDInstruction {

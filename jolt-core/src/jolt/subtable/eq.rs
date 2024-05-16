@@ -1,10 +1,11 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_std::log2;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
-#[derive(Default)]
+#[derive(Default, Allocative)]
 pub struct EqSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }

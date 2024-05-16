@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use crate::{
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct BGEUInstruction(pub u64, pub u64);
 
 impl JoltInstruction for BGEUInstruction {

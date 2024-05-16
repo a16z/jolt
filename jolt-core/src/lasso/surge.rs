@@ -1,4 +1,5 @@
 use crate::poly::{commitment::commitment_scheme::BatchType, field::JoltField};
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
@@ -17,6 +18,7 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math, mul_0_1_optimized, transcript::ProofTranscript},
 };
 
+#[derive(Allocative)]
 pub struct SurgePolys<F, PCS>
 where
     F: JoltField,
@@ -29,7 +31,7 @@ where
     pub E_polys: Vec<DensePolynomial<F>>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct SurgeCommitment<CS: CommitmentScheme> {
     /// Commitments to dim_i and read_cts_i polynomials.
     pub dim_read_commitment: Vec<CS::Commitment>,
@@ -122,7 +124,7 @@ where
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct SurgeReadWriteOpenings<F>
 where
     F: JoltField,
@@ -208,12 +210,13 @@ where
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct SurgeFinalOpenings<F, Instruction, const C: usize, const M: usize>
 where
     F: JoltField,
     Instruction: JoltInstruction + Default,
 {
+    #[allocative(visit = visit_unsupported)]
     _instruction: PhantomData<Instruction>,
     final_openings: Vec<F>,       // C-sized
     a_init_final: Option<F>,      // Computed by verifier
@@ -460,6 +463,7 @@ where
     }
 }
 
+#[derive(Allocative)]
 pub struct SurgePrimarySumcheck<F, PCS>
 where
     F: JoltField,
@@ -472,6 +476,8 @@ where
     opening_proof: PCS::BatchedProof,
 }
 
+#[derive(Allocative)]
+
 pub struct SurgePreprocessing<F, Instruction, const C: usize, const M: usize>
 where
     F: JoltField,
@@ -481,6 +487,7 @@ where
     materialized_subtables: Vec<Vec<F>>,
 }
 
+#[derive(Allocative)]
 #[allow(clippy::type_complexity)]
 pub struct SurgeProof<F, PCS, Instruction, const C: usize, const M: usize>
 where

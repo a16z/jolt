@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use enum_dispatch::enum_dispatch;
 use fixedbitset::*;
 use rand::prelude::StdRng;
@@ -13,7 +14,7 @@ use common::rv_trace::ELFInstruction;
 use std::fmt::Debug;
 
 #[enum_dispatch]
-pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize {
+pub trait JoltInstruction: Clone + Debug + Send + Sync + Serialize + Allocative {
     fn operands(&self) -> (u64, u64);
     /// Combines `vals` according to the instruction's "collation" polynomial `g`.
     /// If `vals` are subtable entries (as opposed to MLE evaluations), this function returns the

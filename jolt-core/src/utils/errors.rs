@@ -1,7 +1,8 @@
 use core::fmt::Debug;
+use allocative::Allocative;
 use thiserror::Error;
 
-#[derive(Error, Debug, Default)]
+#[derive(Error, Debug, Default, Allocative)]
 pub enum ProofVerifyError {
     #[error("Invalid input length, expected length {0} but got {1}")]
     InvalidInputLength(usize, usize),

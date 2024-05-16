@@ -6,6 +6,7 @@ use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::transcript::ProofTranscript;
+use allocative::Allocative;
 use ark_serialize::*;
 
 #[derive(Debug, Clone)]
@@ -209,7 +210,7 @@ impl<F: JoltField> BatchedGrandProductCircuit<F> {
     }
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct BatchedGrandProductArgument<F: JoltField> {
     proof: Vec<LayerProofBatched<F>>,
 }

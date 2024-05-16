@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -12,7 +13,7 @@ use crate::utils::instruction_utils::{
     add_and_chunk_operands, assert_valid_parameters, concatenate_lookups,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct ADDInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
@@ -70,6 +71,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADDInstruction<WORD_SIZE> {
 
 #[cfg(test)]
 mod test {
+    use allocative::FlameGraphBuilder;
     use ark_bn254::Fr;
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
@@ -82,10 +84,13 @@ mod test {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
-
+        
+        let mut flamegraph = FlameGraphBuilder::default();
+        
         for _ in 0..256 {
             let (x, y) = (rng.next_u32() as u64, rng.next_u32() as u64);
             let instruction = ADDInstruction::<32>(x, y);
+            flamegraph.visit_root(&instruction); 
             jolt_instruction_test!(instruction);
         }
 
@@ -100,6 +105,10 @@ mod test {
             ADDInstruction::<32>(u32_max, 1 << 8),
             ADDInstruction::<32>(1 << 8, u32_max),
         ];
+        
+        let flamegraph_src = flamegraph.finish().flamegraph().write();
+        println!("{}", flamegraph_src);
+        
         for instruction in instructions {
             jolt_instruction_test!(instruction);
         }

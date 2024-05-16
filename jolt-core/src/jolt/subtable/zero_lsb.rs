@@ -1,9 +1,11 @@
+use allocative::Allocative;
+
 use crate::poly::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
-#[derive(Default)]
+#[derive(Default, Allocative)]
 pub struct ZeroLSBSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }

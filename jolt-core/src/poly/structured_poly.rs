@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::commitment::commitment_scheme::CommitmentScheme;
@@ -23,7 +24,7 @@ pub trait StructuredCommitment<C: CommitmentScheme>: Send + Sync + Sized {
 /// different subset of the same polynomials may be opened at different points, resulting in
 /// different opening proofs.
 pub trait StructuredOpeningProof<F, C, Polynomials>:
-    Sync + CanonicalSerialize + CanonicalDeserialize
+    Sync + CanonicalSerialize + CanonicalDeserialize + Allocative
 where
     F: JoltField,
     C: CommitmentScheme<Field = F>,

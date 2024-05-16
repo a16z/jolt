@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -9,7 +10,7 @@ use super::LassoSubtable;
 /// Example usage in ADD:
 /// Input z is of 65 bits, which is split into 20-bit chunks.
 /// This subtable is used to remove the overflow bit from the 4th chunk.
-#[derive(Default)]
+#[derive(Default, Allocative)]
 pub struct TruncateOverflowSubtable<F: JoltField, const WORD_SIZE: usize> {
     _field: PhantomData<F>,
 }

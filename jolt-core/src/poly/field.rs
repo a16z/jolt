@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use allocative::Allocative;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::UniformRand;
@@ -51,6 +52,22 @@ pub trait JoltField:
     fn from_u64(n: u64) -> Option<Self>;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+}
+
+pub trait Final {
+    fn finalise(&self) -> Self;
+}
+
+// impl Allocative for ark_bn254::Fr {
+//     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+//         visitor.visit_simple_sized::<Self>();
+//     }
+// }
+
+impl Final for ark_bn254::Fr {
+    fn finalise(&self) -> Self {
+        *self
+    }
 }
 
 impl JoltField for ark_bn254::Fr {

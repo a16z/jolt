@@ -1,8 +1,10 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use rayon::prelude::*;
 
 use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
+#[derive(Allocative)]
 pub struct EqPolynomial<F> {
     r: Vec<F>,
 }

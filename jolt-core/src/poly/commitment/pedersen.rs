@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::SeedableRng;
@@ -8,7 +9,7 @@ use std::io::Read;
 
 use crate::msm::VariableBaseMSM;
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct PedersenGenerators<G: CurveGroup> {
     pub generators: Vec<G>,
 }
@@ -48,7 +49,6 @@ impl<G: CurveGroup> PedersenGenerators<G> {
         }
     }
 }
-
 pub trait PedersenCommitment<G: CurveGroup>: Sized {
     fn commit(&self, gens: &PedersenGenerators<G>) -> G;
     fn commit_vector(inputs: &[Self], bases: &[G::Affine]) -> G;

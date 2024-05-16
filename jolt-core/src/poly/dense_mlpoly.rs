@@ -6,10 +6,11 @@ use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 use crate::poly::field::JoltField;
 use crate::utils::math::Math;
 use core::ops::Index;
+use allocative::Allocative;
 use rayon::prelude::*;
 use std::ops::AddAssign;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Allocative)]
 pub struct DensePolynomial<F> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,

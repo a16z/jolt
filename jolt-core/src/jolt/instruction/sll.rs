@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -10,7 +11,7 @@ use crate::utils::instruction_utils::{
     assert_valid_parameters, chunk_and_concatenate_for_shift, concatenate_lookups,
 };
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct SLLInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
 impl<const WORD_SIZE: usize> JoltInstruction for SLLInstruction<WORD_SIZE> {

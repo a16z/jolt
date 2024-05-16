@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_std::log2;
 use std::cmp::min;
 use std::marker::PhantomData;
@@ -7,7 +8,7 @@ use super::LassoSubtable;
 use crate::utils::math::Math;
 use crate::utils::split_bits;
 
-#[derive(Default)]
+#[derive(Default, Allocative)]
 pub struct SllSubtable<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> {
     _field: PhantomData<F>,
 }

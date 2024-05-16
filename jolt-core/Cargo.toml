@@ -67,6 +67,7 @@ tokio = "1.37.0"
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 bincode = "1.3.3"
+allocative = "0.3.3"
 
 [build-dependencies]
 common = { path = "../common" }

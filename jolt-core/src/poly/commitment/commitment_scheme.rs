@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct CommitShape {
     pub input_length: usize,
     pub batch_type: BatchType,
@@ -23,7 +24,7 @@ impl CommitShape {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub enum BatchType {
     Big,
     Small,
@@ -31,7 +32,7 @@ pub enum BatchType {
     SurgeReadWrite,
 }
 
-pub trait CommitmentScheme: Clone + Sync + Send + 'static {
+pub trait CommitmentScheme: Clone + Sync + Send + Allocative + 'static {
     type Field: JoltField;
     type Setup: Clone + Sync + Send;
     type Commitment: Sync + Send + CanonicalSerialize + CanonicalDeserialize + AppendToTranscript;

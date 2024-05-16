@@ -1,3 +1,4 @@
+use allocative::Allocative;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ use crate::jolt::subtable::{
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::chunk_operand_usize;
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct LHInstruction(pub u64);
 
 impl JoltInstruction for LHInstruction {

@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -8,7 +9,7 @@ use super::{JoltInstruction, SubtableIndices};
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct SWInstruction(pub u64);
 
 impl JoltInstruction for SWInstruction {

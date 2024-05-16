@@ -64,6 +64,7 @@ sysinfo = "0.30.8"
 
 jolt-sdk = { path = "./jolt-sdk" }
 jolt-core = { path = "./jolt-core" }
+allocative = "0.3.3"
 
 [profile.test]
 opt-level = 3

@@ -1,4 +1,5 @@
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_std::log2;
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -9,7 +10,7 @@ use crate::jolt::instruction::SubtableIndices;
 use crate::jolt::subtable::{xor::XorSubtable, LassoSubtable};
 use crate::utils::instruction_utils::{chunk_and_concatenate_operands, concatenate_lookups};
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, Allocative)]
 pub struct XORInstruction(pub u64, pub u64);
 
 impl JoltInstruction for XORInstruction {

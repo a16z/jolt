@@ -9,12 +9,13 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use allocative::Allocative;
 use ark_serialize::*;
 use itertools::multizip;
 use rayon::prelude::*;
 use tracing::trace_span;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Allocative)]
 pub enum CubicSumcheckType {
     // eq * A * B
     Prod,
@@ -26,7 +27,7 @@ pub enum CubicSumcheckType {
     Flags,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Allocative)]
 pub struct CubicSumcheckParams<F: JoltField> {
     poly_As: Vec<DensePolynomial<F>>,
     poly_Bs: Vec<DensePolynomial<F>>,

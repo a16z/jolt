@@ -3,6 +3,7 @@
 /// As the constraint system involved in Jolt is very simple, it's easy to generate the matrices directly
 /// and avoids the need for using the circom library.
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use common::{constants::RAM_START_ADDRESS, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
 use smallvec::{smallvec, SmallVec};
@@ -97,7 +98,7 @@ const fn GET_INDEX(input_type: InputType, offset: usize) -> usize {
 
 const SMALLVEC_SIZE: usize = 4;
 
-#[derive(Debug)]
+#[derive(Debug, Allocative)]
 pub struct R1CSBuilder {
     pub A: Vec<(usize, usize, i64)>,
     pub B: Vec<(usize, usize, i64)>,

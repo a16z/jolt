@@ -21,6 +21,7 @@ use super::{
 };
 
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
@@ -85,7 +86,7 @@ fn synthesize_witnesses<F: JoltField>(
     (pc_out, pc, aux)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Allocative)]
 pub struct R1CSInputs<'a, F: JoltField> {
     padded_trace_len: usize,
     bytecode_a: Vec<F>,
@@ -101,7 +102,7 @@ pub struct R1CSInputs<'a, F: JoltField> {
     instruction_flags_bits: Vec<F>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Allocative)]
 pub struct R1CSStepInputs<F: JoltField> {
     pub padded_trace_len: usize,
     pub input_pc: F,

@@ -13,13 +13,14 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::transcript::ProofTranscript;
 
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::interleave;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::iter::zip;
 use std::marker::PhantomData;
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct MultisetHashes<F: JoltField> {
     /// Multiset hash of "read" tuples
     pub read_hashes: Vec<F>,
@@ -40,7 +41,7 @@ impl<F: JoltField> MultisetHashes<F> {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct MemoryCheckingProof<F, C, Polynomials, ReadWriteOpenings, InitFinalOpenings>
 where
     F: JoltField,
@@ -67,6 +68,7 @@ where
 }
 
 // Empty struct to represent that no preprocessing data is used.
+#[derive(Allocative)]
 pub struct NoPreprocessing;
 
 pub trait MemoryCheckingProver<F, C, Polynomials>

@@ -2,18 +2,19 @@
 use crate::poly::field::JoltField;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use allocative::Allocative;
 use ark_serialize::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Allocative)]
 pub struct UniPoly<F> {
     coeffs: Vec<F>,
 }
 
 // ax^2 + bx + c stored as vec![c,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Allocative)]
 pub struct CompressedUniPoly<F: JoltField> {
     coeffs_except_linear_term: Vec<F>,
 }

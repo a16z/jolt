@@ -1,9 +1,11 @@
+use allocative::Allocative;
+
 use crate::poly::field::JoltField;
 use std::marker::PhantomData;
 
 use super::LassoSubtable;
 
-#[derive(Default)]
+#[derive(Default, Allocative)]
 pub struct SignExtendSubtable<F: JoltField, const WIDTH: usize> {
     _field: PhantomData<F>,
 }

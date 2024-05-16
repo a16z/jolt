@@ -1,6 +1,7 @@
 use std::cmp::max;
 
 use crate::poly::field::JoltField;
+use allocative::Allocative;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -9,7 +10,7 @@ use crate::utils::mul_0_1_optimized;
 use super::spartan::{IndexablePoly, SpartanError};
 
 /// A type that holds the shape of the R1CS matrices
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct R1CSShape<F: JoltField> {
     pub(crate) num_cons: usize,
     pub(crate) num_vars: usize,

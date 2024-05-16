@@ -9,6 +9,7 @@ use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use crate::utils::{compute_dotproduct, mul_0_1_optimized};
+use allocative::Allocative;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_integer::Roots;
@@ -17,7 +18,7 @@ use tracing::trace_span;
 
 use crate::msm::VariableBaseMSM;
 
-#[derive(Clone)]
+#[derive(Clone, Allocative)]
 pub struct HyraxScheme<G: CurveGroup> {
     marker: PhantomData<G>,
 }
@@ -145,12 +146,12 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
     }
 }
 
-#[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct HyraxGenerators<G: CurveGroup> {
     pub gens: PedersenGenerators<G>,
 }
 
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct HyraxCommitment<G: CurveGroup> {
     pub row_commitments: Vec<G>,
 }
@@ -221,7 +222,7 @@ impl<G: CurveGroup> AppendToTranscript for HyraxCommitment<G> {
     }
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct HyraxOpeningProof<G: CurveGroup> {
     pub vector_matrix_product: Vec<G::ScalarField>,
 }
@@ -318,7 +319,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxOpeningProof<G> {
     }
 }
 
-#[derive(Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Debug, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct BatchedHyraxOpeningProof<G: CurveGroup> {
     pub joint_proof: HyraxOpeningProof<G>,
     pub ratio: usize,
