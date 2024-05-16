@@ -220,9 +220,10 @@ pub struct ELFInstruction {
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
     pub imm: Option<u32>,
+    pub virtual_sequence_index: Option<usize>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 9;
+pub const NUM_CIRCUIT_FLAGS: usize = 11;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -231,12 +232,14 @@ impl ELFInstruction {
         // 0: first_operand == rs1 (1 if PC)
         // 1: second_operand == rs2 (1 if imm)
         // 2: Load instruction
-        // 3: Store instruciton
+        // 3: Store instruction
         // 4: Jump instruction
-        // 5: Branch instruciton
+        // 5: Branch instruction
         // 6: Instruction writes lookup output to rd
         // 7: Sign-bit of imm
-        // 8: Is concat (Note: used to be is_lui)
+        // 8: Is concat
+        // 9: Increment virtual PC
+        // 10: Assert instruction
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -325,6 +328,28 @@ impl ELFInstruction {
             | RV32IM::BGE
             | RV32IM::BLTU
             | RV32IM::BGEU,
+        );
+
+        // TODO(moodlezoup): Use these flags in R1CS constraints
+        flags[9] = match self.virtual_sequence_index {
+            // For virtual sequences, we set
+            //     virtual PC := ProgARW     (the bytecode `a` value)
+            // if it's the first instruction in the sequence.
+            // Otherwise, we increment the virtual PC:
+            //     virtual PC += 1
+            // This prevents a malicious prover from reordering or omitting
+            // instructions from the virtual sequence.
+            Some(i) => i > 0,
+            // For "real" instructions, we always set
+            //     virtual PC := ProgARW     (the bytecode `a` value)
+            None => false
+        };
+        flags[10] = matches!(self.opcode,
+            RV32IM::VIRTUAL_ASSERT_EQ     |
+            RV32IM::VIRTUAL_ASSERT_LTE    |
+            RV32IM::VIRTUAL_ASSERT_LTU    |
+            RV32IM::VIRTUAL_ASSERT_LT_ABS |
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
         );
 
         flags

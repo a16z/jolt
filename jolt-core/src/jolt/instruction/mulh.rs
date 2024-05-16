@@ -38,6 +38,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: None,
                 rd: v_sx,
                 imm: None,
+                virtual_sequence_index: Some(0),
             },
             register_state: RegisterState {
                 rs1_val: Some(x),
@@ -56,6 +57,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: None,
                 rd: v_sy,
                 imm: None,
+                virtual_sequence_index: Some(1),
             },
             register_state: RegisterState {
                 rs1_val: Some(y),
@@ -74,6 +76,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: r_y,
                 rd: v_0,
                 imm: None,
+                virtual_sequence_index: Some(2),
             },
             register_state: RegisterState {
                 rs1_val: Some(x),
@@ -92,6 +95,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: r_y,
                 rd: v_1,
                 imm: None,
+                virtual_sequence_index: Some(3),
             },
             register_state: RegisterState {
                 rs1_val: Some(s_x),
@@ -110,6 +114,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: r_x,
                 rd: v_2,
                 imm: None,
+                virtual_sequence_index: Some(4),
             },
             register_state: RegisterState {
                 rs1_val: Some(s_y),
@@ -128,6 +133,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: v_1,
                 rd: v_3,
                 imm: None,
+                virtual_sequence_index: Some(5),
             },
             register_state: RegisterState {
                 rs1_val: Some(xy_high_bits),
@@ -146,6 +152,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rs2: v_2,
                 rd: trace_row.instruction.rd,
                 imm: None,
+                virtual_sequence_index: Some(6),
             },
             register_state: RegisterState {
                 rs1_val: Some(partial_sum),

@@ -129,6 +129,14 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::LBU => Ok(SBInstruction(load_value(row)).into()),
             RV32IM::LHU => Ok(SHInstruction(load_value(row)).into()),
 
+            RV32IM::VIRTUAL_ADVICE => todo!(),
+            RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_EQ => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LTE => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LTU => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LT_ABS => todo!(),
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => todo!(),
+
             _ => Err("No corresponding RV32I instruction")
         }
     }
