@@ -1,4 +1,3 @@
-use crate::jolt::instruction::add::ADDInstruction;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
@@ -17,6 +16,7 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
+use crate::jolt::instruction::{add::ADDInstruction, movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
 use common::rv_trace::{ELFInstruction, MemoryState, RVTraceRow, RV32IM};
 
@@ -67,6 +67,14 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::LW => Ok(SWInstruction::default().into()),
             RV32IM::LBU => Ok(SBInstruction::default().into()),
             RV32IM::LHU => Ok(SHInstruction::default().into()),
+
+            RV32IM::VIRTUAL_ADVICE => todo!(),
+            RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_EQ => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LTE => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LTU => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LT_ABS => todo!(),
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => todo!(),
 
             _ => Err("No corresponding RV32I instruction")
         }

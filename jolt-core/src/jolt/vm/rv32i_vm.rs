@@ -10,10 +10,10 @@ use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
-    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction,
-    JoltInstructionSet, SubtableIndices,
+    movsign::MOVSIGNInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
+    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
+    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction,
+    JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -100,7 +100,8 @@ instruction_set!(
   SLTU: SLTUInstruction,
   SLL: SLLInstruction<WORD_SIZE>,
   SRA: SRAInstruction<WORD_SIZE>,
-  SRL: SRLInstruction<WORD_SIZE>
+  SRL: SRLInstruction<WORD_SIZE>,
+  MOVSIGN: MOVSIGNInstruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,

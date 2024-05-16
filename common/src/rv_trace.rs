@@ -12,21 +12,6 @@ pub struct RVTraceRow {
     pub memory_state: Option<MemoryState>,
 }
 
-impl RVTraceRow {
-    pub fn to_virtual(self) -> Vec<Self> {
-        match self.instruction.opcode {
-            // TODO: These M-extension instructions are replaced with virtual sequences
-            RV32IM::MULH => todo!(),
-            RV32IM::MULHSU => todo!(),
-            RV32IM::DIV => todo!(),
-            RV32IM::DIVU => todo!(),
-            RV32IM::REM => todo!(),
-            RV32IM::REMU => todo!(),
-            _ => vec![self],
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum MemoryOp {
     Read(u64),       // (address)
@@ -126,7 +111,9 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 | RV32IM::ORI
                 | RV32IM::XORI
                 | RV32IM::SLTI
-                | RV32IM::SLTIU => [
+                | RV32IM::SLTIU
+                | RV32IM::JALR
+                | RV32IM::VIRTUAL_MOVSIGN => [
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
@@ -161,15 +148,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     MemoryOp::Read(rs1_offset() + 1),
                     MemoryOp::Read(rs1_offset() + 2),
                     MemoryOp::Read(rs1_offset() + 3),
-                ],
-                RV32IM::JALR => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
                 ],
                 RV32IM::FENCE => [
                     MemoryOp::noop_read(),
@@ -436,6 +414,14 @@ pub enum RV32IM {
     REMU,
     FENCE,
     UNIMPL,
+    // Virtual instructions
+    VIRTUAL_MOVSIGN,
+    VIRTUAL_ADVICE,
+    VIRTUAL_ASSERT_LTU,
+    VIRTUAL_ASSERT_LTE,
+    VIRTUAL_ASSERT_LT_ABS,
+    VIRTUAL_ASSERT_EQ_SIGNS,
+    VIRTUAL_ASSERT_EQ,
 }
 
 impl FromStr for RV32IM {
@@ -512,24 +498,24 @@ impl RV32IM {
     #[rustfmt::skip] // keep matches pretty
     pub fn instruction_type(&self) -> RV32InstructionFormat {
         match self {
-            RV32IM::ADD   |
-            RV32IM::SUB   |
-            RV32IM::XOR   |
-            RV32IM::OR    |
-            RV32IM::AND   |
-            RV32IM::SLL   |
-            RV32IM::SRL   |
-            RV32IM::SRA   |
-            RV32IM::SLT   |
-            RV32IM::SLTU  |
-            RV32IM::MUL   |
-            RV32IM::MULH  |
+            RV32IM::ADD    |
+            RV32IM::SUB    |
+            RV32IM::XOR    |
+            RV32IM::OR     |
+            RV32IM::AND    |
+            RV32IM::SLL    |
+            RV32IM::SRL    |
+            RV32IM::SRA    |
+            RV32IM::SLT    |
+            RV32IM::SLTU   |
+            RV32IM::MUL    |
+            RV32IM::MULH   |
             RV32IM::MULHU  |
             RV32IM::MULHSU |
-            RV32IM::MULU  |
-            RV32IM::DIV   |
-            RV32IM::DIVU  |
-            RV32IM::REM   |
+            RV32IM::MULU   |
+            RV32IM::DIV    |
+            RV32IM::DIVU   |
+            RV32IM::REM    |
             RV32IM::REMU => RV32InstructionFormat::R,
 
             RV32IM::ADDI  |
@@ -541,7 +527,8 @@ impl RV32IM {
             RV32IM::SRAI  |
             RV32IM::SLTI  |
             RV32IM::FENCE |
-            RV32IM::SLTIU => RV32InstructionFormat::I,
+            RV32IM::SLTIU |
+            RV32IM::VIRTUAL_MOVSIGN=> RV32InstructionFormat::I,
 
             RV32IM::LB  |
             RV32IM::LH  |
@@ -559,14 +546,20 @@ impl RV32IM {
             RV32IM::BLT  |
             RV32IM::BGE  |
             RV32IM::BLTU |
-            RV32IM::BGEU => RV32InstructionFormat::SB,
+            RV32IM::BGEU |
+            RV32IM::VIRTUAL_ASSERT_EQ     |
+            RV32IM::VIRTUAL_ASSERT_LTE    |
+            RV32IM::VIRTUAL_ASSERT_LTU    |
+            RV32IM::VIRTUAL_ASSERT_LT_ABS |
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => RV32InstructionFormat::SB,
 
-            RV32IM::LUI |
-            RV32IM::AUIPC => RV32InstructionFormat::U,
+            RV32IM::LUI   |
+            RV32IM::AUIPC |
+            RV32IM::VIRTUAL_ADVICE=> RV32InstructionFormat::U,
 
             RV32IM::JAL => RV32InstructionFormat::UJ,
 
-            RV32IM::ECALL |
+            RV32IM::ECALL  |
             RV32IM::EBREAK |
             RV32IM::UNIMPL => unimplemented!(),
         }

@@ -22,7 +22,10 @@ use strum::EnumCount;
 use tracer::ELFInstruction;
 
 use crate::{
-    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
+    jolt::{
+        instruction::{mulh::MULHInstruction, VirtualInstructionSequence},
+        vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
+    },
     poly::field::JoltField,
     utils::thread::unsafe_allocate_zero_vec,
 };
@@ -165,7 +168,15 @@ impl Program {
 
         let trace: Vec<_> = raw_trace
             .into_par_iter()
-            .flat_map(|row| row.to_virtual())
+            .flat_map(|row| match row.instruction.opcode {
+                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(row),
+                tracer::RV32IM::MULHSU => todo!(),
+                tracer::RV32IM::DIV => todo!(),
+                tracer::RV32IM::DIVU => todo!(),
+                tracer::RV32IM::REM => todo!(),
+                tracer::RV32IM::REMU => todo!(),
+                _ => vec![row],
+            })
             .map(|row| {
                 let instruction_lookup = if let Ok(jolt_instruction) = RV32I::try_from(&row) {
                     Some(jolt_instruction)
