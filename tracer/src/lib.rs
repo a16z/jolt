@@ -103,7 +103,6 @@ pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
                 instructions.push(ELFInstruction {
                     address,
                     opcode: RV32IM::UNIMPL,
-                    raw: word,
                     rs1: None,
                     rs2: None,
                     rd: None,

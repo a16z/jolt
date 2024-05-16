@@ -34,7 +34,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_MOVSIGN,
-                raw: 0, // TODO: delete this field?
                 rs1: r_x,
                 rs2: None,
                 rd: v_sx,
@@ -53,7 +52,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_MOVSIGN,
-                raw: 0,
                 rs1: r_y,
                 rs2: None,
                 rd: v_sy,
@@ -72,7 +70,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULHU,
-                raw: 0,
                 rs1: r_x,
                 rs2: r_y,
                 rd: v_0,
@@ -91,7 +88,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULU,
-                raw: 0,
                 rs1: v_sx,
                 rs2: r_y,
                 rd: v_1,
@@ -110,7 +106,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULU,
-                raw: 0,
                 rs1: v_sy,
                 rs2: r_x,
                 rd: v_2,
@@ -129,7 +124,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::ADD,
-                raw: 0,
                 rs1: v_0,
                 rs2: v_1,
                 rd: v_3,
@@ -148,7 +142,6 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::ADD,
-                raw: 0,
                 rs1: v_3,
                 rs2: v_2,
                 rd: trace_row.instruction.rd,

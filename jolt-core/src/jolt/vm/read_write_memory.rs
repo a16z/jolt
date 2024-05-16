@@ -28,30 +28,10 @@ use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION,
     RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
-use common::rv_trace::{ELFInstruction, JoltDevice, MemoryLayout, MemoryOp, RV32IM};
-use common::to_ram_address;
+use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
 use super::JoltTraceStep;
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
-
-pub trait RandomInstruction {
-    fn random(index: usize, rng: &mut StdRng) -> Self;
-}
-
-impl RandomInstruction for ELFInstruction {
-    fn random(index: usize, rng: &mut StdRng) -> Self {
-        Self {
-            address: to_ram_address(index) as u64,
-            raw: rng.next_u32(),
-            // Only `address` and `raw` are used in ReadWriteMemory; the rest don't matter
-            opcode: RV32IM::ADD,
-            rs1: None,
-            rs2: None,
-            rd: None,
-            imm: None,
-        }
-    }
-}
 
 pub fn random_memory_trace<F: JoltField>(
     memory_init: &Vec<(u64, u8)>,

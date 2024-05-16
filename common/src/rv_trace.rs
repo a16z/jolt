@@ -216,7 +216,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
 pub struct ELFInstruction {
     pub address: u64,
     pub opcode: RV32IM,
-    pub raw: u32,
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
@@ -363,6 +362,7 @@ impl RVTraceRow {
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize, Hash)]
 #[repr(u8)]
+#[allow(non_camel_case_types)]
 pub enum RV32IM {
     ADD,
     SUB,
