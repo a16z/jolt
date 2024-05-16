@@ -541,12 +541,9 @@ impl Mmu {
 
     fn trace_store(&mut self, effective_address: u64, value: u64) {
         if effective_address < DRAM_BASE {
-            if self.jolt_device.is_output(effective_address) {
-                self.tracer.push_memory(MemoryState::Write {
-                    address: effective_address,
-                    post_value: value,
-                });
-            } else if self.jolt_device.is_panic(effective_address) {
+            if self.jolt_device.is_output(effective_address)
+                || self.jolt_device.is_panic(effective_address)
+            {
                 self.tracer.push_memory(MemoryState::Write {
                     address: effective_address,
                     post_value: value,

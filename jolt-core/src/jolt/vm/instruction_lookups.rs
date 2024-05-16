@@ -936,7 +936,7 @@ where
                 for (j, op) in ops.iter().enumerate() {
                     if let Some(instr) = &op.instruction_lookup {
                         let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(&instr)];
+                            [InstructionSet::enum_index(instr)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = access_sequence[j];
                             debug_assert!(memory_address < M);
@@ -985,7 +985,7 @@ where
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
             if let Some(instr) = &op.instruction_lookup {
-                instruction_flag_bitvectors[InstructionSet::enum_index(&instr)][j] = 1;
+                instruction_flag_bitvectors[InstructionSet::enum_index(instr)][j] = 1;
             }
         }
 
