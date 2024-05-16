@@ -174,7 +174,7 @@ where
         Ok((proof.into_affine(), evaluation))
     }
 
-    fn verify(
+    fn _verify(
         vk: impl Borrow<KZGVerifierKey<P>>,
         commitment: &KZGCommitment<P>,
         point: &P::ScalarField,
@@ -228,7 +228,7 @@ mod tests {
             let point = Fr::rand(rng);
             let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
-                UnivariateKZG::<Bn254>::verify(&vk, &comm, &point, &proof, &value)?,
+                UnivariateKZG::<Bn254>::_verify(&vk, &comm, &point, &proof, &value)?,
                 "proof was incorrect for max_degree = {}, polynomial_degree = {}",
                 degree,
                 p.degree(),

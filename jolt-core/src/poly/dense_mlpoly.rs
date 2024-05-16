@@ -8,7 +8,7 @@ use crate::utils::math::Math;
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
-use std::ops::AddAssign;
+use std::ops::{AddAssign, Mul};
 
 #[derive(Debug, PartialEq)]
 pub struct DensePolynomial<F> {
@@ -275,9 +275,11 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
-        Self::new(std::iter::from_fn(|| Some(F::random(&mut rng))).take(1 << num_vars).collect())
-
-
+        Self::new(
+            std::iter::from_fn(|| Some(F::random(&mut rng)))
+                .take(1 << num_vars)
+                .collect(),
+        )
     }
 }
 
@@ -312,6 +314,19 @@ impl<F: JoltField> AddAssign<&DensePolynomial<F>> for DensePolynomial<F> {
             num_vars: self.num_vars,
             len: self.len,
             Z: summed_evaluations,
+        }
+    }
+}
+
+impl<F: JoltField> Mul<F> for DensePolynomial<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: F) -> Self::Output {
+        let evals: Vec<F> = self.Z.iter().map(|a| *a * rhs).collect();
+        Self {
+            num_vars: self.num_vars,
+            len: self.len,
+            Z: evals,
         }
     }
 }
