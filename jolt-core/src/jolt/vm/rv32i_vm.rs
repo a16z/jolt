@@ -10,7 +10,8 @@ use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    movsign::MOVSIGNInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
+    movsign::MOVSIGNInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+    mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
     sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
     srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction,
     JoltInstruction, JoltInstructionSet, SubtableIndices,
@@ -101,7 +102,10 @@ instruction_set!(
   SLL: SLLInstruction<WORD_SIZE>,
   SRA: SRAInstruction<WORD_SIZE>,
   SRL: SRLInstruction<WORD_SIZE>,
-  MOVSIGN: MOVSIGNInstruction<WORD_SIZE>
+  MOVSIGN: MOVSIGNInstruction<WORD_SIZE>,
+  MUL: MULInstruction<WORD_SIZE>,
+  MULU: MULUInstruction<WORD_SIZE>,
+  MULHU: MULHUInstruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
