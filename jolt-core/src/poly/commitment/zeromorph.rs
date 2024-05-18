@@ -240,15 +240,13 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
     pub tau_N_max_sub_2_N: P::G2Affine,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P>
-where
-    Self: CurveGroup,
 {
     fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_point(b"poly_commitment_share", self);
+        transcript.append_point(b"poly_commitment_share", &self.0.into_group());
     }
 }
 
@@ -284,8 +282,8 @@ where
             let quotient_iter = quotient.iter_mut();
 
             quotient_iter
-                .zip_eq(&*remainder_lo)
-                .zip_eq(&*remainder_hi)
+                .zip(&*remainder_lo)
+                .zip(&*remainder_hi)
                 .for_each(|((q, r_lo), r_hi)| {
                     *q = *r_hi - *r_lo;
                 });
@@ -296,7 +294,7 @@ where
             #[cfg(not(feature = "multicore"))]
             let remainder_lo_iter = remainder_lo.iter_mut();
             remainder_lo_iter
-                .zip_eq(remainder_hi)
+                .zip(remainder_hi)
                 .for_each(|(r_lo, r_hi)| {
                     *r_lo += (*r_hi - r_lo as &_) * x_i;
                 });
@@ -390,11 +388,11 @@ where
 
     let q_scalars = iter::successors(Some(P::ScalarField::one()), |acc| Some(*acc * y_challenge))
         .take(num_vars)
-        .zip_eq(offsets_of_x)
+        .zip(offsets_of_x)
         .zip(squares_of_x)
         .zip(&vs)
-        .zip_eq(&vs[1..])
-        .zip_eq(challenges.iter().rev())
+        .zip(&vs[1..])
+        .zip(challenges.iter().rev())
         .map(
             |(((((power_of_y, offset_of_x), square_of_x), v_i), v_j), u_i)| {
                 (
@@ -421,9 +419,6 @@ where
     pub fn protocol_name() -> &'static [u8] {
         b"Zeromorph"
     }
-
-    //IDEAS;
-    // - extra sampling from transcript??? -> no adding randomness has to due with information leakage not verification
 
     pub fn commit(
         pp: &ZeromorphProverKey<P>,
@@ -532,7 +527,7 @@ where
     // evals[0..m]
     fn batch_open(
         pk: &ZeromorphProverKey<P>,
-        polynomials: &[DensePolynomial<P::ScalarField>],
+        polynomials: &[&DensePolynomial<P::ScalarField>],
         point: &[P::ScalarField],
         evals: &[P::ScalarField],
         transcript: &mut ProofTranscript,
@@ -561,17 +556,17 @@ where
 
     fn batch_verify(
         vk: &ZeromorphVerifierKey<P>,
-        commitments: &[ZeromorphCommitment<P>],
+        commitments: &[&ZeromorphCommitment<P>],
         point: &[P::ScalarField],
         evals: &[P::ScalarField],
         batch_proof: &ZeromorphProof<P>,
         transcript: &mut ProofTranscript,
-    ) -> Result<bool, ProofVerifyError> {
+    ) -> Result<(), ProofVerifyError> {
         // Compute batching of unshifted polynomials f_i:
         // Compute powers of batching challenge rho
         let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
         let mut scalar = P::ScalarField::one();
-        let (batched_eval, batched_commitment) = evals.iter().zip_eq(commitments.iter()).fold(
+        let (batched_eval, batched_commitment) = evals.iter().zip(commitments.iter()).fold(
             (P::ScalarField::zero(), P::G1::zero()),
             |(mut batched_evaluation, mut batched_commitment), (opening, commitment)| {
                 batched_evaluation += scalar * opening;
@@ -598,7 +593,7 @@ where
         eval: &P::ScalarField,
         proof: &ZeromorphProof<P>,
         transcript: &mut ProofTranscript,
-    ) -> Result<bool, ProofVerifyError> {
+    ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
 
         // Receive commitments [q_k]
@@ -630,7 +625,7 @@ where
         ) = eval_and_quotient_scalars::<P>(y_challenge, x_challenge, z_challenge, point);
         q_scalars
             .iter_mut()
-            .zip_eq(zmpoly_q_scalars)
+            .zip(zmpoly_q_scalars)
             .for_each(|(scalar, zm_poly_q_scalar)| {
                 *scalar += zm_poly_q_scalar;
             });
@@ -656,20 +651,17 @@ where
                 (vk.kzg_vk.beta_g2.into_group() - (vk.kzg_vk.g2 * x_challenge)).into(),
             ],
         );
-        Ok(pairing.is_zero())
+        if pairing.is_zero() {
+            Ok(())
+        } else {
+            Err(ProofVerifyError::InternalError)
+        }
     }
 }
 
-//TODO: have setup be a dummy if lazy_static isn't in use -> just pass in lazy static and select needed keys from for portions it is needed.
-//TODO: find commitments in interface
-//TODO: test batched commitments outside interface first thing tomorrow.
-//TODO: implement multilinear poly * scalar
-
-/*
 impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
     <P as Pairing>::ScalarField: poly::field::JoltField,
-    ZeromorphCommitment<P>: CurveGroup,
 {
     type Field = P::ScalarField;
     type Setup = (ZeromorphProverKey<P>, ZeromorphVerifierKey<P>);
@@ -678,11 +670,17 @@ where
     type BatchedProof = ZeromorphProof<P>;
 
     fn setup(_shapes: &[CommitShape]) -> Self::Setup {
-        todo!()
+        ZeromorphSRS(Arc::new(SRS::setup(
+            &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
+            65536 + 1
+        ))).trim(65536)
     }
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
-        assert!(setup.0.commit_pp.g1_powers().len() < poly.Z.len());
+        assert!(
+            setup.0.commit_pp.g1_powers().len() > poly.Z.len(),
+            "COMMIT KEY LENGTH ERROR {}, {}", setup.0.commit_pp.g1_powers().len(), poly.Z.len()
+    );
         ZeromorphCommitment(
             UVKZGPCS::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
         )
@@ -701,8 +699,8 @@ where
         iter.enumerate()
             .map(|(i, evals)| {
                 assert!(
-                    gens.0.commit_pp.g1_powers().len() < evals.len(),
-                    "COMMIT KEY LENGTH ERROR"
+                    gens.0.commit_pp.g1_powers().len() > evals.len(),
+                    "COMMIT KEY LENGTH ERROR {}, {}", gens.0.commit_pp.g1_powers().len(), evals.len()
                 );
                 ZeromorphCommitment(
                     UVKZGPCS::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
@@ -722,13 +720,12 @@ where
         setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
-        commitment: &Self::Commitment,
-        eval: &Self::Field,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
+        //TODO: setup
+        let eval = poly.evaluate(&opening_point);
         Zeromorph::<P>::open(
             &setup.0,
-            &commitment,
             &poly,
             &opening_point,
             &eval,
@@ -738,39 +735,21 @@ where
     }
 
     fn batch_prove(
+        setup: &Self::Setup,
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
         batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
-        let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
-        let mut scalar = P::ScalarField::one();
-        // Compute batching of unshifted polynomials f_i:
-        let mut scalar = P::ScalarField::one();
-        let (f_batched, batched_evaluation) = (0..polynomials.len()).fold(
-            (
-                DensePolynomial::new(vec![P::ScalarField::zero(); n]),
-                P::ScalarField::zero(),
-            ),
-            |(mut f_batched, mut batched_evaluation), i| {
-                f_batched += polynomials[i].clone() * scalar;
-                batched_evaluation += scalar * openings[i];
-                scalar *= rho;
-                (f_batched, batched_evaluation)
-            },
-        );
-        let mut pi_poly = UniPoly::from_coeff(f_batched.Z.clone());
-        Zeromorph::<P>::open(
+        //TODO: setup
+        Zeromorph::<P>::batch_open(
             &setup.0,
-            &commitment,
-            &pi_poly,
+            polynomials,
             &opening_point,
-            &batched_evaluation,
+            &openings,
             transcript,
         )
-        .unwrap()
     }
 
     fn verify(
@@ -799,25 +778,11 @@ where
         commitments: &[&Self::Commitment],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        // Compute batching of unshifted polynomials f_i:
-        // Compute powers of batching challenge rho
-        let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
-        let mut scalar = P::ScalarField::one();
-        let (batched_opening, batched_commitment) =
-            openings.iter().zip_eq(commitments.iter()).fold(
-                (P::ScalarField::zero(), P::G1::zero()),
-                |(mut batched_evaluation, mut batched_commitment), (opening, commitment)| {
-                    batched_evaluation += scalar * opening;
-                    batched_commitment += commitment.0 * scalar;
-                    scalar *= rho;
-                    (batched_evaluation, batched_commitment)
-                },
-            );
-        Zeromorph::<P>::verify(
+        Zeromorph::<P>::batch_verify(
             &setup.1,
-            &ZeromorphCommitment(batched_commitment.into_affine()),
-            &opening_point,
-            &batched_opening,
+            commitments,
+            opening_point,
+            openings,
             &batch_proof,
             transcript,
         )
@@ -827,7 +792,6 @@ where
         b"zeromorph"
     }
 }
-*/
 
 #[cfg(test)]
 mod test {
@@ -850,62 +814,6 @@ mod test {
                 acc
             })
     }
-
-    /*
-    #[test]
-    fn prove_verify_batched() {
-      let max_vars = 16;
-      let mut rng = test_rng();
-      let num_polys = 8;
-      let srs = ZEROMORPH_SRS.lock().unwrap();
-
-      for num_vars in 3..max_vars {
-        // Setup
-        let (pk, vk) = {
-          let poly_size = 1 << (num_vars + 1);
-          srs.trim(poly_size - 1).unwrap()
-        };
-        let polys: Vec<DensePolynomial<Fr>> = (0..num_polys)
-          .map(|_| {
-            DensePolynomial::new(
-              (0..(1 << num_vars))
-                .map(|_| Fr::rand(&mut rng))
-                .collect::<Vec<_>>(),
-            )
-          })
-          .collect::<Vec<_>>();
-        let challenges = (0..num_vars)
-          .into_iter()
-          .map(|_| Fr::rand(&mut rng))
-          .collect::<Vec<_>>();
-        let evals = polys
-          .clone()
-          .into_iter()
-          .map(|poly| poly.evaluate(&challenges))
-          .collect::<Vec<_>>();
-
-        // Commit and open
-        let commitments = Zeromorph::<Bn254>::commit(&polys, &pk.g1_powers).unwrap();
-
-        let mut prover_transcript = Transcript::new(b"example");
-        let proof =
-          Zeromorph::<Bn254>::prove(&polys, &evals, &challenges, &pk, &mut prover_transcript).unwrap();
-
-        let mut verifier_transcript = Transcript::new(b"example");
-        Zeromorph::<Bn254>::verify(
-          &commitments,
-          &evals,
-          &challenges,
-          &vk,
-          &mut verifier_transcript,
-          proof,
-        )
-        .unwrap();
-
-        //TODO: check both random oracles are synced
-      }
-    }
-    */
 
     /// Test for computing qk given multilinear f
     /// Given 𝑓(𝑋₀, …, 𝑋ₙ₋₁), and `(𝑢, 𝑣)` such that \f(\u) = \v, compute `qₖ(𝑋₀, …, 𝑋ₖ₋₁)`
@@ -1234,15 +1142,14 @@ mod test {
                 .collect::<Vec<_>>();
             let altered_verifier_eval = poly.evaluate(&altered_verifier_point);
             let mut verifier_transcript = ProofTranscript::new(b"TestEval");
-            assert!(!Zeromorph::<Bn254>::verify(
+            assert!(Zeromorph::<Bn254>::verify(
                 &vk,
                 &commitment,
                 &altered_verifier_point,
                 &altered_verifier_eval,
                 &proof,
                 &mut verifier_transcript,
-            )
-            .unwrap());
+            ).is_err())
         }
     }
 
@@ -1252,9 +1159,9 @@ mod test {
             for num_vars in [4, 5, 6] {
                 let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(num_vars as u64);
 
-                let polys: Vec<DensePolynomial<Fr>> = (0..num_polys)
+                let polys: Vec<_> = (0..num_polys)
                     .map(|_| DensePolynomial::random(num_vars, &mut rng))
-                    .collect();
+                    .collect::<Vec<_>>();
                 let point: Vec<Fr> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
                 let evals: Vec<Fr> = polys.iter().map(|poly| poly.evaluate(&point)).collect();
 
@@ -1265,10 +1172,13 @@ mod test {
                     .map(|poly| Zeromorph::<Bn254>::commit(&pk, &poly).unwrap())
                     .collect();
 
+                let commitments_refs: Vec<_> = commitments.iter().map(|x| x).collect();
+                let polys_refs: Vec<_> = polys.iter().map(|x| x).collect();
+
                 let mut prover_transcript = ProofTranscript::new(b"TestEval");
                 let proof = Zeromorph::<Bn254>::batch_open(
                     &pk,
-                    &polys,
+                    &polys_refs,
                     &point,
                     &evals,
                     &mut prover_transcript,
@@ -1280,7 +1190,7 @@ mod test {
                 let mut verifier_transcript = ProofTranscript::new(b"TestEval");
                 Zeromorph::<Bn254>::batch_verify(
                     &vk,
-                    &commitments,
+                    &commitments_refs,
                     &point,
                     &evals,
                     &proof,
@@ -1302,14 +1212,14 @@ mod test {
                     .map(|poly| poly.evaluate(&altered_verifier_point))
                     .collect();
                 let mut verifier_transcript = ProofTranscript::new(b"TestEval");
-                assert!(!Zeromorph::<Bn254>::batch_verify(
+                assert!(Zeromorph::<Bn254>::batch_verify(
                     &vk,
-                    &commitments,
+                    &commitments_refs,
                     &altered_verifier_point,
                     &altered_verifier_evals,
                     &proof,
                     &mut verifier_transcript,
-                ).unwrap());
+                ).is_err())
             }
         }
     }

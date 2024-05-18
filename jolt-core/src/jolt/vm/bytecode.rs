@@ -624,6 +624,7 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeReadWriteOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &BytecodePolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
@@ -634,6 +635,7 @@ where
         combined_openings.extend(openings.v_read_write_openings.iter());
 
         C::batch_prove(
+            generators,
             &[
                 &polynomials.a_read_write,
                 &polynomials.t_read,
@@ -705,12 +707,13 @@ where
 
     #[tracing::instrument(skip_all, name = "BytecodeInitFinalOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &BytecodePolynomials<F, C>,
         opening_point: &[F],
         _openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        C::prove(&polynomials.t_final, opening_point, transcript)
+        C::prove(generators, &polynomials.t_final, opening_point, transcript)
     }
 
     fn compute_verifier_openings(
@@ -859,7 +862,7 @@ mod tests {
 
         let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
         let commitments = polys.commit(&generators);
-        let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(&generators, &preprocessing, &polys, &mut transcript);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(
@@ -921,7 +924,7 @@ mod tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
-        let proof = BytecodeProof::prove_memory_checking(&preprocessing, &polys, &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(&generators, &preprocessing, &polys, &mut transcript);
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(

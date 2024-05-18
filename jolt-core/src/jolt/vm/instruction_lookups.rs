@@ -146,6 +146,7 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
@@ -165,6 +166,7 @@ where
         primary_sumcheck_openings.push(openings.lookup_outputs_opening);
 
         C::batch_prove(
+            generators,
             &primary_sumcheck_polys,
             opening_point,
             &primary_sumcheck_openings,
@@ -262,6 +264,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
@@ -284,6 +287,7 @@ where
         .concat();
 
         C::batch_prove(
+            generators,
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -364,12 +368,14 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         C::batch_prove(
+            generators,
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
@@ -802,6 +808,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
     pub fn prove(
+        generators: &CS::Setup,
         polynomials: &InstructionPolynomials<F, CS>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
         transcript: &mut ProofTranscript,
@@ -835,6 +842,7 @@ where
             lookup_outputs_opening: outputs_eval,
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            generators,
             polynomials,
             &r_primary_sumcheck,
             &sumcheck_openings,
@@ -848,7 +856,7 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = Self::prove_memory_checking(preprocessing, polynomials, transcript);
+        let memory_checking = Self::prove_memory_checking(generators, preprocessing, polynomials, transcript);
 
         InstructionLookupsProof {
             _instructions: PhantomData,
