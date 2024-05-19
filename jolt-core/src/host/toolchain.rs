@@ -25,6 +25,7 @@ pub fn install_toolchain() -> Result<()> {
     let toolchain_url = toolchain_url();
 
     let rt = Runtime::new().unwrap();
+    println!("Downloading toolchain (retrying up to {DOWNLOAD_RETRIES} times)");
     rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
         download_toolchain(&client, &toolchain_url)
     }))?;
@@ -40,6 +41,7 @@ async fn retry_times<F, T, E>(times: usize, base_ms: u64, f: F) -> Result<T>
         E: Future<Output=Result<T>>,
 {
     for i in 0..times {
+        println!("Attempt {}/{}", i + 1, times);
         match f().await {
             Ok(t) => return Ok(t),
             Err(e) => {
