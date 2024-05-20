@@ -25,7 +25,6 @@ pub fn install_toolchain() -> Result<()> {
     let toolchain_url = toolchain_url();
 
     let rt = Runtime::new().unwrap();
-    println!("Downloading toolchain (retrying up to {DOWNLOAD_RETRIES} times)");
     rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
         download_toolchain(&client, &toolchain_url)
     }))?;
@@ -46,7 +45,7 @@ where
             Ok(t) => return Ok(t),
             Err(e) => {
                 let timeout = delay_timeout(i, base_ms);
-                println!("Error: {}. Retrying in {}ms", e, timeout);
+                println!("Toolchain download error {i}/{times}: {e}. Retrying in {timeout}ms");
                 tokio::time::sleep(std::time::Duration::from_millis(timeout)).await;
             }
         }
