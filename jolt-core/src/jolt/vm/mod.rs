@@ -62,25 +62,26 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
+    fn no_op() -> Self {
+        JoltTraceStep {
+            instruction_lookup: None,
+            bytecode_row: BytecodeRow::no_op(0),
+            memory_ops: [
+                MemoryOp::noop_read(),  // rs1
+                MemoryOp::noop_read(),  // rs2
+                MemoryOp::noop_write(), // rd is write-only
+                MemoryOp::noop_read(),  // RAM byte 1
+                MemoryOp::noop_read(),  // RAM byte 2
+                MemoryOp::noop_read(),  // RAM byte 3
+                MemoryOp::noop_read(),  // RAM byte 4
+            ],
+        }
+    }
+
     fn pad(trace: &mut Vec<Self>) {
         let unpadded_length = trace.len();
         let padded_length = unpadded_length.next_power_of_two();
-        trace.resize(
-            padded_length,
-            JoltTraceStep {
-                instruction_lookup: None,
-                bytecode_row: BytecodeRow::no_op(0),
-                memory_ops: [
-                    MemoryOp::noop_read(),  // rs1
-                    MemoryOp::noop_read(),  // rs2
-                    MemoryOp::noop_write(), // rd is write-only
-                    MemoryOp::noop_read(),  // RAM byte 1
-                    MemoryOp::noop_read(),  // RAM byte 2
-                    MemoryOp::noop_read(),  // RAM byte 3
-                    MemoryOp::noop_read(),  // RAM byte 4
-                ],
-            },
-        );
+        trace.resize(padded_length, Self::no_op());
     }
 }
 

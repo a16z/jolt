@@ -201,7 +201,7 @@ impl Program {
             .for_each(|(flag_index, chunk)| {
                 chunk.iter_mut().zip(trace.iter()).for_each(|(flag, row)| {
                     let packed_circuit_flags = row.bytecode_row.bitflags >> RV32I::COUNT;
-                    // if circuit_flags[flag_index] {
+                    // Check if the flag is set in the packed representation
                     if (packed_circuit_flags >> (NUM_CIRCUIT_FLAGS - flag_index - 1)) & 1 != 0 {
                         *flag = F::one();
                     }

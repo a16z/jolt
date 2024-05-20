@@ -1,3 +1,4 @@
+use common::constants::virtual_register_index;
 use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
@@ -18,12 +19,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
         let r_x = trace_row.instruction.rs1;
         let r_y = trace_row.instruction.rs2;
         // Virtual registers used in sequence
-        let v_sx = Some(32);
-        let v_sy = Some(33);
-        let v_0 = Some(34);
-        let v_1 = Some(35);
-        let v_2 = Some(36);
-        let v_3 = Some(37);
+        let v_sx = Some(virtual_register_index(0));
+        let v_sy = Some(virtual_register_index(1));
+        let v_0 = Some(virtual_register_index(2));
+        let v_1 = Some(virtual_register_index(3));
+        let v_2 = Some(virtual_register_index(4));
+        let v_3 = Some(virtual_register_index(5));
 
         let mut virtual_sequence = vec![];
 
@@ -174,7 +175,7 @@ mod test {
     use super::*;
 
     #[test]
-    // TODO: Turn this into a macro, similar to the `jolt_instruction_test` macro
+    // TODO(moodlezoup): Turn this into a macro, similar to the `jolt_instruction_test` macro
     fn mulh_virtual_sequence_32() {
         let mut rng = test_rng();
 

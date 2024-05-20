@@ -220,6 +220,8 @@ pub struct ELFInstruction {
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
     pub imm: Option<u32>,
+    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// Jolt paper), then this contains the instruction's index within the sequence.
     pub virtual_sequence_index: Option<usize>,
 }
 

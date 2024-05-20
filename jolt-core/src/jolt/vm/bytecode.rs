@@ -401,7 +401,7 @@ where
     type ReadWriteOpenings = BytecodeReadWriteOpenings<F>;
     type InitFinalOpenings = BytecodeInitFinalOpenings<F>;
 
-    // [a, address, opcode, rd, rs1, rs2, imm, t]
+    // [virtual_address, elf_address, opcode, rd, rs1, rs2, imm, t]
     type MemoryTuple = [F; 8];
 
     fn fingerprint(inputs: &Self::MemoryTuple, gamma: &F, tau: &F) -> F {
