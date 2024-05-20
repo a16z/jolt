@@ -1843,11 +1843,11 @@ fn trace_r(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        raw: word,
         imm: None,
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: Some(normalize_register(f.rd)),
+        virtual_sequence_index: None,
     }
 }
 
@@ -1856,11 +1856,11 @@ fn trace_i(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        raw: word,
         imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: None,
         rd: Some(normalize_register(f.rd)),
+        virtual_sequence_index: None,
     }
 }
 
@@ -1869,11 +1869,11 @@ fn trace_s(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        raw: word,
         imm: Some(normalize_is_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
+        virtual_sequence_index: None,
     }
 }
 
@@ -1882,11 +1882,11 @@ fn trace_b(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        raw: word,
         imm: Some(normalize_b_imm(f.imm)),
         rs1: Some(normalize_register(f.rs1)),
         rs2: Some(normalize_register(f.rs2)),
         rd: None,
+        virtual_sequence_index: None,
     }
 }
 
@@ -1895,11 +1895,11 @@ fn trace_u(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        raw: word,
         imm: Some(normalize_u_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
+        virtual_sequence_index: None,
     }
 }
 
@@ -1909,11 +1909,11 @@ fn trace_j(inst: &Instruction, xlen: &Xlen, word: u32, address: u64) -> ELFInstr
     ELFInstruction {
         opcode: RV32IM::from_str(inst.name).unwrap(),
         address: normalize_u64(address, xlen),
-        raw: word,
         imm: Some(normalize_j_imm(f.imm)),
         rs1: None,
         rs2: None,
         rd: Some(normalize_register(f.rd)),
+        virtual_sequence_index: None,
     }
 }
 

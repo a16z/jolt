@@ -4,11 +4,9 @@ use serde::{Deserialize, Serialize};
 use tracer::{ELFInstruction, JoltDevice, RVTraceRow, RV32IM};
 
 use crate::{
-    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+    jolt::vm::{rv32i_vm::RV32I, JoltTraceStep},
     poly::field::JoltField,
 };
-
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::MemoryOp};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProgramSummary {
@@ -18,15 +16,13 @@ pub struct ProgramSummary {
     pub memory_init: Vec<(u64, u8)>,
 
     pub io_device: JoltDevice,
-    pub bytecode_trace: Vec<BytecodeRow>,
-    pub instruction_trace: Vec<Option<RV32I>>,
-    pub memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
+    pub processed_trace: Vec<JoltTraceStep<RV32I>>,
     pub circuit_flags: Vec<bool>,
 }
 
 impl ProgramSummary {
     pub fn trace_len(&self) -> usize {
-        self.memory_trace.len()
+        self.processed_trace.len()
     }
 
     pub fn analyze<F: JoltField>(&self) -> Vec<(RV32IM, usize)> {

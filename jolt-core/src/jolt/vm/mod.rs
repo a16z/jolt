@@ -5,6 +5,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use strum::EnumCount;
 
 use crate::jolt::vm::timestamp_range_check::RangeCheckPolynomials;
@@ -51,6 +52,37 @@ where
     pub instruction_lookups: InstructionLookupsPreprocessing<F>,
     pub bytecode: BytecodePreprocessing<F>,
     pub read_write_memory: ReadWriteMemoryPreprocessing,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
+    pub instruction_lookup: Option<InstructionSet>,
+    pub bytecode_row: BytecodeRow,
+    pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
+}
+
+impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
+    fn no_op() -> Self {
+        JoltTraceStep {
+            instruction_lookup: None,
+            bytecode_row: BytecodeRow::no_op(0),
+            memory_ops: [
+                MemoryOp::noop_read(),  // rs1
+                MemoryOp::noop_read(),  // rs2
+                MemoryOp::noop_write(), // rd is write-only
+                MemoryOp::noop_read(),  // RAM byte 1
+                MemoryOp::noop_read(),  // RAM byte 2
+                MemoryOp::noop_read(),  // RAM byte 3
+                MemoryOp::noop_read(),  // RAM byte 4
+            ],
+        }
+    }
+
+    fn pad(trace: &mut Vec<Self>) {
+        let unpadded_length = trace.len();
+        let padded_length = unpadded_length.next_power_of_two();
+        trace.resize(padded_length, Self::no_op());
+    }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -122,6 +154,7 @@ where
             &self.bytecode.v_read_write[2],
             &self.bytecode.v_read_write[3],
             &self.bytecode.v_read_write[4],
+            &self.bytecode.v_read_write[5],
         ];
         let num_bytecode_trace_polys = bytecode_trace_polys.len();
 
@@ -277,18 +310,18 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     #[tracing::instrument(skip_all, name = "Jolt::prove")]
     fn prove(
         program_io: JoltDevice,
-        bytecode_trace: Vec<BytecodeRow>,
-        memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
-        instructions: Vec<Option<Self::InstructionSet>>,
+        mut trace: Vec<JoltTraceStep<Self::InstructionSet>>,
         circuit_flags: Vec<F>,
         preprocessing: JoltPreprocessing<F, PCS>,
     ) -> (
         JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
         JoltCommitments<PCS>,
     ) {
-        let trace_length = instructions.len();
+        let trace_length = trace.len();
         let padded_trace_length = trace_length.next_power_of_two();
         println!("Trace length: {}", trace_length);
+
+        JoltTraceStep::pad(&mut trace);
 
         let mut transcript = ProofTranscript::new(b"Jolt transcript");
         Self::fiat_shamir_preamble(&mut transcript, &program_io, trace_length);
@@ -301,21 +334,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             Self::InstructionSet,
             Self::Subtables,
         >::polynomialize(
-            &preprocessing.instruction_lookups, &instructions
-        );
-
-        let mut padded_memory_trace = memory_trace;
-        padded_memory_trace.resize(
-            padded_trace_length,
-            [
-                MemoryOp::noop_read(),  // rs1
-                MemoryOp::noop_read(),  // rs2
-                MemoryOp::noop_write(), // rd is write-only
-                MemoryOp::noop_read(),  // RAM byte 1
-                MemoryOp::noop_read(),  // RAM byte 2
-                MemoryOp::noop_read(),  // RAM byte 3
-                MemoryOp::noop_read(),  // RAM byte 4
-            ],
+            &preprocessing.instruction_lookups, &trace
         );
 
         let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
@@ -323,11 +342,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &program_io,
             load_store_flags,
             &preprocessing.read_write_memory,
-            padded_memory_trace,
+            &trace,
         );
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
-            || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, bytecode_trace),
+            || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace),
             || RangeCheckPolynomials::<F, PCS>::new(read_timestamps),
         );
 
@@ -343,7 +362,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_setup(
             padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
-            &instructions,
+            &trace,
             &jolt_polynomials,
             circuit_flags,
             &preprocessing.generators,
@@ -491,7 +510,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     fn r1cs_setup(
         padded_trace_length: usize,
         memory_start: u64,
-        instructions: &[Option<Self::InstructionSet>],
+        instructions: &[JoltTraceStep<Self::InstructionSet>],
         polynomials: &JoltPolynomials<F, PCS>,
         circuit_flags: Vec<F>,
         generators: &PCS::Setup,
@@ -509,8 +528,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut chunks_y: Vec<F> = unsafe_allocate_zero_vec(num_chunks);
 
         for (instruction_index, op) in instructions.iter().enumerate() {
-            if let Some(op) = op {
-                let (chunks_x_op, chunks_y_op) = op.operand_chunks(C, log_M);
+            if let Some(instr) = &op.instruction_lookup {
+                let (chunks_x_op, chunks_y_op) = instr.operand_chunks(C, log_M);
                 for (chunk_index, (x, y)) in chunks_x_op
                     .into_iter()
                     .zip(chunks_y_op.into_iter())

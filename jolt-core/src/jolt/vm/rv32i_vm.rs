@@ -10,10 +10,11 @@ use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    or::ORInstruction, sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction,
-    slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction,
-    sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction, JoltInstruction,
-    JoltInstructionSet, SubtableIndices,
+    movsign::MOVSIGNInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
+    mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
+    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
+    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction,
+    JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -100,7 +101,11 @@ instruction_set!(
   SLTU: SLTUInstruction,
   SLL: SLLInstruction<WORD_SIZE>,
   SRA: SRAInstruction<WORD_SIZE>,
-  SRL: SRLInstruction<WORD_SIZE>
+  SRL: SRLInstruction<WORD_SIZE>,
+  MOVSIGN: MOVSIGNInstruction<WORD_SIZE>,
+  MUL: MULInstruction<WORD_SIZE>,
+  MULU: MULUInstruction<WORD_SIZE>,
+  MULHU: MULHUInstruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
@@ -196,17 +201,14 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
         let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            program.trace();
+        let (io_device, trace, circuit_flags) = program.trace();
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) =
             <RV32IJoltVM as Jolt<Fr, HyraxScheme<G1Projective>, C, M>>::prove(
                 io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
+                trace,
                 circuit_flags,
                 preprocessing.clone(),
             );
@@ -225,17 +227,14 @@ mod tests {
         let mut program = host::Program::new("sha3-guest");
         program.set_input(&[5u8; 32]);
         let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            program.trace();
+        let (io_device, trace, circuit_flags) = program.trace();
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
                 io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
+                trace,
                 circuit_flags,
                 preprocessing.clone(),
             );

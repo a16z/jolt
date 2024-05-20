@@ -388,7 +388,7 @@ impl Mmu {
     /// * `value`
     pub fn store(&mut self, v_address: u64, value: u8) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store(effective_address, 1, value as u64);
+        self.trace_store(effective_address, value as u64);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
             Ok(p_address) => {
                 self.store_raw(p_address, value);
@@ -453,7 +453,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store(effective_address, 2, value as u64);
+        self.trace_store(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 2)
     }
 
@@ -465,7 +465,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store(effective_address, 4, value as u64);
+        self.trace_store(effective_address, value as u64);
         self.store_bytes(v_address, value as u64, 4)
     }
 
@@ -477,7 +477,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<(), Trap> {
         let effective_address = self.get_effective_address(v_address);
-        self.trace_store(effective_address, 8, value);
+        self.trace_store(effective_address, value);
         self.store_bytes(v_address, value, 8)
     }
 
@@ -539,39 +539,21 @@ impl Mmu {
         }
     }
 
-    fn trace_store(&mut self, effective_address: u64, bytes: u64, value: u64) {
+    fn trace_store(&mut self, effective_address: u64, value: u64) {
         if effective_address < DRAM_BASE {
-            if self.jolt_device.is_output(effective_address) {
-                let mut pre_value_bytes = [0u8; 8];
-                for i in 0..bytes {
-                    pre_value_bytes[i as usize] = self.jolt_device.load(effective_address + i);
-                }
-                let pre_value = u64::from_le_bytes(pre_value_bytes);
-
+            if self.jolt_device.is_output(effective_address)
+                || self.jolt_device.is_panic(effective_address)
+            {
                 self.tracer.push_memory(MemoryState::Write {
                     address: effective_address,
-                    pre_value,
-                    post_value: value,
-                });
-            } else if self.jolt_device.is_panic(effective_address) {
-                let pre_value = self.jolt_device.load(effective_address) as u64;
-                self.tracer.push_memory(MemoryState::Write {
-                    address: effective_address,
-                    pre_value,
                     post_value: value,
                 });
             } else {
                 panic!("Unknown memory mapping {:X}.", effective_address);
             }
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
-            }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
             self.tracer.push_memory(MemoryState::Write {
                 address: effective_address,
-                pre_value,
                 post_value: value,
             });
         }

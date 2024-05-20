@@ -1,3 +1,4 @@
+use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -27,29 +28,10 @@ use common::constants::{
     memory_address_to_witness_index, BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION,
     RAM_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT, REG_OPS_PER_INSTRUCTION,
 };
-use common::rv_trace::{ELFInstruction, JoltDevice, MemoryLayout, MemoryOp, RV32IM};
-use common::to_ram_address;
+use common::rv_trace::{JoltDevice, MemoryLayout, MemoryOp};
 
+use super::JoltTraceStep;
 use super::{timestamp_range_check::TimestampValidityProof, JoltCommitments, JoltPolynomials};
-
-pub trait RandomInstruction {
-    fn random(index: usize, rng: &mut StdRng) -> Self;
-}
-
-impl RandomInstruction for ELFInstruction {
-    fn random(index: usize, rng: &mut StdRng) -> Self {
-        Self {
-            address: to_ram_address(index) as u64,
-            raw: rng.next_u32(),
-            // Only `address` and `raw` are used in ReadWriteMemory; the rest don't matter
-            opcode: RV32IM::ADD,
-            rs1: None,
-            rs2: None,
-            rd: None,
-            imm: None,
-        }
-    }
-}
 
 pub fn random_memory_trace<F: JoltField>(
     memory_init: &Vec<(u64, u8)>,
@@ -75,10 +57,10 @@ pub fn random_memory_trace<F: JoltField>(
             std::array::from_fn(|_| MemoryOp::noop_read());
 
         let rs1 = rng.next_u64() % REGISTER_COUNT;
-        ops[RS1] = MemoryOp::Read(rs1, memory[rs1 as usize]);
+        ops[RS1] = MemoryOp::Read(rs1);
 
         let rs2 = rng.next_u64() % REGISTER_COUNT;
-        ops[RS2] = MemoryOp::Read(rs2, memory[rs2 as usize]);
+        ops[RS2] = MemoryOp::Read(rs2);
 
         // Don't write to the zero register
         let rd = rng.next_u64() % (REGISTER_COUNT - 1) + 1;
@@ -97,7 +79,7 @@ pub fn random_memory_trace<F: JoltField>(
             let load_rng = rng.next_u32();
             if load_rng % 3 == 0 {
                 // LB
-                ops[3] = MemoryOp::Read(ram_address, memory[remapped_address as usize]);
+                ops[3] = MemoryOp::Read(ram_address);
                 for i in 1..4 {
                     ops[i + 3] = MemoryOp::noop_read();
                 }
@@ -107,10 +89,7 @@ pub fn random_memory_trace<F: JoltField>(
             } else if load_rng % 3 == 1 {
                 // LH
                 for i in 0..2 {
-                    ops[i + 3] = MemoryOp::Read(
-                        ram_address + i as u64,
-                        memory[i + remapped_address as usize],
-                    );
+                    ops[i + 3] = MemoryOp::Read(ram_address + i as u64);
                 }
                 for i in 2..4 {
                     ops[i + 3] = MemoryOp::noop_read();
@@ -121,10 +100,7 @@ pub fn random_memory_trace<F: JoltField>(
             } else {
                 // LW
                 for i in 0..4 {
-                    ops[i + 3] = MemoryOp::Read(
-                        ram_address + i as u64,
-                        memory[i + remapped_address as usize],
-                    );
+                    ops[i + 3] = MemoryOp::Read(ram_address + i as u64);
                 }
                 for (i, flag) in load_store_flags.iter_mut().enumerate() {
                     flag.push(if i == 4 { 1 } else { 0 });
@@ -325,23 +301,23 @@ fn map_to_polys<F: JoltField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePol
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
-    pub fn new(
+    pub fn new<InstructionSet: JoltInstructionSet>(
         program_io: &JoltDevice,
         load_store_flags: &[DensePolynomial<F>],
         preprocessing: &ReadWriteMemoryPreprocessing,
-        memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
+        trace: &Vec<JoltTraceStep<InstructionSet>>,
     ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
-        let m = memory_trace.len();
+        let m = trace.len();
         assert!(m.is_power_of_two());
 
-        let max_trace_address = memory_trace
+        let max_trace_address = trace
             .iter()
             .flat_map(|step| {
-                step.iter().map(|op| match op {
-                    MemoryOp::Read(a, _) => remap_address(*a, &program_io.memory_layout),
+                step.memory_ops.iter().map(|op| match op {
+                    MemoryOp::Read(a) => remap_address(*a, &program_io.memory_layout),
                     MemoryOp::Write(a, _) => remap_address(*a, &program_io.memory_layout),
                 })
             })
@@ -385,14 +361,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         let write_tuples: Arc<Mutex<HashSet<(u64, u64, u64)>>> =
             Arc::new(Mutex::new(HashSet::new()));
 
-        let (memory_trace_reg, memory_trace_ram): (Vec<Vec<MemoryOp>>, Vec<Vec<MemoryOp>>) =
-            memory_trace
-                .into_par_iter()
-                .map(|item| {
-                    let (reg, ram) = item.split_at(3);
-                    (reg.to_vec(), ram.to_vec())
-                })
-                .unzip();
+        let (memory_trace_reg, memory_trace_ram): (Vec<Vec<MemoryOp>>, Vec<Vec<MemoryOp>>) = trace
+            .into_par_iter()
+            .map(|step| {
+                let (reg, ram) = step.memory_ops.split_at(3);
+                (reg.to_vec(), ram.to_vec())
+            })
+            .unzip();
 
         let reg_count = REGISTER_COUNT as usize;
         let mut v_final_reg = v_init[..reg_count].to_vec();
@@ -455,11 +430,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                         || sw_flag[i].is_one()
                     {
                         match step[RAM_1_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(a >= program_io.memory_layout.input_start);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -517,9 +492,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                         a_ram.push(0);
                         for ram_byte_index in [RAM_1_INDEX, RAM_2_INDEX, RAM_3_INDEX, RAM_4_INDEX] {
                             match step[ram_byte_index] {
-                                MemoryOp::Read(a, v) => {
+                                MemoryOp::Read(a) => {
                                     assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
                                 }
                                 MemoryOp::Write(a, v) => {
                                     assert_eq!(a, 0);
@@ -541,12 +515,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     // Only the LH/SH/LW/SW instructions access ≥2 byte of RAM
                     if lh_flag[i].is_one() || sh_flag[i].is_one() || sw_flag[i].is_one() {
                         match step[RAM_2_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 1);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -599,9 +573,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     } else {
                         for ram_byte_index in [RAM_2_INDEX, RAM_3_INDEX, RAM_4_INDEX] {
                             match step[ram_byte_index] {
-                                MemoryOp::Read(a, v) => {
+                                MemoryOp::Read(a) => {
                                     assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
                                 }
                                 MemoryOp::Write(a, v) => {
                                     assert_eq!(a, 0);
@@ -624,12 +597,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     // Both LW and SW are represented by `sw_flag` for the purpose of lookups
                     if sw_flag[i].is_one() {
                         match step[RAM_3_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 2);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -680,12 +653,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                             }
                         };
                         match step[RAM_4_INDEX] {
-                            MemoryOp::Read(a, v) => {
+                            MemoryOp::Read(a) => {
                                 assert!(!is_v_write_ram);
                                 assert_eq!(a, ram_word_address + 3);
                                 let remapped_a = remap_address(a, &program_io.memory_layout);
                                 let remapped_a_index = remap_address_index(remapped_a);
-                                debug_assert_eq!(v, v_final_ram[remapped_a_index]);
+                                let v = v_final_ram[remapped_a_index];
 
                                 #[cfg(test)]
                                 {
@@ -738,9 +711,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     } else {
                         for ram_byte_index in [RAM_3_INDEX, RAM_4_INDEX] {
                             match step[ram_byte_index] {
-                                MemoryOp::Read(a, v) => {
+                                MemoryOp::Read(a) => {
                                     assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
                                 }
                                 MemoryOp::Write(a, v) => {
                                     assert_eq!(a, 0);
@@ -780,9 +752,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     let timestamp = i as u64;
 
                     match step[RS1] {
-                        MemoryOp::Read(a, v) => {
+                        MemoryOp::Read(a) => {
                             assert!(a < REGISTER_COUNT);
-                            debug_assert_eq!(v, v_final_reg[a as usize]);
+                            let v = v_final_reg[a as usize];
 
                             #[cfg(test)]
                             {
@@ -804,9 +776,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     };
 
                     match step[RS2] {
-                        MemoryOp::Read(a, v) => {
+                        MemoryOp::Read(a) => {
                             assert!(a < REGISTER_COUNT);
-                            debug_assert_eq!(v, v_final_reg[a as usize]);
+                            let v = v_final_reg[a as usize];
 
                             #[cfg(test)]
                             {
@@ -828,8 +800,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     };
 
                     match step[RD] {
-                        MemoryOp::Read(a, v) => {
-                            panic!("Unexpected rd MemoryOp::Read({}, {})", a, v)
+                        MemoryOp::Read(a) => {
+                            panic!("Unexpected rd MemoryOp::Read({})", a)
                         }
                         MemoryOp::Write(a, v_new) => {
                             assert!(a < REGISTER_COUNT);
@@ -1035,9 +1007,9 @@ where
     fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::evals(opening_point);
         let mut openings = [
-            &polynomials.bytecode.v_read_write[1],
-            &polynomials.bytecode.v_read_write[2],
-            &polynomials.bytecode.v_read_write[3],
+            &polynomials.bytecode.v_read_write[2], // rd
+            &polynomials.bytecode.v_read_write[3], // rs1
+            &polynomials.bytecode.v_read_write[4], // rs2
             &polynomials.read_write_memory.a_ram,
         ]
         .into_par_iter()
@@ -1074,9 +1046,9 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let read_write_polys = [
-            &polynomials.bytecode.v_read_write[1],
-            &polynomials.bytecode.v_read_write[2],
-            &polynomials.bytecode.v_read_write[3],
+            &polynomials.bytecode.v_read_write[2], // rd
+            &polynomials.bytecode.v_read_write[3], // rs1
+            &polynomials.bytecode.v_read_write[4], // rs2
             &polynomials.read_write_memory.a_ram,
         ]
         .into_iter()
@@ -1129,7 +1101,7 @@ where
             generators,
             opening_point,
             &openings,
-            &commitment.bytecode.trace_commitments[3..6]
+            &commitment.bytecode.trace_commitments[4..7]
                 .iter()
                 .chain(commitment.read_write_memory.trace_commitments.iter())
                 .collect::<Vec<_>>(),
@@ -1300,9 +1272,9 @@ where
                     .into_par_iter()
                     .map(|j| {
                         let a = match i {
-                            RS1 => polynomials.bytecode.v_read_write[2][j],
-                            RS2 => polynomials.bytecode.v_read_write[3][j],
-                            RD => polynomials.bytecode.v_read_write[1][j],
+                            RS1 => polynomials.bytecode.v_read_write[3][j],
+                            RS2 => polynomials.bytecode.v_read_write[4][j],
+                            RD => polynomials.bytecode.v_read_write[2][j],
                             _ => {
                                 polynomials.read_write_memory.a_ram[j]
                                     + F::from_u64((i - RAM_1) as u64).unwrap()
@@ -1326,19 +1298,19 @@ where
                         RS1 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.bytecode.v_read_write[2][j]
+                                + polynomials.bytecode.v_read_write[3][j]
                                 - *tau
                         }
                         RS2 => {
                             F::from_u64(j as u64).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.bytecode.v_read_write[3][j]
+                                + polynomials.bytecode.v_read_write[4][j]
                                 - *tau
                         }
                         RD => {
                             F::from_u64(j as u64 + 1).unwrap() * gamma_squared
                                 + mul_0_optimized(&v_write[j], gamma)
-                                + polynomials.bytecode.v_read_write[1][j]
+                                + polynomials.bytecode.v_read_write[2][j]
                                 - *tau
                         }
                         _ => {

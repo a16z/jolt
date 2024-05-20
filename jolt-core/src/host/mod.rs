@@ -15,14 +15,17 @@ use serde::Serialize;
 use common::{
     constants::{
         DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-        MEMORY_OPS_PER_INSTRUCTION,
     },
-    rv_trace::{JoltDevice, MemoryOp, NUM_CIRCUIT_FLAGS},
+    rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS},
 };
+use strum::EnumCount;
 use tracer::ELFInstruction;
 
 use crate::{
-    jolt::vm::{bytecode::BytecodeRow, rv32i_vm::RV32I},
+    jolt::{
+        instruction::{mulh::MULHInstruction, VirtualInstructionSequence},
+        vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
+    },
     poly::field::JoltField,
     utils::thread::unsafe_allocate_zero_vec,
 };
@@ -157,60 +160,55 @@ impl Program {
 
     // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
-    pub fn trace<F: JoltField>(
-        mut self,
-    ) -> (
-        JoltDevice,
-        Vec<BytecodeRow>,
-        Vec<Option<RV32I>>,
-        Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]>,
-        Vec<F>,
-    ) {
+    pub fn trace<F: JoltField>(mut self) -> (JoltDevice, Vec<JoltTraceStep<RV32I>>, Vec<F>) {
         self.build();
         let elf = self.elf.unwrap();
-        let (trace, io_device) =
+        let (raw_trace, io_device) =
             tracer::trace(&elf, &self.input, self.max_input_size, self.max_output_size);
 
-        let bytecode_trace: Vec<BytecodeRow> = trace
-            .par_iter()
-            .map(|row| BytecodeRow::from_instruction::<RV32I>(&row.instruction))
-            .collect();
-
-        let instruction_trace: Vec<Option<RV32I>> = trace
-            .par_iter()
+        let trace: Vec<_> = raw_trace
+            .into_par_iter()
+            .flat_map(|row| match row.instruction.opcode {
+                tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(row),
+                tracer::RV32IM::MULHSU => todo!(),
+                tracer::RV32IM::DIV => todo!(),
+                tracer::RV32IM::DIVU => todo!(),
+                tracer::RV32IM::REM => todo!(),
+                tracer::RV32IM::REMU => todo!(),
+                _ => vec![row],
+            })
             .map(|row| {
-                if let Ok(jolt_instruction) = RV32I::try_from(row) {
+                let instruction_lookup = if let Ok(jolt_instruction) = RV32I::try_from(&row) {
                     Some(jolt_instruction)
                 } else {
                     // Instruction does not use lookups
                     None
+                };
+
+                JoltTraceStep {
+                    instruction_lookup,
+                    bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
+                    memory_ops: (&row).into(),
                 }
             })
             .collect();
-
-        let memory_trace: Vec<[MemoryOp; MEMORY_OPS_PER_INSTRUCTION]> =
-            trace.par_iter().map(|row| row.into()).collect();
-
         let padded_trace_len = trace.len().next_power_of_two();
+
         let mut circuit_flag_trace = unsafe_allocate_zero_vec(padded_trace_len * NUM_CIRCUIT_FLAGS);
         circuit_flag_trace
             .par_chunks_mut(padded_trace_len)
             .enumerate()
             .for_each(|(flag_index, chunk)| {
                 chunk.iter_mut().zip(trace.iter()).for_each(|(flag, row)| {
-                    if row.instruction.to_circuit_flags()[flag_index] {
+                    let packed_circuit_flags = row.bytecode_row.bitflags >> RV32I::COUNT;
+                    // Check if the flag is set in the packed representation
+                    if (packed_circuit_flags >> (NUM_CIRCUIT_FLAGS - flag_index - 1)) & 1 != 0 {
                         *flag = F::one();
                     }
                 });
             });
 
-        (
-            io_device,
-            bytecode_trace,
-            instruction_trace,
-            memory_trace,
-            circuit_flag_trace,
-        )
+        (io_device, trace, circuit_flag_trace)
     }
 
     pub fn trace_analyze<F: JoltField>(mut self) -> ProgramSummary {
@@ -220,8 +218,7 @@ impl Program {
             tracer::trace(elf, &self.input, self.max_input_size, self.max_output_size);
 
         let (bytecode, memory_init) = self.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            self.trace();
+        let (io_device, processed_trace, circuit_flags) = self.trace();
         let circuit_flags: Vec<bool> = circuit_flags
             .into_iter()
             .map(|flag: F| flag.is_one())
@@ -232,9 +229,7 @@ impl Program {
             bytecode,
             memory_init,
             io_device,
-            bytecode_trace,
-            instruction_trace,
-            memory_trace,
+            processed_trace,
             circuit_flags,
         }
     }
