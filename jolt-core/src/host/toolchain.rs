@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, read_to_string},
+    fs::{self, read_to_string, File},
     future::Future,
     io::Write,
     path::PathBuf,
@@ -36,9 +36,9 @@ pub fn install_toolchain() -> Result<()> {
 }
 
 async fn retry_times<F, T, E>(times: usize, base_ms: u64, f: F) -> Result<T>
-    where
-        F: Fn() -> E,
-        E: Future<Output=Result<T>>,
+where
+    F: Fn() -> E,
+    E: Future<Output = Result<T>>,
 {
     for i in 0..times {
         println!("Attempt {}/{}", i + 1, times);
