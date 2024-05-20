@@ -19,10 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchain nightly-2023-09-22
-        uses: dtolnay/rust-toolchain@master
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly-2023-09-22
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
@@ -37,10 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchain nightly-2023-09-22
-        uses: dtolnay/rust-toolchain@master
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly-2023-09-22
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -55,10 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchain nightly-2023-09-22
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2023-09-22
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
