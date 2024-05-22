@@ -1045,7 +1045,7 @@ mod tests {
                     aux_0.clone(),
                 );
                 let aux_1 = builder
-                    .allocate_prod(4 * TestInputs::RAMByte0 + 2.into(), TestInputs::OpFlags0);
+                    .allocate_prod(4 * TestInputs::RAMByte0 + 2i64, TestInputs::OpFlags0);
                 builder.constrain_eq(aux_1, TestInputs::RAMByte1);
             }
         }

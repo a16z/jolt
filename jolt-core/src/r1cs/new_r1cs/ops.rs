@@ -202,6 +202,35 @@ impl<I: ConstraintInput> std::ops::Sub for Variable<I> {
     }
 }
 
+impl<I: ConstraintInput> std::ops::Add<i64> for LC<I> {
+    type Output = Self;
+
+    fn add(self, other: i64) -> Self::Output {
+        let mut terms = self.0;
+        terms.push(Term(Variable::Constant, other));
+        LC(terms)
+    }
+}
+
+impl<I: ConstraintInput> std::ops::Add<i64> for Term<I> {
+    type Output = LC<I>;
+
+    fn add(self, other: i64) -> Self::Output {
+        let mut terms = vec![self];
+        terms.push(Term(Variable::Constant, other));
+        LC(terms)
+    }
+}
+
+impl<I: ConstraintInput> std::ops::Add<Variable<I>> for Term<I> {
+    type Output = LC<I>;
+
+    fn add(self, other: Variable<I>) -> Self::Output {
+        let terms = vec![self, Term(other, 1)];
+        LC(terms)
+    }
+}
+
 // Into<LC<I>>
 
 impl<I: ConstraintInput> Into<LC<I>> for i64 {
@@ -299,6 +328,42 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 let terms: Vec<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> =
                     self.into_iter().map(Into::into).collect();
                 LC::new(terms)
+            }
+        }
+
+        impl std::ops::Add for $ConcreteInput {
+            type Output = LC<$ConcreteInput>;
+
+            fn add(self, other: Self) -> Self::Output {
+                LC::sum2(self, other)
+            }
+        }
+
+        impl std::ops::Add<$ConcreteInput> for crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> {
+            type Output = LC<$ConcreteInput>;
+
+            fn add(self, other: $ConcreteInput) -> Self::Output {
+                let other_term: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> = other.into();
+                LC::sum2(self, other_term)
+            }
+        }
+
+        impl std::ops::Add<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
+            type Output = LC<$ConcreteInput>;
+
+            fn add(self, other: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
+                other + self
+            }
+        }
+
+        impl std::ops::Add<$ConcreteInput> for LC<$ConcreteInput> {
+            type Output = LC<$ConcreteInput>;
+
+            fn add(self, other: $ConcreteInput) -> Self::Output {
+                let other_term: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> = other.into();
+                let mut combined_terms: Vec<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> = self.terms().to_vec();
+                combined_terms.push(other_term);
+                LC::new(combined_terms)
             }
         }
 

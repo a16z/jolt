@@ -1,4 +1,4 @@
-use crate::{impl_r1cs_input_lc_conversions, input_range, poly::field::JoltField};
+use crate::{impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C, poly::field::JoltField};
 
 use super::{
     builder::{R1CSBuilder, R1CSConstraintBuilder},
@@ -175,20 +175,9 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             input_range!(JoltInputs::ChunksQ_0, JoltInputs::ChunksQ_3).to_vec(),
             LOG_M,
         );
-        // TODO(sragss): I think packed_query is borked.
-        // Packed query: 2147487744
-        // x + y: 4088 + 4096 
-        // Would be good to know ChunksQ[0..3] at step 0 to know if the packing is working
-        // Chunks Query at step 0: BigInt([0, 0, 0, 0])
-        // Chunks Query at step 0: BigInt([0, 0, 0, 0])
-        // Chunks Query at step 0: BigInt([32768, 0, 0, 0])
-        // Chunks Query at step 0: BigInt([4096, 0, 0, 0])
-        // 32768 * 2^16 + 4096 = 2147487744
-        // Actual instruction: ADDInstruction(2147483648, 4096) (AUIPC)
-        // Raw_trace[0] RVTraceRow { instruction: ELFInstruction { address: 2147483648, opcode: AUIPC, rs1: None, rs2: None, rd: Some(2), imm: Some(4096), virtual_sequence_index: None }, register_state: RegisterState { rs1_val: None, rs2_val: None, rd_post_val: Some(2147487744) }, memory_state: None }
 
         cs.constrain_eq_conditional(JoltInputs::IF_Add, packed_query, x + y);
-        cs.constrain_eq_conditional(JoltInputs::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1).into()); // TODO(sragss): Comment on twos complement
+        cs.constrain_eq_conditional(JoltInputs::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1)); // TODO(sragss): Comment on twos complement
         cs.constrain_eq_conditional(JoltInputs::OpFlags_IsLoad, packed_query, packed_load_store);
         cs.constrain_eq_conditional(
             JoltInputs::OpFlags_IsStore,
@@ -208,7 +197,15 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_x, x);
         cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_y, y);
 
-        // TODO(sragss): Missing some concat shit here.
+        // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-i]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i]) 
+        let is_shift = JoltInputs::IF_Sll + JoltInputs::IF_Srl + JoltInputs::IF_Sra;
+        let chunks_x = input_range!(JoltInputs::ChunksX_0, JoltInputs::ChunksX_3);
+        let chunks_y = input_range!(JoltInputs::ChunksY_0, JoltInputs::ChunksY_3);
+        let chunks_query = input_range!(JoltInputs::ChunksQ_0, JoltInputs::ChunksQ_3);
+        for i in 0..C {
+            let relevant_chunk_y = cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
+            cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunks_query[i], (1i64 << 8) * chunks_x[i] + relevant_chunk_y);
+        }
 
         // if (rd != 0 && if_update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
