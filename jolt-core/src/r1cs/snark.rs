@@ -88,16 +88,16 @@ fn synthesize_witnesses<F: JoltField>(
 #[derive(Clone, Debug, Default)]
 pub struct R1CSInputs<'a, F: JoltField> {
     padded_trace_len: usize,
-    bytecode_a: Vec<F>,
+    pub bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
     memreg_a_rw: &'a [F],
     memreg_v_reads: Vec<&'a F>,
     memreg_v_writes: Vec<&'a F>,
-    chunks_x: Vec<F>,
-    chunks_y: Vec<F>,
-    chunks_query: Vec<F>,
+    pub chunks_x: Vec<F>,
+    pub chunks_y: Vec<F>,
+    pub chunks_query: Vec<F>,
     lookup_outputs: Vec<F>,
-    circuit_flags_bits: Vec<F>,
+    pub circuit_flags_bits: Vec<F>,
     instruction_flags_bits: Vec<F>,
 }
 
@@ -230,75 +230,63 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
 
     #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
     pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
-        // TODO(sragss / arasuarun): Explain why non-trace-len relevant stuff (ex: bytecode) gets chunked to padded_trace_len
         let mut chunks: Vec<Vec<F>> = Vec::new();
-        chunks.par_extend(
-            self.bytecode_a
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.bytecode_v
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.memreg_a_rw
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.memreg_v_reads
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>()),
-        );
-        chunks.par_extend(
-            self.memreg_v_writes
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>()),
-        );
-        chunks.par_extend(
-            self.chunks_x
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.chunks_y
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.chunks_query
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.lookup_outputs
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.circuit_flags_bits
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
-        chunks.par_extend(
-            self.instruction_flags_bits
-                .par_chunks(padded_trace_len)
-                .map(|chunk| chunk.to_vec()),
-        );
+        let bytecode_a_chunks = self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("bytecode_a size: {}", bytecode_a_chunks.len());
+        chunks.par_extend(bytecode_a_chunks);
+
+        let bytecode_v_chunks = self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("bytecode_v size: {}", bytecode_v_chunks.len());
+        chunks.par_extend(bytecode_v_chunks);
+
+        let memreg_a_rw_chunks = self.memreg_a_rw.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("memreg_a_rw size: {}", memreg_a_rw_chunks.len());
+        chunks.par_extend(memreg_a_rw_chunks);
+
+        let memreg_v_reads_chunks = self.memreg_v_reads.par_chunks(padded_trace_len).map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
+        println!("memreg_v_reads size: {}", memreg_v_reads_chunks.len());
+        chunks.par_extend(memreg_v_reads_chunks);
+
+        let memreg_v_writes_chunks = self.memreg_v_writes.par_chunks(padded_trace_len).map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
+        println!("memreg_v_writes size: {}", memreg_v_writes_chunks.len());
+        chunks.par_extend(memreg_v_writes_chunks);
+
+        let chunks_x_chunks = self.chunks_x.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("chunks_x size: {}", chunks_x_chunks.len());
+        chunks.par_extend(chunks_x_chunks);
+
+        let chunks_y_chunks = self.chunks_y.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("chunks_y size: {}", chunks_y_chunks.len());
+        chunks.par_extend(chunks_y_chunks);
+
+        let chunks_query_chunks = self.chunks_query.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("chunks_query size: {}", chunks_query_chunks.len());
+        chunks.par_extend(chunks_query_chunks);
+
+        let lookup_outputs_chunks = self.lookup_outputs.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("lookup_outputs size: {}", lookup_outputs_chunks.len());
+        chunks.par_extend(lookup_outputs_chunks);
+
+        let circuit_flags_bits_chunks = self.circuit_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("circuit_flags_bits size: {}", circuit_flags_bits_chunks.len());
+        chunks.par_extend(circuit_flags_bits_chunks);
+
+        let instruction_flags_bits_chunks = self.instruction_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        println!("instruction_flags_bits size: {}", instruction_flags_bits_chunks.len());
+        chunks.par_extend(instruction_flags_bits_chunks);
         chunks
     }
 }
 
+// TODO(sragss): Reprivatize.
 /// Commitments unique to R1CS.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSCommitment<C: CommitmentScheme> {
-    io: Vec<C::Commitment>,
-    aux: Vec<C::Commitment>,
+    pub io: Vec<C::Commitment>,
+    pub aux: Vec<C::Commitment>,
     /// Operand chunks { x, y }
-    chunks: Vec<C::Commitment>,
-    circuit_flags: Vec<C::Commitment>,
+    pub chunks: Vec<C::Commitment>,
+    pub circuit_flags: Vec<C::Commitment>,
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
@@ -337,6 +325,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         inputs: &R1CSInputs<F>,
         generators: &C::Setup,
     ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<C>), SpartanError> {
+        println!("padded_trace_len: {}", padded_trace_len);
         let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
         let _enter = span.enter();
         let mut jolt_shape = R1CSBuilder::default();

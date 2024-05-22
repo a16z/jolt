@@ -16,11 +16,11 @@ pub enum Variable<I: ConstraintInput> {
     Constant,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Term<I: ConstraintInput>(pub Variable<I>, pub i64);
 
 /// Linear Combination of terms.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LC<I: ConstraintInput>(Vec<Term<I>>);
 
 impl<I: ConstraintInput> LC<I> {
@@ -80,6 +80,25 @@ impl<I: ConstraintInput> LC<I> {
             }
         }
         result
+    }
+}
+
+impl<I: ConstraintInput> std::fmt::Debug for LC<I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LC(")?;
+        for (index, term) in self.0.iter().enumerate() {
+            if index > 0 {
+                write!(f, " + ")?;
+            }
+            write!(f, "{:?}", term)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl<I: ConstraintInput> std::fmt::Debug for Term<I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}*{:?}", self.1, self.0)
     }
 }
 

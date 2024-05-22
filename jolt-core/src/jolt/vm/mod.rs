@@ -1,6 +1,8 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::field::JoltField;
+use crate::r1cs::new_r1cs::builder::R1CSBuilder;
+use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltInputs};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -54,7 +56,7 @@ where
     pub read_write_memory: ReadWriteMemoryPreprocessing,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,
@@ -364,8 +366,19 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
             &trace,
             &jolt_polynomials,
-            circuit_flags,
+            circuit_flags.clone(),
             &preprocessing.generators,
+        );
+
+        // SAM MODE
+        // TODO(sragss): We may not even need the whole materialized inputs after commitment.
+        let (upgraded_inputs, upgraded_commitments) = Self::r1cs_setup_UPGRADED(
+            padded_trace_length, 
+            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
+            &trace, 
+            &jolt_polynomials, 
+            circuit_flags, 
+            &preprocessing.generators
         );
 
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
@@ -515,6 +528,92 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         circuit_flags: Vec<F>,
         generators: &PCS::Setup,
     ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<PCS>) {
+        let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
+
+        let (spartan_key, witness_segments, r1cs_commitments) =
+            R1CSProof::<F, PCS>::compute_witness_commit(
+                32,
+                C,
+                padded_trace_length,
+                memory_start,
+                &inputs,
+                generators,
+            )
+            .expect("R1CSProof setup failed");
+
+        (spartan_key, witness_segments, r1cs_commitments)
+    }
+
+    fn r1cs_setup_UPGRADED(
+        padded_trace_length: usize,
+        memory_start: u64, // TODO(sragss): Use.
+        instructions: &[JoltTraceStep<Self::InstructionSet>],
+        polynomials: &JoltPolynomials<F, PCS>,
+        circuit_flags: Vec<F>,
+        generators: &PCS::Setup,
+    ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>) {
+        let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
+
+        use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
+        let mut builder = R1CSBuilder::<F, JoltInputs>::new();
+        let constraints = JoltConstraints();
+        constraints.build_constraints(&mut builder);
+        // TODO(sragss): Move this into clone_to_trace_len_chunks();
+        // TODO(sragss): Maybe totally unnecessary?
+        let pc_input: Vec<F> = inputs.bytecode_a.clone();
+        let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
+        inputs_flat.insert(0, pc_input.clone()); // TODO(sragss): rm
+        // TODO(sragss): Create an R1CSInputs::flatten function to use here and reuse in compute_witness_commit
+        let aux = builder.compute_aux(&inputs_flat);
+        // TODO(sragss): Commit to aux. And PcIn if we're still doing that.
+
+        // TODO(sragss): Move this logic onto R1CSInputs
+        assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
+        let span = tracing::span!(tracing::Level::INFO, "new_commitments");
+        let _guard = span.enter();
+        let chunk_batch_size = inputs.chunks_x.len() / padded_trace_length + inputs.chunks_y.len() / padded_trace_length;
+        let mut chunk_batch_slices: Vec<&[F]> = Vec::with_capacity(chunk_batch_size);
+        for batchee in [&inputs.chunks_x, &inputs.chunks_y].iter() {
+            chunk_batch_slices.extend(batchee.chunks(padded_trace_length));
+        }
+        let chunks_comms =
+            PCS::batch_commit(chunk_batch_slices.as_slice(), generators, BatchType::Big);
+
+        let circuit_flag_slices: Vec<&[F]> =
+            inputs.circuit_flags_bits.chunks(padded_trace_length).collect();
+        let circuit_flags_comms =
+            PCS::batch_commit(circuit_flag_slices.as_slice(), generators, BatchType::Big);
+        drop(_guard);
+
+        // TODO(sragss): Commit to io, aux
+        let io_comms = vec![PCS::commit_slice(&pc_input, generators)];
+        let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
+        let aux_comms = PCS::batch_commit(&aux_ref, generators, BatchType::Big);
+
+        let r1cs_commitments = R1CSCommitment::<PCS> {
+            io: io_comms,
+            aux: aux_comms,
+            chunks: chunks_comms,
+            circuit_flags: circuit_flags_comms,
+        };
+
+        #[cfg(test)]
+        {
+            let (az, bz, cz) = builder.compute_spartan(&inputs_flat, &aux, &vec![]);
+            builder.assert_valid(&az, &bz, &cz, &vec![], padded_trace_length);
+        }
+
+        inputs_flat.extend(aux);
+
+        (inputs_flat, r1cs_commitments)
+    }
+
+    fn r1cs_construct_inputs<'a>(        
+        padded_trace_length: usize,
+        instructions: &'a [JoltTraceStep<Self::InstructionSet>],
+        polynomials: &'a JoltPolynomials<F, PCS>,
+        circuit_flags: Vec<F>
+    ) -> R1CSInputs<'a, F> {
         let log_M = log2(M) as usize;
 
         // Assemble the polynomials and commitments from the rest of Jolt.
@@ -572,7 +671,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
                     .evals_ref()
                     .par_iter(),
             );
+            println!("Chunks Query at step 0: {:?}", polynomials.instruction_lookups.dim[i].evals_ref()[0]);
         }
+        println!("0th instruction: {:?}", instructions[0]);
+        println!("0th rs1 read: {:?}", memreg_v_reads[0]);
         drop(_guard);
 
         // Flattening this out into a Vec<F> and chunking into padded_trace_length-sized chunks
@@ -593,18 +695,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             instruction_flags,
         );
 
-        let (spartan_key, witness_segments, r1cs_commitments) =
-            R1CSProof::<F, PCS>::compute_witness_commit(
-                32,
-                C,
-                padded_trace_length,
-                memory_start,
-                &inputs,
-                generators,
-            )
-            .expect("R1CSProof setup failed");
-
-        (spartan_key, witness_segments, r1cs_commitments)
+        inputs
     }
 
     fn fiat_shamir_preamble(

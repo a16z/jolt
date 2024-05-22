@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::{poly::field::JoltField, r1cs::new_r1cs::jolt_constraints::JoltInputs};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -489,13 +489,18 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
 
         let compute_lc = |lc: &LC<I>, inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
             let mut eval = F::zero();
+            // println!();
             lc.terms().iter().for_each(|term| match term.0 {
                 Variable::Input(input) => {
                     eval += from_i64::<F>(term.1) * inputs[input.into()][step_index];
+                    // println!("Evaluate += : {:?} = {eval:?}", term);
+                    // println!("Debug: inputs[input.into()][step_index]: {:?}", inputs[input.into()][step_index]);
                 }
                 Variable::Auxiliary(aux_index) => {
                     assert!(aux_index < self.next_aux);
                     eval += from_i64::<F>(term.1) * aux[aux_index][step_index];
+                    // println!("Evaluate += : {:?} = {eval:?}", term);
+                    // println!("Debug: inputs[input.into()][step_index]: {:?}", aux[aux_index][step_index]);
                 }
                 Variable::Constant => {
                     eval += from_i64::<F>(term.1);
@@ -525,6 +530,21 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
                 Az[z_index] = compute_lc(&constraint.a, &inputs, &aux, step_index);
                 Bz[z_index] = compute_lc(&constraint.b, &inputs, &aux, step_index);
                 Cz[z_index] = compute_lc(&constraint.c, &inputs, &aux, step_index);
+
+                #[cfg(test)]
+                {
+                    if Az[z_index] * Bz[z_index] != Cz[z_index] {
+                        println!("Constraint mismatch at step {step_index}!");
+                        println!("Constraint Index: {constraint_index}");
+                        println!("Constraint: {constraint:?}");
+                        println!("Az: {:?}", Az[z_index]);
+                        println!("Bz: {:?}", Bz[z_index]);
+                        println!("Cz: {:?}", Cz[z_index]);
+                        println!("Bytecode_Opcode: {:?}", inputs[JoltInputs::Bytecode_Opcode as usize][step_index]);
+                        println!();
+                        panic!();
+                    }
+                }
             }
         }
 
@@ -558,7 +578,12 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
                 } else {
                     (0, 0)
                 };
-                panic!("Mismatch at global constraint {constraint_index} => {:?}\nuniform constraint: {uniform_constraint_index}\nstep: {step_index}", self.constraints[constraint_index]);
+                panic!(
+                    "Mismatch at global constraint {constraint_index} => {:?}\n\
+                    uniform constraint: {uniform_constraint_index}\n\
+                    step: {step_index}", 
+                    self.constraints[uniform_constraint_index]
+                );
             }
         }
     }

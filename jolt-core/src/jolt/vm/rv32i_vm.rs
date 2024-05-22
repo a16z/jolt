@@ -199,7 +199,7 @@ mod tests {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
+        program.set_input(&3u32);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace, circuit_flags) = program.trace();
 

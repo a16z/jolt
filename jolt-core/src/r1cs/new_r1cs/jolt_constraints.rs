@@ -5,15 +5,16 @@ use super::{
     ops::{ConstraintInput, Variable, LC},
 };
 
+// TODO(sragss): JoltInputs -> JoltIn
 #[allow(non_camel_case_types)]
 #[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq)]
 #[repr(usize)]
-enum JoltInputs {
+pub enum JoltInputs {
     PcIn,
-    PcOut,
 
-    Bytecode_A,
+    Bytecode_A, // Virtual address
     // Bytecode_V
+    Bytecode_ELFAddress,
     Bytecode_Opcode,
     Bytecode_RS1,
     Bytecode_RS2,
@@ -22,9 +23,9 @@ enum JoltInputs {
 
     RAM_A,
     // Ram_V
-    RAM_Read_RD,
     RAM_Read_RS1,
     RAM_Read_RS2,
+    RAM_Read_RD, // TODO(sragss): Appears to be unused?
     RAM_Read_Byte0,
     RAM_Read_Byte1,
     RAM_Read_Byte2,
@@ -52,9 +53,12 @@ enum JoltInputs {
 
     LookupOutput,
 
+    // TODO(sragss): Dedupe OpFlags / CircuitFlags
+    // TODO(sragss): Explicit unit test for comparing OpFlags and InstructionFlags
     // TODO(sragss): Better names for first 2.
+    // Should match rv_trace.to_circuit_flags()
     OpFlags0,
-    OpFlags1,
+    OpFlags_IsImm,
     OpFlags_IsLoad,
     OpFlags_IsStore,
     OpFlags_IsJmp,
@@ -62,8 +66,11 @@ enum JoltInputs {
     OpFlags_LookupOutToRd,
     OpFlags_SignImm,
     OpFlags_IsConcat,
+    OpFlags_IsVirtualSequence, // TODO(moodlezoup / arasuarun): Better name?
+    OpFlags_IsVirtual,
 
     // Instruction Flags
+    // Should match JoltInstructionSet
     IF_Add,
     IF_Sub,
     IF_And,
@@ -83,6 +90,10 @@ enum JoltInputs {
     IF_Sll,
     IF_Sra,
     IF_Srl,
+    IF_Movsign,
+    IF_Mul,
+    IF_MulU,
+    IF_MulHu,
 }
 impl_r1cs_input_lc_conversions!(JoltInputs);
 impl ConstraintInput for JoltInputs {}
@@ -93,31 +104,27 @@ const MEMORY_START: i64 = 128; // TODO(sragss): Non constant.
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
 
-struct JoltConstraints();
+pub struct JoltConstraints();
 impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
     type Inputs = JoltInputs;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let op_flag_inputs = input_range!(JoltInputs::OpFlags0, JoltInputs::OpFlags_IsConcat);
-        for op_flag_input in op_flag_inputs {
-            cs.constrain_binary(op_flag_input);
-        }
-        for instruction_flag_input in input_range!(JoltInputs::IF_Add, JoltInputs::IF_Srl) {
-            cs.constrain_binary(instruction_flag_input);
+        let flags = input_range!(JoltInputs::OpFlags0, JoltInputs::IF_MulHu);
+        for flag in flags {
+            cs.constrain_binary(flag);
         }
 
         cs.constrain_eq(JoltInputs::PcIn, JoltInputs::Bytecode_A);
 
-        cs.constrain_pack_be(op_flag_inputs.to_vec(), JoltInputs::Bytecode_Opcode, 1);
+        // TODO(sragss): I don't understand how this constraint is possibly true unless Bytecode_Opcode is mis-labeled.
+        cs.constrain_pack_be(flags.to_vec(), JoltInputs::Bytecode_Opcode, 1);
 
-        let ram_writes = input_range!(JoltInputs::RAM_Read_Byte0, JoltInputs::RAM_Read_Byte3);
-        let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
 
-        let real_pc = LC::sum2(4i64 * JoltInputs::PcIn, PC_START_ADDRESS + PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltInputs::OpFlags0, JoltInputs::RAM_Read_RS1, real_pc);
+        let real_pc = LC::sum2(4i64 * JoltInputs::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let x = cs.allocate_if_else(JoltInputs::OpFlags0, real_pc, JoltInputs::RAM_Read_RS1);
         let y = cs.allocate_if_else(
-            JoltInputs::OpFlags1,
-            JoltInputs::RAM_Read_RS2,
+            JoltInputs::OpFlags_IsImm,
             JoltInputs::Bytecode_Imm,
+            JoltInputs::RAM_Read_RS2
         );
 
         let signed_output = LC::sub2(JoltInputs::Bytecode_Imm, 0xffffffffi64 - 1i64); // TODO(sragss): Comment about twos-complement.
@@ -127,12 +134,13 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             signed_output,
         );
 
-        let flag_0_or_1_condition = LC::sum2(JoltInputs::OpFlags0, JoltInputs::OpFlags1);
-        cs.constrain_eq_conditional(
-            flag_0_or_1_condition,
-            LC::sum2(JoltInputs::RAM_Read_RS1, imm_signed),
-            LC::sum2(JoltInputs::RAM_A, MEMORY_START),
-        );
+        let flag_0_or_1_condition = LC::sum2(JoltInputs::OpFlags0, JoltInputs::OpFlags_IsImm);
+        // TODO(sragss): MEMORY_START is not a constant. Store on JoltConstraints.
+        // cs.constrain_eq_conditional(
+        //     flag_0_or_1_condition,
+        //     LC::sum2(JoltInputs::RAM_Read_RS1, imm_signed),
+        //     LC::sum2(JoltInputs::RAM_A, MEMORY_START),
+        // );
 
         cs.constrain_eq_conditional(
             JoltInputs::OpFlags_IsLoad,
@@ -155,6 +163,8 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             JoltInputs::RAM_Write_Byte3,
         );
 
+        let ram_writes = input_range!(JoltInputs::RAM_Write_Byte0, JoltInputs::RAM_Write_Byte3);
+        let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
             JoltInputs::OpFlags_IsStore,
             packed_load_store,
@@ -165,8 +175,20 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             input_range!(JoltInputs::ChunksQ_0, JoltInputs::ChunksQ_3).to_vec(),
             LOG_M,
         );
+        // TODO(sragss): I think packed_query is borked.
+        // Packed query: 2147487744
+        // x + y: 4088 + 4096 
+        // Would be good to know ChunksQ[0..3] at step 0 to know if the packing is working
+        // Chunks Query at step 0: BigInt([0, 0, 0, 0])
+        // Chunks Query at step 0: BigInt([0, 0, 0, 0])
+        // Chunks Query at step 0: BigInt([32768, 0, 0, 0])
+        // Chunks Query at step 0: BigInt([4096, 0, 0, 0])
+        // 32768 * 2^16 + 4096 = 2147487744
+        // Actual instruction: ADDInstruction(2147483648, 4096) (AUIPC)
+        // Raw_trace[0] RVTraceRow { instruction: ELFInstruction { address: 2147483648, opcode: AUIPC, rs1: None, rs2: None, rd: Some(2), imm: Some(4096), virtual_sequence_index: None }, register_state: RegisterState { rs1_val: None, rs2_val: None, rd_post_val: Some(2147487744) }, memory_state: None }
+
         cs.constrain_eq_conditional(JoltInputs::IF_Add, packed_query, x + y);
-        cs.constrain_eq_conditional(JoltInputs::IF_Sub, packed_query, x - y); // TODO(sragss): Twos complement.
+        cs.constrain_eq_conditional(JoltInputs::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1).into()); // TODO(sragss): Comment on twos complement
         cs.constrain_eq_conditional(JoltInputs::OpFlags_IsLoad, packed_query, packed_load_store);
         cs.constrain_eq_conditional(
             JoltInputs::OpFlags_IsStore,
@@ -174,7 +196,6 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             JoltInputs::RAM_Read_RS2,
         );
 
-        // TODO(sragss): BE or LE
         // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
         let chunked_x = cs.allocate_pack_be(
             input_range!(JoltInputs::ChunksX_0, JoltInputs::ChunksX_3).to_vec(),
@@ -241,7 +262,7 @@ mod tests {
         // rv_trace::to_circuit_flags
         // all zero for ADD
         inputs[JoltInputs::OpFlags0 as usize][0] = Fr::zero(); // first_operand = rs1
-        inputs[JoltInputs::OpFlags1 as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
+        inputs[JoltInputs::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
         let aux = builder.compute_aux(&inputs);
         let (az, bz, cz) = builder.compute_spartan(&inputs, &aux, &vec![]);
