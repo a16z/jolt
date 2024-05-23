@@ -405,7 +405,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         // TODO(sragss): Fiat shamir (relevant) commitments
-        let proof = UniformSpartanProof::prove_precommitted(generators, &key, witness_segments, transcript)?;
+        let proof = UniformSpartanProof::prove_precommitted(
+            generators,
+            &key,
+            witness_segments,
+            transcript,
+        )?;
         Ok(R1CSProof::<F, C> { proof, key })
     }
 

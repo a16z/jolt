@@ -4,8 +4,11 @@
 use std::{iter, marker::PhantomData};
 
 use crate::msm::VariableBaseMSM;
-use crate::poly::{self, unipoly::UniPoly, dense_mlpoly::DensePolynomial};
-use crate::utils::{errors::ProofVerifyError, transcript::{AppendToTranscript, ProofTranscript}};
+use crate::poly::{self, dense_mlpoly::DensePolynomial, unipoly::UniPoly};
+use crate::utils::{
+    errors::ProofVerifyError,
+    transcript::{AppendToTranscript, ProofTranscript},
+};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -19,7 +22,10 @@ use ark_ec::VariableBaseMSM;
 
 use rayon::prelude::*;
 
-use super::{commitment_scheme::{BatchType, CommitShape, CommitmentScheme}, kzg::{SRS, UVKZGPCS, KZGProverKey, KZGVerifierKey}};
+use super::{
+    commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+    kzg::{KZGProverKey, KZGVerifierKey, SRS, UVKZGPCS},
+};
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
 
@@ -59,8 +65,7 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
 #[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
-impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P>
-{
+impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P> {
     fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut ProofTranscript) {
         transcript.append_point(b"poly_commitment_share", &self.0.into_group());
     }
@@ -281,10 +286,7 @@ where
             .par_iter()
             .map(|q| UVKZGPCS::commit(&pp.commit_pp, q).unwrap())
             .collect();
-        let q_comms: Vec<P::G1> = q_k_com
-            .par_iter()
-            .map(|c| c.into_group())
-            .collect();
+        let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
         q_comms
             .iter()
             .for_each(|c| transcript.append_point(b"quo", c));
@@ -344,7 +346,7 @@ where
         let num_vars = point.len();
         let n = 1 << num_vars;
 
-        //TODO(pat): produce powers in parallel 
+        //TODO(pat): produce powers in parallel
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
         let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
         // Compute batching of unshifted polynomials f_i, and batched eval v_i:
@@ -373,7 +375,6 @@ where
         batch_proof: &ZeromorphProof<P>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-
         //TODO(pat): produce powers in parallel using window method
         // Compute batching of unshifted polynomials f_i:
         // Compute powers of batching challenge rho
@@ -408,11 +409,7 @@ where
     ) -> Result<(), ProofVerifyError> {
         transcript.append_protocol_name(Self::protocol_name());
 
-        let q_comms: Vec<P::G1> = proof
-            .q_k_com
-            .iter()
-            .map(|c| c.into_group())
-            .collect();
+        let q_comms: Vec<P::G1> = proof.q_k_com.iter().map(|c| c.into_group()).collect();
         q_comms
             .iter()
             .for_each(|c| transcript.append_point(b"quo", c));
@@ -482,15 +479,18 @@ where
 
         ZeromorphSRS(Arc::new(SRS::setup(
             &mut ChaCha20Rng::from_seed(*b"ZEROMORPH_POLY_COMMITMENT_SCHEME"),
-            max_len
-        ))).trim(max_len)
+            max_len,
+        )))
+        .trim(max_len)
     }
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
             setup.0.commit_pp.g1_powers().len() > poly.Z.len(),
-            "COMMIT KEY LENGTH ERROR {}, {}", setup.0.commit_pp.g1_powers().len(), poly.Z.len()
-    );
+            "COMMIT KEY LENGTH ERROR {}, {}",
+            setup.0.commit_pp.g1_powers().len(),
+            poly.Z.len()
+        );
         ZeromorphCommitment(
             UVKZGPCS::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
         )
@@ -506,18 +506,18 @@ where
         let iter = evals.par_iter();
         #[cfg(not(feature = "multicore"))]
         let iter = evals.iter();
-        iter
-            .map(|evals| {
-                assert!(
-                    gens.0.commit_pp.g1_powers().len() > evals.len(),
-                    "COMMIT KEY LENGTH ERROR {}, {}", gens.0.commit_pp.g1_powers().len(), evals.len()
-                );
-                ZeromorphCommitment(
-                    UVKZGPCS::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
-                        .unwrap(),
-                )
-            })
-            .collect::<Vec<_>>()
+        iter.map(|evals| {
+            assert!(
+                gens.0.commit_pp.g1_powers().len() > evals.len(),
+                "COMMIT KEY LENGTH ERROR {}, {}",
+                gens.0.commit_pp.g1_powers().len(),
+                evals.len()
+            );
+            ZeromorphCommitment(
+                UVKZGPCS::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
@@ -533,14 +533,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let eval = poly.evaluate(&opening_point);
-        Zeromorph::<P>::open(
-            &setup.0,
-            &poly,
-            &opening_point,
-            &eval,
-            transcript,
-        )
-        .unwrap()
+        Zeromorph::<P>::open(&setup.0, &poly, &opening_point, &eval, transcript).unwrap()
     }
 
     fn batch_prove(
@@ -551,13 +544,7 @@ where
         _batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        Zeromorph::<P>::batch_open(
-            &setup.0,
-            polynomials,
-            &opening_point,
-            &openings,
-            transcript,
-        )
+        Zeromorph::<P>::batch_open(&setup.0, polynomials, &opening_point, &openings, transcript)
     }
 
     fn verify(
@@ -908,7 +895,8 @@ mod test {
                 &altered_verifier_eval,
                 &proof,
                 &mut verifier_transcript,
-            ).is_err())
+            )
+            .is_err())
         }
     }
 
@@ -930,7 +918,7 @@ mod test {
                     .iter()
                     .map(|poly| Zeromorph::<Bn254>::commit(&pk, &poly).unwrap())
                     .collect();
- 
+
                 let commitments_refs: Vec<_> = commitments.iter().map(|x| x).collect();
                 let polys_refs: Vec<_> = polys.iter().map(|x| x).collect();
 
@@ -978,7 +966,8 @@ mod test {
                     &altered_verifier_evals,
                     &proof,
                     &mut verifier_transcript,
-                ).is_err())
+                )
+                .is_err())
             }
         }
     }

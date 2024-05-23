@@ -856,7 +856,8 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = Self::prove_memory_checking(generators, preprocessing, polynomials, transcript);
+        let memory_checking =
+            Self::prove_memory_checking(generators, preprocessing, polynomials, transcript);
 
         InstructionLookupsProof {
             _instructions: PhantomData,

@@ -399,8 +399,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         drop_in_background_thread(jolt_polynomials);
 
-        let r1cs_proof =
-            R1CSProof::prove(&preprocessing.generators, spartan_key, witness_segments, &mut transcript).expect("proof failed");
+        let r1cs_proof = R1CSProof::prove(
+            &preprocessing.generators,
+            spartan_key,
+            witness_segments,
+            &mut transcript,
+        )
+        .expect("proof failed");
 
         let jolt_proof = JoltProof {
             trace_length,

@@ -11,7 +11,7 @@ use serde::Serialize;
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum PCSType {
     Hyrax,
-    Zeromorph
+    Zeromorph,
 }
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -49,7 +49,7 @@ pub fn benchmarks(
     }
 }
 
-fn fibonacci<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
+fn fibonacci<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -57,7 +57,7 @@ where
     prove_example::<u32, PCS, F>("fibonacci-guest", &9u32)
 }
 
-fn sha2<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
+fn sha2<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -65,7 +65,7 @@ where
     prove_example::<Vec<u8>, PCS, F>("sha2-guest", &vec![5u8; 2048])
 }
 
-fn sha3<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
+fn sha3<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -87,7 +87,7 @@ fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSeri
 fn prove_example<T: Serialize, PCS, F>(
     example_name: &str,
     input: &T,
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -100,10 +100,8 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace, circuit_flags) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<
-            F,
-            PCS,
-        > = RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
@@ -137,7 +135,7 @@ where
     tasks
 }
 
-fn sha2chain<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> 
+fn sha2chain<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -151,10 +149,8 @@ where
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace, circuit_flags) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<
-            F,
-            PCS,
-        > = RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(

@@ -862,7 +862,12 @@ mod tests {
 
         let generators = HyraxScheme::<G1Projective>::setup(&commitment_shapes);
         let commitments = polys.commit(&generators);
-        let proof = BytecodeProof::prove_memory_checking(&generators, &preprocessing, &polys, &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(
+            &generators,
+            &preprocessing,
+            &polys,
+            &mut transcript,
+        );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(
@@ -924,7 +929,12 @@ mod tests {
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
 
-        let proof = BytecodeProof::prove_memory_checking(&generators, &preprocessing, &polys, &mut transcript);
+        let proof = BytecodeProof::prove_memory_checking(
+            &generators,
+            &preprocessing,
+            &polys,
+            &mut transcript,
+        );
 
         let mut transcript = ProofTranscript::new(b"test_transcript");
         BytecodeProof::verify_memory_checking(

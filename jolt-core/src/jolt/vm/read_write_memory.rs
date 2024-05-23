@@ -1570,7 +1570,8 @@ where
                 transcript,
             );
 
-        let sumcheck_opening_proof = C::prove(&generators, &polynomials.v_final, &r_sumcheck, transcript);
+        let sumcheck_opening_proof =
+            C::prove(&generators, &polynomials.v_final, &r_sumcheck, transcript);
 
         Self {
             num_rounds,
@@ -1695,8 +1696,12 @@ where
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let memory_checking_proof =
-            ReadWriteMemoryProof::prove_memory_checking(generators, preprocessing, polynomials, transcript);
+        let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
+            generators,
+            preprocessing,
+            polynomials,
+            transcript,
+        );
 
         let output_proof = OutputSumcheckProof::prove_outputs(
             generators,

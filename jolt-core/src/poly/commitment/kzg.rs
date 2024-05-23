@@ -1,5 +1,5 @@
 use crate::msm::VariableBaseMSM;
-use crate::poly::{unipoly::UniPoly, field::JoltField};
+use crate::poly::{field::JoltField, unipoly::UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, CurveGroup};
@@ -59,7 +59,10 @@ impl<P: Pairing> SRS<P> {
 
     pub fn trim(params: Arc<Self>, max_degree: usize) -> (KZGProverKey<P>, KZGVerifierKey<P>) {
         assert!(params.g1_powers.len() > 0, "max_degree is 0");
-        assert!(max_degree < params.g1_powers.len(), "SRS length is less than size");
+        assert!(
+            max_degree < params.g1_powers.len(),
+            "SRS length is less than size"
+        );
         let g1 = params.g1_powers[0];
         let g2 = params.g2_powers[0];
         let beta_g2 = params.g2_powers[1];

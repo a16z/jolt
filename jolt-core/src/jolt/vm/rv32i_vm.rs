@@ -177,14 +177,11 @@ mod tests {
 
     fn test_instruction_set_subtables<PCS: CommitmentScheme>() {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in
-            <RV32IJoltVM as Jolt<_, PCS, C, M>>::InstructionSet::iter()
-        {
+        for instruction in <RV32IJoltVM as Jolt<_, PCS, C, M>>::InstructionSet::iter() {
             for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<_, PCS, C, M>>::Subtables::from(
-                    subtable.subtable_id(),
-                );
+                let _ =
+                    <RV32IJoltVM as Jolt<_, PCS, C, M>>::Subtables::from(subtable.subtable_id());
                 subtable_set.insert(subtable.subtable_id());
             }
         }
@@ -239,15 +236,14 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) =
-            <RV32IJoltVM as Jolt<Fr, Zeromorph<Bn254>, C, M>>::prove(
-                io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
-                circuit_flags,
-                preprocessing.clone(),
-            );
+        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, Zeromorph<Bn254>, C, M>>::prove(
+            io_device,
+            bytecode_trace,
+            memory_trace,
+            instruction_trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
         let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
         assert!(
             verification_result.is_ok(),

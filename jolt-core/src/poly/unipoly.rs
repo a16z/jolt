@@ -132,17 +132,6 @@ impl<F: JoltField> UniPoly<F> {
         }
     }
 
-    pub fn divide_minus_u(&self, u: F) -> Self {
-        let d = self.coeffs.len();
-
-        // Compute h(x) = f(x)/(x - u)
-        let mut h = vec![F::zero(); d];
-        for i in (1..d).rev() {
-            h[i - 1] = self.coeffs[i] + h[i] * u;
-        }
-        Self::from_coeff(h)
-    }
-
     pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
         Self::from_coeff(
             std::iter::from_fn(|| Some(F::random(&mut rng)))
