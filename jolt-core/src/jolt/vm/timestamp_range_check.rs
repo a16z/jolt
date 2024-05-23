@@ -267,7 +267,7 @@ where
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
 
     fn prove_memory_checking(
-        generators: &C::Setup,
+        _generators: &C::Setup,
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, C>,
         _transcript: &mut ProofTranscript,
