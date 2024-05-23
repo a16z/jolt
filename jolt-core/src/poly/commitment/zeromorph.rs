@@ -445,12 +445,13 @@ where
             proof.q_k_com.clone(),
         ]
         .concat();
-        let c = <P::G1 as VariableBaseMSM>::msm(&bases, &scalars)
+        let zeta_z_com = <P::G1 as VariableBaseMSM>::msm(&bases, &scalars)
             .unwrap()
             .into_affine();
 
+        // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, -[X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
         let pairing = P::multi_pairing(
-            &[c, proof.pi],
+            &[zeta_z_com, proof.pi],
             &[
                 (-vk.tau_N_max_sub_2_N.into_group()).into_affine(),
                 (vk.kzg_vk.beta_g2.into_group() - (vk.kzg_vk.g2 * x_challenge)).into(),
