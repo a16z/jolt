@@ -2,3 +2,4 @@ pub mod commitment_scheme;
 pub mod hyrax;
 pub mod pedersen;
 pub mod zeromorph;
+pub mod kzg;
