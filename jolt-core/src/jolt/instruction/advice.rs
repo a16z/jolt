@@ -9,7 +9,7 @@ use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
 // The lookup constraints of Advide and Move is the same.
-// Both are performing range checks.
+// Both are performing simple range checks.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ADVICEAndMOVEInstruction<const WORD_SIZE: usize>(pub u64);
 
