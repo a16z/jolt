@@ -138,6 +138,7 @@ pub mod lh;
 pub mod movsign;
 pub mod mul;
 pub mod mulh;
+pub mod mulhsu;
 pub mod mulhu;
 pub mod mulu;
 pub mod or;
