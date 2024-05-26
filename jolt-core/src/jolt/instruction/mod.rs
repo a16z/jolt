@@ -128,6 +128,7 @@ pub trait VirtualInstructionSequence {
 }
 
 pub mod add;
+pub mod advice;
 pub mod and;
 pub mod beq;
 pub mod bge;
