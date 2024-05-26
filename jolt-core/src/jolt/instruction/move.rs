@@ -11,9 +11,9 @@ use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 // TODO(ethan000): Could be wrong but I think Advice and Move have same lookup constraints.
 // Both are performing simple range checks so they could be merged together.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct ADVICEInstruction<const WORD_SIZE: usize>(pub u64);
+pub struct MOVEInstruction<const WORD_SIZE: usize>(pub u64);
 
-impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for MOVEInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, 0)
     }
@@ -56,7 +56,7 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use super::ADVICEInstruction;
+    use super::MOVEInstruction;
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
@@ -67,7 +67,7 @@ mod test {
 
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = ADVICEInstruction::<32>(x);
+            let instruction = MOVEInstruction::<32>(x);
             jolt_instruction_test!(instruction);
         }
     }

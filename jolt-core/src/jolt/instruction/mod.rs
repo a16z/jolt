@@ -136,6 +136,7 @@ pub mod bgeu;
 pub mod bne;
 pub mod lb;
 pub mod lh;
+pub mod r#move;
 pub mod movsign;
 pub mod mul;
 pub mod mulh;

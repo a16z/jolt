@@ -1,3 +1,4 @@
+use crate::jolt::instruction::advice::ADVICEInstruction;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
@@ -75,7 +76,7 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::MULU => Ok(MULUInstruction::default().into()),
             RV32IM::MULHU => Ok(MULHUInstruction::default().into()),
 
-            RV32IM::VIRTUAL_ADVICE => todo!(),
+            RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction::default().into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_EQ => todo!(),
             RV32IM::VIRTUAL_ASSERT_LTE => todo!(),
@@ -140,7 +141,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
-            RV32IM::VIRTUAL_ADVICE => todo!(),
+            RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction(row.register_state.rs1_val.unwrap()).into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_EQ => todo!(),
             RV32IM::VIRTUAL_ASSERT_LTE => todo!(),

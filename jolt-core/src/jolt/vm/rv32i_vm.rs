@@ -1,3 +1,4 @@
+use crate::jolt::instruction::advice::ADVICEInstruction;
 use crate::poly::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
@@ -105,7 +106,8 @@ instruction_set!(
   MOVSIGN: MOVSIGNInstruction<WORD_SIZE>,
   MUL: MULInstruction<WORD_SIZE>,
   MULU: MULUInstruction<WORD_SIZE>,
-  MULHU: MULHUInstruction<WORD_SIZE>
+  MULHU: MULHUInstruction<WORD_SIZE>,
+  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
