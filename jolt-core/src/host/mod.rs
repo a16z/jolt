@@ -23,7 +23,9 @@ use tracer::ELFInstruction;
 
 use crate::{
     jolt::{
-        instruction::{mulh::MULHInstruction, VirtualInstructionSequence},
+        instruction::{
+            mulh::MULHInstruction, mulhsu::MULHSUInstruction, VirtualInstructionSequence,
+        },
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
     poly::field::JoltField,
@@ -170,7 +172,7 @@ impl Program {
             .into_par_iter()
             .flat_map(|row| match row.instruction.opcode {
                 tracer::RV32IM::MULH => MULHInstruction::<32>::virtual_sequence(row),
-                tracer::RV32IM::MULHSU => todo!(),
+                tracer::RV32IM::MULHSU => MULHSUInstruction::<32>::virtual_sequence(row),
                 tracer::RV32IM::DIV => todo!(),
                 tracer::RV32IM::DIVU => todo!(),
                 tracer::RV32IM::REM => todo!(),
