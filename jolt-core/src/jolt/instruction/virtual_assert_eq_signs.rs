@@ -59,7 +59,7 @@ mod test {
     use super::EQSIGNSInstruction;
 
     #[test]
-    fn slt_instruction_32_e2e() {
+    fn eq_signs_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;

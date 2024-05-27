@@ -1,4 +1,7 @@
+use crate::jolt::instruction::lte::LTEInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
+use crate::jolt::instruction::virtual_assert_eq_signs::EQSIGNSInstruction;
+use crate::jolt::instruction::virtual_assert_lt_abs::LTABSInstruction;
 use crate::poly::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
@@ -107,7 +110,10 @@ instruction_set!(
   MUL: MULInstruction<WORD_SIZE>,
   MULU: MULUInstruction<WORD_SIZE>,
   MULHU: MULHUInstruction<WORD_SIZE>,
-  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>
+  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_LTE: LTEInstruction,
+  VIRTUAL_ASSERT_LT_ABS: LTABSInstruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_EQ_SIGNS: EQSIGNSInstruction
 );
 subtable_enum!(
   RV32ISubtables,

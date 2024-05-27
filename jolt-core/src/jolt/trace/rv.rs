@@ -5,6 +5,7 @@ use crate::jolt::instruction::bgeu::BGEUInstruction;
 use crate::jolt::instruction::bne::BNEInstruction;
 use crate::jolt::instruction::lb::LBInstruction;
 use crate::jolt::instruction::lh::LHInstruction;
+use crate::jolt::instruction::lte::LTEInstruction;
 use crate::jolt::instruction::mul::MULInstruction;
 use crate::jolt::instruction::mulhu::MULHUInstruction;
 use crate::jolt::instruction::mulu::MULUInstruction;
@@ -19,6 +20,8 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
+use crate::jolt::instruction::virtual_assert_eq_signs::EQSIGNSInstruction;
+use crate::jolt::instruction::virtual_assert_lt_abs::LTABSInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -79,10 +82,10 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction::default().into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction::default().into()),
-            RV32IM::VIRTUAL_ASSERT_LTE => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LTE => Ok(LTEInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_LTU => Ok(SLTUInstruction::default().into()),
-            RV32IM::VIRTUAL_ASSERT_LT_ABS => todo!(),
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LT_ABS => Ok(LTABSInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => Ok(EQSIGNSInstruction::default().into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
@@ -141,13 +144,14 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::MULU => Ok(MULUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
+            // TODO: Input of Advice is not from register
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction(row.register_state.rs1_val.unwrap()).into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap()).into()),
-            RV32IM::VIRTUAL_ASSERT_EQ => todo!(),
-            RV32IM::VIRTUAL_ASSERT_LTE => todo!(),
-            RV32IM::VIRTUAL_ASSERT_LTU => todo!(),
-            RV32IM::VIRTUAL_ASSERT_LT_ABS => todo!(),
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => todo!(),
+            RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_LTE => Ok(LTEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_LTU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_LT_ABS => Ok(LTABSInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => Ok(EQSIGNSInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
