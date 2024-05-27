@@ -1,4 +1,4 @@
-use crate::jolt::instruction::advice::ADVICEInstruction;
+use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::poly::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};

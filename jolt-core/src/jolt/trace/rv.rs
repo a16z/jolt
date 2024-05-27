@@ -1,4 +1,3 @@
-use crate::jolt::instruction::advice::ADVICEInstruction;
 use crate::jolt::instruction::and::ANDInstruction;
 use crate::jolt::instruction::beq::BEQInstruction;
 use crate::jolt::instruction::bge::BGEInstruction;
@@ -19,6 +18,7 @@ use crate::jolt::instruction::sra::SRAInstruction;
 use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
+use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -78,9 +78,9 @@ impl TryFrom<&ELFInstruction> for RV32I {
 
             RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction::default().into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction::default().into()),
-            RV32IM::VIRTUAL_ASSERT_EQ => todo!(),
+            RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_LTE => todo!(),
-            RV32IM::VIRTUAL_ASSERT_LTU => todo!(),
+            RV32IM::VIRTUAL_ASSERT_LTU => Ok(SLTUInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_LT_ABS => todo!(),
             RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => todo!(),
 

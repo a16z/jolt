@@ -128,7 +128,6 @@ pub trait VirtualInstructionSequence {
 }
 
 pub mod add;
-pub mod advice;
 pub mod and;
 pub mod beq;
 pub mod bge;
@@ -136,7 +135,6 @@ pub mod bgeu;
 pub mod bne;
 pub mod lb;
 pub mod lh;
-pub mod r#move;
 pub mod movsign;
 pub mod mul;
 pub mod mulh;
@@ -153,6 +151,8 @@ pub mod sra;
 pub mod srl;
 pub mod sub;
 pub mod sw;
+pub mod virtual_advice;
+pub mod virtual_assert_lt_abs;
 pub mod xor;
 
 #[cfg(test)]

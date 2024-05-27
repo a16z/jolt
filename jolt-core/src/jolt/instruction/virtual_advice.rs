@@ -8,8 +8,6 @@ use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
-// TODO(ethan000): Could be wrong but I think Advice and Move have same lookup constraints.
-// Both are performing simple range checks so they could be merged together.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ADVICEInstruction<const WORD_SIZE: usize>(pub u64);
 

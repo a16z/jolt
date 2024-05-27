@@ -2,7 +2,7 @@
 name = "jolt-core"
 version = "0.1.0"
 authors = [
-    # author of original Spartan paper and code base 
+    # author of original Spartan paper and code base
     "Srinath Setty <srinath@microsoft.com>",
     # authors who contributed to the Arkworks Spartan fork
     "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
