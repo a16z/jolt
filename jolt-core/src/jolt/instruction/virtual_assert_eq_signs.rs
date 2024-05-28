@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct EQSIGNSInstruction(pub u64, pub u64);
+pub struct ASSERTEQSIGNSInstruction(pub u64, pub u64);
 
-impl JoltInstruction for EQSIGNSInstruction {
+impl JoltInstruction for ASSERTEQSIGNSInstruction {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -56,7 +56,7 @@ mod test {
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-    use super::EQSIGNSInstruction;
+    use super::ASSERTEQSIGNSInstruction;
 
     #[test]
     fn eq_signs_instruction_32_e2e() {
@@ -67,19 +67,19 @@ mod test {
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
             let y = rng.next_u32() as u64;
-            let instruction = EQSIGNSInstruction(x, y);
+            let instruction = ASSERTEQSIGNSInstruction(x, y);
             jolt_instruction_test!(instruction);
         }
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            EQSIGNSInstruction(100, 0),
-            EQSIGNSInstruction(0, 100),
-            EQSIGNSInstruction(1, 0),
-            EQSIGNSInstruction(0, u32_max),
-            EQSIGNSInstruction(u32_max, 0),
-            EQSIGNSInstruction(u32_max, u32_max),
-            EQSIGNSInstruction(u32_max, 1 << 8),
-            EQSIGNSInstruction(1 << 8, u32_max),
+            ASSERTEQSIGNSInstruction(100, 0),
+            ASSERTEQSIGNSInstruction(0, 100),
+            ASSERTEQSIGNSInstruction(1, 0),
+            ASSERTEQSIGNSInstruction(0, u32_max),
+            ASSERTEQSIGNSInstruction(u32_max, 0),
+            ASSERTEQSIGNSInstruction(u32_max, u32_max),
+            ASSERTEQSIGNSInstruction(u32_max, 1 << 8),
+            ASSERTEQSIGNSInstruction(1 << 8, u32_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

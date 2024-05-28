@@ -128,7 +128,7 @@ mod test {
         let y = if r_x == r_y { x } else { rng.next_u32() as u64 };
         let result = ((i128::from(x as i32) * i128::from(y)) >> 32) as u32;
 
-        let mulh_trace_row = RVTraceRow {
+        let mulhsu_trace_row = RVTraceRow {
             instruction: ELFInstruction {
                 address: rng.next_u64(),
                 opcode: RV32IM::MULHSU,
@@ -146,7 +146,7 @@ mod test {
             memory_state: None,
         };
 
-        let virtual_sequence = MULHSUInstruction::<32>::virtual_sequence(mulh_trace_row);
+        let virtual_sequence = MULHSUInstruction::<32>::virtual_sequence(mulhsu_trace_row);
         let mut registers = vec![0u64; REGISTER_COUNT as usize];
         registers[r_x as usize] = x;
         registers[r_y as usize] = y;

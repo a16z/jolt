@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct LTEInstruction(pub u64, pub u64);
+pub struct ASSERTLTEInstruction(pub u64, pub u64);
 
-impl JoltInstruction for LTEInstruction {
+impl JoltInstruction for ASSERTLTEInstruction {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -91,10 +91,10 @@ mod test {
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-    use super::LTEInstruction;
+    use super::ASSERTLTEInstruction;
 
     #[test]
-    fn lte_instruction_e2e() {
+    fn assert_lte_instruction_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
@@ -104,7 +104,7 @@ mod test {
             let x = rng.next_u32();
             let y = rng.next_u32();
 
-            let instruction = LTEInstruction(x as u64, y as u64);
+            let instruction = ASSERTLTEInstruction(x as u64, y as u64);
 
             jolt_instruction_test!(instruction);
         }
@@ -112,20 +112,20 @@ mod test {
         // Ones
         for _ in 0..256 {
             let x = rng.next_u32();
-            jolt_instruction_test!(LTEInstruction(x as u64, x as u64));
+            jolt_instruction_test!(ASSERTLTEInstruction(x as u64, x as u64));
         }
 
         // Edge-cases
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            LTEInstruction(100, 0),
-            LTEInstruction(0, 100),
-            LTEInstruction(1, 0),
-            LTEInstruction(0, u32_max),
-            LTEInstruction(u32_max, 0),
-            LTEInstruction(u32_max, u32_max),
-            LTEInstruction(u32_max, 1 << 8),
-            LTEInstruction(1 << 8, u32_max),
+            ASSERTLTEInstruction(100, 0),
+            ASSERTLTEInstruction(0, 100),
+            ASSERTLTEInstruction(1, 0),
+            ASSERTLTEInstruction(0, u32_max),
+            ASSERTLTEInstruction(u32_max, 0),
+            ASSERTLTEInstruction(u32_max, u32_max),
+            ASSERTLTEInstruction(u32_max, 1 << 8),
+            ASSERTLTEInstruction(1 << 8, u32_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);

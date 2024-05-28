@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct LTABSInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
+pub struct ASSERTLTABSInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl<const WORD_SIZE: usize> JoltInstruction for LTABSInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for ASSERTLTABSInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -82,7 +82,7 @@ mod test {
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-    use super::LTABSInstruction;
+    use super::ASSERTLTABSInstruction;
 
     #[test]
     fn lt_abs_instruction_32_e2e() {
@@ -93,21 +93,39 @@ mod test {
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
             let y = rng.next_u32() as u64;
-            let instruction = LTABSInstruction::<32>(x, y);
+            let instruction = ASSERTLTABSInstruction::<32>(x, y);
             jolt_instruction_test!(instruction);
         }
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            LTABSInstruction::<32>(100, 0),
-            LTABSInstruction::<32>(0, 100),
-            LTABSInstruction::<32>(1, 0),
-            LTABSInstruction::<32>(0, u32_max),
-            LTABSInstruction::<32>(u32_max, 0),
-            LTABSInstruction::<32>(u32_max, u32_max),
-            LTABSInstruction::<32>(u32_max, 1 << 8),
-            LTABSInstruction::<32>(1 << 8, u32_max),
+            ASSERTLTABSInstruction::<32>(100, 0),
+            ASSERTLTABSInstruction::<32>(0, 100),
+            ASSERTLTABSInstruction::<32>(1, 0),
+            ASSERTLTABSInstruction::<32>(0, u32_max),
+            ASSERTLTABSInstruction::<32>(u32_max, 0),
+            ASSERTLTABSInstruction::<32>(u32_max, u32_max),
+            ASSERTLTABSInstruction::<32>(u32_max, 1 << 8),
+            ASSERTLTABSInstruction::<32>(1 << 8, u32_max),
         ];
         for instruction in instructions {
+            jolt_instruction_test!(instruction);
+        }
+    }
+
+    #[test]
+    fn assert_lte_instruction_64_e2e() {
+        let mut rng = test_rng();
+        const C: usize = 8;
+        const M: usize = 1 << 16;
+
+        for _ in 0..256 {
+            let (x, y) = (rng.next_u64(), rng.next_u64());
+            let instruction = ASSERTLTABSInstruction::<64>(x, y);
+            jolt_instruction_test!(instruction);
+        }
+        for _ in 0..256 {
+            let x = rng.next_u64();
+            let instruction = ASSERTLTABSInstruction::<64>(x, x);
             jolt_instruction_test!(instruction);
         }
     }
