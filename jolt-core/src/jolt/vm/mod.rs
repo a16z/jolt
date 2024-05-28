@@ -528,7 +528,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let constraints = JoltConstraints();
         constraints.build_constraints(&mut uniform_builder);
         // TODO(sragss): Move this into clone_to_trace_len_chunks();
-        // TODO(sragss): Maybe totally unnecessary?
         let mut pc_input: Vec<F> = inputs.bytecode_a.clone();
         pc_input.resize(pc_input.len().next_power_of_two(), F::zero());
         println!("padded_trace_length {padded_trace_length}");
@@ -541,8 +540,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let combined_builder = CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, vec![]);
 
         let aux = combined_builder.compute_aux(&inputs_flat);
-        // TODO(sragss): Commit to aux. And PcIn if we're still doing that.
-
         // TODO(sragss): Move this logic onto R1CSInputs
         assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
         let span = tracing::span!(tracing::Level::INFO, "new_commitments");
@@ -561,7 +558,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             PCS::batch_commit(circuit_flag_slices.as_slice(), generators, BatchType::Big);
         drop(_guard);
 
-        // TODO(sragss): Commit to io, aux
         let io_refs = vec![pc_input.as_ref()];
         let io_comms = PCS::batch_commit(&io_refs, generators, BatchType::Big);
         let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();

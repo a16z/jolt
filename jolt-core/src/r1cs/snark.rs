@@ -16,9 +16,6 @@ use crate::{
 
 use super::new_r1cs::key::UniformSpartanKey;
 use super::new_r1cs::spartan_3::{SpartanError, UniformSpartanProof};
-use super::{
-    constraints::R1CSBuilder,
-};
 
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -26,64 +23,6 @@ use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS}
 use rayon::prelude::*;
 use std::borrow::Borrow;
 use strum::EnumCount;
-
-#[tracing::instrument(name = "synthesize_witnesses", skip_all)]
-/// Returns (io, aux) = (pc_out, pc, aux)
-fn synthesize_witnesses<F: JoltField>(
-    inputs: &R1CSInputs<F>,
-    num_aux: usize,
-) -> (Vec<F>, Vec<F>, Vec<Vec<F>>) {
-    let span = tracing::span!(tracing::Level::TRACE, "synthesize_witnesses");
-    let _enter = span.enter();
-    let triples_stepwise: Vec<(Vec<F>, F, F)> = (0..inputs.padded_trace_len)
-        .into_par_iter()
-        .map(|i| {
-            let step = inputs.clone_step(i);
-            let pc_cur = step.input_pc;
-            let aux = R1CSBuilder::calculate_jolt_aux(step, num_aux);
-            (aux, pc_cur, F::zero())
-        })
-        .collect();
-    drop(_enter);
-
-    // TODO(sragss / arasuarun): Remove pc_out, pc from calculate_aux and triples_stepwise
-
-    // Convert step-wise to variable-wise
-    // [[aux_var_0, aux_var_1, ...], [aux_var_0, aux_var_1, ...], ...] => [[aux_var_0, aux_var_0, ...], [aux_var_1, aux_var_1, ...], ...]
-    // Aux result shape: aux[num_vars][num_steps]
-
-    let num_vars = triples_stepwise[0].0.len();
-    let mut aux: Vec<Vec<F>> = (0..num_vars)
-        .into_par_iter()
-        .map(|_| unsafe_allocate_zero_vec::<F>(inputs.padded_trace_len))
-        .collect();
-    let mut pc_out: Vec<F> = unsafe_allocate_zero_vec(inputs.padded_trace_len);
-    let mut pc: Vec<F> = unsafe_allocate_zero_vec(inputs.padded_trace_len);
-
-    let other_span = tracing::span!(tracing::Level::TRACE, "aux_recombine");
-    let _enter = other_span.enter();
-    aux.par_iter_mut()
-        .enumerate()
-        .for_each(|(var_index, aux_varwise)| {
-            for step_index in 0..inputs.padded_trace_len {
-                aux_varwise[step_index] = triples_stepwise[step_index].0[var_index];
-            }
-        });
-    drop(_enter);
-
-    pc_out
-        .par_iter_mut()
-        .zip(pc.par_iter_mut())
-        .enumerate()
-        .for_each(|(step_index, (slot_out, slot))| {
-            *slot_out = triples_stepwise[step_index].1;
-            *slot = triples_stepwise[step_index].2;
-        });
-
-    drop_in_background_thread(triples_stepwise);
-
-    (pc_out, pc, aux)
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct R1CSInputs<'a, F: JoltField> {
@@ -209,70 +148,39 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         output
     }
 
-    pub fn trace_len(&self) -> usize {
-        self.padded_trace_len
-    }
-
-    pub fn num_vars_per_step(&self) -> usize {
-        let trace_len = self.trace_len();
-        self.bytecode_a.len() / trace_len
-            + self.bytecode_v.len() / trace_len
-            + self.memreg_a_rw.len() / trace_len
-            + self.memreg_v_reads.len() / trace_len
-            + self.memreg_v_writes.len() / trace_len
-            + self.chunks_x.len() / trace_len
-            + self.chunks_y.len() / trace_len
-            + self.chunks_query.len() / trace_len
-            + self.lookup_outputs.len() / trace_len
-            + self.circuit_flags_bits.len() / trace_len
-            + self.instruction_flags_bits.len() / trace_len
-    }
-
-    #[tracing::instrument(skip_all, name = "R1CSInputs::trace_len_chunks")]
     pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
         let mut chunks: Vec<Vec<F>> = Vec::new();
         let bytecode_a_chunks = self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("bytecode_a size: {}", bytecode_a_chunks.len());
         chunks.par_extend(bytecode_a_chunks);
 
         let bytecode_v_chunks = self.bytecode_v.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("bytecode_v size: {}", bytecode_v_chunks.len());
         chunks.par_extend(bytecode_v_chunks);
 
         let memreg_a_rw_chunks = self.memreg_a_rw.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("memreg_a_rw size: {}", memreg_a_rw_chunks.len());
         chunks.par_extend(memreg_a_rw_chunks);
 
         let memreg_v_reads_chunks = self.memreg_v_reads.par_chunks(padded_trace_len).map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
-        println!("memreg_v_reads size: {}", memreg_v_reads_chunks.len());
         chunks.par_extend(memreg_v_reads_chunks);
 
         let memreg_v_writes_chunks = self.memreg_v_writes.par_chunks(padded_trace_len).map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
-        println!("memreg_v_writes size: {}", memreg_v_writes_chunks.len());
         chunks.par_extend(memreg_v_writes_chunks);
 
         let chunks_x_chunks = self.chunks_x.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("chunks_x size: {}", chunks_x_chunks.len());
         chunks.par_extend(chunks_x_chunks);
 
         let chunks_y_chunks = self.chunks_y.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("chunks_y size: {}", chunks_y_chunks.len());
         chunks.par_extend(chunks_y_chunks);
 
         let chunks_query_chunks = self.chunks_query.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("chunks_query size: {}", chunks_query_chunks.len());
         chunks.par_extend(chunks_query_chunks);
 
         let lookup_outputs_chunks = self.lookup_outputs.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("lookup_outputs size: {}", lookup_outputs_chunks.len());
         chunks.par_extend(lookup_outputs_chunks);
 
         let circuit_flags_bits_chunks = self.circuit_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("circuit_flags_bits size: {}", circuit_flags_bits_chunks.len());
         chunks.par_extend(circuit_flags_bits_chunks);
 
         let instruction_flags_bits_chunks = self.instruction_flags_bits.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
-        println!("instruction_flags_bits size: {}", instruction_flags_bits_chunks.len());
         chunks.par_extend(instruction_flags_bits_chunks);
         chunks
     }
@@ -315,8 +223,6 @@ pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
 }
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
-x
-
     fn format_commitments(jolt_commitments: &JoltCommitments<C>, C: usize) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
