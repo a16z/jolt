@@ -14,6 +14,10 @@ impl<F: JoltField> EqPolynomial<F> {
         EqPolynomial { r }
     }
 
+    pub fn extend(&mut self, r_new: F) {
+        self.r.push(r_new);
+    }
+
     pub fn evaluate(&self, rx: &[F]) -> F {
         assert_eq!(self.r.len(), rx.len());
         (0..rx.len())
@@ -32,20 +36,26 @@ impl<F: JoltField> EqPolynomial<F> {
     }
 
     /// Computes evals serially. Uses less memory (and fewer allocations) than `evals_parallel`.
-    fn evals_serial(r: &[F], ell: usize) -> Vec<F> {
+    pub fn evals_serial(r: &[F], ell: usize) -> Vec<F> {
         let mut evals: Vec<F> = vec![F::one(); ell.pow2()];
-        let mut size = 1;
         for j in 0..ell {
             // in each iteration, we double the size of chis
-            size *= 2;
-            for i in (0..size).rev().step_by(2) {
-                // copy each element from the prior iteration twice
-                let scalar = evals[i / 2];
-                evals[i] = scalar * r[j];
-                evals[i - 1] = scalar - evals[i];
-            }
+            Self::evals_serial_extend(r[j], &mut evals, j+1);
         }
         evals
+    }
+
+    /// Adds new evaluations to to a pre-existing array of them
+    pub fn evals_serial_extend(r: F, evals: &mut [F], depth: usize) {
+        let size = 1 << depth;
+
+        println!("size: {:?}", size);
+        for i in (0..size).rev().step_by(2) {
+            // copy each element from the prior iteration twice
+            let scalar = evals[i / 2];
+            evals[i] = scalar * r;
+            evals[i - 1] = scalar - evals[i];
+        }
     }
 
     /// Computes evals in parallel. Uses more memory and allocations than `evals_serial`, but

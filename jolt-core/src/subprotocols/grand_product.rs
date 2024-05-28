@@ -60,11 +60,13 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
         let mut claims_to_verify = self.claims();
         let mut r_grand_product = Vec::new();
+        let mut evals = Vec::new();
 
         for layer in self.layers() {
             proof_layers.push(layer.prove_layer(
                 &mut claims_to_verify,
                 &mut r_grand_product,
+                &mut evals,
                 transcript,
             ));
         }
@@ -177,7 +179,8 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
         &mut self,
         claims: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
-        transcript: &mut ProofTranscript,
+        prev_evals: &mut Vec<F>,
+        transcript: &mut ProofTranscript
     ) -> BatchedGrandProductLayerProof<F> {
         // produce a fresh set of coeffs
         let coeffs: Vec<F> = transcript.challenge_vector(b"rand_coeffs_next_layer", claims.len());
@@ -188,7 +191,21 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             .map(|(&claim, &coeff)| claim * coeff)
             .sum();
 
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
+        // let mut eq_poly = DensePolynomial::new(EqPolynomial::evals_serial(&r_grand_product, r_grand_product.len()));
+
+        let mut eq_poly ;
+
+        if r_grand_product.len() == 0 {
+            prev_evals.append(&mut EqPolynomial::<F>::evals(&r_grand_product));
+            eq_poly = DensePolynomial::new(prev_evals.clone());
+        } else {
+            prev_evals.append(&mut vec![F::one(); prev_evals.len()]);
+            println!("evals len: {:?}", prev_evals.len());
+            let depth = r_grand_product.len();
+            println!("depth {:?}", depth);
+            EqPolynomial::evals_serial_extend(r_grand_product[depth-1], prev_evals, depth);
+            eq_poly = DensePolynomial::new(prev_evals.clone());
+        }
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &coeffs, &mut eq_poly, transcript);
@@ -1352,6 +1369,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
         &mut self,
         claims_to_verify: &mut Vec<F>,
         r_grand_product: &mut Vec<F>,
+        prev_evals: &mut Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
         // produce a fresh set of coeffs
@@ -1364,7 +1382,17 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
             .map(|(&claim, &coeff)| claim * coeff)
             .sum();
 
-        let mut eq_poly = DensePolynomial::new(EqPolynomial::<F>::evals(r_grand_product));
+        let mut eq_poly = DensePolynomial::new(EqPolynomial::evals_serial(&r_grand_product, r_grand_product.len()));
+
+        // if r_grand_product.len() == 0 {
+        //     prev_evals.append(&mut EqPolynomial::<F>::evals(&r_grand_product));
+        //     eq_poly = DensePolynomial::new(prev_evals.clone());
+        // } else {
+        //     prev_evals.append(&mut vec![F::one(); prev_evals.len()]);
+        //     let depth = r_grand_product.len();
+        //     EqPolynomial::evals_serial_extend(r_grand_product[depth-1], prev_evals, depth);
+        //     eq_poly = DensePolynomial::new(prev_evals.clone());
+        // }
 
         let (sumcheck_proof, r_sumcheck, sumcheck_claims) =
             self.prove_sumcheck(&claim, &coeffs, &mut eq_poly, transcript);
