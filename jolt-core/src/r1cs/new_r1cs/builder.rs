@@ -450,7 +450,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
                     sparse.consts.push((row_index, from_i64::<F>(term.1)));
                 }
             }
-
         };
 
         for (row_index, constraint) in self.constraints.iter().enumerate() {
@@ -473,12 +472,12 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     }
 }
 
-type Coeff<F> = (usize, usize, F);
+pub type Coeff<F> = (usize, usize, F);
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-struct SparseConstraints<F: JoltField> {
-    vars: Vec<Coeff<F>>,
-    consts: Vec<(usize, F)>
+pub struct SparseConstraints<F: JoltField> {
+    pub vars: Vec<Coeff<F>>,
+    pub consts: Vec<(usize, F)>
 }
 
 impl<F: JoltField> SparseConstraints<F> {
@@ -511,7 +510,7 @@ pub struct UniformR1CS<F: JoltField> {
 }
 
 // TODO(sragss): More detailed documentation
-/// Represents full matrices (A, B, C) with `uniform_builder`` being repeated `uniform_repeat` times and `uniform_repeat - 1` "cross-uniform" constraints.
+/// Represents full matrices (A, B, C) with `uniform_builder` being repeated `uniform_repeat` times and `uniform_repeat - 1` "cross-uniform" constraints.
 pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
     uniform_builder: R1CSBuilder<F, I>,
     uniform_repeat: usize,

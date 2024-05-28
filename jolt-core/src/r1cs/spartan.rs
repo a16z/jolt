@@ -571,8 +571,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let (rx_con, rx_ts) = r_x.split_at(r_x.len() - num_steps_bits as usize);
 
         let r_y = inner_sumcheck_r.clone();
-        // TODO(sragss): I believe labeled backwards. ry_var <> ry_ts MSBs select the step index within a row. LSBs select the relevant column.
-        // Maybe not, maybe this is indexing Az, Bz, Cz which are MSB variable ordered
         let (ry_var, ry_ts) = r_y.split_at(r_y.len() - num_steps_bits as usize);
 
         let eq_rx_con = EqPolynomial::evals(rx_con);

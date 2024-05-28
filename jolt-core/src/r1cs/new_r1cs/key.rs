@@ -53,69 +53,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
         self.num_steps * self.uniform_r1cs.num_vars.next_power_of_two()
     }
     
-    // TODO(sragss): rm in favor of from_builder
-    // pub fn construct(
-    //     uniform: (Vec<(usize, usize, F)>, Vec<(usize, usize, F)>, Vec<(usize, usize, F)>), 
-    //     num_constraints_total: usize,
-    //     num_vars_total: usize,
-    //     num_steps: usize,
-    //     uniform_num_vars: usize,
-    //     uniform_num_rows: usize,
-    // ) -> Self {
-    //     assert!(num_constraints_total.is_power_of_two());
-    //     assert!(num_vars_total.is_power_of_two());
-    //     assert!(num_steps.is_power_of_two());
-
-    //     let vk_digest = Self::digest(&single_step_shape, num_steps);
-
-    //     Self {
-    //         uniform_r1cs: UniformR1CS { 
-    //             a: single_step_shape.0, 
-    //             b: single_step_shape.1, 
-    //             c: single_step_shape.2, 
-    //             num_vars: uniform_num_vars, 
-    //             num_rows: uniform_num_rows,
-    //         },
-    //         num_cons_total: num_constraints_total.next_power_of_two(),
-    //         // num_vars_total: num_vars_total.next_power_of_two(),
-    //         num_steps: num_steps.next_power_of_two(),
-    //         vk_digest,
-    //     }
-    // }
-
-    /// Returns the digest of the r1cs shape
-    fn digest(
-            uniform_r1cs: &UniformR1CS<F>, 
-            num_steps: usize) -> F {
-        let mut compressed_bytes = Vec::new();
-        uniform_r1cs 
-            .serialize_compressed(&mut compressed_bytes)
-            .unwrap();
-        compressed_bytes.extend(num_steps.to_be_bytes().to_vec());
-        let mut hasher = Sha3_256::new();
-        hasher.input(compressed_bytes);
-
-        let map_to_field = |digest: &[u8]| -> F {
-            let bv = (0..250).map(|i| {
-                let (byte_pos, bit_pos) = (i / 8, i % 8);
-                let bit = (digest[byte_pos] >> bit_pos) & 1;
-                bit == 1
-            });
-
-            // turn the bit vector into a scalar
-            let mut digest = F::zero();
-            let mut coeff = F::one();
-            for bit in bv {
-                if bit {
-                    digest += coeff;
-                }
-                coeff += coeff;
-            }
-            digest
-        };
-        map_to_field(&hasher.result())
-    }
-
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F]) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2());
@@ -149,6 +86,39 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let eval_const = const_poly.evaluate(r_rest);
 
         (F::one() - r_const) * eval_variables + r_const * eval_const
+    }
+
+    /// Returns the digest of the r1cs shape
+    fn digest(
+            uniform_r1cs: &UniformR1CS<F>, 
+            num_steps: usize) -> F {
+        let mut compressed_bytes = Vec::new();
+        uniform_r1cs 
+            .serialize_compressed(&mut compressed_bytes)
+            .unwrap();
+        compressed_bytes.extend(num_steps.to_be_bytes().to_vec());
+        let mut hasher = Sha3_256::new();
+        hasher.input(compressed_bytes);
+
+        let map_to_field = |digest: &[u8]| -> F {
+            let bv = (0..250).map(|i| {
+                let (byte_pos, bit_pos) = (i / 8, i % 8);
+                let bit = (digest[byte_pos] >> bit_pos) & 1;
+                bit == 1
+            });
+
+            // turn the bit vector into a scalar
+            let mut digest = F::zero();
+            let mut coeff = F::one();
+            for bit in bv {
+                if bit {
+                    digest += coeff;
+                }
+                coeff += coeff;
+            }
+            digest
+        };
+        map_to_field(&hasher.result())
     }
 }
 
@@ -203,8 +173,71 @@ mod test {
     use super::*;
     use ark_bn254::Fr;
 
-    use crate::{poly::dense_mlpoly::DensePolynomial, r1cs::new_r1cs::{builder::{R1CSBuilder, R1CSConstraintBuilder}, test::TestInputs}, utils::math::Math};
+    use crate::{poly::dense_mlpoly::DensePolynomial, r1cs::new_r1cs::{builder::{R1CSBuilder, R1CSConstraintBuilder, SparseConstraints}, test::TestInputs}, utils::math::Math};
     use strum::EnumCount;
+
+    fn materialize_full<F: JoltField>(key: &UniformSpartanKey<F>, sparse_constraints: &SparseConstraints<F>) -> Vec<F> {
+        let row_width = 2 * key.num_vars_total().next_power_of_two();
+        let col_height = key.num_cons_total;
+        let total_size = row_width * col_height;
+        assert!(total_size.is_power_of_two());
+        let mut materialized = vec![F::zero(); total_size];
+
+        for (row, col, val) in sparse_constraints.vars.iter() {
+            for step_index in 0..key.num_steps {
+                let x = col * key.num_steps + step_index;
+                let y = row * key.num_steps + step_index;
+                let i = y * row_width + x;
+                materialized[i] = *val;
+            }
+        }
+
+        let const_col_index = key.num_vars_total();
+        for (row, val) in sparse_constraints.consts.iter() {
+            for step_index in 0..key.num_steps {
+                let y = row * key.num_steps + step_index;
+                let i = y * row_width + const_col_index;
+                materialized[i] = *val;
+            }
+        }
+
+        materialized
+    }
+
+    #[test]
+    fn materialize() {
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
+        // OpFlags0 * OpFlags1 == 12
+        struct TestConstraints();
+        impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+            type Inputs = TestInputs;
+            fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+                builder.constrain_prod(TestInputs::OpFlags0, TestInputs::OpFlags1, 12);
+            }
+        }
+
+        let constraints = TestConstraints();
+        constraints.build_constraints(&mut uniform_builder);
+        let num_steps: usize = 3;
+        let num_steps_pad = 4;
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+        let key = UniformSpartanKey::from_builder(&combined_builder);
+
+        let materialized_a = materialize_full(&key, &key.uniform_r1cs.a);
+        let materialized_b = materialize_full(&key, &key.uniform_r1cs.b);
+        let materialized_c = materialize_full(&key, &key.uniform_r1cs.c);
+
+        let row_width = (TestInputs::COUNT.next_power_of_two() * num_steps_pad).next_power_of_two() * 2;
+        let op_flags_0_pos = (TestInputs::OpFlags0 as usize ) * num_steps_pad;
+        assert_eq!(materialized_a[op_flags_0_pos], Fr::one());
+        assert_eq!(materialized_b[(TestInputs::OpFlags1 as usize) * num_steps_pad], Fr::one());
+        let const_col_index = row_width / 2;
+        assert_eq!(materialized_c[const_col_index], Fr::from(12));
+        assert_eq!(materialized_a[row_width + op_flags_0_pos + 1], Fr::one());
+        assert_eq!(materialized_c[row_width + const_col_index], Fr::from(12));
+        assert_eq!(materialized_c[2 * row_width + const_col_index], Fr::from(12));
+        assert_eq!(materialized_c[3 * row_width + const_col_index], Fr::from(12));
+    }
 
     #[test]
     fn z_mle() {
