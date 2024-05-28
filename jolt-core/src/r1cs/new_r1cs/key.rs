@@ -1,9 +1,9 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
-use crate::poly::field::JoltField;
+use crate::poly::{eq_poly::EqPolynomial, field::JoltField};
 
-use super::{builder::{CombinedUniformBuilder, UniformR1CS}, ops::ConstraintInput};
+use super::{builder::{CombinedUniformBuilder, SparseConstraints, UniformR1CS}, ops::ConstraintInput};
 use digest::Digest;
 
 use crate::utils::math::Math;
@@ -52,6 +52,15 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn num_vars_total(&self) -> usize {
         self.num_steps * self.uniform_r1cs.num_vars.next_power_of_two()
     }
+
+    /// Number of columns across all steps + constant column padded to next power of two.
+    pub fn num_cols_total(&self) -> usize {
+        2 * self.num_vars_total()
+    }
+
+    pub fn num_rows_total(&self) -> usize {
+        self.num_cons_total
+    }
     
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F]) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
@@ -86,6 +95,53 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let eval_const = const_poly.evaluate(r_rest);
 
         (F::one() - r_const) * eval_variables + r_const * eval_const
+    }
+
+    /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
+    pub fn evaluate_r1cs_matrix_mles(&self, r: &[F]) -> (F, F, F) {
+        let total_rows_bits = self.num_rows_total().log_2();
+        let total_cols_bits = self.num_cols_total().log_2();
+        let steps_bits = self.num_steps.log_2();
+        let uniform_rows_bits = self.uniform_r1cs.num_rows.next_power_of_two().log_2();
+        let uniform_cols_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
+        assert_eq!(r.len(), total_rows_bits + total_cols_bits);
+        assert_eq!(total_rows_bits - steps_bits, uniform_rows_bits);
+
+        // Deconstruct 'r' into representitive bits
+        let (r_row, r_col) = r.split_at(total_rows_bits);
+        let (r_row_constr, r_row_step) = r_row.split_at(uniform_rows_bits);
+        let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1); // TODO(sragss): correct?
+        assert_eq!(r_row_step.len(), r_col_step.len());
+        
+        let eq_rx_ry_ts = EqPolynomial::new(r_row_step.to_vec()).evaluate(r_col_step);
+        let eq_rx_con = EqPolynomial::evals(&r_row_constr);
+        let eq_ry_var = EqPolynomial::evals(&r_col_var);
+
+        // TODO(sragss): Must be able to dedupe
+        let eq_r_row = EqPolynomial::evals(r_row);
+
+        let compute = | constraints: &SparseConstraints<F> | -> F {
+            let var_evaluation: F = constraints.vars.iter().map(|(row, col, coeff)| {
+                // Note: row indexes constraints, col indexes vars
+                *coeff * eq_rx_ry_ts * eq_rx_con[*row] * eq_ry_var[*col]
+            }).sum();
+
+            // Constant (second half of each row)
+            let r_col_const: F = r_col[0] * (1..total_cols_bits).into_iter().map(|i| F::one() - r_col[i]).product::<F>();
+            let mut sum = F::zero();
+            for (constraint_row, constant_coeff) in &constraints.consts {
+                let mut eq_summation = F::zero();
+                for step_index in 0..self.num_steps { // TODO(sragss): Are these bounds right? Verifier now linear.
+                    let packed_row_index = constraint_row * (1 << steps_bits)  + step_index;
+                    eq_summation += eq_r_row[packed_row_index];
+                }
+                sum += *constant_coeff * eq_summation; 
+            }
+            var_evaluation + r_col_const * sum
+        };
+
+        (compute(&self.uniform_r1cs.a), compute(&self.uniform_r1cs.b), compute(&self.uniform_r1cs.c))
+
     }
 
     /// Returns the digest of the r1cs shape
@@ -237,6 +293,50 @@ mod test {
         assert_eq!(materialized_c[row_width + const_col_index], Fr::from(12));
         assert_eq!(materialized_c[2 * row_width + const_col_index], Fr::from(12));
         assert_eq!(materialized_c[3 * row_width + const_col_index], Fr::from(12));
+    }
+
+    #[test]
+    fn r1cs_matrix_mles() {
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
+        // OpFlags0 * OpFlags1 == 12
+        struct TestConstraints();
+        impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+            type Inputs = TestInputs;
+            fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+                builder.constrain_prod(TestInputs::OpFlags0, TestInputs::OpFlags1, 12);
+            }
+        }
+
+        let constraints = TestConstraints();
+        constraints.build_constraints(&mut uniform_builder);
+        let num_steps: usize = 3;
+        let _num_steps_pad = 4;
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+        let key = UniformSpartanKey::from_builder(&combined_builder);
+
+        let big_a = DensePolynomial::new(materialize_full(&key, &key.uniform_r1cs.a));
+        let big_b = DensePolynomial::new(materialize_full(&key, &key.uniform_r1cs.b));
+        let big_c = DensePolynomial::new(materialize_full(&key, &key.uniform_r1cs.c));
+
+        let r_len = (key.num_cols_total() * key.num_rows_total()).log_2();
+        let r = vec![
+            Fr::from(100), 
+            Fr::from(200), 
+            Fr::from(300), 
+            Fr::from(400), 
+            Fr::from(500), 
+            Fr::from(600), 
+            Fr::from(700), 
+            Fr::from(800), 
+            Fr::from(900), 
+            Fr::from(1000)
+        ];
+        assert_eq!(r.len(), r_len);
+        let (a_r, b_r, c_r) = key.evaluate_r1cs_matrix_mles(&r);
+
+        assert_eq!(big_a.evaluate(&r), a_r);
+        assert_eq!(big_b.evaluate(&r), b_r);
+        assert_eq!(big_c.evaluate(&r), c_r);
     }
 
     #[test]
