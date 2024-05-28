@@ -1,7 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
-use crate::poly::{eq_poly::EqPolynomial, field::JoltField};
+use crate::{poly::{eq_poly::EqPolynomial, field::JoltField}, utils::thread::unsafe_allocate_zero_vec};
 
 use super::{builder::{CombinedUniformBuilder, SparseConstraints, UniformR1CS}, ops::ConstraintInput};
 use digest::Digest;
@@ -45,7 +45,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     fn full_z_len(&self) -> usize {
-        2 * self.num_steps * self.uniform_r1cs.num_vars
+        2 * self.num_steps * self.uniform_r1cs.num_vars.next_power_of_two()
     }
 
     /// Number of variables across all steps padded to next power of two. 
@@ -60,6 +60,37 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
     pub fn num_rows_total(&self) -> usize {
         self.num_cons_total
+    }
+
+    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_mle_rlc")]
+    pub fn evaluate_r1cs_mle_rlc(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
+        assert_eq!(r_constr.len(), self.uniform_r1cs.num_rows.next_power_of_two().log_2());
+        assert_eq!(r_step.len(), self.num_steps.log_2());
+
+        let (sm_a_r, sm_b_r, sm_c_r) = self.evaluate_uniform_r1cs_at_row(r_constr);
+
+        let r_rlc_sq = r_rlc.square();
+        let sm_rlc = sm_a_r.iter().zip(sm_b_r.iter()).zip(sm_c_r.iter())
+            .map(|((a, b), c)| *a + r_rlc * b + r_rlc_sq * c)
+            .collect::<Vec<F>>();
+
+        let mut rlc = unsafe_allocate_zero_vec(self.num_cols_total());
+        let eq_r_var_step = EqPolynomial::evals(r_step);
+
+        rlc.par_chunks_mut(self.num_steps)
+            .take(self.uniform_r1cs.num_vars)
+            .enumerate()
+            .for_each(|(var_index, var_chunk)| {
+                if !sm_rlc[var_index].is_zero() {
+                    for (step_index, item) in var_chunk.iter_mut().enumerate() {
+                        *item = eq_r_var_step[step_index] * sm_rlc[var_index];
+                    }
+                }
+        });
+
+        rlc[self.num_vars_total()] = sm_rlc[self.uniform_r1cs.num_vars]; // constant
+
+        rlc
     }
 
     /// Evaluates uniformA(r_x, _), uniformB(r_x, _), uniformC(r_x, _) assuming tight packing, no padding and tightly packed constant column.
@@ -89,6 +120,10 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F]) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2());
+
+        println!("constant index: {}", self.num_vars_total());
+        println!("witness semgnts len: {}", self.num_vars_total());
+        println!("total len {}", self.full_z_len());
 
         // Z can be computed in two halves, [Variables, (constant) 1, 0 , ...] indexed by the first bit.
         let r_const = r[0];
@@ -253,7 +288,7 @@ mod test {
     use super::*;
     use ark_bn254::Fr;
 
-    use crate::{poly::dense_mlpoly::DensePolynomial, r1cs::new_r1cs::{builder::{R1CSBuilder, R1CSConstraintBuilder, SparseConstraints}, test::TestInputs}, utils::math::Math};
+    use crate::{poly::dense_mlpoly::DensePolynomial, r1cs::new_r1cs::{builder::{R1CSBuilder, R1CSConstraintBuilder, SparseConstraints}, test::TestInputs}, utils::{index_to_field_bitvector, math::Math}};
     use strum::EnumCount;
 
     fn materialize_full<F: JoltField>(key: &UniformSpartanKey<F>, sparse_constraints: &SparseConstraints<F>) -> Vec<F> {
@@ -282,6 +317,14 @@ mod test {
         }
 
         materialized
+    }
+
+    fn materialize_all<F: JoltField>(key: &UniformSpartanKey<F>) -> (Vec<F>, Vec<F>, Vec<F>) {
+        (
+            materialize_full(&key, &key.uniform_r1cs.a),
+            materialize_full(&key, &key.uniform_r1cs.b),
+            materialize_full(&key, &key.uniform_r1cs.c)
+        )
     }
 
     #[test]
@@ -320,31 +363,53 @@ mod test {
     }
 
     #[test]
-    fn evaluate_uniform_r1cs_at_row() {
+    fn evaluate_r1cs_mle_rlc() {
         let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
-        // OpFlags0 * OpFlags1 == 12
-        // OpFlags0 * OpFlags1 == 12
+        // PcIn * PcOut == 12
+        // BytecodeA == BytecodeVOpcode + PCIn
         struct TestConstraints();
         impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
             type Inputs = TestInputs;
             fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
-                builder.constrain_prod(TestInputs::OpFlags0, TestInputs::OpFlags1, 12);
-                builder.constrain_eq(TestInputs::OpFlags2, TestInputs::OpFlags3 + TestInputs::BytecodeA);
+                builder.constrain_prod(TestInputs::PcIn, TestInputs::PcOut, 12);
+                builder.constrain_eq(TestInputs::BytecodeA, TestInputs::BytecodeVOpcode + TestInputs::PcIn);
             }
         }
 
         let constraints = TestConstraints();
         constraints.build_constraints(&mut uniform_builder);
         let num_steps: usize = 3;
-        let num_steps_pad = 4;
+        let _num_steps_pad = 4;
         let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
         let key = UniformSpartanKey::from_builder(&combined_builder);
 
-        let r_len = key.uniform_r1cs.num_rows.next_power_of_two().log_2();
-        let r = vec![Fr::from(100)];
-        assert_eq!(r.len(), r_len);
-        let (sm_a, sm_b, sm_c) = key.evaluate_uniform_r1cs_at_row(&r);
-        todo!("sragss: not really sure what to compare to.")
+        let (a, b, c) = materialize_all(&key);
+        let (a, b, c) = (DensePolynomial::new(a), DensePolynomial::new(b), DensePolynomial::new(c));
+
+        let r_row_constr_len = key.uniform_r1cs.num_rows.next_power_of_two().log_2();
+        let r_col_step_len = key.num_steps.log_2();
+
+        let r_row_constr = vec![Fr::from(100)];
+        let r_row_step = vec![Fr::from(100), Fr::from(200)];
+        assert_eq!(r_row_constr.len(), r_row_constr_len);
+        assert_eq!(r_row_step.len(), r_col_step_len);
+        let r_rlc = Fr::from(1000);
+
+        let rlc = key.evaluate_r1cs_mle_rlc(&r_row_constr, &r_row_step, r_rlc);
+
+        // let row_coordinate_len = key.num_rows_total().log_2();
+        let col_coordinate_len = key.num_cols_total().log_2();
+        let row_coordinate: Vec<Fr> = [r_row_constr, r_row_step].concat();
+        for i in 0..key.num_cols_total() {
+            let col_coordinate = index_to_field_bitvector(i, col_coordinate_len);
+
+            let coordinate: Vec<Fr> = [row_coordinate.clone(), col_coordinate].concat();
+            let expected_rlc = a.evaluate(&coordinate) 
+                + r_rlc * b.evaluate(&coordinate) 
+                + r_rlc * r_rlc * c.evaluate(&coordinate);
+
+            assert_eq!(expected_rlc, rlc[i], "Failed at {i}");
+        }
     }
 
     #[test]

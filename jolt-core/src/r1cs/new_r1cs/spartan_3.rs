@@ -5,6 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::compute_dotproduct_low_optimized;
+use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::r1cs::new_r1cs::key::UniformSpartanKey;
@@ -66,6 +67,7 @@ pub enum SpartanError {
 
 // TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
 // and can run all the normal DensePolynomial ops.
+#[derive(Clone)]
 pub struct SegmentedPaddedWitness<F: JoltField> {
     total_len: usize,
     segments: Vec<Vec<F>>,
@@ -76,6 +78,7 @@ pub struct SegmentedPaddedWitness<F: JoltField> {
 impl<F: JoltField> SegmentedPaddedWitness<F> {
     pub fn new(total_len: usize, segments: Vec<Vec<F>>) -> Self {
         let segment_len = segments[0].len();
+        assert!(segment_len.is_power_of_two());
         for segment in &segments {
             assert_eq!(
                 segment.len(),
@@ -95,6 +98,7 @@ impl<F: JoltField> SegmentedPaddedWitness<F> {
         self.total_len
     }
 
+    #[tracing::instrument(skip_all, name = "SegmentedPaddedWitness::evaluate_all")]
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::evals(&point);
         assert!(chi.len() >= self.segment_len);
@@ -169,22 +173,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
-        println!("\n UPGRADED SPARTAN");
-        // TODO(sragss): Can drop constraint_builder in favor of UniformSpartanKey if we pass in Az, Bz, Cz.
-        let mut verifier_transcript = transcript.clone();
-        let padded_num_columns = constraint_builder.total_columns().next_power_of_two();
+        assert_eq!(witness_segments.len(), key.uniform_r1cs.num_vars);
         let padded_num_rows = constraint_builder.constraint_rows().next_power_of_two();
-        witness_segments.iter().for_each(|segment| assert_eq!(segment.len(), constraint_builder.uniform_repeat()));
-        let poly_ABC_len = 2 * padded_num_columns; // TODO(sragss): Why?? I think this is just a shitty way of making space for const.
+        witness_segments.iter().for_each(|segment| assert_eq!(segment.len(), key.num_steps));
 
-        let segmented_padded_witness = SegmentedPaddedWitness::new(padded_num_columns, witness_segments);
+        let segmented_padded_witness = SegmentedPaddedWitness::new(key.num_vars_total(), witness_segments);
 
-        // TODO(sragss): Should x be based on padded_num_rows. Why?
-        // TODO(sragss): Arasu decided "x" was vertical. Convert to 'rows / columns'
-        let num_rounds_x = padded_num_rows.ilog2() as usize; // (A,B,C) rows
-        let num_rounds_y = padded_num_columns.ilog2() as usize + 1; // (A,B,C) cols
-        println!("num_rounds_x {num_rounds_x}");
-        println!("num_rounds_y {num_rounds_y}");
+        let num_rounds_x = key.num_rows_total().log_2();
+        let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
 
@@ -268,111 +264,18 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             [claim_Az, claim_Bz, claim_Cz].as_slice(),
         );
 
-
-        // VERIFIER VERIFIER VERIFIER VERIFIER VERIFIER
-        // TODO(sragss): rm
-        // VERIFIER VERIFIER VERIFIER VERIFIER VERIFIER
-        let verifier_tau = (0..num_rounds_x)
-            .map(|_i| verifier_transcript.challenge_scalar(b"t"))
-            .collect::<Vec<F>>();
-        assert_eq!(tau, verifier_tau);
-        let (claim_outer_final, r_x) = outer_sumcheck_proof
-            .verify(F::zero(), num_rounds_x, 3, &mut verifier_transcript)
-            .expect("Sumcheck doesn't verify bruv.");
-            // .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
-        assert_eq!(outer_sumcheck_r, r_x);
-        // verify claim_outer_final
-        verifier_transcript.append_scalars(b"claims_outer", [claim_Az, claim_Bz, claim_Cz].as_slice());
-        let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
-        let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
-        if claim_outer_final != claim_outer_final_expected {
-            return Err(SpartanError::InvalidOuterSumcheckClaim);
-        }
-
-
         // inner sum-check
         let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
         let claim_inner_joint = claim_Az
             + r_inner_sumcheck_RLC * claim_Bz
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
 
-        let span = tracing::span!(tracing::Level::TRACE, "poly_ABC");
-        let _enter = span.enter();
-
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-        let poly_ABC = {
-            let num_steps_bits = constraint_builder.uniform_repeat().next_power_of_two().ilog2();
-            println!("outer_sumcheck_r.len(): {}", outer_sumcheck_r.len());
-            println!("num_steps_bits: {}", num_steps_bits);
-            let (rx_con, rx_ts) =
-                outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
-            let (eq_rx_con, eq_rx_ts) = rayon::join(
-                || EqPolynomial::evals(rx_con),
-                || EqPolynomial::evals(rx_ts),
-            );
-            assert_eq!(eq_rx_con.len(), constraint_builder.uniform_columns().next_power_of_two());
+        let num_steps_bits = constraint_builder.uniform_repeat().next_power_of_two().ilog2();
+        let (rx_con, rx_ts) =
+            outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
+        let mut poly_ABC = DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
-            // With uniformity, each entry of the RLC of A, B, C can be expressed using
-            // the RLC of the small_A, small_B, small_C matrices.
-
-            // 1. Evaluate \tilde smallM(r_x, y) for all y. Here, \tilde smallM(r_x, y) = \sum_{x} eq(r_x, x) * smallM(x, y)
-            let (small_A_evals, small_B_evals, small_C_evals) = key.evaluate_uniform_r1cs_at_row(&rx_con);
-
-            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_small_RLC_evals");
-            let _enter = span.enter();
-            let r_sq = r_inner_sumcheck_RLC * r_inner_sumcheck_RLC;
-            let small_RLC_evals = (0..small_A_evals.len())
-                .into_par_iter()
-                .map(|i| {
-                    small_A_evals[i]
-                        + small_B_evals[i] * r_inner_sumcheck_RLC
-                        + small_C_evals[i] * r_sq
-                })
-                .collect::<Vec<F>>();
-            drop(_enter);
-
-            // 2. Obtains the MLE evaluation for each variable y in the full matrix.
-            // We first handle all entries but the last one with the constant 1 variable.
-            // Each entry is just the small_RLC_evals for the corresponding variable multiplied with eq_rx_tx[timestamp of variable]
-            let other_span = tracing::span!(tracing::Level::TRACE, "poly_ABC_wait_alloc_complete");
-            let _other_enter = other_span.enter();
-            let mut RLC_evals = unsafe_allocate_zero_vec(poly_ABC_len);
-            drop(_other_enter);
-
-            let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_big_RLC_evals");
-            let _enter = span.enter();
-
-            // Handle all variables but pc_out and the constant
-            RLC_evals
-                .par_chunks_mut(constraint_builder.uniform_repeat())
-                .take(constraint_builder.total_columns() / constraint_builder.uniform_repeat()) // Note that this ignores the last variable which is the constant
-                .enumerate()
-                .for_each(|(var_index, var_chunk)| {
-                    if !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
-                        for (ts, item) in var_chunk.iter_mut().enumerate() {
-                            *item = eq_rx_ts[ts] * small_RLC_evals[var_index];
-                        }
-                    }
-                });
-            drop(_enter);
-
-            // Handle pc_out
-            // RLC_evals[1..constraint_builder.uniform_repeat()]
-            //     .par_iter_mut()
-            //     .enumerate()
-            //     .for_each(|(i, rlc)| {
-            //         *rlc += eq_rx_ts[i] * small_RLC_evals[1]; // take the intended mle eval at pc_out and add it instead to pc_in
-            //     });
-
-            // Handle the constant
-            // TODO(sragss): These functions are named like shit.
-            RLC_evals[key.num_vars_total()] = small_RLC_evals[key.uniform_r1cs.num_vars]; // constant
-
-            RLC_evals
-        };
-        drop(_enter);
-        drop(span);
-        let mut poly_ABC = DensePolynomial::new(poly_ABC);
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
@@ -382,22 +285,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
-        println!("claims_inner: {_claims_inner:?}");
-        println!("inner_sumcheck_r: {inner_sumcheck_r:?}");
 
-        // The number of prefix bits needed to identify a segment within the witness vector
-        // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
-        // The +1 is for the first element in r_y used as indicator between input or witness.
-
-        // TODO(sragss): There was a +1 here before. I removed it bc .evaluate_all(r_y) fails otherwise.
-        let n_prefix = padded_num_columns.ilog2() as usize - constraint_builder.uniform_repeat().ilog2() as usize;
-        let r_y_point = &inner_sumcheck_r[n_prefix..];
-
-        // Evaluate each segment on r_y_point
-        let span = tracing::span!(tracing::Level::TRACE, "evaluate_segments");
-        let _enter = span.enter();
-        let witness_evals = segmented_padded_witness.evaluate_all(r_y_point.to_owned());
-        drop(_enter);
+        // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
+        let r_col_segment_bits= key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
+        let r_col_step= &inner_sumcheck_r[r_col_segment_bits..];
+        let witness_evals = segmented_padded_witness.evaluate_all(r_col_step.to_owned());
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
             segmented_padded_witness.into_dense_polys();
@@ -405,7 +297,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             witness_segment_polys.iter().collect();
         let opening_proof = C::batch_prove(
             &witness_segment_polys_ref,
-            r_y_point,
+            &r_col_step,
             &witness_evals,
             BatchType::Big,
             transcript,
@@ -438,11 +330,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         generators: &C::Setup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
-        println!("\n\nVERIFIER TIME");
-        let num_rounds_x = key.num_cons_total.ilog2() as usize;
-        let num_rounds_y = key.num_vars_total().ilog2() as usize;
-        println!("num_rounds_x {num_rounds_x}");
-        println!("num_rounds_y {num_rounds_y}");
+        let num_rounds_x = key.num_rows_total().log_2();
+        let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
         let tau = (0..num_rounds_x)
@@ -482,7 +371,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
-        println!("inner_sumcheck_r: {inner_sumcheck_r:?}");
 
         // n_prefix = n_segments + 1
         let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
@@ -496,8 +384,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let left_expected = eval_a
             + r_inner_sumcheck_RLC * eval_b 
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * eval_c;
-        println!("evals combined: {left_expected:?}");
-        println!("r_inner_sumcheck_RLC {r_inner_sumcheck_RLC:?}");
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
         if claim_inner_final != claim_inner_final_expected {
