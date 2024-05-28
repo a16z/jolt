@@ -3,7 +3,8 @@
 use crate::poly::field::JoltField;
 use crate::r1cs::new_r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
 use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltInputs};
-use crate::r1cs::new_r1cs::spartan_3;
+use crate::r1cs::new_r1cs::key::UniformSpartanKey;
+use crate::r1cs::new_r1cs::spartan_3::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -21,7 +22,6 @@ use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
 use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
-use crate::r1cs::spartan::UniformSpartanKey;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -362,18 +362,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
 
-        let (spartan_key, witness_segments, r1cs_commitments) = Self::r1cs_setup(
-            padded_trace_length,
-            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
-            &trace,
-            &jolt_polynomials,
-            circuit_flags.clone(),
-            &preprocessing.generators,
-        );
-
-        // SAM MODE
-        // TODO(sragss): We may not even need the whole materialized inputs after commitment.
-        let (upgraded_inputs, upgraded_commitments, upgraded_combined_builder) = Self::r1cs_setup_UPGRADED(
+        let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
             padded_trace_length, 
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
             &trace, 
@@ -381,7 +370,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             circuit_flags, 
             &preprocessing.generators
         );
-        let upgraded_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(&upgraded_combined_builder, padded_trace_length);
+        let spartan_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(&r1cs_builder, padded_trace_length);
 
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         transcript.append_scalar(b"spartan key", &spartan_key.vk_digest);
@@ -411,14 +400,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         drop_in_background_thread(jolt_polynomials);
 
-        let r1cs_proof =
-            R1CSProof::prove(spartan_key, witness_segments, &mut transcript).expect("proof failed");
-
-        // TODO(sragss): Temp forking of the verifier transcript
-        let mut verifier_transcript = transcript.clone();
-        let upgraded_r1cs_proof = spartan_3::UniformSpartanProof::<F, PCS>::prove_precommitted(upgraded_combined_builder, &upgraded_key, upgraded_inputs.clone(), &mut transcript.clone()).expect("SPARTAN3 FAILURE");
-        // TODO(sragss): Format commitments equivalent
-        upgraded_r1cs_proof.verify_precommitted(upgraded_key, vec![], &preprocessing.generators, &mut verifier_transcript).expect("upgraded verifier failed");
+        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(r1cs_builder, &spartan_key, witness_segments, &mut transcript).expect("r1cs proof failed");
+        let r1cs_proof = R1CSProof {
+            key: spartan_key,
+            proof: spartan_proof
+        };
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -523,36 +509,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         commitments: JoltCommitments<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        proof
-            .verify(generators, commitments, C, transcript)
+        proof.verify(generators, commitments, C, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
     fn r1cs_setup(
-        padded_trace_length: usize,
-        memory_start: u64,
-        instructions: &[JoltTraceStep<Self::InstructionSet>],
-        polynomials: &JoltPolynomials<F, PCS>,
-        circuit_flags: Vec<F>,
-        generators: &PCS::Setup,
-    ) -> (UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<PCS>) {
-        let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
-
-        let (spartan_key, witness_segments, r1cs_commitments) =
-            R1CSProof::<F, PCS>::compute_witness_commit(
-                32,
-                C,
-                padded_trace_length,
-                memory_start,
-                &inputs,
-                generators,
-            )
-            .expect("R1CSProof setup failed");
-
-        (spartan_key, witness_segments, r1cs_commitments)
-    }
-
-    fn r1cs_setup_UPGRADED(
         padded_trace_length: usize,
         memory_start: u64, // TODO(sragss): Use.
         instructions: &[JoltTraceStep<Self::InstructionSet>],
@@ -568,7 +529,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         constraints.build_constraints(&mut uniform_builder);
         // TODO(sragss): Move this into clone_to_trace_len_chunks();
         // TODO(sragss): Maybe totally unnecessary?
-        let pc_input: Vec<F> = inputs.bytecode_a.clone();
+        let mut pc_input: Vec<F> = inputs.bytecode_a.clone();
+        pc_input.resize(pc_input.len().next_power_of_two(), F::zero());
+        println!("padded_trace_length {padded_trace_length}");
+        println!("pc_input size {}", pc_input.len());
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
         inputs_flat.insert(0, pc_input.clone()); // TODO(sragss): rm
         // TODO(sragss): Create an R1CSInputs::flatten function to use here and reuse in compute_witness_commit
@@ -598,7 +562,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         drop(_guard);
 
         // TODO(sragss): Commit to io, aux
-        let io_comms = vec![PCS::commit_slice(&pc_input, generators)];
+        let io_refs = vec![pc_input.as_ref()];
+        let io_comms = PCS::batch_commit(&io_refs, generators, BatchType::Big);
         let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
         let aux_comms = PCS::batch_commit(&aux_ref, generators, BatchType::Big);
 

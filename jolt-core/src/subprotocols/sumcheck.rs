@@ -4,7 +4,7 @@
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
-use crate::r1cs::spartan::IndexablePoly;
+use crate::r1cs::new_r1cs::spartan_3::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;

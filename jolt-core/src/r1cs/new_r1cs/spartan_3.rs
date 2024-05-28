@@ -3,7 +3,6 @@
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
-use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -140,6 +139,10 @@ impl<F: JoltField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
     fn len(&self) -> usize {
         self.total_len
     }
+}
+
+pub trait IndexablePoly<F: JoltField>: std::ops::Index<usize, Output = F> + Sync {
+    fn len(&self) -> usize;
 }
 
 /// A succinct proof of knowledge of a witness to a relaxed R1CS instance
@@ -325,7 +328,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
     pub fn verify_precommitted(
         &self,
-        key: UniformSpartanKey<F>,
+        key: &UniformSpartanKey<F>,
         witness_segment_commitments: Vec<&C::Commitment>,
         generators: &C::Setup,
         transcript: &mut ProofTranscript,
@@ -373,7 +376,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // n_prefix = n_segments + 1
-        let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
+        // let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
+        let n_prefix = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
 
         let eval_Z = key.evaluate_z_mle(&self.claimed_witnesss_evals, &inner_sumcheck_r);
 
@@ -391,6 +395,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
+        println!("Verifying spartan PCS");
         C::batch_verify(
             &self.opening_proof,
             generators,

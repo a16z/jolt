@@ -8,16 +8,16 @@ use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    r1cs::r1cs_shape::R1CSShape,
     utils::{
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
         transcript::ProofTranscript,
     },
 };
 
+use super::new_r1cs::key::UniformSpartanKey;
+use super::new_r1cs::spartan_3::{SpartanError, UniformSpartanProof};
 use super::{
     constraints::R1CSBuilder,
-    spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof},
 };
 
 use crate::poly::field::JoltField;
@@ -311,91 +311,11 @@ impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     pub key: UniformSpartanKey<F>,
-    proof: UniformSpartanProof<F, C>,
+    pub proof: UniformSpartanProof<F, C>,
 }
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
-    /// Computes the full witness in segments of len `padded_trace_len`, commits to new required intermediary variables.
-    #[tracing::instrument(skip_all, name = "R1CSProof::compute_witness_commit")]
-    pub fn compute_witness_commit(
-        _W: usize,
-        _C: usize,
-        padded_trace_len: usize,
-        memory_start: u64,
-        inputs: &R1CSInputs<F>,
-        generators: &C::Setup,
-    ) -> Result<(UniformSpartanKey<F>, Vec<Vec<F>>, R1CSCommitment<C>), SpartanError> {
-        println!("padded_trace_len: {}", padded_trace_len);
-        let span = tracing::span!(tracing::Level::TRACE, "shape_stuff");
-        let _enter = span.enter();
-        let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);
-        let key = UniformSpartanProof::<F, C>::setup_precommitted(
-            &jolt_shape,
-            padded_trace_len,
-            memory_start,
-        )?;
-        drop(_enter);
-        drop(span);
-
-        let (pc_out, pc, aux) = synthesize_witnesses(inputs, jolt_shape.num_internal);
-        let io_segments = vec![pc_out, pc];
-        let io_segments_ref = vec![io_segments[0].as_slice(), io_segments[1].as_slice()];
-        let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
-        let io_comms = C::batch_commit(io_segments_ref.as_slice(), generators, BatchType::Big);
-        let aux_comms = C::batch_commit(aux_ref.as_slice(), generators, BatchType::Big);
-
-        let span = tracing::span!(tracing::Level::INFO, "new_commitments");
-        let _guard = span.enter();
-        let chunk_batch_size =
-            inputs.chunks_x.len() / padded_trace_len + inputs.chunks_y.len() / padded_trace_len;
-        let mut chunk_batch_slices: Vec<&[F]> = Vec::with_capacity(chunk_batch_size);
-        for batchee in [&inputs.chunks_x, &inputs.chunks_y].iter() {
-            chunk_batch_slices.extend(batchee.chunks(padded_trace_len));
-        }
-        let chunks_comms =
-            C::batch_commit(chunk_batch_slices.as_slice(), generators, BatchType::Big);
-
-        let circuit_flag_slices: Vec<&[F]> =
-            inputs.circuit_flags_bits.chunks(padded_trace_len).collect();
-        let circuit_flags_comms =
-            C::batch_commit(circuit_flag_slices.as_slice(), generators, BatchType::Big);
-        drop(_guard);
-
-        let r1cs_commitments = R1CSCommitment {
-            io: io_comms,
-            aux: aux_comms,
-            chunks: chunks_comms,
-            circuit_flags: circuit_flags_comms,
-        };
-
-        let cloning_stuff_span =
-            tracing::span!(tracing::Level::TRACE, "cloning_to_witness_segments");
-        let _enter = cloning_stuff_span.enter();
-        let inputs_segments = inputs.clone_to_trace_len_chunks(padded_trace_len);
-
-        let mut w_segments: Vec<Vec<F>> =
-            Vec::with_capacity(io_segments.len() + inputs_segments.len() + aux.len());
-        w_segments.extend(io_segments.into_iter());
-        w_segments.par_extend(inputs_segments.into_par_iter());
-        w_segments.par_extend(aux.into_par_iter());
-
-        drop(_enter);
-        drop(cloning_stuff_span);
-
-        Ok((key, w_segments, r1cs_commitments))
-    }
-
-    #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
-    pub fn prove(
-        key: UniformSpartanKey<F>,
-        witness_segments: Vec<Vec<F>>,
-        transcript: &mut ProofTranscript,
-    ) -> Result<Self, SpartanError> {
-        // TODO(sragss): Fiat shamir (relevant) commitments
-        let proof = UniformSpartanProof::prove_precommitted(&key, witness_segments, transcript)?;
-        Ok(R1CSProof::<F, C> { proof, key })
-    }
+x
 
     fn format_commitments(jolt_commitments: &JoltCommitments<C>, C: usize) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
@@ -449,32 +369,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         C: usize,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
-        // TODO(sragss): Fiat shamir (relevant) commitments
         let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
         self.proof.verify_precommitted(
-            witness_segment_commitments,
             &self.key,
-            &[],
+            witness_segment_commitments,
             generators,
             transcript,
         )
-    }
-}
-
-impl<F: JoltField> UniformShapeBuilder<F> for R1CSBuilder {
-    fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F> {
-        let mut jolt_shape = R1CSBuilder::default();
-        R1CSBuilder::jolt_r1cs_matrices(&mut jolt_shape, memory_start);
-        let constraints_F = jolt_shape.convert_to_field();
-        let shape_single = R1CSShape::<F> {
-            A: constraints_F.0,
-            B: constraints_F.1,
-            C: constraints_F.2,
-            num_cons: jolt_shape.num_constraints + 1, // +1 for the IO consistency constraint
-            num_vars: jolt_shape.num_aux,             // shouldn't include 1 or IO
-            num_io: jolt_shape.num_inputs,
-        };
-
-        shape_single.pad_vars()
     }
 }
