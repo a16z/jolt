@@ -157,32 +157,19 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         constraint_builder: &CombinedUniformBuilder<F, I>,
         padded_num_steps: usize,
     ) -> UniformSpartanKey<F> {
-        todo!()
-        // assert_eq!(padded_num_steps, constraint_builder.uniform_repeat().next_power_of_two());
-        // let single_step_shape = constraint_builder.materialize_uniform();
-
-        // let padded_num_constraints = constraint_builder.constraint_rows().next_power_of_two();
-        // let padded_num_vars = constraint_builder.total_columns().next_power_of_two();
-
-        // UniformSpartanKey::construct(
-        //     single_step_shape, 
-        //     padded_num_constraints, 
-        //     padded_num_vars, 
-        //     padded_num_steps, 
-        //     constraint_builder.uniform_rows(), 
-        //     constraint_builder.uniform_columns()
-        // )
+        assert_eq!(padded_num_steps, constraint_builder.uniform_repeat().next_power_of_two());
+        UniformSpartanKey::from_builder(&constraint_builder)
     }
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted(
         constraint_builder: CombinedUniformBuilder<F, JoltInputs>,
+        key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
-        todo!();
-        /*println!("\n UPGRADED SPARTAN");
+        println!("\n UPGRADED SPARTAN");
         // TODO(sragss): Can drop constraint_builder in favor of UniformSpartanKey if we pass in Az, Bz, Cz.
         let mut verifier_transcript = transcript.clone();
         let padded_num_columns = constraint_builder.total_columns().next_power_of_two();
@@ -195,7 +182,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         // TODO(sragss): Should x be based on padded_num_rows. Why?
         // TODO(sragss): Arasu decided "x" was vertical. Convert to 'rows / columns'
         let num_rounds_x = padded_num_rows.ilog2() as usize; // (A,B,C) rows
-        let num_rounds_y = padded_num_columns.ilog2() as usize; // (A,B,C) cols
+        let num_rounds_y = padded_num_columns.ilog2() as usize + 1; // (A,B,C) cols
         println!("num_rounds_x {num_rounds_x}");
         println!("num_rounds_y {num_rounds_y}");
 
@@ -324,34 +311,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 || EqPolynomial::evals(rx_ts),
             );
             assert_eq!(eq_rx_con.len(), constraint_builder.uniform_columns().next_power_of_two());
-            // TODO(sragss): Assert size of eq_rx_ts
-            let n_steps = constraint_builder.uniform_repeat();
 
             // With uniformity, each entry of the RLC of A, B, C can be expressed using
             // the RLC of the small_A, small_B, small_C matrices.
 
             // 1. Evaluate \tilde smallM(r_x, y) for all y. Here, \tilde smallM(r_x, y) = \sum_{x} eq(r_x, x) * smallM(x, y)
-            let compute_eval_table_sparse_single = |small_M: &[(usize, usize, F)], columns: usize| -> Vec<F> {
-                let mut small_M_evals = vec![F::zero(); columns];
-                for (row, col, val) in small_M.iter() {
-                    small_M_evals[*col] += eq_rx_con[*row] * val;
-                }
-                small_M_evals
-            };
-
-            // TODO(sragss): Switch to key.uniform_r1cs
-            let (a_uniform, b_uniform, c_uniform) = constraint_builder.materialize_uniform();
-            let columns = constraint_builder.uniform_columns() + 1; // TODO(sragss): Additional column is for constants??
-
-            let (small_A_evals, (small_B_evals, small_C_evals)) = rayon::join(
-                || compute_eval_table_sparse_single(&a_uniform, columns),
-                || {
-                    rayon::join(
-                        || compute_eval_table_sparse_single(&b_uniform, columns),
-                        || compute_eval_table_sparse_single(&c_uniform, columns),
-                    )
-                },
-            );
+            let (small_A_evals, small_B_evals, small_C_evals) = key.evaluate_uniform_r1cs_at_row(&rx_con);
 
             let span = tracing::span!(tracing::Level::TRACE, "poly_ABC_small_RLC_evals");
             let _enter = span.enter();
@@ -383,7 +348,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .take(constraint_builder.total_columns() / constraint_builder.uniform_repeat()) // Note that this ignores the last variable which is the constant
                 .enumerate()
                 .for_each(|(var_index, var_chunk)| {
-                    if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
+                    if !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
                         for (ts, item) in var_chunk.iter_mut().enumerate() {
                             *item = eq_rx_ts[ts] * small_RLC_evals[var_index];
                         }
@@ -392,16 +357,16 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             drop(_enter);
 
             // Handle pc_out
-            RLC_evals[1..constraint_builder.uniform_repeat()]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, rlc)| {
-                    *rlc += eq_rx_ts[i] * small_RLC_evals[1]; // take the intended mle eval at pc_out and add it instead to pc_in
-                });
+            // RLC_evals[1..constraint_builder.uniform_repeat()]
+            //     .par_iter_mut()
+            //     .enumerate()
+            //     .for_each(|(i, rlc)| {
+            //         *rlc += eq_rx_ts[i] * small_RLC_evals[1]; // take the intended mle eval at pc_out and add it instead to pc_in
+            //     });
 
             // Handle the constant
             // TODO(sragss): These functions are named like shit.
-            RLC_evals[constraint_builder.total_columns() - 1] = small_RLC_evals[constraint_builder.uniform_columns()]; // constant
+            RLC_evals[key.num_vars_total()] = small_RLC_evals[key.uniform_r1cs.num_vars]; // constant
 
             RLC_evals
         };
@@ -461,7 +426,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             eval_arg: vec![],
             claimed_witnesss_evals: witness_evals,
             opening_proof,
-        })*/
+        })
     }
 
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
@@ -474,8 +439,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         println!("\n\nVERIFIER TIME");
-        let N_SEGMENTS = witness_segment_commitments.len();
-
         let num_rounds_x = key.num_cons_total.ilog2() as usize;
         let num_rounds_y = key.num_vars_total().ilog2() as usize;
         println!("num_rounds_x {num_rounds_x}");
@@ -526,93 +489,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         let eval_Z = key.evaluate_z_mle(&self.claimed_witnesss_evals, &inner_sumcheck_r);
 
-        println!("EVAL Z: {eval_Z:?}");
-
-        /* MLE evaluation */
-        let num_steps_bits = key.num_steps.ilog2();
-        let (rx_con, rx_ts) = r_x.split_at(r_x.len() - num_steps_bits as usize);
-
         let r_y = inner_sumcheck_r.clone();
-        let (ry_var, ry_ts) = r_y.split_at(r_y.len() - num_steps_bits as usize);
+        let r = [r_x, r_y].concat();
+        let (eval_a, eval_b, eval_c) = key.evaluate_r1cs_matrix_mles(&r);
 
-        let eq_rx_con = EqPolynomial::evals(rx_con);
-        let eq_ry_var = EqPolynomial::evals(ry_var);
-
-        let eq_rx_ry_ts = EqPolynomial::new(rx_ts.to_vec()).evaluate(ry_ts);
-        let eq_ry_0 =
-            EqPolynomial::new(ry_ts.to_vec()).evaluate(vec![F::zero(); ry_ts.len()].as_slice());
-
-        /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
-        That is, it ignores the case where x is all 1s, outputting 0.
-        Assumes x and y are provided big-endian. */
-        let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
-            let one = F::from_u64(1_u64).unwrap();
-            let _two = F::from_u64(2_u64).unwrap();
-
-            /* If y+1 = x, then the two bit vectors are of the following form.
-                Let k be the longest suffix of 1s in x.
-                In y, those k bits are 0.
-                Then, the next bit in x is 0 and the next bit in y is 1.
-                The remaining higher bits are the same in x and y.
-            */
-            (0..l)
-                .into_par_iter()
-                .map(|k| {
-                    let lower_bits_product = (0..k)
-                        .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
-                        .product::<F>();
-                    let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
-                    let higher_bits_product = ((k + 1)..l)
-                        .map(|i| {
-                            x[l - 1 - i] * y[l - 1 - i]
-                                + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
-                        })
-                        .product::<F>();
-                    lower_bits_product * kth_bit_product * higher_bits_product
-                })
-                .sum()
-        };
-
-        let y_eq_x_plus_1 = plus_1_mle(rx_ts, ry_ts, num_steps_bits as usize);
-
-        // compute evaluations of R1CS matrices
-        let multi_evaluate_uniform = |M_vec: &[&[(usize, usize, F)]]| -> Vec<F> {
-            let evaluate_with_table_uniform = |M: &[(usize, usize, F)]| -> F {
-                (0..M.len())
-                    .into_par_iter()
-                    .map(|i| {
-                        let (row, col, val) = M[i];
-                        val * eq_rx_con[row] *
-                            // * if col == 1 {
-                                // pc_out (col 1) is redirected to pc_in (col 0)
-                                // eq_ry_var[0] * y_eq_x_plus_1
-                            // } else 
-                            if col == key.uniform_r1cs.num_vars {
-                                eq_ry_var[col] * eq_ry_0
-                            } else {
-                                eq_ry_var[col] * eq_rx_ry_ts
-                            }
-                    })
-                    .sum()
-            };
-
-            (0..M_vec.len())
-                .into_par_iter()
-                .map(|i| evaluate_with_table_uniform(M_vec[i]))
-                .collect()
-        };
-
-        todo!();
-        /*let evals = multi_evaluate_uniform(&[
-            &key.uniform_r1cs.a,
-            &key.uniform_r1cs.b,
-            &key.uniform_r1cs.c,
-        ]);
-        println!("evals: {evals:?}");
-
-        let left_expected = evals[0]
-            + r_inner_sumcheck_RLC * evals[1]
-            + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * evals[2];
+        let left_expected = eval_a
+            + r_inner_sumcheck_RLC * eval_b 
+            + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * eval_c;
         println!("evals combined: {left_expected:?}");
         println!("r_inner_sumcheck_RLC {r_inner_sumcheck_RLC:?}");
         let right_expected = eval_Z;
@@ -632,7 +515,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         )
         .map_err(|_| SpartanError::InvalidPCSProof)?;
 
-        Ok(())*/
+        Ok(())
     }
 }
 

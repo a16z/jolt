@@ -416,7 +416,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         // TODO(sragss): Temp forking of the verifier transcript
         let mut verifier_transcript = transcript.clone();
-        let upgraded_r1cs_proof = spartan_3::UniformSpartanProof::<F, PCS>::prove_precommitted(upgraded_combined_builder, upgraded_inputs.clone(), &mut transcript.clone()).expect("SPARTAN3 FAILURE");
+        let upgraded_r1cs_proof = spartan_3::UniformSpartanProof::<F, PCS>::prove_precommitted(upgraded_combined_builder, &upgraded_key, upgraded_inputs.clone(), &mut transcript.clone()).expect("SPARTAN3 FAILURE");
         // TODO(sragss): Format commitments equivalent
         upgraded_r1cs_proof.verify_precommitted(upgraded_key, vec![], &preprocessing.generators, &mut verifier_transcript).expect("upgraded verifier failed");
 

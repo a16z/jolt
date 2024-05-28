@@ -61,7 +61,31 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn num_rows_total(&self) -> usize {
         self.num_cons_total
     }
+
+    /// Evaluates uniformA(r_x, _), uniformB(r_x, _), uniformC(r_x, _) assuming tight packing, no padding and tightly packed constant column.
+    pub fn evaluate_uniform_r1cs_at_row(&self, r_row: &[F]) -> (Vec<F>, Vec<F>, Vec<F>) {
+        assert_eq!(r_row.len(), self.uniform_r1cs.num_rows.next_power_of_two().log_2());
+
+        let eq_r_row = EqPolynomial::evals(r_row);
+
+        let compute = | constraints: &SparseConstraints<F> | -> Vec<F> {
+            // +1 for constant
+            let mut evals = vec![F::zero(); self.uniform_r1cs.num_vars + 1];
+            for (row, col, val) in constraints.vars.iter() {
+                evals[*col] += eq_r_row[*row] * val;
+            }
+
+            for (row, val) in constraints.consts.iter() {
+                evals[self.uniform_r1cs.num_vars] += eq_r_row[*row] * val;
+            }
+
+            evals
+        };
+
+        (compute(&self.uniform_r1cs.a), compute(&self.uniform_r1cs.b), compute(&self.uniform_r1cs.c))
+    }
     
+    /// Evaluates the full expanded witness vector at 'r' using evaluations of segments.
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F]) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2());
@@ -293,6 +317,34 @@ mod test {
         assert_eq!(materialized_c[row_width + const_col_index], Fr::from(12));
         assert_eq!(materialized_c[2 * row_width + const_col_index], Fr::from(12));
         assert_eq!(materialized_c[3 * row_width + const_col_index], Fr::from(12));
+    }
+
+    #[test]
+    fn evaluate_uniform_r1cs_at_row() {
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
+        // OpFlags0 * OpFlags1 == 12
+        // OpFlags0 * OpFlags1 == 12
+        struct TestConstraints();
+        impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+            type Inputs = TestInputs;
+            fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+                builder.constrain_prod(TestInputs::OpFlags0, TestInputs::OpFlags1, 12);
+                builder.constrain_eq(TestInputs::OpFlags2, TestInputs::OpFlags3 + TestInputs::BytecodeA);
+            }
+        }
+
+        let constraints = TestConstraints();
+        constraints.build_constraints(&mut uniform_builder);
+        let num_steps: usize = 3;
+        let num_steps_pad = 4;
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+        let key = UniformSpartanKey::from_builder(&combined_builder);
+
+        let r_len = key.uniform_r1cs.num_rows.next_power_of_two().log_2();
+        let r = vec![Fr::from(100)];
+        assert_eq!(r.len(), r_len);
+        let (sm_a, sm_b, sm_c) = key.evaluate_uniform_r1cs_at_row(&r);
+        todo!("sragss: not really sure what to compare to.")
     }
 
     #[test]
