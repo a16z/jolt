@@ -1,8 +1,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::field::JoltField;
-use crate::r1cs::new_r1cs::builder::R1CSBuilder;
+use crate::r1cs::new_r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
 use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltInputs};
+use crate::r1cs::new_r1cs::spartan_3;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -372,7 +373,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         // SAM MODE
         // TODO(sragss): We may not even need the whole materialized inputs after commitment.
-        let (upgraded_inputs, upgraded_commitments) = Self::r1cs_setup_UPGRADED(
+        let (upgraded_inputs, upgraded_commitments, upgraded_combined_builder) = Self::r1cs_setup_UPGRADED(
             padded_trace_length, 
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
             &trace, 
@@ -380,6 +381,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             circuit_flags, 
             &preprocessing.generators
         );
+        let upgraded_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(&upgraded_combined_builder, padded_trace_length);
 
         // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         transcript.append_scalar(b"spartan key", &spartan_key.vk_digest);
@@ -411,6 +413,12 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         let r1cs_proof =
             R1CSProof::prove(spartan_key, witness_segments, &mut transcript).expect("proof failed");
+
+        // TODO(sragss): Temp forking of the verifier transcript
+        let mut verifier_transcript = transcript.clone();
+        let upgraded_r1cs_proof = spartan_3::UniformSpartanProof::<F, PCS>::prove_precommitted(upgraded_combined_builder, upgraded_inputs.clone(), &mut transcript.clone()).expect("SPARTAN3 FAILURE");
+        // TODO(sragss): Format commitments equivalent
+        upgraded_r1cs_proof.verify_precommitted(upgraded_key, vec![], &preprocessing.generators, &mut verifier_transcript).expect("upgraded verifier failed");
 
         let jolt_proof = JoltProof {
             trace_length,
@@ -551,20 +559,24 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         polynomials: &JoltPolynomials<F, PCS>,
         circuit_flags: Vec<F>,
         generators: &PCS::Setup,
-    ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>) {
+    ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>, CombinedUniformBuilder<F, JoltInputs>) {
         let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
 
         use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
-        let mut builder = R1CSBuilder::<F, JoltInputs>::new();
+        let mut uniform_builder = R1CSBuilder::<F, JoltInputs>::new();
         let constraints = JoltConstraints();
-        constraints.build_constraints(&mut builder);
+        constraints.build_constraints(&mut uniform_builder);
         // TODO(sragss): Move this into clone_to_trace_len_chunks();
         // TODO(sragss): Maybe totally unnecessary?
         let pc_input: Vec<F> = inputs.bytecode_a.clone();
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
         inputs_flat.insert(0, pc_input.clone()); // TODO(sragss): rm
         // TODO(sragss): Create an R1CSInputs::flatten function to use here and reuse in compute_witness_commit
-        let aux = builder.compute_aux(&inputs_flat);
+
+        // TODO(sragss): Non-uniform constraints.
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, vec![]);
+
+        let aux = combined_builder.compute_aux(&inputs_flat);
         // TODO(sragss): Commit to aux. And PcIn if we're still doing that.
 
         // TODO(sragss): Move this logic onto R1CSInputs
@@ -599,13 +611,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         #[cfg(test)]
         {
-            let (az, bz, cz) = builder.compute_spartan(&inputs_flat, &aux, &vec![]);
-            builder.assert_valid(&az, &bz, &cz, &vec![], padded_trace_length);
+            let (az, bz, cz) = combined_builder.compute_spartan(&inputs_flat, &aux);
+            combined_builder.assert_valid(&az, &bz, &cz);
         }
 
         inputs_flat.extend(aux);
 
-        (inputs_flat, r1cs_commitments)
+        (inputs_flat, r1cs_commitments, combined_builder)
     }
 
     fn r1cs_construct_inputs<'a>(        

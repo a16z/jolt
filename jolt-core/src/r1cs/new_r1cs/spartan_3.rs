@@ -3,9 +3,11 @@
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
+use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::r1cs::new_r1cs::key::UniformSpartanKey;
 use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
@@ -13,54 +15,18 @@ use rayon::prelude::*;
 use sha3::Digest;
 use sha3::Sha3_256;
 use thiserror::Error;
+use strum::EnumCount;
 
-use super::r1cs_shape::R1CSShape;
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
     subprotocols::sumcheck::SumcheckInstanceProof,
 };
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformSpartanKey<F: JoltField> {
-    shape_single_step: R1CSShape<F>, // Single step shape
-    num_cons_total: usize,           // Number of constraints
-    num_vars_total: usize,           // Number of variables
-    num_steps: usize,                // Padded number of steps
-    pub(crate) vk_digest: F,         // digest of the verifier's key
-}
+use super::builder::CombinedUniformBuilder;
+use super::jolt_constraints::JoltInputs;
+use super::ops::ConstraintInput;
 
-impl<F: JoltField> UniformSpartanKey<F> {
-    /// Returns the digest of the r1cs shape
-    pub fn compute_digest(shape_single_step: &R1CSShape<F>, num_steps: usize) -> F {
-        let mut compressed_bytes = Vec::new();
-        shape_single_step
-            .serialize_compressed(&mut compressed_bytes)
-            .unwrap();
-        compressed_bytes.append(&mut num_steps.to_be_bytes().to_vec());
-        let mut hasher = Sha3_256::new();
-        hasher.input(compressed_bytes);
 
-        let map_to_field = |digest: &[u8]| -> F {
-            let bv = (0..250).map(|i| {
-                let (byte_pos, bit_pos) = (i / 8, i % 8);
-                let bit = (digest[byte_pos] >> bit_pos) & 1;
-                bit == 1
-            });
-
-            // turn the bit vector into a scalar
-            let mut digest = F::zero();
-            let mut coeff = F::one();
-            for bit in bv {
-                if bit {
-                    digest += coeff;
-                }
-                coeff += coeff;
-            }
-            digest
-        };
-        map_to_field(&hasher.result())
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -97,10 +63,6 @@ pub enum SpartanError {
     InvalidPCSProof,
 }
 
-// Trait which will kick out a small and big R1CS shape
-pub trait UniformShapeBuilder<F: JoltField> {
-    fn single_step_shape(&self, memory_start: u64) -> R1CSShape<F>;
-}
 
 // TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
 // and can run all the normal DensePolynomial ops.
@@ -135,10 +97,12 @@ impl<F: JoltField> SegmentedPaddedWitness<F> {
 
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::evals(&point);
+        assert!(chi.len() >= self.segment_len);
+        
         let evals = self
             .segments
             .par_iter()
-            .map(|segment| compute_dotproduct_low_optimized(&chi, segment))
+            .map(|segment| compute_dotproduct_low_optimized(&chi[0..self.segment_len], segment))
             .collect();
         drop_in_background_thread(chi);
         evals
@@ -168,10 +132,6 @@ impl<F: JoltField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
     }
 }
 
-pub trait IndexablePoly<F: JoltField>: std::ops::Index<usize, Output = F> + Sync {
-    fn len(&self) -> usize;
-}
-
 impl<F: JoltField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
     fn len(&self) -> usize {
         self.total_len
@@ -193,75 +153,72 @@ pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::setup_precommitted")]
-    pub fn setup_precommitted<ShapeBuilder: UniformShapeBuilder<F>>(
-        circuit: &ShapeBuilder,
+    pub fn setup_precommitted<I: ConstraintInput>(
+        constraint_builder: &CombinedUniformBuilder<F, I>,
         padded_num_steps: usize,
-        memory_start: u64,
-    ) -> Result<UniformSpartanKey<F>, SpartanError> {
-        let shape_single_step = circuit.single_step_shape(memory_start);
+    ) -> UniformSpartanKey<F> {
+        todo!()
+        // assert_eq!(padded_num_steps, constraint_builder.uniform_repeat().next_power_of_two());
+        // let single_step_shape = constraint_builder.materialize_uniform();
 
-        let num_constraints_total = shape_single_step.num_cons * padded_num_steps;
-        let num_aux_total = shape_single_step.num_vars * padded_num_steps;
+        // let padded_num_constraints = constraint_builder.constraint_rows().next_power_of_two();
+        // let padded_num_vars = constraint_builder.total_columns().next_power_of_two();
 
-        let pad_num_constraints = num_constraints_total.next_power_of_two();
-        let pad_num_aux = num_aux_total.next_power_of_two();
-
-        let vk_digest = UniformSpartanKey::compute_digest(&shape_single_step, padded_num_steps);
-
-        let key = UniformSpartanKey {
-            shape_single_step,
-            num_cons_total: pad_num_constraints,
-            num_vars_total: pad_num_aux,
-            num_steps: padded_num_steps,
-            vk_digest,
-        };
-
-        Ok(key)
+        // UniformSpartanKey::construct(
+        //     single_step_shape, 
+        //     padded_num_constraints, 
+        //     padded_num_vars, 
+        //     padded_num_steps, 
+        //     constraint_builder.uniform_rows(), 
+        //     constraint_builder.uniform_columns()
+        // )
     }
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted(
-        key: &UniformSpartanKey<F>,
+        constraint_builder: CombinedUniformBuilder<F, JoltInputs>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
-        println!("\n\nOG SPARTAN");
-        let poly_ABC_len = 2 * key.num_vars_total;
+        todo!();
+        /*println!("\n UPGRADED SPARTAN");
+        // TODO(sragss): Can drop constraint_builder in favor of UniformSpartanKey if we pass in Az, Bz, Cz.
+        let mut verifier_transcript = transcript.clone();
+        let padded_num_columns = constraint_builder.total_columns().next_power_of_two();
+        let padded_num_rows = constraint_builder.constraint_rows().next_power_of_two();
+        witness_segments.iter().for_each(|segment| assert_eq!(segment.len(), constraint_builder.uniform_repeat()));
+        let poly_ABC_len = 2 * padded_num_columns; // TODO(sragss): Why?? I think this is just a shitty way of making space for const.
 
-        let segmented_padded_witness =
-            SegmentedPaddedWitness::new(key.num_vars_total, witness_segments);
+        let segmented_padded_witness = SegmentedPaddedWitness::new(padded_num_columns, witness_segments);
 
-        let num_rounds_x = key.num_cons_total.ilog2() as usize;
-        let num_rounds_y = key.num_vars_total.ilog2() as usize + 1;
+        // TODO(sragss): Should x be based on padded_num_rows. Why?
+        // TODO(sragss): Arasu decided "x" was vertical. Convert to 'rows / columns'
+        let num_rounds_x = padded_num_rows.ilog2() as usize; // (A,B,C) rows
+        let num_rounds_y = padded_num_columns.ilog2() as usize; // (A,B,C) cols
+        println!("num_rounds_x {num_rounds_x}");
+        println!("num_rounds_y {num_rounds_y}");
 
         // outer sum-check
+
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Vec<F>>();
-
-        let combined_witness_size =
-            (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
-
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
-        let span = tracing::span!(tracing::Level::TRACE, "allocate_witness_vecs");
-        let _enter = span.enter();
-        let mut A_z = unsafe_allocate_zero_vec(combined_witness_size);
-        let mut B_z = unsafe_allocate_zero_vec(combined_witness_size);
-        let mut C_z = unsafe_allocate_zero_vec(combined_witness_size);
-        drop(_enter);
+        // TODO(sragss): This snippet makes prove JoltInputs dependent.
+        let inputs = &segmented_padded_witness.segments[0..JoltInputs::COUNT];
+        let aux = &segmented_padded_witness.segments[JoltInputs::COUNT..];
+        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan(&inputs, &aux);
 
-        key.shape_single_step.multiply_vec_uniform(
-            &segmented_padded_witness,
-            key.num_steps,
-            &mut A_z,
-            &mut B_z,
-            &mut C_z,
-        )?;
-        let mut poly_Az = DensePolynomial::new(A_z);
-        let mut poly_Bz = DensePolynomial::new(B_z);
-        let mut poly_Cz = DensePolynomial::new(C_z);
+        // TODO(sragss): Explicitly left because this is wasteful. Should likely deal with through more intelligent DensePaddedPolynomial.
+        az.resize(padded_num_rows, F::zero());
+        bz.resize(padded_num_rows, F::zero());
+        cz.resize(padded_num_rows, F::zero());
+
+        let mut poly_Az = DensePolynomial::new(az);
+        let mut poly_Bz = DensePolynomial::new(bz);
+        let mut poly_Cz = DensePolynomial::new(cz);
 
         #[cfg(test)]
         {
@@ -324,6 +281,28 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             [claim_Az, claim_Bz, claim_Cz].as_slice(),
         );
 
+
+        // VERIFIER VERIFIER VERIFIER VERIFIER VERIFIER
+        // TODO(sragss): rm
+        // VERIFIER VERIFIER VERIFIER VERIFIER VERIFIER
+        let verifier_tau = (0..num_rounds_x)
+            .map(|_i| verifier_transcript.challenge_scalar(b"t"))
+            .collect::<Vec<F>>();
+        assert_eq!(tau, verifier_tau);
+        let (claim_outer_final, r_x) = outer_sumcheck_proof
+            .verify(F::zero(), num_rounds_x, 3, &mut verifier_transcript)
+            .expect("Sumcheck doesn't verify bruv.");
+            // .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
+        assert_eq!(outer_sumcheck_r, r_x);
+        // verify claim_outer_final
+        verifier_transcript.append_scalars(b"claims_outer", [claim_Az, claim_Bz, claim_Cz].as_slice());
+        let taus_bound_rx = EqPolynomial::new(tau).evaluate(&r_x);
+        let claim_outer_final_expected = taus_bound_rx * (claim_Az * claim_Bz - claim_Cz);
+        if claim_outer_final != claim_outer_final_expected {
+            return Err(SpartanError::InvalidOuterSumcheckClaim);
+        }
+
+
         // inner sum-check
         let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
         let claim_inner_joint = claim_Az
@@ -335,7 +314,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
         let poly_ABC = {
-            let num_steps_bits = key.num_steps.ilog2();
+            let num_steps_bits = constraint_builder.uniform_repeat().next_power_of_two().ilog2();
             println!("outer_sumcheck_r.len(): {}", outer_sumcheck_r.len());
             println!("num_steps_bits: {}", num_steps_bits);
             let (rx_con, rx_ts) =
@@ -344,27 +323,32 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 || EqPolynomial::evals(rx_con),
                 || EqPolynomial::evals(rx_ts),
             );
-            println!("eq_rx_con.len(): {}", eq_rx_con.len());
-            let n_steps = key.num_steps;
+            assert_eq!(eq_rx_con.len(), constraint_builder.uniform_columns().next_power_of_two());
+            // TODO(sragss): Assert size of eq_rx_ts
+            let n_steps = constraint_builder.uniform_repeat();
 
             // With uniformity, each entry of the RLC of A, B, C can be expressed using
             // the RLC of the small_A, small_B, small_C matrices.
 
             // 1. Evaluate \tilde smallM(r_x, y) for all y. Here, \tilde smallM(r_x, y) = \sum_{x} eq(r_x, x) * smallM(x, y)
-            let compute_eval_table_sparse_single = |small_M: &Vec<(usize, usize, F)>| -> Vec<F> {
-                let mut small_M_evals = vec![F::zero(); key.shape_single_step.num_vars + 1];
+            let compute_eval_table_sparse_single = |small_M: &[(usize, usize, F)], columns: usize| -> Vec<F> {
+                let mut small_M_evals = vec![F::zero(); columns];
                 for (row, col, val) in small_M.iter() {
                     small_M_evals[*col] += eq_rx_con[*row] * val;
                 }
                 small_M_evals
             };
 
+            // TODO(sragss): Switch to key.uniform_r1cs
+            let (a_uniform, b_uniform, c_uniform) = constraint_builder.materialize_uniform();
+            let columns = constraint_builder.uniform_columns() + 1; // TODO(sragss): Additional column is for constants??
+
             let (small_A_evals, (small_B_evals, small_C_evals)) = rayon::join(
-                || compute_eval_table_sparse_single(&key.shape_single_step.A),
+                || compute_eval_table_sparse_single(&a_uniform, columns),
                 || {
                     rayon::join(
-                        || compute_eval_table_sparse_single(&key.shape_single_step.B),
-                        || compute_eval_table_sparse_single(&key.shape_single_step.C),
+                        || compute_eval_table_sparse_single(&b_uniform, columns),
+                        || compute_eval_table_sparse_single(&c_uniform, columns),
                     )
                 },
             );
@@ -395,8 +379,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
             // Handle all variables but pc_out and the constant
             RLC_evals
-                .par_chunks_mut(n_steps)
-                .take(key.num_vars_total / n_steps) // Note that this ignores the last variable which is the constant
+                .par_chunks_mut(constraint_builder.uniform_repeat())
+                .take(constraint_builder.total_columns() / constraint_builder.uniform_repeat()) // Note that this ignores the last variable which is the constant
                 .enumerate()
                 .for_each(|(var_index, var_chunk)| {
                     if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
@@ -408,7 +392,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             drop(_enter);
 
             // Handle pc_out
-            RLC_evals[1..key.num_steps]
+            RLC_evals[1..constraint_builder.uniform_repeat()]
                 .par_iter_mut()
                 .enumerate()
                 .for_each(|(i, rlc)| {
@@ -416,16 +400,16 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 });
 
             // Handle the constant
-            RLC_evals[key.num_vars_total] = small_RLC_evals[key.shape_single_step.num_vars]; // constant
+            // TODO(sragss): These functions are named like shit.
+            RLC_evals[constraint_builder.total_columns() - 1] = small_RLC_evals[constraint_builder.uniform_columns()]; // constant
 
             RLC_evals
         };
         drop(_enter);
         drop(span);
-
         let mut poly_ABC = DensePolynomial::new(poly_ABC);
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
-            SumcheckInstanceProof::prove_spartan_quadratic::<_>(
+            SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
                 num_rounds_y,
                 &mut poly_ABC, // r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
@@ -433,11 +417,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
+        println!("claims_inner: {_claims_inner:?}");
+        println!("inner_sumcheck_r: {inner_sumcheck_r:?}");
 
         // The number of prefix bits needed to identify a segment within the witness vector
         // assuming that num_vars_total is a power of 2 and each segment has length num_steps, which is also a power of 2.
         // The +1 is for the first element in r_y used as indicator between input or witness.
-        let n_prefix = (key.num_vars_total.ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
+
+        // TODO(sragss): There was a +1 here before. I removed it bc .evaluate_all(r_y) fails otherwise.
+        let n_prefix = padded_num_columns.ilog2() as usize - constraint_builder.uniform_repeat().ilog2() as usize;
         let r_y_point = &inner_sumcheck_r[n_prefix..];
 
         // Evaluate each segment on r_y_point
@@ -473,27 +461,25 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             eval_arg: vec![],
             claimed_witnesss_evals: witness_evals,
             opening_proof,
-        })
+        })*/
     }
 
-    /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "SNARK::verify")]
+    /// verifies a proof of satisfiability of a `RelaxedR1CS` instance
     pub fn verify_precommitted(
         &self,
+        key: UniformSpartanKey<F>,
         witness_segment_commitments: Vec<&C::Commitment>,
-        key: &UniformSpartanKey<F>,
-        io: &[F],
         generators: &C::Setup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
-        assert_eq!(io.len(), 0); // Currently not using io
-
+        println!("\n\nVERIFIER TIME");
         let N_SEGMENTS = witness_segment_commitments.len();
 
-        let (num_rounds_x, num_rounds_y) = (
-            usize::try_from(key.num_cons_total.ilog2()).unwrap(),
-            (usize::try_from(key.num_vars_total.ilog2()).unwrap() + 1),
-        );
+        let num_rounds_x = key.num_cons_total.ilog2() as usize;
+        let num_rounds_y = key.num_vars_total().ilog2() as usize;
+        println!("num_rounds_x {num_rounds_x}");
+        println!("num_rounds_y {num_rounds_y}");
 
         // outer sum-check
         let tau = (0..num_rounds_x)
@@ -533,46 +519,20 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
+        println!("inner_sumcheck_r: {inner_sumcheck_r:?}");
 
         // n_prefix = n_segments + 1
-        let n_prefix = (key.num_vars_total.ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
+        let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
 
-        let eval_Z = {
-            let eval_X = {
-                // constant term
-                let poly_X = vec![(0, F::one())];
-                SparsePolynomial::new(usize::try_from(key.num_vars_total.ilog2()).unwrap(), poly_X)
-                    .evaluate(&inner_sumcheck_r[1..])
-            };
+        let eval_Z = key.evaluate_z_mle(&self.claimed_witnesss_evals, &inner_sumcheck_r);
 
-            // evaluate the segments of W
-            let r_y_witness = &inner_sumcheck_r[1..n_prefix]; // skip the first as it's used to separate the inputs and the witness
-            let eval_W = (0..N_SEGMENTS)
-                .map(|i| {
-                    let bin = format!("{:0width$b}", i, width = n_prefix - 1); // write i in binary using N_PREFIX bits
-
-                    let product = bin.chars().enumerate().fold(F::one(), |acc, (j, bit)| {
-                        acc * if bit == '0' {
-                            F::one() - r_y_witness[j]
-                        } else {
-                            r_y_witness[j]
-                        }
-                    });
-
-                    product * self.claimed_witnesss_evals[i]
-                })
-                .sum::<F>();
-
-            (F::one() - inner_sumcheck_r[0]) * eval_W + inner_sumcheck_r[0] * eval_X
-        };
+        println!("EVAL Z: {eval_Z:?}");
 
         /* MLE evaluation */
         let num_steps_bits = key.num_steps.ilog2();
         let (rx_con, rx_ts) = r_x.split_at(r_x.len() - num_steps_bits as usize);
 
         let r_y = inner_sumcheck_r.clone();
-        // TODO(sragss): I believe labeled backwards. ry_var <> ry_ts MSBs select the step index within a row. LSBs select the relevant column.
-        // Maybe not, maybe this is indexing Az, Bz, Cz which are MSB variable ordered
         let (ry_var, ry_ts) = r_y.split_at(r_y.len() - num_steps_bits as usize);
 
         let eq_rx_con = EqPolynomial::evals(rx_con);
@@ -622,11 +582,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                     .into_par_iter()
                     .map(|i| {
                         let (row, col, val) = M[i];
-                        val * eq_rx_con[row]
-                            * if col == 1 {
+                        val * eq_rx_con[row] *
+                            // * if col == 1 {
                                 // pc_out (col 1) is redirected to pc_in (col 0)
-                                eq_ry_var[0] * y_eq_x_plus_1
-                            } else if col == key.shape_single_step.num_vars {
+                                // eq_ry_var[0] * y_eq_x_plus_1
+                            // } else 
+                            if col == key.uniform_r1cs.num_vars {
                                 eq_ry_var[col] * eq_ry_0
                             } else {
                                 eq_ry_var[col] * eq_rx_ry_ts
@@ -641,15 +602,19 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .collect()
         };
 
-        let evals = multi_evaluate_uniform(&[
-            &key.shape_single_step.A,
-            &key.shape_single_step.B,
-            &key.shape_single_step.C,
+        todo!();
+        /*let evals = multi_evaluate_uniform(&[
+            &key.uniform_r1cs.a,
+            &key.uniform_r1cs.b,
+            &key.uniform_r1cs.c,
         ]);
+        println!("evals: {evals:?}");
 
         let left_expected = evals[0]
             + r_inner_sumcheck_RLC * evals[1]
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * evals[2];
+        println!("evals combined: {left_expected:?}");
+        println!("r_inner_sumcheck_RLC {r_inner_sumcheck_RLC:?}");
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
         if claim_inner_final != claim_inner_final_expected {
@@ -667,7 +632,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         )
         .map_err(|_| SpartanError::InvalidPCSProof)?;
 
-        Ok(())
+        Ok(())*/
     }
 }
 
@@ -715,4 +680,11 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
     (0..num_bits)
         .map(|shift_amount| ((operand & (1 << (num_bits - shift_amount - 1))) > 0))
         .collect::<Vec<bool>>()
+}
+
+#[cfg(test)]
+mod tests {
+    fn piecewise_mle() {
+
+    }
 }

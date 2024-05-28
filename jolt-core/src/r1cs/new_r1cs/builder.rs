@@ -1,14 +1,10 @@
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
 use crate::{poly::field::JoltField, r1cs::new_r1cs::jolt_constraints::JoltInputs};
 use std::fmt::Debug;
 use std::ops::Range;
 
 use super::ops::{from_i64, ConstraintInput, Term, Variable, LC};
-
-pub struct R1CSBuilder<F: JoltField, I: ConstraintInput> {
-    constraints: Vec<Constraint<I>>,
-    next_aux: usize,
-    aux_computations: Vec<AuxComputation<F, I>>,
-}
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
     type Inputs: ConstraintInput;
@@ -149,6 +145,12 @@ impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
             .collect();
         (self.compute)(&computed_inputs)
     }
+}
+
+pub struct R1CSBuilder<F: JoltField, I: ConstraintInput> {
+    pub constraints: Vec<Constraint<I>>,
+    pub next_aux: usize,
+    pub aux_computations: Vec<AuxComputation<F, I>>,
 }
 
 impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
@@ -418,31 +420,140 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         self.allocate_aux(symbolic_inputs, compute)
     }
 
-    // TODO(sragss): Everything up until here assumes the single R1CS paradigm then this goes to Uniform / Multi
-    // Could do R1CSBuilder -> UniformSpartanBuilder(uniform_constraints, offset_equality_constraints).{compute_aux, compute_spartan}
+    fn num_aux(&self) -> usize {
+        self.next_aux
+    }
 
+    fn variable_to_column(&self, var: Variable<I>) -> usize {
+        match var {
+            Variable::Input(inner) => inner.into(),
+            Variable::Auxiliary(aux) => I::COUNT + aux ,
+            Variable::Constant => (I::COUNT + self.num_aux()).next_power_of_two()
+        }
+    }
+
+    fn materialize(&self) -> UniformR1CS<F> {
+        let a_len: usize = self.constraints.iter().map(|c| c.a.num_vars()).sum();
+        let b_len: usize = self.constraints.iter().map(|c| c.b.num_vars()).sum();
+        let c_len: usize = self.constraints.iter().map(|c| c.c.num_vars()).sum();
+        let mut a_sparse = SparseConstraints::empty_with_capacity(a_len, self.constraints.len());
+        let mut b_sparse = SparseConstraints::empty_with_capacity(b_len, self.constraints.len());
+        let mut c_sparse = SparseConstraints::empty_with_capacity(c_len, self.constraints.len());
+
+        let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F>| {
+            let sorted = lc.sorted_terms();
+            sorted.iter()
+                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+                .for_each(|term| sparse.vars.push((row_index, self.variable_to_column(term.0), from_i64::<F>(term.1))));
+            if let Some(term) = sorted.last() {
+                if matches!(term.0, Variable::Constant) {
+                    sparse.consts.push((row_index, from_i64::<F>(term.1)));
+                }
+            }
+
+        };
+
+        for (row_index, constraint) in self.constraints.iter().enumerate() {
+            update_sparse(row_index, &constraint.a, &mut a_sparse);
+            update_sparse(row_index, &constraint.b, &mut b_sparse);
+            update_sparse(row_index, &constraint.c, &mut c_sparse);
+        }
+
+        assert_eq!(a_sparse.vars.len(), a_len);
+        assert_eq!(b_sparse.vars.len(), b_len);
+        assert_eq!(c_sparse.vars.len(), c_len);
+
+        UniformR1CS::<F> {
+            a: a_sparse, 
+            b: b_sparse, 
+            c: c_sparse, 
+            num_vars: I::COUNT + self.num_aux(),
+            num_rows: self.constraints.len()
+        }
+    }
+}
+
+type Coeff<F> = (usize, usize, F);
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+struct SparseConstraints<F: JoltField> {
+    vars: Vec<Coeff<F>>,
+    consts: Vec<(usize, F)>
+}
+
+impl<F: JoltField> SparseConstraints<F> {
+    fn empty_with_capacity(vars: usize, consts: usize) -> Self {
+        Self {
+            vars: Vec::with_capacity(vars),
+            consts: Vec::with_capacity(consts)
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            vars: vec![],
+            consts: vec![]
+        }
+    }
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct UniformR1CS<F: JoltField> {
+    pub a: SparseConstraints<F>,
+    pub b: SparseConstraints<F>,
+    pub c: SparseConstraints<F>,
+
+    /// Unpadded number of variables in uniform instance.
+    pub num_vars: usize,
+
+    /// Unpadded number of rows in uniform instance.
+    pub num_rows: usize,
+}
+
+// TODO(sragss): More detailed documentation
+/// Represents full matrices (A, B, C) with `uniform_builder`` being repeated `uniform_repeat` times and `uniform_repeat - 1` "cross-uniform" constraints.
+pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
+    uniform_builder: R1CSBuilder<F, I>,
+    uniform_repeat: usize,
+
+    offset_equality_constraints: Vec<(LC<I>, LC<I>)>,
+}
+
+impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
+    pub fn construct(uniform_builder: R1CSBuilder<F, I>, uniform_repeat: usize, offset_equality_constraints: Vec<(LC<I>, LC<I>)>) -> Self {
+        for (lc1, lc2) in &offset_equality_constraints {
+            [lc1, lc2].iter().for_each(|lc| {
+                lc.terms().iter().for_each(|term| {
+                    if let Variable::Auxiliary(_) = term.0 {
+                        // Actually may work fine but it's untested as it's unused.
+                        panic!("Unsupported: offset_equality_constraints LC.terms contain aux");
+                    }
+                });
+            });
+        }
+        Self { uniform_builder, uniform_repeat, offset_equality_constraints }
+    }
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     pub fn compute_aux(&self, inputs: &[Vec<F>]) -> Vec<Vec<F>> {
         assert_eq!(inputs.len(), I::COUNT);
-        let padded_trace_len = inputs[0].len();
         inputs
             .iter()
-            .for_each(|inner_input| assert_eq!(inner_input.len(), padded_trace_len));
+            .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
 
         // let aux_len = self.next_aux * padded_trace_len;
-        let mut aux = vec![vec![F::zero(); padded_trace_len]; self.next_aux];
+        let mut aux = vec![vec![F::zero(); self.uniform_repeat]; self.uniform_builder.num_aux()];
 
-        for (aux_index, aux_compute) in self.aux_computations.iter().enumerate() {
+        for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter().enumerate() {
             match aux_compute.output {
                 Variable::Input(_) => panic!(),
                 Variable::Constant => panic!(),
                 Variable::Auxiliary(index) => assert_eq!(aux_index, index),
             }
-            for step_index in 0..padded_trace_len {
+            for step_index in 0..self.uniform_repeat {
                 let required_z_values: Vec<F> = aux_compute
                     .flat_vars
                     .iter()
-                    .map(|var| inputs[self.witness_index(var.clone())][step_index])
+                    .map(|var| inputs[self.uniform_builder.witness_index(var.clone())][step_index])
                     .collect();
                 aux[aux_index][step_index] = aux_compute.compute(&required_z_values);
             }
@@ -451,56 +562,83 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         aux
     }
 
+    // TODO(sragss): Prefix num_ for all below -- these generally need a rename
+    pub(super) fn offset_eq_constraint_rows(&self) -> usize {
+        self.offset_equality_constraints.len() * (self.uniform_repeat - 1) // First step is unconstrained
+    }
+
+    pub(super) fn uniform_repeat_constraint_rows(&self) -> usize {
+        self.uniform_repeat * self.uniform_builder.constraints.len()
+    }
+
+    pub(super) fn constraint_rows(&self) -> usize {
+        self.offset_eq_constraint_rows() + self.uniform_repeat_constraint_rows()
+    }
+
+    pub(super) fn uniform_rows(&self) -> usize {
+        self.uniform_builder.constraints.len()
+    }
+
+    /// Number of columns / variables in the uniform instance. Does not include constant column.
+    pub(super) fn uniform_columns(&self) -> usize {
+        I::COUNT + self.uniform_builder.num_aux()
+    }
+
+    /// Total number of columns / variables across all uniform steps + 1 constant.
+    pub(super) fn total_columns(&self) -> usize {
+        // Uniform variables + constant variable "1"
+        self.uniform_columns() * self.uniform_repeat + 1
+    }
+
+    pub(super) fn uniform_repeat(&self) -> usize {
+        self.uniform_repeat
+    }
+
+    /// Materializes the uniform constraints into a single sparse (value != 0) A, B, C matrix represented in (row, col, value) format.
+    pub fn materialize_uniform(&self) -> UniformR1CS<F> {
+        self.uniform_builder.materialize()
+    }
+
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0)], ... [Aux(self.next_aux - 1), ...]]
     pub fn compute_spartan(
         &self,
         inputs: &[Vec<F>],
         aux: &[Vec<F>],
-        offset_equality_constraints: &[(LC<I>, LC<I>)],
     ) -> (Vec<F>, Vec<F>, Vec<F>) {
         assert_eq!(inputs.len(), I::COUNT);
-        let padded_trace_len = inputs[0].len();
+        // let padded_trace_len = inputs[0].len();
+        // TODO(sragss): Maybe this should be packed.
         inputs
             .iter()
-            .for_each(|inner_input| assert_eq!(inner_input.len(), padded_trace_len));
+            .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
 
-        let num_aux = self.next_aux;
+        let num_aux = self.uniform_builder.num_aux();
         assert_eq!(aux.len(), num_aux);
         aux.iter()
-            .for_each(|aux_segment| assert_eq!(aux_segment.len(), padded_trace_len));
+            .for_each(|aux_segment| assert_eq!(aux_segment.len(), self.uniform_repeat));
 
-        // "rows in z"
-        let offset_eq_constraint_rows = offset_equality_constraints.len() * (padded_trace_len - 1); // First step unconstrained
-        let uniform_constraint_rows = padded_trace_len * self.constraints.len();
+        let offset_eq_constraint_rows = self.offset_eq_constraint_rows();
+        let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
+        let constraint_rows = self.constraint_rows();
 
-        // TODO(sragss): Do I need to deal with constants?
-        // let const_rows = 1; // TODO(sragss): chat is this real?
-        // let unpadded_spartan_vector_rows= offset_eq_constraint_rows + uniform_constraint_rows + const_rows;
-
-        let unpadded_spartan_vector_rows = offset_eq_constraint_rows + uniform_constraint_rows;
-
-        // TODO(sragss): btw ~unpadded~
+        // TODO(sragss): unsafe_alloc_zero_vec
+        // TODO(sragss): btw ~unpadded~ should be handeled upstream
         let (mut Az, mut Bz, mut Cz) = (
-            vec![F::zero(); unpadded_spartan_vector_rows],
-            vec![F::zero(); unpadded_spartan_vector_rows],
-            vec![F::zero(); unpadded_spartan_vector_rows],
+            vec![F::zero(); constraint_rows],
+            vec![F::zero(); constraint_rows],
+            vec![F::zero(); constraint_rows],
         );
 
         let compute_lc = |lc: &LC<I>, inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
             let mut eval = F::zero();
-            // println!();
             lc.terms().iter().for_each(|term| match term.0 {
                 Variable::Input(input) => {
                     eval += from_i64::<F>(term.1) * inputs[input.into()][step_index];
-                    // println!("Evaluate += : {:?} = {eval:?}", term);
-                    // println!("Debug: inputs[input.into()][step_index]: {:?}", inputs[input.into()][step_index]);
                 }
                 Variable::Auxiliary(aux_index) => {
-                    assert!(aux_index < self.next_aux);
+                    assert!(aux_index < self.uniform_builder.num_aux());
                     eval += from_i64::<F>(term.1) * aux[aux_index][step_index];
-                    // println!("Evaluate += : {:?} = {eval:?}", term);
-                    // println!("Debug: inputs[input.into()][step_index]: {:?}", aux[aux_index][step_index]);
                 }
                 Variable::Constant => {
                     eval += from_i64::<F>(term.1);
@@ -511,10 +649,10 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
 
         // 1. offset_equality_constraints: Xz[0..offset_eq_constraint_rows]
         // Az * 1 == Cz
-        for (constraint_index, constraint) in offset_equality_constraints.iter().enumerate() {
+        for (constraint_index, constraint) in self.offset_equality_constraints.iter().enumerate() {
             // For offset equality constraints we only constrain 1..N steps, the first does not have recursive definition.
-            for step_index in 0..(padded_trace_len - 1) {
-                let index = constraint_index * padded_trace_len + step_index;
+            for step_index in 0..(self.uniform_repeat - 1) {
+                let index = constraint_index * self.uniform_repeat + step_index;
                 Az[index] = compute_lc(&constraint.0, &inputs, &aux, step_index);
                 Bz[index] = F::one();
                 Cz[index] = compute_lc(&constraint.1, &inputs, &aux, step_index);
@@ -523,10 +661,10 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
 
         // 2. uniform_constraints: Xz[offset_eq_constraint_rows..uniform_constraint_rows]
         // TODO(sragss): Could either materialize then multiply or do it directly from the constraints. Should compare performance
-        for (constraint_index, constraint) in self.constraints.iter().enumerate() {
-            for step_index in 0..padded_trace_len {
+        for (constraint_index, constraint) in self.uniform_builder.constraints.iter().enumerate() {
+            for step_index in 0..self.uniform_repeat {
                 let z_index =
-                    offset_eq_constraint_rows + constraint_index * padded_trace_len + step_index;
+                    offset_eq_constraint_rows + constraint_index * self.uniform_repeat + step_index;
                 Az[z_index] = compute_lc(&constraint.a, &inputs, &aux, step_index);
                 Bz[z_index] = compute_lc(&constraint.b, &inputs, &aux, step_index);
                 Cz[z_index] = compute_lc(&constraint.c, &inputs, &aux, step_index);
@@ -557,23 +695,18 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         az: &[F],
         bz: &[F],
         cz: &[F],
-        offset_equality_constraints: &[(LC<I>, LC<I>)],
-        padded_trace_len: usize,
     ) {
-        let offset_eq_constraint_rows = (padded_trace_len - 1) * offset_equality_constraints.len();
-        let uniform_constraint_rows = padded_trace_len * self.constraints.len();
-
-        let len = az.len();
-        let expected_len = offset_eq_constraint_rows + uniform_constraint_rows;
-        assert_eq!(az.len(), expected_len);
-        assert_eq!(bz.len(), expected_len);
-        assert_eq!(cz.len(), expected_len);
-        for constraint_index in 0..len {
+        let rows = az.len();
+        let expected_rows = self.constraint_rows();
+        assert_eq!(az.len(), expected_rows);
+        assert_eq!(bz.len(), expected_rows);
+        assert_eq!(cz.len(), expected_rows);
+        for constraint_index in 0..rows {
             if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
                 let (uniform_constraint_index, step_index) = if constraint_index != 0 {
                     (
-                        padded_trace_len / constraint_index,
-                        padded_trace_len % constraint_index,
+                        self.uniform_repeat / constraint_index,
+                        self.uniform_repeat % constraint_index,
                     )
                 } else {
                     (0, 0)
@@ -582,48 +715,23 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
                     "Mismatch at global constraint {constraint_index} => {:?}\n\
                     uniform constraint: {uniform_constraint_index}\n\
                     step: {step_index}", 
-                    self.constraints[uniform_constraint_index]
+                    self.uniform_builder.constraints[uniform_constraint_index]
                 );
             }
         }
     }
+
 }
+
 
 #[cfg(test)]
 mod tests {
     use crate::{impl_r1cs_input_lc_conversions, input_range};
 
     use super::*;
+    use crate::r1cs::new_r1cs::test::TestInputs;
     use ark_bn254::Fr;
     use strum::EnumCount;
-
-    #[allow(non_camel_case_types)]
-    #[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq)]
-    #[repr(usize)]
-    enum TestInputs {
-        PcIn,
-        PcOut,
-        BytecodeA,
-        BytecodeVOpcode,
-        BytecodeVRS1,
-        BytecodeVRS2,
-        BytecodeVRD,
-        BytecodeVImm,
-        RAMA,
-        RAMRS1,
-        RAMRS2,
-        RAMByte0,
-        RAMByte1,
-        RAMByte2,
-        RAMByte3,
-        OpFlags0,
-        OpFlags1,
-        OpFlags2,
-        OpFlags3,
-        OpFlags_SignImm,
-    }
-    impl ConstraintInput for TestInputs {}
-    impl_r1cs_input_lc_conversions!(TestInputs);
 
     #[test]
     fn aux_compute_simple() {
@@ -994,7 +1102,7 @@ mod tests {
 
     #[test]
     fn alloc_compute_simple_uniform_only() {
-        let mut builder = R1CSBuilder::<Fr, TestInputs>::new();
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
 
         // OpFlags0 * OpFlags1 == Aux(0)
         struct TestConstraints();
@@ -1006,30 +1114,31 @@ mod tests {
         }
 
         let constraints = TestConstraints();
-        constraints.build_constraints(&mut builder);
-        assert_eq!(builder.constraints.len(), 1);
-        assert_eq!(builder.next_aux, 1);
-
+        constraints.build_constraints(&mut uniform_builder);
+        assert_eq!(uniform_builder.constraints.len(), 1);
+        assert_eq!(uniform_builder.next_aux, 1);
         let num_steps = 2;
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
         inputs[TestInputs::OpFlags1 as usize][0] = Fr::from(7);
         inputs[TestInputs::OpFlags0 as usize][1] = Fr::from(11);
         inputs[TestInputs::OpFlags1 as usize][1] = Fr::from(13);
-        let aux = builder.compute_aux(&inputs);
+        let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(11 * 13)]]);
 
-        let (az, bz, cz) = builder.compute_spartan(&inputs, &aux, &vec![]);
+        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
         assert_eq!(az.len(), 2);
         assert_eq!(bz.len(), 2);
         assert_eq!(cz.len(), 2);
 
-        builder.assert_valid(&az, &bz, &cz, &vec![], num_steps);
+        combined_builder.assert_valid(&az, &bz, &cz);
     }
 
     #[test]
     fn alloc_compute_complex_uniform_only() {
-        let mut builder = R1CSBuilder::<Fr, TestInputs>::new();
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
 
         // OpFlags0 * OpFlags1 == Aux(0)
         // OpFlags2 + OpFlags3 == Aux(0)
@@ -1051,11 +1160,13 @@ mod tests {
         }
 
         let constraints = TestConstraints();
-        constraints.build_constraints(&mut builder);
-        assert_eq!(builder.constraints.len(), 4);
-        assert_eq!(builder.next_aux, 2);
+        constraints.build_constraints(&mut uniform_builder);
+        assert_eq!(uniform_builder.constraints.len(), 4);
+        assert_eq!(uniform_builder.next_aux, 2);
 
         let num_steps = 2;
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
         inputs[TestInputs::OpFlags1 as usize][0] = Fr::from(7);
@@ -1071,7 +1182,7 @@ mod tests {
         inputs[TestInputs::RAMByte0 as usize][1] = Fr::from(10);
         inputs[TestInputs::RAMByte1 as usize][1] = Fr::from((4 * 10 + 2) * 7);
 
-        let aux = builder.compute_aux(&inputs);
+        let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(
             aux,
             vec![
@@ -1080,17 +1191,17 @@ mod tests {
             ]
         );
 
-        let (az, bz, cz) = builder.compute_spartan(&inputs, &aux, &vec![]);
+        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
         assert_eq!(az.len(), 4 * 2);
         assert_eq!(bz.len(), 4 * 2);
         assert_eq!(cz.len(), 4 * 2);
 
-        builder.assert_valid(&az, &bz, &cz, &vec![], num_steps);
+        combined_builder.assert_valid(&az, &bz, &cz);
     }
 
     #[test]
     fn alloc_compute_simple_combined() {
-        let mut builder = R1CSBuilder::<Fr, TestInputs>::new();
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
 
         // OpFlags0 * OpFlags1 == Aux(0)
         struct TestConstraints();
@@ -1102,9 +1213,9 @@ mod tests {
         }
 
         let constraints = TestConstraints();
-        constraints.build_constraints(&mut builder);
-        assert_eq!(builder.constraints.len(), 1);
-        assert_eq!(builder.next_aux, 1);
+        constraints.build_constraints(&mut uniform_builder);
+        assert_eq!(uniform_builder.constraints.len(), 1);
+        assert_eq!(uniform_builder.next_aux, 1);
 
         let num_steps = 2;
 
@@ -1114,6 +1225,8 @@ mod tests {
             (TestInputs::OpFlags0.into(), TestInputs::OpFlags0.into()),
             (LC::sum2(TestInputs::PcIn, 4), TestInputs::PcIn.into()),
         ];
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
+
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1122,259 +1235,14 @@ mod tests {
         inputs[TestInputs::OpFlags0 as usize][1] = Fr::from(5);
         inputs[TestInputs::OpFlags1 as usize][1] = Fr::from(13);
         inputs[TestInputs::PcIn as usize][1] = Fr::from(104);
-        let aux = builder.compute_aux(&inputs);
+        let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(5 * 13)]]);
 
-        let (az, bz, cz) = builder.compute_spartan(&inputs, &aux, &non_uniform_constraints);
+        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
         assert_eq!(az.len(), 4);
         assert_eq!(bz.len(), 4);
         assert_eq!(cz.len(), 4);
 
-        builder.assert_valid(&az, &bz, &cz, &non_uniform_constraints, num_steps);
-    }
-
-    #[allow(non_camel_case_types)]
-    #[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq)]
-    #[repr(usize)]
-    enum JoltInputs {
-        PcIn,
-        PcOut,
-
-        Bytecode_A,
-        // Bytecode_V
-        Bytecode_Opcode,
-        Bytecode_RS1,
-        Bytecode_RS2,
-        Bytecode_RD,
-        Bytecode_Imm,
-
-        RAM_A,
-        // Ram_V
-        RAM_Read_RD,
-        RAM_Read_RS1,
-        RAM_Read_RS2,
-        RAM_Read_Byte0,
-        RAM_Read_Byte1,
-        RAM_Read_Byte2,
-        RAM_Read_Byte3,
-        RAM_Write_RD,
-        RAM_Write_Byte0,
-        RAM_Write_Byte1,
-        RAM_Write_Byte2,
-        RAM_Write_Byte3,
-
-        ChunksX_0,
-        ChunksX_1,
-        ChunksX_2,
-        ChunksX_3,
-
-        ChunksY_0,
-        ChunksY_1,
-        ChunksY_2,
-        ChunksY_3,
-
-        ChunksQ_0,
-        ChunksQ_1,
-        ChunksQ_2,
-        ChunksQ_3,
-
-        LookupOutput,
-
-        // TODO(sragss): Better names for first 2.
-        OpFlags0,
-        OpFlags1,
-        OpFlags_IsLoad,
-        OpFlags_IsStore,
-        OpFlags_IsJmp,
-        OpFlags_IsBranch,
-        OpFlags_LookupOutToRd,
-        OpFlags_SignImm,
-        OpFlags_IsConcat,
-
-        // Instruction Flags
-        IF_Add,
-        IF_Sub,
-        IF_And,
-        IF_Or,
-        IF_Xor,
-        IF_Lb,
-        IF_Lh,
-        IF_Sb,
-        IF_Sh,
-        IF_Sw,
-        IF_Beq,
-        IF_Bge,
-        IF_Bgeu,
-        IF_Bne,
-        IF_Slt,
-        IF_Sltu,
-        IF_Sll,
-        IF_Sra,
-        IF_Srl,
-    }
-    impl_r1cs_input_lc_conversions!(JoltInputs);
-    impl ConstraintInput for JoltInputs {}
-
-    const PC_START_ADDRESS: i64 = 0x80000000;
-    const PC_NOOP_SHIFT: i64 = 4;
-    const MEMORY_START: i64 = 128; // TODO(sragss): Non constant.
-    const LOG_M: usize = 16;
-    const OPERAND_SIZE: usize = LOG_M / 2;
-
-    #[test]
-    fn jolt() {
-        let mut builder = R1CSBuilder::<Fr, JoltInputs>::new();
-
-        struct JoltConstraints();
-        impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
-            type Inputs = JoltInputs;
-            fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-                let op_flag_inputs =
-                    input_range!(JoltInputs::OpFlags0, JoltInputs::OpFlags_IsConcat);
-                for op_flag_input in op_flag_inputs {
-                    cs.constrain_binary(op_flag_input);
-                }
-                for instruction_flag_input in input_range!(JoltInputs::IF_Add, JoltInputs::IF_Srl) {
-                    cs.constrain_binary(instruction_flag_input);
-                }
-
-                cs.constrain_eq(JoltInputs::PcIn, JoltInputs::Bytecode_A);
-
-                cs.constrain_pack_be(op_flag_inputs.to_vec(), JoltInputs::Bytecode_Opcode, 1);
-
-                let ram_writes =
-                    input_range!(JoltInputs::RAM_Read_Byte0, JoltInputs::RAM_Read_Byte3);
-                let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
-
-                let real_pc = LC::sum2(4i64 * JoltInputs::PcIn, PC_START_ADDRESS + PC_NOOP_SHIFT);
-                let x =
-                    cs.allocate_if_else(JoltInputs::OpFlags0, JoltInputs::RAM_Read_RS1, real_pc);
-                let y = cs.allocate_if_else(
-                    JoltInputs::OpFlags1,
-                    JoltInputs::RAM_Read_RS2,
-                    JoltInputs::Bytecode_Imm,
-                );
-
-                let signed_output = LC::sub2(JoltInputs::Bytecode_Imm, 0xffffffffi64 - 1i64); // TODO(sragss): Comment about twos-complement.
-                let imm_signed = cs.allocate_if_else(
-                    JoltInputs::OpFlags_SignImm,
-                    JoltInputs::Bytecode_Imm,
-                    signed_output,
-                );
-
-                let flag_0_or_1_condition = LC::sum2(JoltInputs::OpFlags0, JoltInputs::OpFlags1);
-                cs.constrain_eq_conditional(
-                    flag_0_or_1_condition,
-                    LC::sum2(JoltInputs::RAM_Read_RS1, imm_signed),
-                    LC::sum2(JoltInputs::RAM_A, MEMORY_START),
-                );
-
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsLoad,
-                    JoltInputs::RAM_Read_Byte0,
-                    JoltInputs::RAM_Write_Byte0,
-                );
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsLoad,
-                    JoltInputs::RAM_Read_Byte1,
-                    JoltInputs::RAM_Write_Byte1,
-                );
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsLoad,
-                    JoltInputs::RAM_Read_Byte2,
-                    JoltInputs::RAM_Write_Byte2,
-                );
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsLoad,
-                    JoltInputs::RAM_Read_Byte3,
-                    JoltInputs::RAM_Write_Byte3,
-                );
-
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsStore,
-                    packed_load_store,
-                    JoltInputs::LookupOutput,
-                );
-
-                let packed_query = cs.allocate_pack_be(
-                    input_range!(JoltInputs::ChunksQ_0, JoltInputs::ChunksQ_3).to_vec(),
-                    LOG_M,
-                );
-                cs.constrain_eq_conditional(JoltInputs::IF_Add, packed_query, x + y);
-                cs.constrain_eq_conditional(JoltInputs::IF_Sub, packed_query, x - y); // TODO(sragss): Twos complement.
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsLoad,
-                    packed_query,
-                    packed_load_store,
-                );
-                cs.constrain_eq_conditional(
-                    JoltInputs::OpFlags_IsStore,
-                    packed_query,
-                    JoltInputs::RAM_Read_RS2,
-                );
-
-                // TODO(sragss): BE or LE
-                // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
-                let chunked_x = cs.allocate_pack_be(
-                    input_range!(JoltInputs::ChunksX_0, JoltInputs::ChunksX_3).to_vec(),
-                    OPERAND_SIZE,
-                );
-                let chunked_y = cs.allocate_pack_be(
-                    input_range!(JoltInputs::ChunksY_0, JoltInputs::ChunksY_3).to_vec(),
-                    OPERAND_SIZE,
-                );
-                cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_x, x);
-                cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_y, y);
-
-                // TODO(sragss): Some concat bullshit here.
-
-                // if (rd != 0 && if_update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
-                // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
-                let rd_nonzero_and_lookup_to_rd =
-                    cs.allocate_prod(JoltInputs::Bytecode_RD, JoltInputs::OpFlags_LookupOutToRd);
-                cs.constrain_eq_conditional(
-                    rd_nonzero_and_lookup_to_rd,
-                    JoltInputs::RAM_Write_RD,
-                    JoltInputs::LookupOutput,
-                );
-                let rd_nonzero_and_jmp =
-                    cs.allocate_prod(JoltInputs::Bytecode_RD, JoltInputs::OpFlags_IsJmp);
-                let lhs = LC::sum2(JoltInputs::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-                let rhs = JoltInputs::RAM_Write_RD;
-                cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
-
-                // TODO(sragss): PC incrementing constraints. Next PC: Check if it's a branch and the lookup output is 1. Check if it's a jump.
-            }
-        }
-
-        let jolt_constraints = JoltConstraints();
-        jolt_constraints.build_constraints(&mut builder);
-
-        let num_steps = 1;
-        let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltInputs::COUNT];
-
-        // ADD instruction
-        inputs[JoltInputs::PcIn as usize][0] = Fr::from(10);
-        inputs[JoltInputs::Bytecode_A as usize][0] = Fr::from(10);
-        inputs[JoltInputs::Bytecode_Opcode as usize][0] = Fr::from(0);
-        inputs[JoltInputs::Bytecode_RS1 as usize][0] = Fr::from(2);
-        inputs[JoltInputs::Bytecode_RS2 as usize][0] = Fr::from(3);
-        inputs[JoltInputs::Bytecode_RD as usize][0] = Fr::from(4);
-
-        inputs[JoltInputs::RAM_Read_RD as usize][0] = Fr::from(0);
-        inputs[JoltInputs::RAM_Read_RS1 as usize][0] = Fr::from(100);
-        inputs[JoltInputs::RAM_Read_RS2 as usize][0] = Fr::from(200);
-        inputs[JoltInputs::RAM_Write_RD as usize][0] = Fr::from(300);
-        // remainder RAM == 0
-
-        // rv_trace::to_circuit_flags
-        // all zero for ADD
-        inputs[JoltInputs::OpFlags0 as usize][0] = Fr::zero(); // first_operand = rs1
-        inputs[JoltInputs::OpFlags1 as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
-
-        let aux = builder.compute_aux(&inputs);
-        let (az, bz, cz) = builder.compute_spartan(&inputs, &aux, &vec![]);
-
-        builder.assert_valid(&az, &bz, &cz, &vec![], num_steps);
+        combined_builder.assert_valid(&az, &bz, &cz);
     }
 }

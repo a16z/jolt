@@ -7,7 +7,7 @@ use super::{
 
 // TODO(sragss): JoltInputs -> JoltIn
 #[allow(non_camel_case_types)]
-#[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq)]
+#[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(usize)]
 pub enum JoltInputs {
     PcIn,
@@ -197,7 +197,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_x, x);
         cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_y, y);
 
-        // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-i]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i]) 
+        // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i]) 
         let is_shift = JoltInputs::IF_Sll + JoltInputs::IF_Srl + JoltInputs::IF_Sra;
         let chunks_x = input_range!(JoltInputs::ChunksX_0, JoltInputs::ChunksX_3);
         let chunks_y = input_range!(JoltInputs::ChunksY_0, JoltInputs::ChunksY_3);
@@ -229,17 +229,21 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::r1cs::new_r1cs::builder::CombinedUniformBuilder;
+
     use ark_bn254::Fr;
     use strum::EnumCount;
 
     #[test]
     fn single_instruction_jolt() {
-        let mut builder = R1CSBuilder::<Fr, JoltInputs>::new();
+        let mut uniform_builder = R1CSBuilder::<Fr, JoltInputs>::new();
 
         let jolt_constraints = JoltConstraints();
-        jolt_constraints.build_constraints(&mut builder);
+        jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
+        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltInputs::COUNT];
 
         // ADD instruction
@@ -261,9 +265,9 @@ mod tests {
         inputs[JoltInputs::OpFlags0 as usize][0] = Fr::zero(); // first_operand = rs1
         inputs[JoltInputs::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
-        let aux = builder.compute_aux(&inputs);
-        let (az, bz, cz) = builder.compute_spartan(&inputs, &aux, &vec![]);
+        let aux = combined_builder.compute_aux(&inputs);
+        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
 
-        builder.assert_valid(&az, &bz, &cz, &vec![], num_steps);
+        combined_builder.assert_valid(&az, &bz, &cz);
     }
 }

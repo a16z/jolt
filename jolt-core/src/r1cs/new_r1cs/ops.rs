@@ -5,18 +5,18 @@ use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 
 pub trait ConstraintInput:
-    Clone + Copy + Debug + PartialEq + IntoEnumIterator + EnumCount + Into<usize> + 'static
+    Clone + Copy + Debug + PartialEq + Eq + PartialOrd + Ord + IntoEnumIterator + EnumCount + Into<usize> + 'static
 {
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Variable<I: ConstraintInput> {
     Input(I),
     Auxiliary(usize),
     Constant,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Term<I: ConstraintInput>(pub Variable<I>, pub i64);
 
 /// Linear Combination of terms.
@@ -25,6 +25,9 @@ pub struct LC<I: ConstraintInput>(Vec<Term<I>>);
 
 impl<I: ConstraintInput> LC<I> {
     pub fn new(terms: Vec<Term<I>>) -> Self {
+        #[cfg(test)]
+        Self::assert_no_duplicate_terms(&terms);
+
         LC(terms)
     }
 
@@ -34,6 +37,12 @@ impl<I: ConstraintInput> LC<I> {
 
     pub fn terms(&self) -> &[Term<I>] {
         &self.0
+    }
+
+    pub fn sorted_terms(&self) -> Vec<Term<I>> {
+        let mut sorted_terms = self.0.clone();
+        sorted_terms.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted_terms
     }
 
     pub fn num_terms(&self) -> usize {
@@ -80,6 +89,18 @@ impl<I: ConstraintInput> LC<I> {
             }
         }
         result
+    }
+
+    #[cfg(test)]
+    fn assert_no_duplicate_terms(terms: &[Term<I>]) {
+        let mut term_vec = Vec::new();
+        for term in terms {
+            if term_vec.contains(&term.0) {
+                panic!("Duplicate variable found in terms");
+            } else {
+                term_vec.push(term.0);
+            }
+        }
     }
 }
 
@@ -313,8 +334,8 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl Into<LC<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> LC<$ConcreteInput> {
+        impl Into<crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> crate::r1cs::new_r1cs::ops::LC<$ConcreteInput> {
                 crate::r1cs::new_r1cs::ops::Term(
                     crate::r1cs::new_r1cs::ops::Variable::Input(self),
                     1,
@@ -323,47 +344,47 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl Into<LC<$ConcreteInput>> for Vec<$ConcreteInput> {
-            fn into(self) -> LC<$ConcreteInput> {
+        impl Into<crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
+            fn into(self) -> crate::r1cs::new_r1cs::ops::LC<$ConcreteInput> {
                 let terms: Vec<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> =
                     self.into_iter().map(Into::into).collect();
-                LC::new(terms)
+                crate::r1cs::new_r1cs::ops::LC::new(terms)
             }
         }
 
         impl std::ops::Add for $ConcreteInput {
-            type Output = LC<$ConcreteInput>;
+            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: Self) -> Self::Output {
-                LC::sum2(self, other)
+                crate::r1cs::new_r1cs::ops::LC::sum2(self, other)
             }
         }
 
         impl std::ops::Add<$ConcreteInput> for crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> {
-            type Output = LC<$ConcreteInput>;
+            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: $ConcreteInput) -> Self::Output {
                 let other_term: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> = other.into();
-                LC::sum2(self, other_term)
+                crate::r1cs::new_r1cs::ops::LC::sum2(self, other_term)
             }
         }
 
         impl std::ops::Add<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            type Output = LC<$ConcreteInput>;
+            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
                 other + self
             }
         }
 
-        impl std::ops::Add<$ConcreteInput> for LC<$ConcreteInput> {
-            type Output = LC<$ConcreteInput>;
+        impl std::ops::Add<$ConcreteInput> for crate::r1cs::new_r1cs::ops::LC<$ConcreteInput> {
+            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: $ConcreteInput) -> Self::Output {
                 let other_term: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> = other.into();
                 let mut combined_terms: Vec<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> = self.terms().to_vec();
                 combined_terms.push(other_term);
-                LC::new(combined_terms)
+                crate::r1cs::new_r1cs::ops::LC::new(combined_terms)
             }
         }
 
@@ -422,7 +443,7 @@ macro_rules! enum_range {
 /// use jolt_core::r1cs::new_r1cs::ops::{ConstraintInput, Variable};
 /// # use strum_macros::{EnumCount, EnumIter};
 ///
-/// # #[derive(Clone, Copy, Debug, PartialEq, EnumCount, EnumIter)]
+/// # #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter)]
 /// #[repr(usize)]
 /// pub enum Inputs {
 ///     A,
@@ -462,4 +483,47 @@ macro_rules! input_range {
         }
         arr
     }};
+}
+
+#[cfg(test)]
+mod test {
+    use strum_macros::{EnumCount, EnumIter};
+
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter)]
+    #[repr(usize)]
+    enum Inputs {
+        A, 
+        B,
+        C,
+        D
+    }
+
+    impl Into<usize> for Inputs {
+        fn into(self) -> usize {
+            self as usize
+        }
+    }
+    impl ConstraintInput for Inputs {}
+
+    #[test]
+    fn variable_ordering() {
+        let mut variables: Vec<Variable<Inputs>> = vec![Variable::Auxiliary(10), Variable::Auxiliary(5), Variable::Constant, Variable::Input(Inputs::C), Variable::Input(Inputs::B)];
+        let expected_sort: Vec<Variable<Inputs>> = vec![Variable::Input(Inputs::B), Variable::Input(Inputs::C), Variable::Auxiliary(5), Variable::Auxiliary(10), Variable::Constant];
+        variables.sort();
+        assert_eq!(variables, expected_sort);
+    }
+
+    #[test]
+    fn lc_sorting() {
+        let mut variables: Vec<Variable<Inputs>> = vec![Variable::Auxiliary(10), Variable::Auxiliary(5), Variable::Constant, Variable::Input(Inputs::C), Variable::Input(Inputs::B)];
+
+        let expected_sort: Vec<Variable<Inputs>> = vec![Variable::Input(Inputs::B), Variable::Input(Inputs::C), Variable::Auxiliary(5), Variable::Auxiliary(10), Variable::Constant];
+        let expected_sorted_terms: Vec<Term<Inputs>> = expected_sort.into_iter().map(|variable| variable.into()).collect();
+
+        let terms = variables.into_iter().map(|variable| variable.into()).collect();
+        let lc = LC::new(terms);
+        assert_eq!(lc.sorted_terms(), expected_sorted_terms);
+    }
 }
