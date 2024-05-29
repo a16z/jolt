@@ -395,7 +395,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .take(key.num_vars_total / n_steps) // Note that this ignores the last variable which is the constant
                 .enumerate()
                 .for_each(|(var_index, var_chunk)| {
-                    if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
+                    if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1)
                         for (ts, item) in var_chunk.iter_mut().enumerate() {
                             *item = eq_rx_ts[ts] * small_RLC_evals[var_index];
                         }
