@@ -315,107 +315,107 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 self as usize
             }
         }
-        impl Into<crate::r1cs::new_r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::new_r1cs::ops::Variable<$ConcreteInput> {
-                crate::r1cs::new_r1cs::ops::Variable::Input(self)
+        impl Into<crate::r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> crate::r1cs::ops::Variable<$ConcreteInput> {
+                crate::r1cs::ops::Variable::Input(self)
             }
         }
 
-        impl Into<(crate::r1cs::new_r1cs::ops::Variable<$ConcreteInput>, i64)> for $ConcreteInput {
-            fn into(self) -> (crate::r1cs::new_r1cs::ops::Variable<$ConcreteInput>, i64) {
-                (crate::r1cs::new_r1cs::ops::Variable::Input(self), 1)
+        impl Into<(crate::r1cs::ops::Variable<$ConcreteInput>, i64)> for $ConcreteInput {
+            fn into(self) -> (crate::r1cs::ops::Variable<$ConcreteInput>, i64) {
+                (crate::r1cs::ops::Variable::Input(self), 1)
             }
         }
-        impl Into<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::new_r1cs::ops::Term(
-                    crate::r1cs::new_r1cs::ops::Variable::Input(self),
+        impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
+                crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(self),
                     1,
                 )
             }
         }
 
-        impl Into<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
-            fn into(self) -> crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::new_r1cs::ops::Term(
-                    crate::r1cs::new_r1cs::ops::Variable::Input(self.0),
+        impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
+            fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
+                crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(self.0),
                     self.1,
                 )
             }
         }
 
-        impl Into<crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::new_r1cs::ops::LC<$ConcreteInput> {
-                crate::r1cs::new_r1cs::ops::Term(
-                    crate::r1cs::new_r1cs::ops::Variable::Input(self),
+        impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
+                crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(self),
                     1,
                 )
                 .into()
             }
         }
 
-        impl Into<crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
-            fn into(self) -> crate::r1cs::new_r1cs::ops::LC<$ConcreteInput> {
-                let terms: Vec<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> =
+        impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
+            fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
+                let terms: Vec<crate::r1cs::ops::Term<$ConcreteInput>> =
                     self.into_iter().map(Into::into).collect();
-                crate::r1cs::new_r1cs::ops::LC::new(terms)
+                crate::r1cs::ops::LC::new(terms)
             }
         }
 
         impl std::ops::Add for $ConcreteInput {
-            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
+            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: Self) -> Self::Output {
-                crate::r1cs::new_r1cs::ops::LC::sum2(self, other)
+                crate::r1cs::ops::LC::sum2(self, other)
             }
         }
 
-        impl std::ops::Add<$ConcreteInput> for crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> {
-            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
+        impl std::ops::Add<$ConcreteInput> for crate::r1cs::ops::Term<$ConcreteInput> {
+            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: $ConcreteInput) -> Self::Output {
-                let other_term: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> = other.into();
-                crate::r1cs::new_r1cs::ops::LC::sum2(self, other_term)
+                let other_term: crate::r1cs::ops::Term<$ConcreteInput> = other.into();
+                crate::r1cs::ops::LC::sum2(self, other_term)
             }
         }
 
-        impl std::ops::Add<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
+        impl std::ops::Add<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
+            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
 
-            fn add(self, other: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
+            fn add(self, other: crate::r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
                 other + self
             }
         }
 
-        impl std::ops::Add<$ConcreteInput> for crate::r1cs::new_r1cs::ops::LC<$ConcreteInput> {
-            type Output = crate::r1cs::new_r1cs::ops::LC<$ConcreteInput>;
+        impl std::ops::Add<$ConcreteInput> for crate::r1cs::ops::LC<$ConcreteInput> {
+            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: $ConcreteInput) -> Self::Output {
-                let other_term: crate::r1cs::new_r1cs::ops::Term<$ConcreteInput> = other.into();
-                let mut combined_terms: Vec<crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>> =
+                let other_term: crate::r1cs::ops::Term<$ConcreteInput> = other.into();
+                let mut combined_terms: Vec<crate::r1cs::ops::Term<$ConcreteInput>> =
                     self.terms().to_vec();
                 combined_terms.push(other_term);
-                crate::r1cs::new_r1cs::ops::LC::new(combined_terms)
+                crate::r1cs::ops::LC::new(combined_terms)
             }
         }
 
         impl std::ops::Mul<i64> for $ConcreteInput {
-            type Output = crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>;
+            type Output = crate::r1cs::ops::Term<$ConcreteInput>;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                crate::r1cs::new_r1cs::ops::Term(
-                    crate::r1cs::new_r1cs::ops::Variable::Input(self),
+                crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(self),
                     rhs,
                 )
             }
         }
 
         impl std::ops::Mul<$ConcreteInput> for i64 {
-            type Output = crate::r1cs::new_r1cs::ops::Term<$ConcreteInput>;
+            type Output = crate::r1cs::ops::Term<$ConcreteInput>;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                crate::r1cs::new_r1cs::ops::Term(
-                    crate::r1cs::new_r1cs::ops::Variable::Input(rhs),
+                crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(rhs),
                     self,
                 )
             }
@@ -451,7 +451,7 @@ macro_rules! enum_range {
 
 /// ```rust
 /// use jolt_core::input_range;
-/// use jolt_core::r1cs::new_r1cs::ops::{ConstraintInput, Variable};
+/// use jolt_core::r1cs::ops::{ConstraintInput, Variable};
 /// # use strum_macros::{EnumCount, EnumIter};
 ///
 /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter)]
@@ -486,7 +486,7 @@ macro_rules! input_range {
         arr
     }};
     ($start:path, $end:path) => {{
-        let mut arr = [crate::r1cs::new_r1cs::ops::Variable::Input($start);
+        let mut arr = [crate::r1cs::ops::Variable::Input($start);
             ($end as usize) - ($start as usize) + 1];
         for i in ($start as usize)..=($end as usize) {
             arr[i - ($start as usize)] =

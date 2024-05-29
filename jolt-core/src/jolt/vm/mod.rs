@@ -1,10 +1,10 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::field::JoltField;
-use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
-use crate::r1cs::new_r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
-use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltIn};
-use crate::r1cs::new_r1cs::spartan_3::{self, UniformSpartanProof};
+use crate::r1cs::builder::R1CSConstraintBuilder;
+use crate::r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
+use crate::r1cs::jolt_constraints::{JoltConstraints, JoltIn};
+use crate::r1cs::spartan_3::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;

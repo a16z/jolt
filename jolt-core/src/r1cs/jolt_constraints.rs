@@ -247,7 +247,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 mod tests {
     use super::*;
 
-    use crate::r1cs::new_r1cs::builder::CombinedUniformBuilder;
+    use crate::r1cs::builder::CombinedUniformBuilder;
 
     use ark_bn254::Fr;
     use strum::EnumCount;

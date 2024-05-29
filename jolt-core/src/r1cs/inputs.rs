@@ -14,8 +14,8 @@ use crate::{
     },
 };
 
-use super::new_r1cs::key::UniformSpartanKey;
-use super::new_r1cs::spartan_3::{SpartanError, UniformSpartanProof};
+use super::key::UniformSpartanKey;
+use super::spartan_3::{SpartanError, UniformSpartanProof};
 
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

@@ -3,7 +3,7 @@
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
-use crate::r1cs::new_r1cs::key::UniformSpartanKey;
+use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;

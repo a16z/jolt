@@ -319,7 +319,7 @@ mod test {
 
     use crate::{
         poly::dense_mlpoly::DensePolynomial,
-        r1cs::new_r1cs::{
+        r1cs::{
             builder::{R1CSBuilder, R1CSConstraintBuilder, SparseConstraints},
             test::TestInputs,
         },

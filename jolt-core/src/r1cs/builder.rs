@@ -1,7 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use strum::EnumCount;
 
-use crate::{poly::field::JoltField, r1cs::new_r1cs::jolt_constraints::JoltIn};
+use crate::{poly::field::JoltField, r1cs::jolt_constraints::JoltIn};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -752,7 +752,7 @@ mod tests {
     use crate::{impl_r1cs_input_lc_conversions, input_range};
 
     use super::*;
-    use crate::r1cs::new_r1cs::test::TestInputs;
+    use crate::r1cs::test::TestInputs;
     use ark_bn254::Fr;
     use strum::EnumCount;
 
