@@ -1,10 +1,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::field::JoltField;
+use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
 use crate::r1cs::new_r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
 use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltIn};
-use crate::r1cs::new_r1cs::key::UniformSpartanKey;
-use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
 use crate::r1cs::new_r1cs::spartan_3::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -22,7 +21,7 @@ use crate::lasso::memory_checking::{MemoryCheckingProver, MemoryCheckingVerifier
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::structured_poly::StructuredCommitment;
-use crate::r1cs::snark::{R1CSCommitment, R1CSInputs, R1CSProof};
+use crate::r1cs::inputs::{R1CSCommitment, R1CSInputs, R1CSProof};
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -364,14 +363,17 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
 
         let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
-            padded_trace_length, 
+            padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
-            &trace, 
-            &jolt_polynomials, 
-            circuit_flags, 
-            &preprocessing.generators
+            &trace,
+            &jolt_polynomials,
+            circuit_flags,
+            &preprocessing.generators,
         );
-        let spartan_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(&r1cs_builder, padded_trace_length);
+        let spartan_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(
+            &r1cs_builder,
+            padded_trace_length,
+        );
 
         transcript.append_scalar(b"spartan key", &spartan_key.vk_digest);
 
@@ -399,10 +401,16 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         drop_in_background_thread(jolt_polynomials);
 
-        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(r1cs_builder, &spartan_key, witness_segments, &mut transcript).expect("r1cs proof failed");
+        let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
+            r1cs_builder,
+            &spartan_key,
+            witness_segments,
+            &mut transcript,
+        )
+        .expect("r1cs proof failed");
         let r1cs_proof = R1CSProof {
             key: spartan_key,
-            proof: spartan_proof
+            proof: spartan_proof,
         };
 
         let jolt_proof = JoltProof {
@@ -508,7 +516,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         commitments: JoltCommitments<PCS>,
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
-        proof.verify(generators, commitments, C, transcript)
+        proof
+            .verify(generators, commitments, C, transcript)
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
@@ -519,17 +528,26 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         polynomials: &JoltPolynomials<F, PCS>,
         circuit_flags: Vec<F>,
         generators: &PCS::Setup,
-    ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>, CombinedUniformBuilder<F, JoltIn>) {
-
+    ) -> (
+        Vec<Vec<F>>,
+        R1CSCommitment<PCS>,
+        CombinedUniformBuilder<F, JoltIn>,
+    ) {
         let mut uniform_builder = R1CSBuilder::<F, JoltIn>::new();
         let constraints = JoltConstraints::new(memory_start);
         constraints.build_constraints(&mut uniform_builder);
 
-        let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
+        let inputs = Self::r1cs_construct_inputs(
+            padded_trace_length,
+            instructions,
+            polynomials,
+            circuit_flags,
+        );
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
 
         // TODO(sragss): Non-uniform constraints.
-        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, vec![]);
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, vec![]);
         let aux = combined_builder.compute_aux(&inputs_flat);
 
         assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
@@ -542,14 +560,21 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let chunks_comms = PCS::batch_commit(&chunk_batch_slices, generators, BatchType::Big);
 
         let circuit_flags_comms = PCS::batch_commit(
-            &inputs.circuit_flags_bits.chunks(padded_trace_length).collect::<Vec<&[F]>>(),
+            &inputs
+                .circuit_flags_bits
+                .chunks(padded_trace_length)
+                .collect::<Vec<&[F]>>(),
             generators,
-            BatchType::Big
+            BatchType::Big,
         );
         drop(_guard);
 
         let io_comms = PCS::batch_commit(&[inputs.pc.as_ref()], generators, BatchType::Big);
-        let aux_comms = PCS::batch_commit(&aux.iter().map(AsRef::as_ref).collect::<Vec<&[F]>>(), generators, BatchType::Big);
+        let aux_comms = PCS::batch_commit(
+            &aux.iter().map(AsRef::as_ref).collect::<Vec<&[F]>>(),
+            generators,
+            BatchType::Big,
+        );
 
         let r1cs_commitments = R1CSCommitment::<PCS> {
             io: io_comms,
@@ -570,11 +595,11 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     }
 
     // Assemble the R1CS inputs from across other Jolt structs.
-    fn r1cs_construct_inputs<'a>(        
+    fn r1cs_construct_inputs<'a>(
         padded_trace_length: usize,
         instructions: &'a [JoltTraceStep<Self::InstructionSet>],
         polynomials: &'a JoltPolynomials<F, PCS>,
-        circuit_flags: Vec<F>
+        circuit_flags: Vec<F>,
     ) -> R1CSInputs<'a, F> {
         let log_M = log2(M) as usize;
 

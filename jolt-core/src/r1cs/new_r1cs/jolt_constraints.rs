@@ -1,4 +1,6 @@
-use crate::{impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C, poly::field::JoltField};
+use crate::{
+    impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C, poly::field::JoltField,
+};
 
 use super::{
     builder::{R1CSBuilder, R1CSConstraintBuilder},
@@ -6,7 +8,17 @@ use super::{
 };
 
 #[allow(non_camel_case_types)]
-#[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    strum_macros::EnumIter,
+    strum_macros::EnumCount,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+)]
 #[repr(usize)]
 pub enum JoltIn {
     PcIn,
@@ -103,14 +115,12 @@ const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
 
 pub struct JoltConstraints {
-    memory_start: u64
+    memory_start: u64,
 }
 
 impl JoltConstraints {
     pub fn new(memory_start: u64) -> Self {
-        Self {
-            memory_start
-        }
+        Self { memory_start }
     }
 }
 
@@ -127,22 +137,18 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         // TODO(sragss): I don't understand how this constraint is possibly true unless Bytecode_Opcode is mis-labeled.
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
 
-
         let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(JoltIn::OpFlags0, real_pc, JoltIn::RAM_Read_RS1);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
             JoltIn::Bytecode_Imm,
-            JoltIn::RAM_Read_RS2
+            JoltIn::RAM_Read_RS2,
         );
 
         // Converts from unsigned to twos-complement representation
         let signed_output = LC::sum2(JoltIn::Bytecode_Imm, 0xffffffffi64 + 1i64);
-        let imm_signed = cs.allocate_if_else(
-            JoltIn::OpFlags_SignImm,
-            signed_output,
-            JoltIn::Bytecode_Imm,
-        );
+        let imm_signed =
+            cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
         let flag_0_or_1_condition = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
         let memory_start: i64 = self.memory_start.try_into().unwrap();
@@ -190,11 +196,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsStore,
-            packed_query,
-            JoltIn::RAM_Read_RS2,
-        );
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RAM_Read_RS2);
 
         // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
         let chunked_x = cs.allocate_pack_be(
@@ -208,14 +210,19 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_x, x);
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_y, y);
 
-        // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i]) 
+        // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
         let is_shift = JoltIn::IF_Sll + JoltIn::IF_Srl + JoltIn::IF_Sra;
         let chunks_x = input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3);
         let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
         let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);
         for i in 0..C {
-            let relevant_chunk_y = cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
-            cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunks_query[i], (1i64 << 8) * chunks_x[i] + relevant_chunk_y);
+            let relevant_chunk_y =
+                cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
+            cs.constrain_eq_conditional(
+                JoltIn::OpFlags_IsConcat,
+                chunks_query[i],
+                (1i64 << 8) * chunks_x[i] + relevant_chunk_y,
+            );
         }
 
         // if (rd != 0 && if_update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
@@ -227,8 +234,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             JoltIn::RAM_Write_RD,
             JoltIn::LookupOutput,
         );
-        let rd_nonzero_and_jmp =
-            cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
+        let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
         let lhs = LC::sum2(JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RAM_Write_RD;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
@@ -254,7 +260,8 @@ mod tests {
         jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
-        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction

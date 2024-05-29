@@ -428,8 +428,8 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     fn variable_to_column(&self, var: Variable<I>) -> usize {
         match var {
             Variable::Input(inner) => inner.into(),
-            Variable::Auxiliary(aux) => I::COUNT + aux ,
-            Variable::Constant => (I::COUNT + self.num_aux()).next_power_of_two()
+            Variable::Auxiliary(aux) => I::COUNT + aux,
+            Variable::Constant => (I::COUNT + self.num_aux()).next_power_of_two(),
         }
     }
 
@@ -443,9 +443,16 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
 
         let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F>| {
             let sorted = lc.sorted_terms();
-            sorted.iter()
+            sorted
+                .iter()
                 .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-                .for_each(|term| sparse.vars.push((row_index, self.variable_to_column(term.0), from_i64::<F>(term.1))));
+                .for_each(|term| {
+                    sparse.vars.push((
+                        row_index,
+                        self.variable_to_column(term.0),
+                        from_i64::<F>(term.1),
+                    ))
+                });
             if let Some(term) = sorted.last() {
                 if matches!(term.0, Variable::Constant) {
                     sparse.consts.push((row_index, from_i64::<F>(term.1)));
@@ -464,11 +471,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         assert_eq!(c_sparse.vars.len(), c_len);
 
         UniformR1CS::<F> {
-            a: a_sparse, 
-            b: b_sparse, 
-            c: c_sparse, 
+            a: a_sparse,
+            b: b_sparse,
+            c: c_sparse,
             num_vars: I::COUNT + self.num_aux(),
-            num_rows: self.constraints.len()
+            num_rows: self.constraints.len(),
         }
     }
 }
@@ -478,21 +485,21 @@ pub type Coeff<F> = (usize, usize, F);
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseConstraints<F: JoltField> {
     pub vars: Vec<Coeff<F>>,
-    pub consts: Vec<(usize, F)>
+    pub consts: Vec<(usize, F)>,
 }
 
 impl<F: JoltField> SparseConstraints<F> {
     fn empty_with_capacity(vars: usize, consts: usize) -> Self {
         Self {
             vars: Vec::with_capacity(vars),
-            consts: Vec::with_capacity(consts)
+            consts: Vec::with_capacity(consts),
         }
     }
 
     fn empty() -> Self {
         Self {
             vars: vec![],
-            consts: vec![]
+            consts: vec![],
         }
     }
 }
@@ -520,7 +527,11 @@ pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
 }
 
 impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
-    pub fn construct(uniform_builder: R1CSBuilder<F, I>, uniform_repeat: usize, offset_equality_constraints: Vec<(LC<I>, LC<I>)>) -> Self {
+    pub fn construct(
+        uniform_builder: R1CSBuilder<F, I>,
+        uniform_repeat: usize,
+        offset_equality_constraints: Vec<(LC<I>, LC<I>)>,
+    ) -> Self {
         for (lc1, lc2) in &offset_equality_constraints {
             [lc1, lc2].iter().for_each(|lc| {
                 lc.terms().iter().for_each(|term| {
@@ -531,7 +542,11 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 });
             });
         }
-        Self { uniform_builder, uniform_repeat, offset_equality_constraints }
+        Self {
+            uniform_builder,
+            uniform_repeat,
+            offset_equality_constraints,
+        }
     }
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     pub fn compute_aux(&self, inputs: &[Vec<F>]) -> Vec<Vec<F>> {
@@ -601,11 +616,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0)], ... [Aux(self.next_aux - 1), ...]]
-    pub fn compute_spartan(
-        &self,
-        inputs: &[Vec<F>],
-        aux: &[Vec<F>],
-    ) -> (Vec<F>, Vec<F>, Vec<F>) {
+    pub fn compute_spartan(&self, inputs: &[Vec<F>], aux: &[Vec<F>]) -> (Vec<F>, Vec<F>, Vec<F>) {
         assert_eq!(inputs.len(), I::COUNT);
         // let padded_trace_len = inputs[0].len();
         // TODO(sragss): Maybe this should be packed.
@@ -679,18 +690,24 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                         println!("Bz: {:?}", Bz[z_index]);
                         println!("Cz: {:?}", Cz[z_index]);
 
-                        for terms in [constraint.a.terms(), constraint.b.terms(), constraint.c.terms()] {
+                        for terms in [
+                            constraint.a.terms(),
+                            constraint.b.terms(),
+                            constraint.c.terms(),
+                        ] {
                             for term in terms {
                                 match term.0 {
                                     Variable::Input(index) => {
-                                        println!("{index:?}: {:?}", inputs[index.into()][step_index]);
-                                    },
+                                        println!(
+                                            "{index:?}: {:?}",
+                                            inputs[index.into()][step_index]
+                                        );
+                                    }
                                     Variable::Auxiliary(index) => {
                                         println!("Aux({index}): {:?}", aux[index][step_index]);
-                                    },
-                                    _ => continue
+                                    }
+                                    _ => continue,
                                 }
-
                             }
                         }
                         panic!();
@@ -703,12 +720,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     }
 
     #[cfg(test)]
-    pub fn assert_valid(
-        &self,
-        az: &[F],
-        bz: &[F],
-        cz: &[F],
-    ) {
+    pub fn assert_valid(&self, az: &[F], bz: &[F], cz: &[F]) {
         let rows = az.len();
         let expected_rows = self.constraint_rows();
         assert_eq!(az.len(), expected_rows);
@@ -727,15 +739,13 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 panic!(
                     "Mismatch at global constraint {constraint_index} => {:?}\n\
                     uniform constraint: {uniform_constraint_index}\n\
-                    step: {step_index}", 
+                    step: {step_index}",
                     self.uniform_builder.constraints[uniform_constraint_index]
                 );
             }
         }
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1131,7 +1141,8 @@ mod tests {
         assert_eq!(uniform_builder.constraints.len(), 1);
         assert_eq!(uniform_builder.next_aux, 1);
         let num_steps = 2;
-        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1166,8 +1177,8 @@ mod tests {
                     LC::sum2(TestInputs::OpFlags2, TestInputs::OpFlags3),
                     aux_0.clone(),
                 );
-                let aux_1 = builder
-                    .allocate_prod(4 * TestInputs::RAMByte0 + 2i64, TestInputs::OpFlags0);
+                let aux_1 =
+                    builder.allocate_prod(4 * TestInputs::RAMByte0 + 2i64, TestInputs::OpFlags0);
                 builder.constrain_eq(aux_1, TestInputs::RAMByte1);
             }
         }
@@ -1178,7 +1189,8 @@ mod tests {
         assert_eq!(uniform_builder.next_aux, 2);
 
         let num_steps = 2;
-        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1238,8 +1250,8 @@ mod tests {
             (TestInputs::OpFlags0.into(), TestInputs::OpFlags0.into()),
             (LC::sum2(TestInputs::PcIn, 4), TestInputs::PcIn.into()),
         ];
-        let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
-
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);

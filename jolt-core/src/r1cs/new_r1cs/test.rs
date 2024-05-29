@@ -3,7 +3,17 @@ use crate::impl_r1cs_input_lc_conversions;
 use super::ops::ConstraintInput;
 
 #[allow(non_camel_case_types)]
-#[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    strum_macros::EnumIter,
+    strum_macros::EnumCount,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+)]
 #[repr(usize)]
 pub enum TestInputs {
     PcIn,

@@ -3,19 +3,19 @@
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::field::JoltField;
+use crate::r1cs::new_r1cs::key::UniformSpartanKey;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
-use crate::r1cs::new_r1cs::key::UniformSpartanKey;
 use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
 use sha3::Digest;
 use sha3::Sha3_256;
-use thiserror::Error;
 use strum::EnumCount;
+use thiserror::Error;
 
 use crate::{
     poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial},
@@ -25,8 +25,6 @@ use crate::{
 use super::builder::CombinedUniformBuilder;
 use super::jolt_constraints::JoltIn;
 use super::ops::ConstraintInput;
-
-
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SpartanError {
@@ -62,7 +60,6 @@ pub enum SpartanError {
     #[error("InvalidPCSProof")]
     InvalidPCSProof,
 }
-
 
 // TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
 // and can run all the normal DensePolynomial ops.
@@ -101,7 +98,7 @@ impl<F: JoltField> SegmentedPaddedWitness<F> {
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
         let chi = EqPolynomial::evals(&point);
         assert!(chi.len() >= self.segment_len);
-        
+
         let evals = self
             .segments
             .par_iter()
@@ -164,7 +161,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         constraint_builder: &CombinedUniformBuilder<F, I>,
         padded_num_steps: usize,
     ) -> UniformSpartanKey<F> {
-        assert_eq!(padded_num_steps, constraint_builder.uniform_repeat().next_power_of_two());
+        assert_eq!(
+            padded_num_steps,
+            constraint_builder.uniform_repeat().next_power_of_two()
+        );
         UniformSpartanKey::from_builder(&constraint_builder)
     }
 
@@ -178,9 +178,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     ) -> Result<Self, SpartanError> {
         assert_eq!(witness_segments.len(), key.uniform_r1cs.num_vars);
         let padded_num_rows = constraint_builder.constraint_rows().next_power_of_two();
-        witness_segments.iter().for_each(|segment| assert_eq!(segment.len(), key.num_steps));
+        witness_segments
+            .iter()
+            .for_each(|segment| assert_eq!(segment.len(), key.num_steps));
 
-        let segmented_padded_witness = SegmentedPaddedWitness::new(key.num_vars_total(), witness_segments);
+        let segmented_padded_witness =
+            SegmentedPaddedWitness::new(key.num_vars_total(), witness_segments);
 
         let num_rounds_x = key.num_rows_total().log_2();
         let num_rounds_y = key.num_cols_total().log_2();
@@ -274,10 +277,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
 
         // this is the polynomial extended from the vector r_A * A(r_x, y) + r_B * B(r_x, y) + r_C * C(r_x, y) for all y
-        let num_steps_bits = constraint_builder.uniform_repeat().next_power_of_two().ilog2();
+        let num_steps_bits = constraint_builder
+            .uniform_repeat()
+            .next_power_of_two()
+            .ilog2();
         let (rx_con, rx_ts) =
             outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
-        let mut poly_ABC = DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
+        let mut poly_ABC =
+            DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
@@ -290,8 +297,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         drop_in_background_thread(poly_ABC);
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
-        let r_col_segment_bits= key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
-        let r_col_step= &inner_sumcheck_r[r_col_segment_bits..];
+        let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
+        let r_col_step = &inner_sumcheck_r[r_col_segment_bits..];
         let witness_evals = segmented_padded_witness.evaluate_all(r_col_step.to_owned());
 
         let witness_segment_polys: Vec<DensePolynomial<F>> =
@@ -386,7 +393,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let (eval_a, eval_b, eval_c) = key.evaluate_r1cs_matrix_mles(&r);
 
         let left_expected = eval_a
-            + r_inner_sumcheck_RLC * eval_b 
+            + r_inner_sumcheck_RLC * eval_b
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * eval_c;
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
@@ -458,7 +465,5 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
 
 #[cfg(test)]
 mod tests {
-    fn piecewise_mle() {
-
-    }
+    fn piecewise_mle() {}
 }
