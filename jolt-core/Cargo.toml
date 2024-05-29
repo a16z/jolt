@@ -2,7 +2,7 @@
 name = "jolt-core"
 version = "0.1.0"
 authors = [
-    # author of original Spartan paper and code base 
+    # author of original Spartan paper and code base
     "Srinath Setty <srinath@microsoft.com>",
     # authors who contributed to the Arkworks Spartan fork
     "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
@@ -61,6 +61,7 @@ dirs = "5.0.1"
 eyre = "0.6.12"
 indicatif = "0.17.8"
 tokio = "1.37.0"
+memory-stats = "1.0.0"
 
 common = { path = "../common" }
 tracer = { path = "../tracer" }

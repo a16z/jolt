@@ -8,6 +8,7 @@ pub mod errors;
 pub mod gaussian_elimination;
 pub mod instruction_utils;
 pub mod math;
+pub mod profiling;
 pub mod thread;
 pub mod transcript;
 
