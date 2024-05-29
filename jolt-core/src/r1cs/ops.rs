@@ -15,6 +15,7 @@ pub trait ConstraintInput:
     + IntoEnumIterator
     + EnumCount
     + Into<usize>
+    + Sync
     + 'static
 {
 }
@@ -42,7 +43,7 @@ impl<I: ConstraintInput> LC<I> {
     }
 
     pub fn zero() -> Self {
-        LC(vec![])
+        LC::new(vec![])
     }
 
     pub fn terms(&self) -> &[Term<I>] {
@@ -85,14 +86,14 @@ impl<I: ConstraintInput> LC<I> {
 
         let mut var_index = 0;
         let mut result = F::zero();
-        for (term_index, term) in self.terms().iter().enumerate() {
+        for (_term_index, term) in self.terms().iter().enumerate() {
             match term.0 {
                 Variable::Input(_) => {
                     result += values[var_index] * from_i64::<F>(term.1);
                     var_index += 1;
                 }
                 Variable::Auxiliary(_) => {
-                    result += values[term_index] * from_i64::<F>(term.1);
+                    result += values[var_index] * from_i64::<F>(term.1);
                     var_index += 1;
                 }
                 Variable::Constant => result += from_i64::<F>(term.1),
@@ -106,7 +107,7 @@ impl<I: ConstraintInput> LC<I> {
         let mut term_vec = Vec::new();
         for term in terms {
             if term_vec.contains(&term.0) {
-                panic!("Duplicate variable found in terms");
+                panic!("Duplicate variable found in terms: {:?}", term.0);
             } else {
                 term_vec.push(term.0);
             }
@@ -133,7 +134,7 @@ impl<I: ConstraintInput> std::fmt::Debug for Term<I> {
     }
 }
 
-// TODO(sragss): Move this onto JoltFiel
+// TODO(sragss): Move this onto JoltField
 pub fn from_i64<F: JoltField>(val: i64) -> F {
     if val > 0 {
         F::from_u64(val as u64).unwrap()
@@ -150,8 +151,15 @@ impl<I: ConstraintInput> std::ops::Add for LC<I> {
 
     fn add(self, other: Self) -> Self::Output {
         let mut combined_terms = self.0;
-        combined_terms.extend(other.0);
-        LC(combined_terms)
+        // TODO(sragss): Can be made more efficient by assuming sorted
+        for other_term in other.0 {
+            if let Some(term) = combined_terms.iter_mut().find(|term| term.0 == other_term.0) {
+                term.1 += other_term.1;
+            } else {
+                combined_terms.push(other_term);
+            }
+        }
+        LC::new(combined_terms)
     }
 }
 
@@ -160,7 +168,7 @@ impl<I: ConstraintInput> std::ops::Neg for LC<I> {
 
     fn neg(self) -> Self::Output {
         let neg_terms = self.0.into_iter().map(|term| -term).collect();
-        LC(neg_terms)
+        LC::new(neg_terms)
     }
 }
 
@@ -168,9 +176,8 @@ impl<I: ConstraintInput> std::ops::Sub for LC<I> {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
-        let mut combined_terms = self.0;
-        combined_terms.extend((-other).0);
-        LC(combined_terms)
+        let negated_other = -other;
+        self + negated_other
     }
 }
 
@@ -180,7 +187,11 @@ impl<I: ConstraintInput> std::ops::Add for Term<I> {
     type Output = LC<I>;
 
     fn add(self, other: Self) -> Self::Output {
-        LC(vec![self, other])
+        if self.0 == other.0 {
+            LC::new(vec![Term(self.0, self.1 + other.1)])
+        } else {
+            LC::new(vec![self, other])
+        }
     }
 }
 
@@ -188,7 +199,7 @@ impl<I: ConstraintInput> std::ops::Sub for Term<I> {
     type Output = LC<I>;
 
     fn sub(self, other: Self) -> Self::Output {
-        LC(vec![self, -other])
+        LC::new(vec![self, -other])
     }
 }
 
@@ -222,14 +233,14 @@ impl<I: ConstraintInput> std::ops::Add for Variable<I> {
     type Output = LC<I>;
 
     fn add(self, other: Self) -> Self::Output {
-        LC(vec![Term(self, 1), Term(other, 1)])
+        LC::new(vec![Term(self, 1), Term(other, 1)])
     }
 }
 impl<I: ConstraintInput> std::ops::Sub for Variable<I> {
     type Output = LC<I>;
 
     fn sub(self, other: Self) -> Self::Output {
-        LC(vec![Term(self, 1), Term(other, -1)])
+        LC::new(vec![Term(self, 1), Term(other, -1)])
     }
 }
 
@@ -237,9 +248,8 @@ impl<I: ConstraintInput> std::ops::Add<i64> for LC<I> {
     type Output = Self;
 
     fn add(self, other: i64) -> Self::Output {
-        let mut terms = self.0;
-        terms.push(Term(Variable::Constant, other));
-        LC(terms)
+        let lc: LC<I> = other.into();
+        self + lc
     }
 }
 
@@ -249,7 +259,7 @@ impl<I: ConstraintInput> std::ops::Add<i64> for Term<I> {
     fn add(self, other: i64) -> Self::Output {
         let mut terms = vec![self];
         terms.push(Term(Variable::Constant, other));
-        LC(terms)
+        LC::new(terms)
     }
 }
 
@@ -258,7 +268,7 @@ impl<I: ConstraintInput> std::ops::Add<Variable<I>> for Term<I> {
 
     fn add(self, other: Variable<I>) -> Self::Output {
         let terms = vec![self, Term(other, 1)];
-        LC(terms)
+        LC::new(terms)
     }
 }
 
@@ -266,25 +276,25 @@ impl<I: ConstraintInput> std::ops::Add<Variable<I>> for Term<I> {
 
 impl<I: ConstraintInput> From<i64> for LC<I> {
     fn from(val: i64) -> Self {
-        LC(vec![Term(Variable::Constant, val)])
+        LC::new(vec![Term(Variable::Constant, val)])
     }
 }
 
 impl<I: ConstraintInput> From<Variable<I>> for LC<I> {
     fn from(val: Variable<I>) -> Self {
-        LC(vec![Term(val, 1)])
+        LC::new(vec![Term(val, 1)])
     }
 }
 
 impl<I: ConstraintInput> From<Term<I>> for LC<I> {
     fn from(val: Term<I>) -> Self {
-        LC(vec![val])
+        LC::new(vec![val])
     }
 }
 
 impl<I: ConstraintInput> From<Vec<Term<I>>> for LC<I> {
     fn from(val: Vec<Term<I>>) -> Self {
-        LC(val)
+        LC::new(val)
     }
 }
 
@@ -305,6 +315,27 @@ impl<I: ConstraintInput> std::ops::Mul<Variable<I>> for i64 {
         Term(other, self)
     }
 }
+
+impl<I: ConstraintInput> std::ops::Add<LC<I>> for Variable<I> {
+    type Output = LC<I>;
+
+    fn add(self, other: LC<I>) -> Self::Output {
+        let mut terms = other.terms().to_vec();
+        terms.push(Term(self, 1));
+        LC::new(terms)
+    }
+}
+
+impl<I: ConstraintInput> std::ops::Add<Variable<I>> for LC<I> {
+    type Output = LC<I>;
+
+    fn add(self, other: Variable<I>) -> Self::Output {
+        let mut terms = self.terms().to_vec();
+        terms.push(Term(other, 1));
+        LC::new(terms)
+    }
+}
+
 
 /// Conversions and arithmetic for concrete ConstraintInput
 #[macro_export]
@@ -420,6 +451,38 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 )
             }
         }
+
+        impl std::ops::Add<i64> for $ConcreteInput {
+            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+
+            fn add(self, rhs: i64) -> Self::Output {
+                let term1 = crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(self),
+                    1,
+                );
+                let term2 = crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Constant,
+                    rhs,
+                );
+                crate::r1cs::ops::LC::new(vec![term1, term2])
+            }
+        }
+
+        impl std::ops::Add<$ConcreteInput> for i64 {
+            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+
+            fn add(self, rhs: $ConcreteInput) -> Self::Output {
+                let term1 = crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Input(rhs),
+                    1,
+                );
+                let term2 = crate::r1cs::ops::Term(
+                    crate::r1cs::ops::Variable::Constant,
+                    self,
+                );
+                crate::r1cs::ops::LC::new(vec![term1, term2])
+            }
+        }
     };
 }
 
@@ -495,6 +558,19 @@ macro_rules! input_range {
         arr
     }};
 }
+
+/// Used to fix an aux variable to a specific index to ensure the aux index can be used elsewhere statically.
+#[macro_export]
+macro_rules! assert_static_aux_index {
+    ($var:expr, $index:expr) => {{
+        if let Variable::Auxiliary(aux_index) = $var {
+            assert_eq!(aux_index, $index, "Unexpected auxiliary index");
+        } else {
+            panic!("Variable is not of variant type Variable::Auxiliary");
+        }
+    }};
+}
+
 
 #[cfg(test)]
 mod test {

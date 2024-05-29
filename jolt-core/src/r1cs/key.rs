@@ -382,7 +382,7 @@ mod test {
         let num_steps: usize = 3;
         let num_steps_pad = 4;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
         let key = UniformSpartanKey::from_builder(&combined_builder);
 
         let materialized_a = materialize_full(&key, &key.uniform_r1cs.a);
@@ -431,9 +431,9 @@ mod test {
         let constraints = TestConstraints();
         constraints.build_constraints(&mut uniform_builder);
         let num_steps: usize = 3;
-        let _num_steps_pad = 4;
+        let num_steps_pad = 4;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
         let key = UniformSpartanKey::from_builder(&combined_builder);
 
         let (a, b, c) = materialize_all(&key);
@@ -484,9 +484,9 @@ mod test {
         let constraints = TestConstraints();
         constraints.build_constraints(&mut uniform_builder);
         let num_steps: usize = 3;
-        let _num_steps_pad = 4;
+        let num_steps_pad = 4;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
         let key = UniformSpartanKey::from_builder(&combined_builder);
 
         let big_a = DensePolynomial::new(materialize_full(&key, &key.uniform_r1cs.a));
@@ -528,11 +528,10 @@ mod test {
 
         let constraints = TestConstraints();
         constraints.build_constraints(&mut uniform_builder);
-        let num_steps: usize = 3;
         let num_steps_pad = 4;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
-        let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
+        let mut inputs = vec![vec![Fr::zero(); num_steps_pad]; TestInputs::COUNT];
 
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(1);
         inputs[TestInputs::OpFlags1 as usize][0] = Fr::from(12);
@@ -542,6 +541,9 @@ mod test {
 
         inputs[TestInputs::OpFlags0 as usize][2] = Fr::from(3);
         inputs[TestInputs::OpFlags1 as usize][2] = Fr::from(4);
+
+        inputs[TestInputs::OpFlags0 as usize][3] = Fr::from(4);
+        inputs[TestInputs::OpFlags1 as usize][3] = Fr::from(3);
 
         // Confirms validity of constraints
         let (_az, _bz, _cz) = combined_builder.compute_spartan(&inputs, &[]);

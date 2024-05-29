@@ -3,7 +3,8 @@
 use crate::poly::field::JoltField;
 use crate::r1cs::builder::R1CSConstraintBuilder;
 use crate::r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
-use crate::r1cs::jolt_constraints::{JoltConstraints, JoltIn};
+use crate::r1cs::jolt_constraints::{JoltConstraints, JoltIn, PC_BRANCH_AUX_INDEX, PC_START_ADDRESS};
+use crate::r1cs::ops::{Variable, LC};
 use crate::r1cs::spartan_3::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -545,9 +546,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
 
-        // TODO(sragss): Non-uniform constraints.
+        // let non_uniform_constraints = vec![(Variable::Auxiliary(PC_BRANCH_AUX_INDEX).into(), (JoltIn::PcIn + PC_START_ADDRESS).into())];
+        let non_uniform_constraints = vec![];
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, non_uniform_constraints);
         let aux = combined_builder.compute_aux(&inputs_flat);
 
         assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
