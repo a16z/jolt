@@ -1,7 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use strum::EnumCount;
 
-use crate::{poly::field::JoltField, utils::thread::unsafe_allocate_zero_vec};
+use crate::{poly::field::JoltField, r1cs::jolt_constraints::PC_START_ADDRESS, utils::thread::unsafe_allocate_zero_vec};
 use std::fmt::Debug;
 use std::ops::Range;
 use rayon::prelude::*;
@@ -749,27 +749,60 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         for (constraint_index, constraint) in self.offset_equality_constraints.iter().enumerate() {
             // TODO(sragss): How to handle?
             // For offset equality constraints we only constrain 1..N steps, the first does not have recursive definition.
-            // for step_index in 0..(self.uniform_repeat - 1) {
-            for step_index in 0..self.uniform_repeat {
+            for step_index in 0..(self.uniform_repeat - 1) {
+            // for step_index in 0..self.uniform_repeat {
                 let index = uniform_constraint_rows + constraint_index * self.uniform_repeat + step_index;
 
-                let condition_step_index = constraint.condition.0.checked_add(step_index as i64).unwrap() as usize;
+                let condition_step_index = usize_plus_i64(step_index, constraint.condition.0);
                 assert!(condition_step_index < self.uniform_repeat);
                 let condition = compute_lc(&constraint.condition.1, inputs, aux, condition_step_index);
                 Az[index] = condition;
 
                 // Technically everything below can be removed as the honest prover is guaranteed to write 0 for Bz, Cz.
-                let eq_a_step_index = constraint.a.0.checked_add(step_index as i64).unwrap() as usize;
-                let eq_b_step_index = constraint.b.0.checked_add(step_index as i64).unwrap() as usize;
+                let eq_a_step_index = usize_plus_i64(step_index, constraint.a.0);
+                let eq_b_step_index = usize_plus_i64(step_index, constraint.b.0);
                 if !condition.is_zero() && eq_a_step_index < self.uniform_repeat && eq_b_step_index < self.uniform_repeat {
                     let eq_a = compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index);
 
                     let eq_b = compute_lc(&constraint.b.1, inputs, aux, eq_b_step_index);
 
                     let eq = eq_a - eq_b;
-                    assert!(eq.is_zero());
+
                     Bz[index] = eq;
                     Cz[index] = F::zero();
+
+                    #[cfg(test)]
+                    if !eq.is_zero() {
+                        println!("step_index: {step_index}");
+                        println!("eq_a: {eq_a:?}");
+                        println!("eq_b: {eq_b:?}");
+                        println!("constraint.a: {:?}", constraint.a);
+                        println!("constraint.b: {:?}", constraint.b);
+
+                        for (offset, lc) in [
+                            &constraint.a,
+                            &constraint.b,
+                            &constraint.condition,
+                        ] {
+                            for term in lc.terms() {
+                                let offset_step_index = usize_plus_i64(step_index, *offset);
+                                match term.0 {
+                                    Variable::Input(index) => {
+                                        println!(
+                                            "{index:?}[offset = {offset}]: {:?}",
+                                            inputs[index.into()][offset_step_index]
+                                        );
+                                    }
+                                    Variable::Auxiliary(index) => {
+                                        println!("Aux({index})[offset = {offset}]: {:?}", aux[index][offset_step_index]);
+                                    }
+                                    _ => continue,
+                                }
+                            }
+                        }
+
+                        panic!("eq should always be zero.");
+                    }
                 }
             }
         }
@@ -777,6 +810,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
         (Az, Bz, Cz)
     }
+
 
     #[cfg(test)]
     pub fn assert_valid(&self, az: &[F], bz: &[F], cz: &[F]) {
@@ -804,6 +838,10 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             }
         }
     }
+}
+
+fn usize_plus_i64(a: usize, b: i64) -> usize {
+    b.checked_add(a as i64).unwrap() as usize
 }
 
 #[cfg(test)]

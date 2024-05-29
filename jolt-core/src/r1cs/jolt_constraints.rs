@@ -147,7 +147,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         );
 
         // Converts from unsigned to twos-complement representation
-        let signed_output = LC::sum2(JoltIn::Bytecode_Imm, 0xffffffffi64 + 1i64);
+        let signed_output = LC::sub2(JoltIn::Bytecode_Imm, 0xffffffffi64 + 1i64);
         let imm_signed =
             cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
@@ -226,7 +226,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             );
         }
 
-        // if (rd != 0 && if_update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
+        // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
         let rd_nonzero_and_lookup_to_rd =
             cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
@@ -241,11 +241,10 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
         let branch_and_lookup_output = cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
-        let next_pc_jump = cs.allocate_if_else(JoltIn::OpFlags_IsJmp, JoltIn::LookupOutput + 4, JoltIn::PcIn + PC_START_ADDRESS + 4);
+        let next_pc_jump = cs.allocate_if_else(JoltIn::OpFlags_IsJmp, JoltIn::LookupOutput + 4, 4 * JoltIn::PcIn + PC_START_ADDRESS + 4);
 
-        // let next_pc_jump_branch = cs.allocate_if_else(branch_and_lookup_output, JoltIn::PcIn + PC_START_ADDRESS + imm_signed, next_pc_jump);
-        // assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
-
+        let next_pc_jump_branch = cs.allocate_if_else(branch_and_lookup_output, 4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed, next_pc_jump);
+        assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
     }
 }
 
