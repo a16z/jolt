@@ -133,6 +133,7 @@ pub mod beq;
 pub mod bge;
 pub mod bgeu;
 pub mod bne;
+pub mod divu;
 pub mod lb;
 pub mod lh;
 pub mod movsign;
@@ -142,6 +143,7 @@ pub mod mulhsu;
 pub mod mulhu;
 pub mod mulu;
 pub mod or;
+pub mod remu;
 pub mod sb;
 pub mod sh;
 pub mod sll;
@@ -155,6 +157,7 @@ pub mod virtual_advice;
 pub mod virtual_assert_eq_signs;
 pub mod virtual_assert_lt_abs;
 pub mod virtual_assert_lte;
+pub mod virtual_move;
 pub mod xor;
 
 #[cfg(test)]

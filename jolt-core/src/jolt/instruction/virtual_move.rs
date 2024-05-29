@@ -4,17 +4,18 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
-use crate::field::JoltField;
-use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
-use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
+use crate::jolt::subtable::{
+    identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
+};
+use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
-pub struct ADVICEInstruction<const WORD_SIZE: usize>(pub u64);
+pub struct MOVEInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for MOVEInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
-        (self.0, 0)
+        (self.0, self.1)
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
@@ -43,7 +44,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
         ]
     }
 
-
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_operand_usize(self.0, C, log_M)
     }
@@ -53,7 +53,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
     }
 
     fn random(&self, rng: &mut StdRng) -> Self {
-        Self(rng.next_u32() as u64)
+        Self(rng.next_u32() as u64, rng.next_u32() as u64)
     }
 }
 
@@ -63,18 +63,19 @@ mod test {
     use ark_std::test_rng;
     use rand_chacha::rand_core::RngCore;
 
-    use super::ADVICEInstruction;
+    use super::MOVEInstruction;
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
     #[test]
-    fn advice_instruction_32_e2e() {
+    fn move_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
-            let instruction = ADVICEInstruction::<32>(x);
+            let y = rng.next_u32() as u64;
+            let instruction = MOVEInstruction::<32>(x, y);
             jolt_instruction_test!(instruction);
         }
     }
