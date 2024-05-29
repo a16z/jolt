@@ -23,7 +23,7 @@ use crate::{
 };
 
 use super::builder::CombinedUniformBuilder;
-use super::jolt_constraints::JoltInputs;
+use super::jolt_constraints::JoltIn;
 use super::ops::ConstraintInput;
 
 
@@ -171,7 +171,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted(
-        constraint_builder: CombinedUniformBuilder<F, JoltInputs>,
+        constraint_builder: CombinedUniformBuilder<F, JoltIn>,
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
@@ -193,8 +193,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         // TODO(sragss): This snippet makes prove JoltInputs dependent.
-        let inputs = &segmented_padded_witness.segments[0..JoltInputs::COUNT];
-        let aux = &segmented_padded_witness.segments[JoltInputs::COUNT..];
+        let inputs = &segmented_padded_witness.segments[0..JoltIn::COUNT];
+        let aux = &segmented_padded_witness.segments[JoltIn::COUNT..];
         let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan(&inputs, &aux);
 
         // TODO(sragss): Explicitly left because this is wasteful. Should likely deal with through more intelligent DensePaddedPolynomial.

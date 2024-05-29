@@ -5,11 +5,10 @@ use super::{
     ops::{ConstraintInput, Variable, LC},
 };
 
-// TODO(sragss): JoltInputs -> JoltIn
 #[allow(non_camel_case_types)]
 #[derive(strum_macros::EnumIter, strum_macros::EnumCount, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(usize)]
-pub enum JoltInputs {
+pub enum JoltIn {
     PcIn,
 
     Bytecode_A, // Virtual address
@@ -55,7 +54,7 @@ pub enum JoltInputs {
 
     // TODO(sragss): Dedupe OpFlags / CircuitFlags
     // TODO(sragss): Explicit unit test for comparing OpFlags and InstructionFlags
-    // TODO(sragss): Better names for first 2.
+    // TODO(sragss): Better name for first.
     // Should match rv_trace.to_circuit_flags()
     OpFlags0,
     OpFlags_IsImm,
@@ -95,131 +94,143 @@ pub enum JoltInputs {
     IF_MulU,
     IF_MulHu,
 }
-impl_r1cs_input_lc_conversions!(JoltInputs);
-impl ConstraintInput for JoltInputs {}
+impl_r1cs_input_lc_conversions!(JoltIn);
+impl ConstraintInput for JoltIn {}
 
 const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
-const MEMORY_START: i64 = 128; // TODO(sragss): Non constant.
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
 
-pub struct JoltConstraints();
+pub struct JoltConstraints {
+    memory_start: u64
+}
+
+impl JoltConstraints {
+    pub fn new(memory_start: u64) -> Self {
+        Self {
+            memory_start
+        }
+    }
+}
+
 impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
-    type Inputs = JoltInputs;
+    type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltInputs::OpFlags0, JoltInputs::IF_MulHu);
+        let flags = input_range!(JoltIn::OpFlags0, JoltIn::IF_MulHu);
         for flag in flags {
             cs.constrain_binary(flag);
         }
 
-        cs.constrain_eq(JoltInputs::PcIn, JoltInputs::Bytecode_A);
+        cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_A);
 
         // TODO(sragss): I don't understand how this constraint is possibly true unless Bytecode_Opcode is mis-labeled.
-        cs.constrain_pack_be(flags.to_vec(), JoltInputs::Bytecode_Opcode, 1);
+        cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
 
 
-        let real_pc = LC::sum2(4i64 * JoltInputs::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltInputs::OpFlags0, real_pc, JoltInputs::RAM_Read_RS1);
+        let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let x = cs.allocate_if_else(JoltIn::OpFlags0, real_pc, JoltIn::RAM_Read_RS1);
         let y = cs.allocate_if_else(
-            JoltInputs::OpFlags_IsImm,
-            JoltInputs::Bytecode_Imm,
-            JoltInputs::RAM_Read_RS2
+            JoltIn::OpFlags_IsImm,
+            JoltIn::Bytecode_Imm,
+            JoltIn::RAM_Read_RS2
         );
 
-        let signed_output = LC::sub2(JoltInputs::Bytecode_Imm, 0xffffffffi64 - 1i64); // TODO(sragss): Comment about twos-complement.
+        // Converts from unsigned to twos-complement representation
+        let signed_output = LC::sum2(JoltIn::Bytecode_Imm, 0xffffffffi64 + 1i64);
         let imm_signed = cs.allocate_if_else(
-            JoltInputs::OpFlags_SignImm,
-            JoltInputs::Bytecode_Imm,
+            JoltIn::OpFlags_SignImm,
             signed_output,
+            JoltIn::Bytecode_Imm,
         );
 
-        let flag_0_or_1_condition = LC::sum2(JoltInputs::OpFlags0, JoltInputs::OpFlags_IsImm);
-        // TODO(sragss): MEMORY_START is not a constant. Store on JoltConstraints.
-        // cs.constrain_eq_conditional(
-        //     flag_0_or_1_condition,
-        //     LC::sum2(JoltInputs::RAM_Read_RS1, imm_signed),
-        //     LC::sum2(JoltInputs::RAM_A, MEMORY_START),
-        // );
-
+        let flag_0_or_1_condition = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
+        let memory_start: i64 = self.memory_start.try_into().unwrap();
         cs.constrain_eq_conditional(
-            JoltInputs::OpFlags_IsLoad,
-            JoltInputs::RAM_Read_Byte0,
-            JoltInputs::RAM_Write_Byte0,
-        );
-        cs.constrain_eq_conditional(
-            JoltInputs::OpFlags_IsLoad,
-            JoltInputs::RAM_Read_Byte1,
-            JoltInputs::RAM_Write_Byte1,
-        );
-        cs.constrain_eq_conditional(
-            JoltInputs::OpFlags_IsLoad,
-            JoltInputs::RAM_Read_Byte2,
-            JoltInputs::RAM_Write_Byte2,
-        );
-        cs.constrain_eq_conditional(
-            JoltInputs::OpFlags_IsLoad,
-            JoltInputs::RAM_Read_Byte3,
-            JoltInputs::RAM_Write_Byte3,
+            flag_0_or_1_condition,
+            LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
+            LC::sum2(JoltIn::RAM_A, memory_start),
         );
 
-        let ram_writes = input_range!(JoltInputs::RAM_Write_Byte0, JoltInputs::RAM_Write_Byte3);
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags_IsLoad,
+            JoltIn::RAM_Read_Byte0,
+            JoltIn::RAM_Write_Byte0,
+        );
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags_IsLoad,
+            JoltIn::RAM_Read_Byte1,
+            JoltIn::RAM_Write_Byte1,
+        );
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags_IsLoad,
+            JoltIn::RAM_Read_Byte2,
+            JoltIn::RAM_Write_Byte2,
+        );
+        cs.constrain_eq_conditional(
+            JoltIn::OpFlags_IsLoad,
+            JoltIn::RAM_Read_Byte3,
+            JoltIn::RAM_Write_Byte3,
+        );
+
+        let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
         let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
         cs.constrain_eq_conditional(
-            JoltInputs::OpFlags_IsStore,
+            JoltIn::OpFlags_IsStore,
             packed_load_store,
-            JoltInputs::LookupOutput,
+            JoltIn::LookupOutput,
         );
 
         let packed_query = cs.allocate_pack_be(
-            input_range!(JoltInputs::ChunksQ_0, JoltInputs::ChunksQ_3).to_vec(),
+            input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
             LOG_M,
         );
 
-        cs.constrain_eq_conditional(JoltInputs::IF_Add, packed_query, x + y);
-        cs.constrain_eq_conditional(JoltInputs::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1)); // TODO(sragss): Comment on twos complement
-        cs.constrain_eq_conditional(JoltInputs::OpFlags_IsLoad, packed_query, packed_load_store);
+        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query, x + y);
+        // Converts from unsigned to twos-complement representation
+        cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
         cs.constrain_eq_conditional(
-            JoltInputs::OpFlags_IsStore,
+            JoltIn::OpFlags_IsStore,
             packed_query,
-            JoltInputs::RAM_Read_RS2,
+            JoltIn::RAM_Read_RS2,
         );
 
         // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
         let chunked_x = cs.allocate_pack_be(
-            input_range!(JoltInputs::ChunksX_0, JoltInputs::ChunksX_3).to_vec(),
+            input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
             OPERAND_SIZE,
         );
         let chunked_y = cs.allocate_pack_be(
-            input_range!(JoltInputs::ChunksY_0, JoltInputs::ChunksY_3).to_vec(),
+            input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
             OPERAND_SIZE,
         );
-        cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_x, x);
-        cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunked_y, y);
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_x, x);
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_y, y);
 
         // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i]) 
-        let is_shift = JoltInputs::IF_Sll + JoltInputs::IF_Srl + JoltInputs::IF_Sra;
-        let chunks_x = input_range!(JoltInputs::ChunksX_0, JoltInputs::ChunksX_3);
-        let chunks_y = input_range!(JoltInputs::ChunksY_0, JoltInputs::ChunksY_3);
-        let chunks_query = input_range!(JoltInputs::ChunksQ_0, JoltInputs::ChunksQ_3);
+        let is_shift = JoltIn::IF_Sll + JoltIn::IF_Srl + JoltIn::IF_Sra;
+        let chunks_x = input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3);
+        let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
+        let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);
         for i in 0..C {
             let relevant_chunk_y = cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
-            cs.constrain_eq_conditional(JoltInputs::OpFlags_IsConcat, chunks_query[i], (1i64 << 8) * chunks_x[i] + relevant_chunk_y);
+            cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunks_query[i], (1i64 << 8) * chunks_x[i] + relevant_chunk_y);
         }
 
         // if (rd != 0 && if_update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
         let rd_nonzero_and_lookup_to_rd =
-            cs.allocate_prod(JoltInputs::Bytecode_RD, JoltInputs::OpFlags_LookupOutToRd);
+            cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
         cs.constrain_eq_conditional(
             rd_nonzero_and_lookup_to_rd,
-            JoltInputs::RAM_Write_RD,
-            JoltInputs::LookupOutput,
+            JoltIn::RAM_Write_RD,
+            JoltIn::LookupOutput,
         );
         let rd_nonzero_and_jmp =
-            cs.allocate_prod(JoltInputs::Bytecode_RD, JoltInputs::OpFlags_IsJmp);
-        let lhs = LC::sum2(JoltInputs::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let rhs = JoltInputs::RAM_Write_RD;
+            cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
+        let lhs = LC::sum2(JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let rhs = JoltIn::RAM_Write_RD;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
         // TODO(sragss): PC incrementing constraints. Next PC: Check if it's a branch and the lookup output is 1. Check if it's a jump.
@@ -237,33 +248,33 @@ mod tests {
 
     #[test]
     fn single_instruction_jolt() {
-        let mut uniform_builder = R1CSBuilder::<Fr, JoltInputs>::new();
+        let mut uniform_builder = R1CSBuilder::<Fr, JoltIn>::new();
 
-        let jolt_constraints = JoltConstraints();
+        let jolt_constraints = JoltConstraints::new(0);
         jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
         let combined_builder = CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
-        let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltInputs::COUNT];
+        let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction
-        inputs[JoltInputs::PcIn as usize][0] = Fr::from(10);
-        inputs[JoltInputs::Bytecode_A as usize][0] = Fr::from(10);
-        inputs[JoltInputs::Bytecode_Opcode as usize][0] = Fr::from(0);
-        inputs[JoltInputs::Bytecode_RS1 as usize][0] = Fr::from(2);
-        inputs[JoltInputs::Bytecode_RS2 as usize][0] = Fr::from(3);
-        inputs[JoltInputs::Bytecode_RD as usize][0] = Fr::from(4);
+        inputs[JoltIn::PcIn as usize][0] = Fr::from(10);
+        inputs[JoltIn::Bytecode_A as usize][0] = Fr::from(10);
+        inputs[JoltIn::Bytecode_Opcode as usize][0] = Fr::from(0);
+        inputs[JoltIn::Bytecode_RS1 as usize][0] = Fr::from(2);
+        inputs[JoltIn::Bytecode_RS2 as usize][0] = Fr::from(3);
+        inputs[JoltIn::Bytecode_RD as usize][0] = Fr::from(4);
 
-        inputs[JoltInputs::RAM_Read_RD as usize][0] = Fr::from(0);
-        inputs[JoltInputs::RAM_Read_RS1 as usize][0] = Fr::from(100);
-        inputs[JoltInputs::RAM_Read_RS2 as usize][0] = Fr::from(200);
-        inputs[JoltInputs::RAM_Write_RD as usize][0] = Fr::from(300);
+        inputs[JoltIn::RAM_Read_RD as usize][0] = Fr::from(0);
+        inputs[JoltIn::RAM_Read_RS1 as usize][0] = Fr::from(100);
+        inputs[JoltIn::RAM_Read_RS2 as usize][0] = Fr::from(200);
+        inputs[JoltIn::RAM_Write_RD as usize][0] = Fr::from(300);
         // remainder RAM == 0
 
         // rv_trace::to_circuit_flags
         // all zero for ADD
-        inputs[JoltInputs::OpFlags0 as usize][0] = Fr::zero(); // first_operand = rs1
-        inputs[JoltInputs::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
+        inputs[JoltIn::OpFlags0 as usize][0] = Fr::zero(); // first_operand = rs1
+        inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
         let aux = combined_builder.compute_aux(&inputs);
         let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);

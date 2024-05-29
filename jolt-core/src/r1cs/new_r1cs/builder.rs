@@ -1,6 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use strum::EnumCount;
 
-use crate::{poly::field::JoltField, r1cs::new_r1cs::jolt_constraints::JoltInputs};
+use crate::{poly::field::JoltField, r1cs::new_r1cs::jolt_constraints::JoltIn};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -677,8 +678,21 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                         println!("Az: {:?}", Az[z_index]);
                         println!("Bz: {:?}", Bz[z_index]);
                         println!("Cz: {:?}", Cz[z_index]);
-                        println!("Bytecode_Opcode: {:?}", inputs[JoltInputs::Bytecode_Opcode as usize][step_index]);
-                        println!();
+
+                        for terms in [constraint.a.terms(), constraint.b.terms(), constraint.c.terms()] {
+                            for term in terms {
+                                match term.0 {
+                                    Variable::Input(index) => {
+                                        println!("{index:?}: {:?}", inputs[index.into()][step_index]);
+                                    },
+                                    Variable::Auxiliary(index) => {
+                                        println!("Aux({index}): {:?}", aux[index][step_index]);
+                                    },
+                                    _ => continue
+                                }
+
+                            }
+                        }
                         panic!();
                     }
                 }

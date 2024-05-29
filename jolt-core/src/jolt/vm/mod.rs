@@ -2,7 +2,7 @@
 
 use crate::poly::field::JoltField;
 use crate::r1cs::new_r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
-use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltInputs};
+use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltIn};
 use crate::r1cs::new_r1cs::key::UniformSpartanKey;
 use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
 use crate::r1cs::new_r1cs::spartan_3::{self, UniformSpartanProof};
@@ -516,15 +516,15 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
     fn r1cs_setup(
         padded_trace_length: usize,
-        memory_start: u64, // TODO(sragss): Use.
+        memory_start: u64,
         instructions: &[JoltTraceStep<Self::InstructionSet>],
         polynomials: &JoltPolynomials<F, PCS>,
         circuit_flags: Vec<F>,
         generators: &PCS::Setup,
-    ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>, CombinedUniformBuilder<F, JoltInputs>) {
+    ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>, CombinedUniformBuilder<F, JoltIn>) {
 
-        let mut uniform_builder = R1CSBuilder::<F, JoltInputs>::new();
-        let constraints = JoltConstraints();
+        let mut uniform_builder = R1CSBuilder::<F, JoltIn>::new();
+        let constraints = JoltConstraints::new(memory_start);
         constraints.build_constraints(&mut uniform_builder);
 
         let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
