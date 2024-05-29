@@ -165,7 +165,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             padded_num_steps,
             constraint_builder.uniform_repeat().next_power_of_two()
         );
-        UniformSpartanKey::from_builder(&constraint_builder)
+        UniformSpartanKey::from_builder(constraint_builder)
     }
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
@@ -198,7 +198,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         // TODO(sragss): This snippet makes prove JoltInputs dependent.
         let inputs = &segmented_padded_witness.segments[0..JoltIn::COUNT];
         let aux = &segmented_padded_witness.segments[JoltIn::COUNT..];
-        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan(&inputs, &aux);
+        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan(inputs, aux);
 
         // TODO(sragss): Explicitly left because this is wasteful. Should likely deal with through more intelligent DensePaddedPolynomial.
         az.resize(padded_num_rows, F::zero());
@@ -307,7 +307,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             witness_segment_polys.iter().collect();
         let opening_proof = C::batch_prove(
             &witness_segment_polys_ref,
-            &r_col_step,
+            r_col_step,
             &witness_evals,
             BatchType::Big,
             transcript,

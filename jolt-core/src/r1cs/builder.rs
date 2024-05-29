@@ -36,7 +36,7 @@ impl<I: ConstraintInput> Constraint<I> {
             }
         }
         let num_aux = aux_set.len();
-        if aux_set.len() > 0 {
+        if !aux_set.is_empty() {
             assert_eq!(num_aux, *aux_set.iter().max().unwrap() + 1); // Ensure there are no gaps
         }
         let aux_index = |aux_index: usize| num_input + aux_index;
@@ -98,7 +98,7 @@ impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
                 if let Variable::Constant = term.0 {
                     continue;
                 }
-                flat_vars.push(term.0.clone());
+                flat_vars.push(term.0);
             }
             if num_vars > 0 {
                 input_to_flat.push(Some(range_start_index..(range_start_index + num_vars)));
@@ -154,6 +154,12 @@ pub struct R1CSBuilder<F: JoltField, I: ConstraintInput> {
     pub aux_computations: Vec<AuxComputation<F, I>>,
 }
 
+impl<F: JoltField, I: ConstraintInput> Default for R1CSBuilder<F, I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     pub fn new() -> Self {
         Self {
@@ -171,7 +177,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let new_aux = Variable::Auxiliary(self.next_aux);
         self.next_aux += 1;
 
-        let computation = AuxComputation::new(new_aux.clone(), symbolic_inputs, compute);
+        let computation = AuxComputation::new(new_aux, symbolic_inputs, compute);
         self.aux_computations.push(computation);
 
         new_aux
@@ -327,7 +333,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     fn aux_pack_le(&mut self, to_pack: &[Variable<I>], operand_bits: usize) -> Variable<I> {
         let pack = move |values: &[F]| -> F {
             values
-                .into_iter()
+                .iter()
                 .enumerate()
                 .fold(F::zero(), |acc, (idx, &value)| {
                     acc + value * F::from_u64(1 << (idx * operand_bits)).unwrap()
@@ -372,7 +378,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     fn aux_pack_be(&mut self, to_pack: &[Variable<I>], operand_bits: usize) -> Variable<I> {
         let pack = move |values: &[F]| -> F {
             values
-                .into_iter()
+                .iter()
                 .rev()
                 .enumerate()
                 .fold(F::zero(), |acc, (idx, &value)| {
@@ -568,7 +574,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 let required_z_values: Vec<F> = aux_compute
                     .flat_vars
                     .iter()
-                    .map(|var| inputs[self.uniform_builder.witness_index(var.clone())][step_index])
+                    .map(|var| inputs[self.uniform_builder.witness_index(*var)][step_index])
                     .collect();
                 aux[aux_index][step_index] = aux_compute.compute(&required_z_values);
             }
@@ -664,9 +670,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             // For offset equality constraints we only constrain 1..N steps, the first does not have recursive definition.
             for step_index in 0..(self.uniform_repeat - 1) {
                 let index = constraint_index * self.uniform_repeat + step_index;
-                Az[index] = compute_lc(&constraint.0, &inputs, &aux, step_index);
+                Az[index] = compute_lc(&constraint.0, inputs, aux, step_index);
                 Bz[index] = F::one();
-                Cz[index] = compute_lc(&constraint.1, &inputs, &aux, step_index);
+                Cz[index] = compute_lc(&constraint.1, inputs, aux, step_index);
             }
         }
 
@@ -676,9 +682,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             for step_index in 0..self.uniform_repeat {
                 let z_index =
                     offset_eq_constraint_rows + constraint_index * self.uniform_repeat + step_index;
-                Az[z_index] = compute_lc(&constraint.a, &inputs, &aux, step_index);
-                Bz[z_index] = compute_lc(&constraint.b, &inputs, &aux, step_index);
-                Cz[z_index] = compute_lc(&constraint.c, &inputs, &aux, step_index);
+                Az[z_index] = compute_lc(&constraint.a, inputs, aux, step_index);
+                Bz[z_index] = compute_lc(&constraint.b, inputs, aux, step_index);
+                Cz[z_index] = compute_lc(&constraint.c, inputs, aux, step_index);
 
                 #[cfg(test)]
                 {
@@ -749,7 +755,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{impl_r1cs_input_lc_conversions, input_range};
+    
 
     use super::*;
     use crate::r1cs::test::TestInputs;
@@ -1010,7 +1016,7 @@ mod tests {
 
         assert_eq!(builder.aux_computations.len(), 1);
         let computed_aux =
-            builder.aux_computations[0].compute(&vec![Fr::one(), Fr::zero(), Fr::one(), Fr::one()]);
+            builder.aux_computations[0].compute(&[Fr::one(), Fr::zero(), Fr::one(), Fr::one()]);
         assert_eq!(computed_aux, Fr::from(13));
         z[builder.witness_index(Variable::Auxiliary(0))] = 13;
         assert!(constraint.is_sat(&z));
@@ -1175,7 +1181,7 @@ mod tests {
                 let aux_0 = builder.allocate_prod(TestInputs::OpFlags0, TestInputs::OpFlags1);
                 builder.constrain_eq(
                     LC::sum2(TestInputs::OpFlags2, TestInputs::OpFlags3),
-                    aux_0.clone(),
+                    aux_0,
                 );
                 let aux_1 =
                     builder.allocate_prod(4 * TestInputs::RAMByte0 + 2i64, TestInputs::OpFlags0);

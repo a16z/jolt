@@ -192,8 +192,8 @@ impl<F: JoltField> UniformSpartanKey<F> {
         assert_eq!(r_row_step.len(), r_col_step.len());
 
         let eq_rx_ry_ts = EqPolynomial::new(r_row_step.to_vec()).evaluate(r_col_step);
-        let eq_rx_con = EqPolynomial::evals(&r_row_constr);
-        let eq_ry_var = EqPolynomial::evals(&r_col_var);
+        let eq_rx_con = EqPolynomial::evals(r_row_constr);
+        let eq_ry_var = EqPolynomial::evals(r_col_var);
 
         // TODO(sragss): Must be able to dedupe
         let eq_r_row = EqPolynomial::evals(r_row);
@@ -211,7 +211,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
             // Constant (second half of each row)
             let r_col_const: F = r_col[0]
                 * (1..total_cols_bits)
-                    .into_iter()
                     .map(|i| F::one() - r_col[i])
                     .product::<F>();
             let mut sum = F::zero();
@@ -360,9 +359,9 @@ mod test {
 
     fn materialize_all<F: JoltField>(key: &UniformSpartanKey<F>) -> (Vec<F>, Vec<F>, Vec<F>) {
         (
-            materialize_full(&key, &key.uniform_r1cs.a),
-            materialize_full(&key, &key.uniform_r1cs.b),
-            materialize_full(&key, &key.uniform_r1cs.c),
+            materialize_full(key, &key.uniform_r1cs.a),
+            materialize_full(key, &key.uniform_r1cs.b),
+            materialize_full(key, &key.uniform_r1cs.c),
         )
     }
 
@@ -545,7 +544,7 @@ mod test {
         inputs[TestInputs::OpFlags1 as usize][2] = Fr::from(4);
 
         // Confirms validity of constraints
-        let (_az, _bz, _cz) = combined_builder.compute_spartan(&inputs, &vec![]);
+        let (_az, _bz, _cz) = combined_builder.compute_spartan(&inputs, &[]);
 
         let key = UniformSpartanKey::from_builder(&combined_builder);
 

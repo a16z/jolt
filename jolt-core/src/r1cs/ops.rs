@@ -196,25 +196,25 @@ impl<I: ConstraintInput> std::ops::Neg for Term<I> {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        Term(self.0, self.1 * -1)
+        Term(self.0, -self.1)
     }
 }
 
-impl<I: ConstraintInput> Into<Term<I>> for i64 {
-    fn into(self) -> Term<I> {
-        Term(Variable::Constant, self)
+impl<I: ConstraintInput> From<i64> for Term<I> {
+    fn from(val: i64) -> Self {
+        Term(Variable::Constant, val)
     }
 }
 
-impl<I: ConstraintInput> Into<Term<I>> for Variable<I> {
-    fn into(self) -> Term<I> {
-        Term(self, 1)
+impl<I: ConstraintInput> From<Variable<I>> for Term<I> {
+    fn from(val: Variable<I>) -> Self {
+        Term(val, 1)
     }
 }
 
-impl<I: ConstraintInput> Into<Term<I>> for (Variable<I>, i64) {
-    fn into(self) -> Term<I> {
-        Term(self.0, self.1)
+impl<I: ConstraintInput> From<(Variable<I>, i64)> for Term<I> {
+    fn from(val: (Variable<I>, i64)) -> Self {
+        Term(val.0, val.1)
     }
 }
 
@@ -264,27 +264,27 @@ impl<I: ConstraintInput> std::ops::Add<Variable<I>> for Term<I> {
 
 // Into<LC<I>>
 
-impl<I: ConstraintInput> Into<LC<I>> for i64 {
-    fn into(self) -> LC<I> {
-        LC(vec![Term(Variable::Constant, self)])
+impl<I: ConstraintInput> From<i64> for LC<I> {
+    fn from(val: i64) -> Self {
+        LC(vec![Term(Variable::Constant, val)])
     }
 }
 
-impl<I: ConstraintInput> Into<LC<I>> for Variable<I> {
-    fn into(self) -> LC<I> {
-        LC(vec![Term(self, 1)])
+impl<I: ConstraintInput> From<Variable<I>> for LC<I> {
+    fn from(val: Variable<I>) -> Self {
+        LC(vec![Term(val, 1)])
     }
 }
 
-impl<I: ConstraintInput> Into<LC<I>> for Term<I> {
-    fn into(self) -> LC<I> {
-        LC(vec![self])
+impl<I: ConstraintInput> From<Term<I>> for LC<I> {
+    fn from(val: Term<I>) -> Self {
+        LC(vec![val])
     }
 }
 
-impl<I: ConstraintInput> Into<LC<I>> for Vec<Term<I>> {
-    fn into(self) -> LC<I> {
-        LC(self)
+impl<I: ConstraintInput> From<Vec<Term<I>>> for LC<I> {
+    fn from(val: Vec<Term<I>>) -> Self {
+        LC(val)
     }
 }
 
@@ -315,8 +315,8 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 self as usize
             }
         }
-        impl Into<crate::r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::ops::Variable<$ConcreteInput> {
+        impl Into<$crate::r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> $crate::r1cs::ops::Variable<$ConcreteInput> {
                 crate::r1cs::ops::Variable::Input(self)
             }
         }
@@ -486,7 +486,7 @@ macro_rules! input_range {
         arr
     }};
     ($start:path, $end:path) => {{
-        let mut arr = [crate::r1cs::ops::Variable::Input($start);
+        let mut arr = [$crate::r1cs::ops::Variable::Input($start);
             ($end as usize) - ($start as usize) + 1];
         for i in ($start as usize)..=($end as usize) {
             arr[i - ($start as usize)] =
@@ -511,9 +511,9 @@ mod test {
         D,
     }
 
-    impl Into<usize> for Inputs {
-        fn into(self) -> usize {
-            self as usize
+    impl From<Inputs> for usize {
+        fn from(val: Inputs) -> Self {
+            val as usize
         }
     }
     impl ConstraintInput for Inputs {}
@@ -540,7 +540,7 @@ mod test {
 
     #[test]
     fn lc_sorting() {
-        let mut variables: Vec<Variable<Inputs>> = vec![
+        let variables: Vec<Variable<Inputs>> = vec![
             Variable::Auxiliary(10),
             Variable::Auxiliary(5),
             Variable::Constant,
