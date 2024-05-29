@@ -373,11 +373,9 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
         let spartan_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(&r1cs_builder, padded_trace_length);
 
-        // append the digest of vk (which includes R1CS matrices) and the RelaxedR1CSInstance to the transcript
         transcript.append_scalar(b"spartan key", &spartan_key.vk_digest);
 
         jolt_commitments.r1cs = Some(r1cs_commitments);
-
         jolt_commitments.append_to_transcript(&mut transcript);
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
