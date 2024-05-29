@@ -7,13 +7,13 @@ use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::thread::unsafe_allocate_zero_vec;
+
 use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
 use sha3::Digest;
-use sha3::Sha3_256;
+
 use strum::EnumCount;
 use thiserror::Error;
 

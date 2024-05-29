@@ -1,7 +1,7 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use strum::EnumCount;
 
-use crate::{poly::field::JoltField, r1cs::jolt_constraints::JoltIn};
+use crate::{poly::field::JoltField};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -630,7 +630,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             .for_each(|aux_segment| assert_eq!(aux_segment.len(), self.uniform_repeat));
 
         let offset_eq_constraint_rows = self.offset_eq_constraint_rows();
-        let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
+        let _uniform_constraint_rows = self.uniform_repeat_constraint_rows();
         let constraint_rows = self.constraint_rows();
 
         // TODO(sragss): unsafe_alloc_zero_vec
