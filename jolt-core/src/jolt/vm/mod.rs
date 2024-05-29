@@ -4,6 +4,7 @@ use crate::poly::field::JoltField;
 use crate::r1cs::new_r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
 use crate::r1cs::new_r1cs::jolt_constraints::{JoltConstraints, JoltInputs};
 use crate::r1cs::new_r1cs::key::UniformSpartanKey;
+use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
 use crate::r1cs::new_r1cs::spartan_3::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -521,47 +522,36 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         circuit_flags: Vec<F>,
         generators: &PCS::Setup,
     ) -> (Vec<Vec<F>>, R1CSCommitment<PCS>, CombinedUniformBuilder<F, JoltInputs>) {
-        let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
 
-        use crate::r1cs::new_r1cs::builder::R1CSConstraintBuilder;
         let mut uniform_builder = R1CSBuilder::<F, JoltInputs>::new();
         let constraints = JoltConstraints();
         constraints.build_constraints(&mut uniform_builder);
-        // TODO(sragss): Move this into clone_to_trace_len_chunks();
-        let mut pc_input: Vec<F> = inputs.bytecode_a.clone();
-        pc_input.resize(pc_input.len().next_power_of_two(), F::zero());
-        println!("padded_trace_length {padded_trace_length}");
-        println!("pc_input size {}", pc_input.len());
+
+        let inputs = Self::r1cs_construct_inputs(padded_trace_length, instructions, polynomials, circuit_flags);
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
-        inputs_flat.insert(0, pc_input.clone()); // TODO(sragss): rm
-        // TODO(sragss): Create an R1CSInputs::flatten function to use here and reuse in compute_witness_commit
 
         // TODO(sragss): Non-uniform constraints.
         let combined_builder = CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, vec![]);
-
         let aux = combined_builder.compute_aux(&inputs_flat);
-        // TODO(sragss): Move this logic onto R1CSInputs
-        assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
-        let span = tracing::span!(tracing::Level::INFO, "new_commitments");
-        let _guard = span.enter();
-        let chunk_batch_size = inputs.chunks_x.len() / padded_trace_length + inputs.chunks_y.len() / padded_trace_length;
-        let mut chunk_batch_slices: Vec<&[F]> = Vec::with_capacity(chunk_batch_size);
-        for batchee in [&inputs.chunks_x, &inputs.chunks_y].iter() {
-            chunk_batch_slices.extend(batchee.chunks(padded_trace_length));
-        }
-        let chunks_comms =
-            PCS::batch_commit(chunk_batch_slices.as_slice(), generators, BatchType::Big);
 
-        let circuit_flag_slices: Vec<&[F]> =
-            inputs.circuit_flags_bits.chunks(padded_trace_length).collect();
-        let circuit_flags_comms =
-            PCS::batch_commit(circuit_flag_slices.as_slice(), generators, BatchType::Big);
+        assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
+        let span = tracing::span!(tracing::Level::INFO, "commit_chunks_flags");
+        let _guard = span.enter();
+        let chunk_batch_slices: Vec<&[F]> = [&inputs.chunks_x, &inputs.chunks_y]
+            .iter()
+            .flat_map(|batchee| batchee.chunks(padded_trace_length))
+            .collect();
+        let chunks_comms = PCS::batch_commit(&chunk_batch_slices, generators, BatchType::Big);
+
+        let circuit_flags_comms = PCS::batch_commit(
+            &inputs.circuit_flags_bits.chunks(padded_trace_length).collect::<Vec<&[F]>>(),
+            generators,
+            BatchType::Big
+        );
         drop(_guard);
 
-        let io_refs = vec![pc_input.as_ref()];
-        let io_comms = PCS::batch_commit(&io_refs, generators, BatchType::Big);
-        let aux_ref: Vec<&[F]> = aux.iter().map(AsRef::as_ref).collect();
-        let aux_comms = PCS::batch_commit(&aux_ref, generators, BatchType::Big);
+        let io_comms = PCS::batch_commit(&[inputs.pc.as_ref()], generators, BatchType::Big);
+        let aux_comms = PCS::batch_commit(&aux.iter().map(AsRef::as_ref).collect::<Vec<&[F]>>(), generators, BatchType::Big);
 
         let r1cs_commitments = R1CSCommitment::<PCS> {
             io: io_comms,
@@ -581,6 +571,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         (inputs_flat, r1cs_commitments, combined_builder)
     }
 
+    // Assemble the R1CS inputs from across other Jolt structs.
     fn r1cs_construct_inputs<'a>(        
         padded_trace_length: usize,
         instructions: &'a [JoltTraceStep<Self::InstructionSet>],
@@ -588,8 +579,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         circuit_flags: Vec<F>
     ) -> R1CSInputs<'a, F> {
         let log_M = log2(M) as usize;
-
-        // Assemble the polynomials and commitments from the rest of Jolt.
 
         // Derive chunks_x and chunks_y
         let span = tracing::span!(tracing::Level::INFO, "compute_chunks_operands");
@@ -623,7 +612,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         drop(_guard);
         drop(span);
 
-        let span = tracing::span!(tracing::Level::INFO, "flatten instruction_flags");
+        let span = tracing::span!(tracing::Level::INFO, "flatten_instruction_flags");
         let _enter = span.enter();
         let instruction_flags: Vec<F> =
             DensePolynomial::flatten(&polynomials.instruction_lookups.instruction_flag_polys);
@@ -644,17 +633,12 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
                     .evals_ref()
                     .par_iter(),
             );
-            println!("Chunks Query at step 0: {:?}", polynomials.instruction_lookups.dim[i].evals_ref()[0]);
         }
-        println!("0th instruction: {:?}", instructions[0]);
-        println!("0th rs1 read: {:?}", memreg_v_reads[0]);
         drop(_guard);
 
-        // Flattening this out into a Vec<F> and chunking into padded_trace_length-sized chunks
-        // will be the exact witness vector to feed into the R1CS
-        // after pre-pending IO and appending the AUX
         let inputs: R1CSInputs<F> = R1CSInputs::new(
             padded_trace_length,
+            bytecode_a.clone(),
             bytecode_a,
             bytecode_v,
             memreg_a_rw,

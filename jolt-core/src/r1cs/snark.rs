@@ -27,6 +27,7 @@ use strum::EnumCount;
 #[derive(Clone, Debug, Default)]
 pub struct R1CSInputs<'a, F: JoltField> {
     padded_trace_len: usize,
+    pub pc: Vec<F>,
     pub bytecode_a: Vec<F>,
     bytecode_v: Vec<F>,
     memreg_a_rw: &'a [F],
@@ -40,24 +41,25 @@ pub struct R1CSInputs<'a, F: JoltField> {
     instruction_flags_bits: Vec<F>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct R1CSStepInputs<F: JoltField> {
-    pub padded_trace_len: usize,
-    pub input_pc: F,
-    pub bytecode_v: Vec<F>,
-    pub memreg_v_reads: Vec<F>,
-    pub memreg_v_writes: Vec<F>,
-    pub chunks_y: Vec<F>,
-    pub chunks_query: Vec<F>,
-    pub lookup_outputs: Vec<F>,
-    pub circuit_flags_bits: Vec<F>,
-    pub instruction_flags_bits: Vec<F>,
-}
+// #[derive(Clone, Debug, Default)]
+// pub struct R1CSStepInputs<F: JoltField> {
+//     pub padded_trace_len: usize,
+//     pub input_pc: F,
+//     pub bytecode_v: Vec<F>,
+//     pub memreg_v_reads: Vec<F>,
+//     pub memreg_v_writes: Vec<F>,
+//     pub chunks_y: Vec<F>,
+//     pub chunks_query: Vec<F>,
+//     pub lookup_outputs: Vec<F>,
+//     pub circuit_flags_bits: Vec<F>,
+//     pub instruction_flags_bits: Vec<F>,
+// }
 
 impl<'a, F: JoltField> R1CSInputs<'a, F> {
     #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
     pub fn new(
         padded_trace_len: usize,
+        pc: Vec<F>,
         bytecode_a: Vec<F>,
         bytecode_v: Vec<F>,
         memreg_a_rw: &'a [F],
@@ -70,6 +72,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         circuit_flags_bits: Vec<F>,
         instruction_flags_bits: Vec<F>,
     ) -> Self {
+        assert!(pc.len() % padded_trace_len == 0);
         assert!(bytecode_a.len() % padded_trace_len == 0);
         assert!(bytecode_v.len() % padded_trace_len == 0);
         assert!(memreg_a_rw.len() % padded_trace_len == 0);
@@ -84,6 +87,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
 
         Self {
             padded_trace_len,
+            pc,
             bytecode_a,
             bytecode_v,
             memreg_a_rw,
@@ -98,58 +102,62 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         }
     }
 
-    fn push_to_step<T: Borrow<F>>(&self, data: &Vec<T>, step: &mut Vec<F>, step_index: usize) {
-        let num_vals = data.len() / self.padded_trace_len;
-        for var_index in 0..num_vals {
-            step.push(*data[var_index * self.padded_trace_len + step_index].borrow());
-        }
-    }
+    // fn push_to_step<T: Borrow<F>>(&self, data: &Vec<T>, step: &mut Vec<F>, step_index: usize) {
+    //     let num_vals = data.len() / self.padded_trace_len;
+    //     for var_index in 0..num_vals {
+    //         step.push(*data[var_index * self.padded_trace_len + step_index].borrow());
+    //     }
+    // }
 
-    pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
-        let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
-            F::zero()
-        } else {
-            self.bytecode_a[step_index]
-        };
+    // pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
+    //     let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
+    //         F::zero()
+    //     } else {
+    //         self.bytecode_a[step_index]
+    //     };
 
-        let mut output = R1CSStepInputs {
-            padded_trace_len: self.padded_trace_len,
-            input_pc: program_counter,
-            bytecode_v: Vec::with_capacity(6),
-            memreg_v_reads: Vec::with_capacity(7),
-            memreg_v_writes: Vec::with_capacity(7),
-            chunks_y: Vec::with_capacity(4),
-            chunks_query: Vec::with_capacity(4),
-            lookup_outputs: Vec::with_capacity(2),
-            circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
-            instruction_flags_bits: Vec::with_capacity(RV32I::COUNT),
-        };
-        self.push_to_step(&self.bytecode_v, &mut output.bytecode_v, step_index);
-        self.push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads, step_index);
-        self.push_to_step(
-            &self.memreg_v_writes,
-            &mut output.memreg_v_writes,
-            step_index,
-        );
-        self.push_to_step(&self.chunks_y, &mut output.chunks_y, step_index);
-        self.push_to_step(&self.chunks_query, &mut output.chunks_query, step_index);
-        self.push_to_step(&self.lookup_outputs, &mut output.lookup_outputs, step_index);
-        self.push_to_step(
-            &self.circuit_flags_bits,
-            &mut output.circuit_flags_bits,
-            step_index,
-        );
-        self.push_to_step(
-            &self.instruction_flags_bits,
-            &mut output.instruction_flags_bits,
-            step_index,
-        );
+    //     let mut output = R1CSStepInputs {
+    //         padded_trace_len: self.padded_trace_len,
+    //         input_pc: program_counter,
+    //         bytecode_v: Vec::with_capacity(6),
+    //         memreg_v_reads: Vec::with_capacity(7),
+    //         memreg_v_writes: Vec::with_capacity(7),
+    //         chunks_y: Vec::with_capacity(4),
+    //         chunks_query: Vec::with_capacity(4),
+    //         lookup_outputs: Vec::with_capacity(2),
+    //         circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
+    //         instruction_flags_bits: Vec::with_capacity(RV32I::COUNT),
+    //     };
+    //     self.push_to_step(&self.bytecode_v, &mut output.bytecode_v, step_index);
+    //     self.push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads, step_index);
+    //     self.push_to_step(
+    //         &self.memreg_v_writes,
+    //         &mut output.memreg_v_writes,
+    //         step_index,
+    //     );
+    //     self.push_to_step(&self.chunks_y, &mut output.chunks_y, step_index);
+    //     self.push_to_step(&self.chunks_query, &mut output.chunks_query, step_index);
+    //     self.push_to_step(&self.lookup_outputs, &mut output.lookup_outputs, step_index);
+    //     self.push_to_step(
+    //         &self.circuit_flags_bits,
+    //         &mut output.circuit_flags_bits,
+    //         step_index,
+    //     );
+    //     self.push_to_step(
+    //         &self.instruction_flags_bits,
+    //         &mut output.instruction_flags_bits,
+    //         step_index,
+    //     );
 
-        output
-    }
+    //     output
+    // }
 
     pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
         let mut chunks: Vec<Vec<F>> = Vec::new();
+
+        let pc_chunks = self.pc.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
+        chunks.par_extend(pc_chunks);
+
         let bytecode_a_chunks = self.bytecode_a.par_chunks(padded_trace_len).map(|chunk| chunk.to_vec());
         chunks.par_extend(bytecode_a_chunks);
 
