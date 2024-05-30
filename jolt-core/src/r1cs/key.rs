@@ -68,6 +68,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         self.num_cons_total
     }
 
+    /// Evaluates A(r_x, y) + r_rlc * B(r_x, y) + r_rlc^2 * C(r_x, y) where r_x = r_constr || r_step for all y.
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_mle_rlc")]
     pub fn evaluate_r1cs_mle_rlc(&self, r_constr: &[F], r_step: &[F], r_rlc: F) -> Vec<F> {
         assert_eq!(
@@ -139,10 +140,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F]) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2());
-
-        println!("constant index: {}", self.num_vars_total());
-        println!("witness semgnts len: {}", self.num_vars_total());
-        println!("total len {}", self.full_z_len());
 
         // Z can be computed in two halves, [Variables, (constant) 1, 0 , ...] indexed by the first bit.
         let r_const = r[0];
