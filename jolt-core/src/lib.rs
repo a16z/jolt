@@ -9,7 +9,9 @@
 #![allow(long_running_const_eval)]
 #![feature(return_position_impl_trait_in_trait)]
 
+#[cfg(feature = "host")]
 pub mod benches;
+#[cfg(feature = "host")]
 pub mod host;
 pub mod jolt;
 pub mod lasso;
