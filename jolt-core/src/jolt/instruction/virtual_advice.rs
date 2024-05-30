@@ -60,7 +60,7 @@ mod test {
     #[test]
     fn advice_instruction_32_e2e() {
         let mut rng = test_rng();
-        const C: usize = 8;
+        const C: usize = 4;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
