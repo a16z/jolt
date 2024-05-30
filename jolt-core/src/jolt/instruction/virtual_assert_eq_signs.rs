@@ -38,7 +38,7 @@ impl JoltInstruction for ASSERTEQSIGNSInstruction {
     }
 
     fn lookup_entry(&self) -> u64 {
-        ((self.0 as i32).signum() == (self.1 as i32).signum()
+        ((self.0 as i32).signum() < 0 && (self.1 as i32).signum() < 0
             || (self.0 as i32).signum() >= 0 && (self.1 as i32).signum() >= 0)
             .into()
     }

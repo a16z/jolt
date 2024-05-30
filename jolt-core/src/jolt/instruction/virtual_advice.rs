@@ -4,6 +4,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
+use crate::jolt::subtable::truncate_overflow::TruncateOverflowSubtable;
 use crate::jolt::subtable::{identity::IdentitySubtable, LassoSubtable};
 use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
@@ -27,12 +28,19 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
     fn subtables<F: JoltField>(
         &self,
         C: usize,
-        _: usize,
+        M: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        vec![(
-            Box::new(IdentitySubtable::new()),
-            SubtableIndices::from(0..C),
-        )]
+        let msb_chunk_index = C - (WORD_SIZE / log2(M) as usize) - 1;
+        vec![
+            (
+                Box::new(TruncateOverflowSubtable::<F, WORD_SIZE>::new()),
+                SubtableIndices::from(0..msb_chunk_index + 1),
+            ),
+            (
+                Box::new(IdentitySubtable::new()),
+                SubtableIndices::from(msb_chunk_index + 1..C),
+            ),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
