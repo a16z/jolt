@@ -16,7 +16,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
         // MULHSU operands
         let x = trace_row.register_state.rs1_val.unwrap();
         let y = trace_row.register_state.rs2_val.unwrap();
-        // MULH source registers
+        // MULHSU source registers
         let r_x = trace_row.instruction.rs1;
         let r_y = trace_row.instruction.rs2;
         // Virtual registers used in sequence
