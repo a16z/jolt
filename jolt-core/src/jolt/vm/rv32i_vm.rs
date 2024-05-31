@@ -231,16 +231,14 @@ mod tests {
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
         let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+        let (io_device, trace, circuit_flags) =
             program.trace();
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, Zeromorph<Bn254>, C, M>>::prove(
             io_device,
-            bytecode_trace,
-            memory_trace,
-            instruction_trace,
+            trace,
             circuit_flags,
             preprocessing.clone(),
         );
@@ -286,7 +284,7 @@ mod tests {
         let mut program = host::Program::new("sha3-guest");
         program.set_input(&[5u8; 32]);
         let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
+        let (io_device, trace, circuit_flags) =
             program.trace();
 
         let preprocessing =
@@ -294,9 +292,7 @@ mod tests {
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, Zeromorph<Bn254>, C, M>>::prove(
                 io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
+                trace,
                 circuit_flags,
                 preprocessing.clone(),
             );
