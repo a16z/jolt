@@ -17,14 +17,11 @@ use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
 
-#[cfg(feature = "ark-msm")]
-use ark_ec::VariableBaseMSM;
-
 use rayon::prelude::*;
 
 use super::{
     commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
-    kzg::{KZGProverKey, KZGVerifierKey, SRS, UVKZGPCS},
+    kzg::{KZGProverKey, KZGVerifierKey, SRS, UnivariateKZG},
 };
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
@@ -96,25 +93,14 @@ where
             let (remainder_lo, remainder_hi) = remainder.split_at_mut(1 << (num_var - 1 - i));
             let mut quotient = vec![P::ScalarField::zero(); remainder_lo.len()];
 
-            #[cfg(feature = "multicore")]
-            let quotient_iter = quotient.par_iter_mut();
-
-            #[cfg(not(feature = "multicore"))]
-            let quotient_iter = quotient.iter_mut();
-
-            quotient_iter
+            quotient.par_iter_mut()
                 .zip(&*remainder_lo)
                 .zip(&*remainder_hi)
                 .for_each(|((q, r_lo), r_hi)| {
                     *q = *r_hi - *r_lo;
                 });
 
-            #[cfg(feature = "multicore")]
-            let remainder_lo_iter = remainder_lo.par_iter_mut();
-
-            #[cfg(not(feature = "multicore"))]
-            let remainder_lo_iter = remainder_lo.iter_mut();
-            remainder_lo_iter
+            remainder_lo.par_iter_mut()
                 .zip(remainder_hi)
                 .for_each(|(r_lo, r_hi)| {
                     *r_lo += (*r_hi - r_lo as &_) * x_i;
@@ -152,7 +138,7 @@ where
 
             #[cfg(not(feature = "multicore"))]
             let q_hat_iter = q_hat[(1 << num_vars) - (1 << idx)..].iter_mut();
-            q_hat_iter.zip(&q.as_vec()).for_each(|(q_hat, q)| {
+            q_hat_iter.zip(&q.coeffs).for_each(|(q_hat, q)| {
                 *q_hat += scalar * q;
             });
             scalar *= y_challenge;
@@ -179,7 +165,6 @@ where
         .take(num_vars + 1)
         .collect();
 
-    // offsets of x =
     let offsets_of_x = {
         let mut offsets_of_x = squares_of_x
             .iter()
@@ -252,7 +237,7 @@ where
             ));
         }
         Ok(ZeromorphCommitment(
-            UVKZGPCS::commit(&pp.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
+            UnivariateKZG::commit(&pp.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
         ))
     }
 
@@ -284,7 +269,7 @@ where
         // TODO: multicore gate
         let q_k_com: Vec<P::G1Affine> = quotients
             .par_iter()
-            .map(|q| UVKZGPCS::commit(&pp.commit_pp, q).unwrap())
+            .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())
             .collect();
         let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
         q_comms
@@ -299,7 +284,7 @@ where
         let (q_hat, offset) = compute_batched_lifted_degree_quotient::<P>(&quotients, &y_challenge);
 
         // Compute and absorb the commitment C_q = [\hat{q}]
-        let q_hat_com = UVKZGPCS::commit_offset(&pp.commit_pp, &q_hat, offset)?;
+        let q_hat_com = UnivariateKZG::commit_offset(&pp.commit_pp, &q_hat, offset)?;
         transcript.append_point(b"q_hat", &q_hat_com.into_group());
 
         // Get x and z challenges
@@ -327,7 +312,7 @@ where
         debug_assert_eq!(f.evaluate(&x_challenge), P::ScalarField::zero());
 
         // Compute and send proof commitment pi
-        let (pi, _) = UVKZGPCS::open(&pp.open_pp, &f, &x_challenge)?;
+        let (pi, _) = UnivariateKZG::open(&pp.open_pp, &f, &x_challenge)?;
 
         Ok(ZeromorphProof {
             pi,
@@ -493,7 +478,7 @@ where
             poly.Z.len()
         );
         ZeromorphCommitment(
-            UVKZGPCS::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
+            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
         )
     }
 
@@ -515,7 +500,7 @@ where
                 evals.len()
             );
             ZeromorphCommitment(
-                UVKZGPCS::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
+                UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
             )
         })
         .collect::<Vec<_>>()
@@ -523,7 +508,7 @@ where
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
         ZeromorphCommitment(
-            UVKZGPCS::commit(&setup.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
+            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
         )
     }
 
@@ -653,7 +638,7 @@ mod test {
         for (k, q_k_uni) in quotients.iter().enumerate() {
             let z_partial = &z_challenge[&z_challenge.len() - k..];
             //This is a weird consequence of how things are done.. the univariate polys are of the multilinear commitment in lagrange basis. Therefore we evaluate as multilinear
-            let q_k = DensePolynomial::new(q_k_uni.as_vec());
+            let q_k = DensePolynomial::new(q_k_uni.coeffs.clone());
             let q_k_eval = q_k.evaluate(z_partial);
 
             res -= (z_challenge[z_challenge.len() - k - 1]

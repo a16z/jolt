@@ -2,7 +2,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::{field::JoltField, unipoly::UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
-use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ec::{AffineRepr, pairing::Pairing, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use rand_core::{CryptoRng, RngCore};
@@ -110,11 +110,11 @@ pub struct KZGVerifierKey<P: Pairing> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct UVKZGPCS<P: Pairing> {
+pub struct UnivariateKZG<P: Pairing> {
     _phantom: PhantomData<P>,
 }
 
-impl<P: Pairing> UVKZGPCS<P>
+impl<P: Pairing> UnivariateKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
 {
@@ -130,11 +130,10 @@ where
             ));
         }
 
-        let scalars = poly.as_vec();
         let bases = pk.g1_powers();
         let c = <P::G1 as VariableBaseMSM>::msm(
-            &bases[offset..scalars.len()],
-            &poly.as_vec()[offset..],
+            &bases[offset..poly.coeffs.len()],
+            &poly.coeffs[offset..],
         )
         .unwrap();
 
@@ -152,8 +151,8 @@ where
             ));
         }
         let c = <P::G1 as VariableBaseMSM>::msm(
-            &pk.g1_powers()[..poly.as_vec().len()],
-            &poly.as_vec().as_slice(),
+            &pk.g1_powers()[..poly.coeffs.len()],
+            &poly.coeffs.as_slice(),
         )
         .unwrap();
         Ok(c.into_affine())
@@ -168,27 +167,17 @@ where
         <P as ark_ec::pairing::Pairing>::ScalarField: JoltField,
     {
         let divisor = UniPoly::from_coeff(vec![-*point, P::ScalarField::one()]);
-        let (witness_poly, _) = poly.divide_with_q_and_r(&divisor).unwrap();
+        let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
         let proof = <P::G1 as VariableBaseMSM>::msm(
-            &pk.g1_powers()[..witness_poly.as_vec().len()],
-            &witness_poly.as_vec().as_slice(),
+            &pk.g1_powers()[..witness_poly.coeffs.len()],
+            &witness_poly.coeffs.as_slice(),
         )
         .unwrap();
         let evaluation = poly.evaluate(point);
         Ok((proof.into_affine(), evaluation))
     }
-}
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use ark_bn254::{Bn254, Fr};
-    use ark_ec::AffineRepr;
-    use ark_std::{rand::Rng, UniformRand};
-    use rand_chacha::ChaCha20Rng;
-    use rand_core::SeedableRng;
-
-    fn kzg_verify<P: Pairing>(
+    pub fn verify(
         vk: &KZGVerifierKey<P>,
         commitment: &P::G1Affine,
         point: &P::ScalarField,
@@ -203,6 +192,16 @@ mod test {
         Ok(lhs == rhs)
     }
 
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use ark_bn254::{Bn254, Fr};
+    use ark_std::{rand::Rng, UniformRand};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
     #[test]
     fn kzg_commit_prove_verify() -> Result<(), ProofVerifyError> {
         let seed = b"11111111111111111111111111111111";
@@ -213,11 +212,11 @@ mod test {
             let pp = Arc::new(SRS::<Bn254>::setup(&mut rng, degree));
             let (ck, vk) = SRS::trim(pp, degree);
             let p = UniPoly::random::<ChaCha20Rng>(degree, rng);
-            let comm = UVKZGPCS::<Bn254>::commit(&ck, &p)?;
+            let comm = UnivariateKZG::<Bn254>::commit(&ck, &p)?;
             let point = Fr::rand(rng);
-            let (proof, value) = UVKZGPCS::<Bn254>::open(&ck, &p, &point)?;
+            let (proof, value) = UnivariateKZG::<Bn254>::open(&ck, &p, &point)?;
             assert!(
-                kzg_verify(&vk, &comm, &point, &proof, &value)?,
+                UnivariateKZG::verify(&vk, &comm, &point, &proof, &value)?,
                 "proof was incorrect for max_degree = {}, polynomial_degree = {}",
                 degree,
                 p.degree(),

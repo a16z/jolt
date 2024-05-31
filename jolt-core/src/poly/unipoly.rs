@@ -13,7 +13,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIter
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
 #[derive(Debug, Clone, PartialEq)]
 pub struct UniPoly<F> {
-    coeffs: Vec<F>,
+    pub coeffs: Vec<F>,
 }
 
 // ax^2 + bx + c stored as vec![c,a]
@@ -57,7 +57,7 @@ impl<F: JoltField> UniPoly<F> {
 
     /// Divide self by another polynomial, and returns the
     /// quotient and remainder.
-    pub fn divide_with_q_and_r(&self, divisor: &Self) -> Option<(Self, Self)> {
+    pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
         if self.is_zero() {
             Some((Self::zero(), Self::zero()))
         } else if divisor.is_zero() {
@@ -139,17 +139,19 @@ impl<F: JoltField> UniPoly<F> {
                 .collect(),
         )
     }
-}
 
-impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
-    fn add_assign(&mut self, rhs: &F) {
-        #[cfg(feature = "multicore")]
-        let iter = self.coeffs.par_iter_mut();
-        #[cfg(not(feature = "multicore"))]
-        let iter = self.coeffs.iter_mut();
-        iter.for_each(|c| *c += rhs);
+    pub fn shift_coefficients(&mut self, rhs: &F) {
+        self.coeffs.par_iter_mut().for_each(|c| *c += rhs);
     }
 }
+
+/*
+impl<F: JoltField> AddAssign<&F> for UniPoly<F> {
+    fn add_assign(&mut self, rhs: &F) {
+        self.coeffs.par_iter_mut().for_each(|c| *c += rhs);
+    }
+}
+*/
 
 impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
     fn add_assign(&mut self, rhs: &Self) {
@@ -330,7 +332,7 @@ mod tests {
                 let divisor = UniPoly::<Fr>::random(b_degree, rng);
 
                 if let Some((quotient, remainder)) =
-                    UniPoly::divide_with_q_and_r(&dividend, &divisor)
+                    UniPoly::divide_with_remainder(&dividend, &divisor)
                 {
                     let mut prod = naive_mul(&divisor, &quotient);
                     prod += &remainder;
