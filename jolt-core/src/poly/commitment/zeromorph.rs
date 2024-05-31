@@ -13,6 +13,7 @@ use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{batch_inversion, Field};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{One, Zero};
+use itertools::izip;
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
@@ -192,23 +193,14 @@ where
             .collect::<Vec<_>>()
     };
 
-    let q_scalars = iter::successors(Some(P::ScalarField::one()), |acc| Some(*acc * y_challenge))
-        .take(num_vars)
-        .zip(offsets_of_x)
-        .zip(squares_of_x)
-        .zip(&vs)
-        .zip(&vs[1..])
-        .zip(challenges.iter().rev())
-        .map(
-            |(((((power_of_y, offset_of_x), square_of_x), v_i), v_j), u_i)| {
-                (
-                    -(power_of_y * offset_of_x),
-                    -(z_challenge * (square_of_x * v_j - *u_i * v_i)),
-                )
-            },
-        )
-        .unzip();
-
+    let q_scalars = izip!(iter::successors(Some(P::ScalarField::one()), |acc| Some(*acc * y_challenge)).take(num_vars), offsets_of_x, squares_of_x, &vs, &vs[1..], challenges.iter().rev()).map(
+        |(power_of_y, offset_of_x, square_of_x, v_i, v_j, u_i)| {
+            (
+                -(power_of_y * offset_of_x),
+                -(z_challenge * (square_of_x * v_j - *u_i * v_i)),
+            )
+        }
+    ).unzip();
     // -vs[0] * z = -z * (x^(2^num_vars) - 1) / (x - 1) = -z Φ_n(x)
     (-vs[0] * z_challenge, q_scalars)
 }
