@@ -22,7 +22,7 @@ use rayon::prelude::*;
 
 use super::{
     commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
-    kzg::{KZGProverKey, KZGVerifierKey, SRS, UnivariateKZG},
+    kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG, SRS},
 };
 
 pub struct ZeromorphSRS<P: Pairing>(Arc<SRS<P>>);
@@ -94,14 +94,16 @@ where
             let (remainder_lo, remainder_hi) = remainder.split_at_mut(1 << (num_var - 1 - i));
             let mut quotient = vec![P::ScalarField::zero(); remainder_lo.len()];
 
-            quotient.par_iter_mut()
+            quotient
+                .par_iter_mut()
                 .zip(&*remainder_lo)
                 .zip(&*remainder_hi)
                 .for_each(|((q, r_lo), r_hi)| {
                     *q = *r_hi - *r_lo;
                 });
 
-            remainder_lo.par_iter_mut()
+            remainder_lo
+                .par_iter_mut()
                 .zip(remainder_hi)
                 .for_each(|(r_lo, r_hi)| {
                     *r_lo += (*r_hi - r_lo as &_) * x_i;
@@ -193,14 +195,22 @@ where
             .collect::<Vec<_>>()
     };
 
-    let q_scalars = izip!(iter::successors(Some(P::ScalarField::one()), |acc| Some(*acc * y_challenge)).take(num_vars), offsets_of_x, squares_of_x, &vs, &vs[1..], challenges.iter().rev()).map(
-        |(power_of_y, offset_of_x, square_of_x, v_i, v_j, u_i)| {
-            (
-                -(power_of_y * offset_of_x),
-                -(z_challenge * (square_of_x * v_j - *u_i * v_i)),
-            )
-        }
-    ).unzip();
+    let q_scalars = izip!(
+        iter::successors(Some(P::ScalarField::one()), |acc| Some(*acc * y_challenge))
+            .take(num_vars),
+        offsets_of_x,
+        squares_of_x,
+        &vs,
+        &vs[1..],
+        challenges.iter().rev()
+    )
+    .map(|(power_of_y, offset_of_x, square_of_x, v_i, v_j, u_i)| {
+        (
+            -(power_of_y * offset_of_x),
+            -(z_challenge * (square_of_x * v_j - *u_i * v_i)),
+        )
+    })
+    .unzip();
     // -vs[0] * z = -z * (x^(2^num_vars) - 1) / (x - 1) = -z Φ_n(x)
     (-vs[0] * z_challenge, q_scalars)
 }
@@ -470,7 +480,8 @@ where
             poly.Z.len()
         );
         ZeromorphCommitment(
-            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
+            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone()))
+                .unwrap(),
         )
     }
 
@@ -492,7 +503,8 @@ where
                 evals.len()
             );
             ZeromorphCommitment(
-                UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
+                UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
+                    .unwrap(),
             )
         })
         .collect::<Vec<_>>()
@@ -500,7 +512,8 @@ where
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
         ZeromorphCommitment(
-            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
+            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
+                .unwrap(),
         )
     }
 

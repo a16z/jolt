@@ -2,7 +2,7 @@ use crate::msm::VariableBaseMSM;
 use crate::poly::{field::JoltField, unipoly::UniPoly};
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
-use ark_ec::{AffineRepr, pairing::Pairing, CurveGroup};
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use rand_core::{CryptoRng, RngCore};
@@ -191,7 +191,6 @@ where
         let rhs = P::pairing(proof, vk.beta_g2.into_group() - (vk.g2 * point));
         Ok(lhs == rhs)
     }
-
 }
 
 #[cfg(test)]
