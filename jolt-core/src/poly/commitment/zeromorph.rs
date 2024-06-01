@@ -351,7 +351,7 @@ where
             },
         );
         let poly = DensePolynomial::new(f_batched.Z.clone());
-        Zeromorph::<P>::open(&pk, &poly, &point, &batched_evaluation, transcript).unwrap()
+        Zeromorph::<P>::open(pk, &poly, point, &batched_evaluation, transcript).unwrap()
     }
 
     fn batch_verify(
@@ -377,11 +377,11 @@ where
             },
         );
         Zeromorph::<P>::verify(
-            &vk,
+            vk,
             &ZeromorphCommitment(batched_commitment.into_affine()),
-            &point,
+            point,
             &batched_eval,
-            &batch_proof,
+            batch_proof,
             transcript,
         )
     }
@@ -438,8 +438,8 @@ where
 
         // e(pi, [tau]_2 - x * [1]_2) == e(C_{\zeta,Z}, -[X^(N_max - 2^n - 1)]_2) <==> e(C_{\zeta,Z} - x * pi, [X^{N_max - 2^n - 1}]_2) * e(-pi, [tau_2]) == 1
         let pairing = P::multi_pairing(
-            &[zeta_z_com, proof.pi],
-            &[
+            [zeta_z_com, proof.pi],
+            [
                 (-vk.tau_N_max_sub_2_N.into_group()).into_affine(),
                 (vk.kzg_vk.beta_g2.into_group() - (vk.kzg_vk.g2 * x_challenge)).into(),
             ],
@@ -523,8 +523,8 @@ where
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let eval = poly.evaluate(&opening_point);
-        Zeromorph::<P>::open(&setup.0, &poly, &opening_point, &eval, transcript).unwrap()
+        let eval = poly.evaluate(opening_point);
+        Zeromorph::<P>::open(&setup.0, poly, opening_point, &eval, transcript).unwrap()
     }
 
     fn batch_prove(
@@ -535,7 +535,7 @@ where
         _batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        Zeromorph::<P>::batch_open(&setup.0, polynomials, &opening_point, &openings, transcript)
+        Zeromorph::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
     }
 
     fn verify(
@@ -548,10 +548,10 @@ where
     ) -> Result<(), ProofVerifyError> {
         Zeromorph::<P>::verify(
             &setup.1,
-            &commitment,
-            &opening_point,
-            &opening,
-            &proof,
+            commitment,
+            opening_point,
+            opening,
+            proof,
             transcript,
         )
     }
@@ -569,7 +569,7 @@ where
             commitments,
             opening_point,
             openings,
-            &batch_proof,
+            batch_proof,
             transcript,
         )
     }

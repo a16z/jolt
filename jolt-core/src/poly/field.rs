@@ -121,7 +121,7 @@ impl JoltField for ark_bn254::Fr {
     }
 
     fn inverse(&self) -> Option<Self> {
-        <Self as ark_ff::Field>::inverse(&self)
+        <Self as ark_ff::Field>::inverse(self)
     }
 
     fn from_bytes(bytes: &[u8]) -> Self {
