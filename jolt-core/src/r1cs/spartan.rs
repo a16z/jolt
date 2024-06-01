@@ -222,6 +222,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted(
+        generators: &C::Setup,
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
@@ -447,6 +448,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
             witness_segment_polys.iter().collect();
         let opening_proof = C::batch_prove(
+            generators,
             &witness_segment_polys_ref,
             r_y_point,
             &witness_evals,
