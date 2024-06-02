@@ -150,7 +150,6 @@ pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
-    eval_arg: Vec<F>, // TODO(arasuarun / sragss): better name
     claimed_witnesss_evals: Vec<F>,
     opening_proof: C::BatchedProof,
 }
@@ -170,8 +169,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
-    pub fn prove_precommitted(
-        constraint_builder: CombinedUniformBuilder<F, JoltIn>,
+    pub fn prove_precommitted<I: ConstraintInput>(
+        constraint_builder: CombinedUniformBuilder<F, I>,
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
@@ -196,8 +195,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         // TODO(sragss): This snippet makes prove JoltInputs dependent.
-        let inputs = &segmented_padded_witness.segments[0..JoltIn::COUNT];
-        let aux = &segmented_padded_witness.segments[JoltIn::COUNT..];
+        let inputs = &segmented_padded_witness.segments[0..I::COUNT];
+        let aux = &segmented_padded_witness.segments[I::COUNT..];
         let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan(inputs, aux);
 
         // TODO(sragss): Explicitly left because this is wasteful. Should likely deal with through more intelligent DensePaddedPolynomial.
@@ -286,6 +285,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
+        let mut verifier_transcript = transcript.clone();
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
@@ -295,6 +295,18 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
+        println!("Prover intitial claim: {claim_inner_joint:?}");
+        println!("Prover inner sumcheck rlc_eval: {:?}", _claims_inner[0]);
+        println!("Prover inner sumcheck z_eval: {:?}", _claims_inner[1]);
+        println!("Prover inner sumcheck r: {inner_sumcheck_r:?}");
+        println!("Prover inner sumcheck r_rlc: {r_inner_sumcheck_RLC:?}");
+        println!("NUM CLAIMS {}", _claims_inner.len());
+        println!("Prover claim_inner_final_expected: {:?}", _claims_inner[0] * _claims_inner[1]);
+        let (claim, v_r) = inner_sumcheck_proof.verify(claim_inner_joint, key.num_cols_total().log_2(), 2, &mut verifier_transcript).expect("should verify");
+        println!("Prover claim {claim:?}");
+        println!("Prover r {v_r:?}");
+        // Check intiial claim
+        // Check local verifier output
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
@@ -325,7 +337,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
-            eval_arg: vec![],
             claimed_witnesss_evals: witness_evals,
             opening_proof,
         })
@@ -341,7 +352,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
-        let num_rounds_y = key.num_cols_total().log_2();
+        let num_rounds_y = key.num_cols_total().log_2(); 
 
         // outer sum-check
         let tau = (0..num_rounds_x)
@@ -377,10 +388,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             + r_inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * self.outer_sumcheck_claims.2;
 
+        // TODO(sragss): Somehow claim_inner_final is coming out wrong -- I thought this was impossible if the 'r's matched
         let (claim_inner_final, inner_sumcheck_r) = self
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
+        println!("Verifier initial claim: {claim_inner_joint:?}");
 
         // n_prefix = n_segments + 1
         // let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
@@ -397,6 +410,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * eval_c;
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
+        println!("Verifier inner sumcheck rlc_eval: {left_expected:?}");
+        println!("Verifier inner sumcheck z_eval: {right_expected:?}");
+        println!("Verifier inner sumcheck r: {inner_sumcheck_r:?}");
+        println!("Verifier inner sumcheck r_rlc: {r_inner_sumcheck_RLC:?}");
+        println!("Verifier claim_inner_final: {claim_inner_final:?}");
+        println!("Verifier claim_inner_fina_expected: {:?}", left_expected * right_expected);
         if claim_inner_final != claim_inner_final_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }

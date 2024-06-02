@@ -547,7 +547,14 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
 
         let non_uniform_constraints = vec![
-            OffsetEqConstraint::new((JoltIn::PcIn, 1), (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), 0), (4 * JoltIn::PcIn + PC_START_ADDRESS, 1))
+            // OffsetEqConstraint::new((JoltIn::PcIn, 1), (Variable::Auxiliary(PC_BRANCH_AUX_INDEX) , 0), (4 * JoltIn::PcIn + PC_START_ADDRESS, 1))
+
+            // TODO(sragss): This works!
+            OffsetEqConstraint::new((1, 0), (JoltIn::PcIn, 0), (JoltIn::PcIn, 0))
+
+            // TODO(sragss): Issue appears to be the Variable::Auxiliary usage in here. No idea why this wouldn't cause the Az-Bz = Cz constraints to fail in assert_valid
+            // Invalid constraints such as that which follows also fail
+            // OffsetEqConstraint::new((0, 0), (JoltIn::PcIn , 0), (JoltIn::PcIn, 1))
         ];
         let combined_builder =
             CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, non_uniform_constraints);

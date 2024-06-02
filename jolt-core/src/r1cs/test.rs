@@ -15,6 +15,28 @@ use super::ops::ConstraintInput;
     Ord,
 )]
 #[repr(usize)]
+pub enum SimpTestIn {
+    Q,
+    R,
+    S
+}
+impl ConstraintInput for SimpTestIn {}
+impl_r1cs_input_lc_conversions!(SimpTestIn);
+
+
+#[allow(non_camel_case_types)]
+#[derive(
+    strum_macros::EnumIter,
+    strum_macros::EnumCount,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+)]
+#[repr(usize)]
 pub enum TestInputs {
     PcIn,
     PcOut,

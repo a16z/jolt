@@ -1,12 +1,12 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use strum::EnumCount;
 
-use crate::{poly::field::JoltField, r1cs::jolt_constraints::PC_START_ADDRESS, utils::thread::unsafe_allocate_zero_vec};
+use crate::{poly::field::JoltField, r1cs::{jolt_constraints::PC_START_ADDRESS, key::{SparseConstraints, UniformR1CS}}, utils::thread::unsafe_allocate_zero_vec};
 use std::fmt::Debug;
 use std::ops::Range;
 use rayon::prelude::*;
 
-use super::ops::{from_i64, ConstraintInput, Term, Variable, LC};
+use super::{key::{NonUniformR1CS, SparseEqualityItem}, ops::{from_i64, ConstraintInput, Term, Variable, LC}};
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
     type Inputs: ConstraintInput;
@@ -495,44 +495,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     }
 }
 
-pub type Coeff<F> = (usize, usize, F);
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct SparseConstraints<F: JoltField> {
-    pub vars: Vec<Coeff<F>>,
-    pub consts: Vec<(usize, F)>,
-}
-
-impl<F: JoltField> SparseConstraints<F> {
-    fn empty_with_capacity(vars: usize, consts: usize) -> Self {
-        Self {
-            vars: Vec::with_capacity(vars),
-            consts: Vec::with_capacity(consts),
-        }
-    }
-
-    fn empty() -> Self {
-        Self {
-            vars: vec![],
-            consts: vec![],
-        }
-    }
-}
-
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct UniformR1CS<F: JoltField> {
-    pub a: SparseConstraints<F>,
-    pub b: SparseConstraints<F>,
-    pub c: SparseConstraints<F>,
-
-    /// Unpadded number of variables in uniform instance.
-    pub num_vars: usize,
-
-    /// Unpadded number of rows in uniform instance.
-    pub num_rows: usize,
-}
-
-pub type OffsetLC<I> = (i64, LC<I>);
+pub type OffsetLC<I> = (usize, LC<I>);
 pub struct OffsetEqConstraint<I: ConstraintInput> {
     condition: OffsetLC<I>,
     a: OffsetLC<I>,
@@ -541,9 +504,9 @@ pub struct OffsetEqConstraint<I: ConstraintInput> {
 
 impl<I: ConstraintInput> OffsetEqConstraint<I> {
     pub fn new(
-        condition: (impl Into<LC<I>>, i64),
-        a: (impl Into<LC<I>>, i64),
-        b: (impl Into<LC<I>>, i64),
+        condition: (impl Into<LC<I>>, usize),
+        a: (impl Into<LC<I>>, usize),
+        b: (impl Into<LC<I>>, usize),
     ) -> Self {
         Self {
             condition: (condition.1, condition.0.into()),
@@ -552,7 +515,6 @@ impl<I: ConstraintInput> OffsetEqConstraint<I> {
         }
     }
 }
-
 
 // TODO(sragss): More detailed documentation
 /// Represents full matrices (A, B, C) with `uniform_builder` being repeated `uniform_repeat` times and `uniform_repeat - 1` "cross-uniform" constraints.
@@ -572,6 +534,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
     ) -> Self {
         assert!(uniform_repeat.is_power_of_two());
+        assert!(offset_equality_constraints.len() <= 1, "Only support a single offset equality constraint");
         Self {
             uniform_builder,
             uniform_repeat,
@@ -656,6 +619,63 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     /// Materializes the uniform constraints into a single sparse (value != 0) A, B, C matrix represented in (row, col, value) format.
     pub fn materialize_uniform(&self) -> UniformR1CS<F> {
         self.uniform_builder.materialize()
+    }
+
+    pub fn materialize_offset_eq(&self) -> NonUniformR1CS<F> {
+        #[cfg(test)]
+        if self.offset_equality_constraints.len() == 0 {
+            return NonUniformR1CS::empty()
+        }
+        assert_eq!(self.offset_equality_constraints.len(), 1);
+
+        // (a - b) * condition == 0
+        // A: a - b
+        // B: condition
+        // C: 0
+
+        let mut eq = SparseEqualityItem::<F>::empty();
+        let mut condition = SparseEqualityItem::<F>::empty();
+
+        let constraint = &self.offset_equality_constraints[0];
+
+        let sorted_condition = constraint.condition.1.sorted_terms();
+        sorted_condition.iter()
+            .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+            .for_each(|term| {
+                condition.offset_vars.push((self.uniform_builder.variable_to_column(term.0), constraint.condition.0, from_i64::<F>(term.1)))
+            });
+        if let Some(term) = sorted_condition.last() {
+            if matches!(term.0, Variable::Constant) {
+                condition.constant = from_i64::<F>(term.1);
+            }
+        }
+
+        // Can't simply combine like terms because of the offset
+        let lhs = constraint.a.1.clone();
+        let rhs = -constraint.b.1.clone();
+
+        lhs.sorted_terms()
+            .iter()
+            .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+            .for_each(|term| {
+                eq.offset_vars.push((self.uniform_builder.variable_to_column(term.0), constraint.a.0, from_i64::<F>(term.1)))
+            });
+        rhs.sorted_terms()
+            .iter()
+            .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+            .for_each(|term| {
+                eq.offset_vars.push((self.uniform_builder.variable_to_column(term.0), constraint.b.0, from_i64::<F>(term.1)))
+            });
+
+        // Handle constants
+        lhs.terms().iter().for_each(|term| assert!(!matches!(term.0, Variable::Constant), "Constants only supported in RHS"));
+        if let Some(term) = rhs.sorted_terms().last() {
+            if matches!(term.0, Variable::Constant) {
+                eq.constant = from_i64::<F>(term.1);
+            }
+        }
+
+        NonUniformR1CS::new(eq, condition)
     }
 
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
@@ -745,7 +765,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         }
 
         // 2. offset_equality_constraints: Xz[uniform_constraint_rows..]
-        // condition * (a - b) == 0
+        // (a - b) * condition == 0
         for (constraint_index, constraint) in self.offset_equality_constraints.iter().enumerate() {
             // TODO(sragss): How to handle?
             // For offset equality constraints we only constrain 1..N steps, the first does not have recursive definition.
@@ -753,14 +773,14 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             // for step_index in 0..self.uniform_repeat {
                 let index = uniform_constraint_rows + constraint_index * self.uniform_repeat + step_index;
 
-                let condition_step_index = usize_plus_i64(step_index, constraint.condition.0);
+                let condition_step_index = step_index + constraint.condition.0;
                 assert!(condition_step_index < self.uniform_repeat);
                 let condition = compute_lc(&constraint.condition.1, inputs, aux, condition_step_index);
-                Az[index] = condition;
+                Bz[index] = condition;
 
                 // Technically everything below can be removed as the honest prover is guaranteed to write 0 for Bz, Cz.
-                let eq_a_step_index = usize_plus_i64(step_index, constraint.a.0);
-                let eq_b_step_index = usize_plus_i64(step_index, constraint.b.0);
+                let eq_a_step_index = step_index + constraint.a.0;
+                let eq_b_step_index = step_index + constraint.b.0;
                 if !condition.is_zero() && eq_a_step_index < self.uniform_repeat && eq_b_step_index < self.uniform_repeat {
                     let eq_a = compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index);
 
@@ -768,7 +788,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
                     let eq = eq_a - eq_b;
 
-                    Bz[index] = eq;
+                    Az[index] = eq;
                     Cz[index] = F::zero();
 
                     #[cfg(test)]
@@ -785,7 +805,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                             &constraint.condition,
                         ] {
                             for term in lc.terms() {
-                                let offset_step_index = usize_plus_i64(step_index, *offset);
+                                let offset_step_index = step_index + offset;
                                 match term.0 {
                                     Variable::Input(index) => {
                                         println!(
@@ -1345,7 +1365,8 @@ mod tests {
         // PcIn[n] + 4 = PcIn[n + 1]
         let non_uniform_constraints: Vec<OffsetEqConstraint<TestInputs>> = vec![
             OffsetEqConstraint::new((Variable::Constant, 0), (TestInputs::OpFlags0, 0), (TestInputs::OpFlags0, 1)),
-            OffsetEqConstraint::new((Variable::Constant, 0), (TestInputs::PcIn + 4, 0), (TestInputs::PcIn, 1)),
+            // TODO: Only one OffsetEqConstraint supported for now.
+            // OffsetEqConstraint::new((Variable::Constant, 0), (TestInputs::PcIn + 4, 0), (TestInputs::PcIn, 1)),
         ];
         let combined_builder =
             CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
@@ -1361,10 +1382,49 @@ mod tests {
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(5 * 13)]]);
 
         let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
-        assert_eq!(az.len(), 6);
-        assert_eq!(bz.len(), 6);
-        assert_eq!(cz.len(), 6);
+        assert_eq!(az.len(), 4);
+        assert_eq!(bz.len(), 4);
+        assert_eq!(cz.len(), 4);
 
         combined_builder.assert_valid(&az, &bz, &cz);
+    }
+
+    #[test]
+    fn materialize_offset_eq() {
+        let mut uniform_builder = R1CSBuilder::<Fr, TestInputs>::new();
+
+        // OpFlags0 * OpFlags1 == Aux(0)
+        struct TestConstraints();
+        impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
+            type Inputs = TestInputs;
+            fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
+                let _aux = builder.allocate_prod(TestInputs::OpFlags0, TestInputs::OpFlags1);
+            }
+        }
+
+        let constraints = TestConstraints();
+        constraints.build_constraints(&mut uniform_builder);
+        assert_eq!(uniform_builder.constraints.len(), 1);
+        assert_eq!(uniform_builder.next_aux, 1);
+
+        let num_steps = 2;
+
+        // OpFlags0[n] = OpFlags0[n + 1];
+        // PcIn[n] + 4 = PcIn[n + 1]
+        let non_uniform_constraints: Vec<OffsetEqConstraint<TestInputs>> = vec![
+            OffsetEqConstraint::new((Variable::Constant, 0), (TestInputs::OpFlags0, 0), (TestInputs::OpFlags0, 1)),
+        ];
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
+
+        let offset_eq = combined_builder.materialize_offset_eq();
+        let mut expected_condition = SparseEqualityItem::<Fr>::empty();
+        expected_condition.constant = Fr::one();
+
+        let mut expected_eq= SparseEqualityItem::<Fr>::empty();
+        expected_eq.offset_vars = vec![(TestInputs::OpFlags0 as usize, 0, Fr::one()), (TestInputs::OpFlags0 as usize, 1, from_i64::<Fr>(-1))];
+
+        assert_eq!(offset_eq.condition, expected_condition);
+        assert_eq!(offset_eq.eq, expected_eq);
     }
 }
