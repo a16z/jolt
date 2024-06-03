@@ -1,8 +1,16 @@
 use ark_bn254::Fr;
 
-use crate::{impl_r1cs_input_lc_conversions, poly::field::JoltField, r1cs::builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder}};
+use crate::{
+    impl_r1cs_input_lc_conversions,
+    poly::field::JoltField,
+    r1cs::builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
+};
 
-use super::{builder::CombinedUniformBuilder, key::{SparseConstraints, UniformSpartanKey}, ops::{from_i64, ConstraintInput}};
+use super::{
+    builder::CombinedUniformBuilder,
+    key::{SparseConstraints, UniformSpartanKey},
+    ops::{from_i64, ConstraintInput},
+};
 
 #[allow(non_camel_case_types)]
 #[derive(
@@ -20,11 +28,10 @@ use super::{builder::CombinedUniformBuilder, key::{SparseConstraints, UniformSpa
 pub enum SimpTestIn {
     Q,
     R,
-    S
+    S,
 }
 impl ConstraintInput for SimpTestIn {}
 impl_r1cs_input_lc_conversions!(SimpTestIn);
-
 
 #[allow(non_camel_case_types)]
 #[derive(
@@ -63,8 +70,6 @@ pub enum TestInputs {
 }
 impl ConstraintInput for TestInputs {}
 impl_r1cs_input_lc_conversions!(TestInputs);
-
-
 
 pub fn materialize_full_uniform<F: JoltField>(
     key: &UniformSpartanKey<F>,
@@ -105,11 +110,8 @@ pub fn materialize_all<F: JoltField>(key: &UniformSpartanKey<F>) -> (Vec<F>, Vec
     )
 }
 
-
-
-
-
-pub fn simp_test_builder_key<F: JoltField>() -> (CombinedUniformBuilder<F, SimpTestIn>, UniformSpartanKey<F>) {
+pub fn simp_test_builder_key<F: JoltField>(
+) -> (CombinedUniformBuilder<F, SimpTestIn>, UniformSpartanKey<F>) {
     let mut uniform_builder = R1CSBuilder::<F, SimpTestIn>::new();
     // Q - R == 0
     // R - S == 0
@@ -122,19 +124,25 @@ pub fn simp_test_builder_key<F: JoltField>() -> (CombinedUniformBuilder<F, SimpT
         }
     }
     // Q[n] + 4 - S[n+1] == 0
-    let offset_eq_constraint = OffsetEqConstraint::new((SimpTestIn::S, 1), (SimpTestIn::Q, 0), (SimpTestIn::S + -4, 1));
+    let offset_eq_constraint = OffsetEqConstraint::new(
+        (SimpTestIn::S, 1),
+        (SimpTestIn::Q, 0),
+        (SimpTestIn::S + -4, 1),
+    );
 
     let constraints = TestConstraints();
     constraints.build_constraints(&mut uniform_builder);
 
     let num_steps: usize = 3;
     let num_steps_pad = 4;
-    let combined_builder =
-        CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![offset_eq_constraint]);
+    let combined_builder = CombinedUniformBuilder::construct(
+        uniform_builder,
+        num_steps_pad,
+        vec![offset_eq_constraint],
+    );
     let key = UniformSpartanKey::from_builder(&combined_builder);
 
     (combined_builder, key)
-
 }
 
 pub fn simp_test_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
@@ -144,9 +152,9 @@ pub fn simp_test_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
     let mut big_c = materialize_full_uniform(&key, &key.uniform_r1cs.c);
 
     // Written by hand from non-uniform constraints
-    let row_0_index = 32*8;
+    let row_0_index = 32 * 8;
     let row_2_index = 32 * 10;
-    let row_1_index = 32*9;
+    let row_1_index = 32 * 9;
     let row_3_index = 32 * 11;
     big_a[row_0_index] = F::one();
     big_a[row_0_index + 9] = from_i64(-1);

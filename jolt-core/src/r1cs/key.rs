@@ -6,10 +6,7 @@ use crate::{
     utils::{index_to_field_bitvector, thread::unsafe_allocate_zero_vec},
 };
 
-use super::{
-    builder::CombinedUniformBuilder,
-    ops::ConstraintInput,
-};
+use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
 use digest::Digest;
 
 use crate::utils::math::Math;
@@ -31,7 +28,6 @@ pub struct UniformSpartanKey<F: JoltField> {
     /// Digest of verifier key
     pub(crate) vk_digest: F,
 }
-
 
 pub type Coeff<F> = (usize, usize, F);
 
@@ -63,7 +59,6 @@ pub struct UniformR1CS<F: JoltField> {
     pub num_rows: usize,
 }
 
-
 /// NonUniformR1CS only supports a single additional equality constraint. 'a' holds the equality (something minus something),
 /// 'b' holds the condition. 'a' * 'b' == 0. Each SparseEqualityItem stores a uniform_column (pointing to a variable) and an offset
 /// suggesting which other step to point to.
@@ -75,10 +70,7 @@ pub struct NonUniformR1CS<F: JoltField> {
 
 impl<F: JoltField> NonUniformR1CS<F> {
     pub fn new(eq: SparseEqualityItem<F>, condition: SparseEqualityItem<F>) -> Self {
-        Self {
-            eq,
-            condition,
-        }
+        Self { eq, condition }
     }
 
     pub fn empty() -> Self {
@@ -89,20 +81,18 @@ impl<F: JoltField> NonUniformR1CS<F> {
     }
 }
 
-
-
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, PartialEq)]
 pub struct SparseEqualityItem<F: JoltField> {
     /// uniform_col, offset, val
     pub offset_vars: Vec<(usize, usize, F)>,
-    pub constant: F
+    pub constant: F,
 }
 
 impl<F: JoltField> SparseEqualityItem<F> {
     pub fn empty() -> Self {
         Self {
             offset_vars: vec![],
-            constant: F::zero()
+            constant: F::zero(),
         }
     }
 }
@@ -183,7 +173,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // rlc[self.num_vars_total()] = sm_rlc[self.uniform_r1cs.num_vars]; // constant
 
         // rlc
-
 
         let mut rlc = unsafe_allocate_zero_vec(self.num_cols_total());
         let y_bits = self.num_cols_total().log_2();
@@ -289,7 +278,9 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // TODO(sragss): Must be able to dedupe
         let eq_r_row = EqPolynomial::evals(r_row.clone());
 
-        let compute = |constraints: &SparseConstraints<F>, non_uni: Option<&SparseEqualityItem<F>>| -> F {
+        let compute = |constraints: &SparseConstraints<F>,
+                       non_uni: Option<&SparseEqualityItem<F>>|
+         -> F {
             let mut full_mle_evaluation: F = constraints
                 .vars
                 .iter()
@@ -308,11 +299,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 const_mle += *constant_coeff * const_eq_inners[*constraint_row];
             }
             full_mle_evaluation += const_mle * const_eq_outer;
-
-
-
-
-
 
             /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
             That is, it ignores the case where x is all 1s, outputting 0.
@@ -344,12 +330,11 @@ impl<F: JoltField> UniformSpartanKey<F> {
                     .sum()
             };
 
-
-
-
             // Non uniform
-            let non_uni_constraint_index = index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
-            let non_uni_eq = EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
+            let non_uni_constraint_index =
+                index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
+            let non_uni_eq =
+                EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
             assert_eq!(non_uni_eq, eq_rx_con[self.uniform_r1cs.num_rows]);
             let mut non_uni_mle = F::zero();
             // NUC
@@ -364,7 +349,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
                     if *offset == 0 {
                         non_uni_mle += *coeff * eq_step * eq_vars[*col];
                     } else if *offset == 1 {
-                        non_uni_mle += *coeff * eq_step_offset_1 * eq_vars[*col] 
+                        non_uni_mle += *coeff * eq_step_offset_1 * eq_vars[*col]
                     } else {
                         panic!("not supported")
                     }
@@ -372,7 +357,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
 
                 non_uni_mle += non_uni.constant * const_eq_outer; // TODO(sragss): THis differs from Arasu's
             }
-
 
             full_mle_evaluation += non_uni_mle * non_uni_eq;
 
@@ -471,9 +455,21 @@ mod test {
     use merlin::Transcript;
 
     use crate::{
-        poly::{commitment::{commitment_scheme::{BatchType, CommitShape, CommitmentScheme}, hyrax::HyraxScheme}, dense_mlpoly::DensePolynomial},
+        poly::{
+            commitment::{
+                commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
+                hyrax::HyraxScheme,
+            },
+            dense_mlpoly::DensePolynomial,
+        },
         r1cs::{
-            builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder}, ops::from_i64, spartan_3::UniformSpartanProof, test::{materialize_all, materialize_full_uniform, simp_test_big_matrices, simp_test_builder_key, SimpTestIn, TestInputs}
+            builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
+            ops::from_i64,
+            spartan_3::UniformSpartanProof,
+            test::{
+                materialize_all, materialize_full_uniform, simp_test_big_matrices,
+                simp_test_builder_key, SimpTestIn, TestInputs,
+            },
         },
         utils::{index_to_field_bitvector, math::Math, transcript::ProofTranscript},
     };
@@ -582,9 +578,18 @@ mod test {
             r_outside.push(Fr::from(100 + i * 100));
         }
         let (a_r, b_r, c_r) = key.evaluate_r1cs_matrix_mles(&r_outside);
-        assert_eq!(DensePolynomial::new(big_a.clone()).evaluate(&r_outside), a_r);
-        assert_eq!(DensePolynomial::new(big_b.clone()).evaluate(&r_outside), b_r);
-        assert_eq!(DensePolynomial::new(big_c.clone()).evaluate(&r_outside), c_r);
+        assert_eq!(
+            DensePolynomial::new(big_a.clone()).evaluate(&r_outside),
+            a_r
+        );
+        assert_eq!(
+            DensePolynomial::new(big_b.clone()).evaluate(&r_outside),
+            b_r
+        );
+        assert_eq!(
+            DensePolynomial::new(big_c.clone()).evaluate(&r_outside),
+            c_r
+        );
     }
 
     #[test]

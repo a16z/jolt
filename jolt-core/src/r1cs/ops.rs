@@ -153,7 +153,10 @@ impl<I: ConstraintInput> std::ops::Add for LC<I> {
         let mut combined_terms = self.0;
         // TODO(sragss): Can be made more efficient by assuming sorted
         for other_term in other.0 {
-            if let Some(term) = combined_terms.iter_mut().find(|term| term.0 == other_term.0) {
+            if let Some(term) = combined_terms
+                .iter_mut()
+                .find(|term| term.0 == other_term.0)
+            {
                 term.1 += other_term.1;
             } else {
                 combined_terms.push(other_term);
@@ -336,7 +339,6 @@ impl<I: ConstraintInput> std::ops::Add<Variable<I>> for LC<I> {
     }
 }
 
-
 /// Conversions and arithmetic for concrete ConstraintInput
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
@@ -359,29 +361,19 @@ macro_rules! impl_r1cs_input_lc_conversions {
         }
         impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
             fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(self),
-                    1,
-                )
+                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1)
             }
         }
 
         impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
             fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(self.0),
-                    self.1,
-                )
+                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self.0), self.1)
             }
         }
 
         impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
             fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
-                crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(self),
-                    1,
-                )
-                .into()
+                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1).into()
             }
         }
 
@@ -434,10 +426,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = crate::r1cs::ops::Term<$ConcreteInput>;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(self),
-                    rhs,
-                )
+                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), rhs)
             }
         }
 
@@ -445,10 +434,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = crate::r1cs::ops::Term<$ConcreteInput>;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(rhs),
-                    self,
-                )
+                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(rhs), self)
             }
         }
 
@@ -456,14 +442,8 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, rhs: i64) -> Self::Output {
-                let term1 = crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(self),
-                    1,
-                );
-                let term2 = crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Constant,
-                    rhs,
-                );
+                let term1 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1);
+                let term2 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Constant, rhs);
                 crate::r1cs::ops::LC::new(vec![term1, term2])
             }
         }
@@ -472,14 +452,8 @@ macro_rules! impl_r1cs_input_lc_conversions {
             type Output = crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 = crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Input(rhs),
-                    1,
-                );
-                let term2 = crate::r1cs::ops::Term(
-                    crate::r1cs::ops::Variable::Constant,
-                    self,
-                );
+                let term1 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(rhs), 1);
+                let term2 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Constant, self);
                 crate::r1cs::ops::LC::new(vec![term1, term2])
             }
         }
@@ -549,8 +523,8 @@ macro_rules! input_range {
         arr
     }};
     ($start:path, $end:path) => {{
-        let mut arr = [$crate::r1cs::ops::Variable::Input($start);
-            ($end as usize) - ($start as usize) + 1];
+        let mut arr =
+            [$crate::r1cs::ops::Variable::Input($start); ($end as usize) - ($start as usize) + 1];
         for i in ($start as usize)..=($end as usize) {
             arr[i - ($start as usize)] =
                 Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
@@ -570,7 +544,6 @@ macro_rules! assert_static_aux_index {
         }
     }};
 }
-
 
 #[cfg(test)]
 mod test {

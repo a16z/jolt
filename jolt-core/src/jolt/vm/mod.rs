@@ -1,9 +1,11 @@
 #![allow(clippy::type_complexity)]
 
 use crate::poly::field::JoltField;
-use crate::r1cs::builder::{OffsetEqConstraint, R1CSConstraintBuilder};
 use crate::r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
-use crate::r1cs::jolt_constraints::{JoltConstraints, JoltIn, PC_BRANCH_AUX_INDEX, PC_START_ADDRESS};
+use crate::r1cs::builder::{OffsetEqConstraint, R1CSConstraintBuilder};
+use crate::r1cs::jolt_constraints::{
+    JoltConstraints, JoltIn, PC_BRANCH_AUX_INDEX, PC_START_ADDRESS,
+};
 use crate::r1cs::ops::{Variable, LC};
 use crate::r1cs::spartan_3::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -546,11 +548,16 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
 
-        let non_uniform_constraints = vec![
-            OffsetEqConstraint::new((JoltIn::PcIn, 1), (Variable::Auxiliary(PC_BRANCH_AUX_INDEX) , 0), (4 * JoltIn::PcIn + PC_START_ADDRESS, 1))
-        ];
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, non_uniform_constraints);
+        let non_uniform_constraints = vec![OffsetEqConstraint::new(
+            (JoltIn::PcIn, 1),
+            (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), 0),
+            (4 * JoltIn::PcIn + PC_START_ADDRESS, 1),
+        )];
+        let combined_builder = CombinedUniformBuilder::construct(
+            uniform_builder,
+            padded_trace_length,
+            non_uniform_constraints,
+        );
         let aux = combined_builder.compute_aux(&inputs_flat);
 
         assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());

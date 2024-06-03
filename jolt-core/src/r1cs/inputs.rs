@@ -4,13 +4,11 @@
     clippy::too_many_arguments
 )]
 
-use crate::poly::commitment::commitment_scheme::{CommitmentScheme};
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
-    utils::{
-        transcript::ProofTranscript,
-    },
+    utils::transcript::ProofTranscript,
 };
 
 use super::key::UniformSpartanKey;
@@ -18,7 +16,7 @@ use super::spartan_3::{SpartanError, UniformSpartanProof};
 
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::{constants::MEMORY_OPS_PER_INSTRUCTION};
+use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use rayon::prelude::*;
 
 use strum::EnumCount;

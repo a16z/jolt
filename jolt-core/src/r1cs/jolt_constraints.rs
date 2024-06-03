@@ -1,5 +1,6 @@
 use crate::{
-    assert_static_aux_index, impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C, poly::field::JoltField
+    assert_static_aux_index, impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C,
+    poly::field::JoltField,
 };
 
 use super::{
@@ -240,10 +241,19 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let rhs = JoltIn::RAM_Write_RD;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
-        let branch_and_lookup_output = cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
-        let next_pc_jump = cs.allocate_if_else(JoltIn::OpFlags_IsJmp, JoltIn::LookupOutput + 4, 4 * JoltIn::PcIn + PC_START_ADDRESS + 4);
+        let branch_and_lookup_output =
+            cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
+        let next_pc_jump = cs.allocate_if_else(
+            JoltIn::OpFlags_IsJmp,
+            JoltIn::LookupOutput + 4,
+            4 * JoltIn::PcIn + PC_START_ADDRESS + 4,
+        );
 
-        let next_pc_jump_branch = cs.allocate_if_else(branch_and_lookup_output, 4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed, next_pc_jump);
+        let next_pc_jump_branch = cs.allocate_if_else(
+            branch_and_lookup_output,
+            4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed,
+            next_pc_jump,
+        );
         assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
     }
 }

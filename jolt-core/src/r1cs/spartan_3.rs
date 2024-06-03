@@ -339,7 +339,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         transcript: &mut ProofTranscript,
     ) -> Result<(), SpartanError> {
         let num_rounds_x = key.num_rows_total().log_2();
-        let num_rounds_y = key.num_cols_total().log_2(); 
+        let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
         let tau = (0..num_rounds_x)
@@ -419,7 +419,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 mod test {
     use ark_bn254::Fr;
 
-    use crate::{poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme}, r1cs::test::{simp_test_builder_key, SimpTestIn}};
+    use crate::{
+        poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme},
+        r1cs::test::{simp_test_builder_key, SimpTestIn},
+    };
 
     use super::*;
 
@@ -427,22 +430,37 @@ mod test {
     fn integration() {
         let (builder, key) = simp_test_builder_key();
         let witness_segments: Vec<Vec<Fr>> = vec![
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* Q */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* R */
-            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* S */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* Q */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* R */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)], /* S */
         ];
 
         // Create a witness and commit
-        let witness_segments_ref: Vec<&[Fr]> = witness_segments.iter().map(|segment| segment.as_slice()).collect();
+        let witness_segments_ref: Vec<&[Fr]> = witness_segments
+            .iter()
+            .map(|segment| segment.as_slice())
+            .collect();
         let gens = HyraxScheme::setup(&vec![CommitShape::new(16, BatchType::Small)]);
-        let witness_commitment = HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+        let witness_commitment =
+            HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
 
         // Prove spartan!
         let mut prover_transcript = ProofTranscript::new(b"stuff");
-        let proof = UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<SimpTestIn>(builder, &key, witness_segments, &mut prover_transcript).unwrap();
+        let proof =
+            UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
+                SimpTestIn,
+            >(builder, &key, witness_segments, &mut prover_transcript)
+            .unwrap();
 
         let mut verifier_transcript = ProofTranscript::new(b"stuff");
         let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
-        proof.verify_precommitted(&key, witness_commitment_ref, &gens, &mut verifier_transcript).expect("Spartan verifier failed");
+        proof
+            .verify_precommitted(
+                &key,
+                witness_commitment_ref,
+                &gens,
+                &mut verifier_transcript,
+            )
+            .expect("Spartan verifier failed");
     }
 }
