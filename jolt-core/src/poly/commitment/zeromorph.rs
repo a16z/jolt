@@ -591,12 +591,11 @@ mod test {
     // Evaluate Phi_k(x) = \sum_{i=0}^k x^i using the direct inefficent formula
     fn phi<P: Pairing>(challenge: &P::ScalarField, subscript: usize) -> P::ScalarField {
         let len = (1 << subscript) as u64;
-        (0..len)
-            .fold(P::ScalarField::zero(), |mut acc, i| {
-                //Note this is ridiculous DevX
-                acc += challenge.pow(BigInt::<1>::from(i));
-                acc
-            })
+        (0..len).fold(P::ScalarField::zero(), |mut acc, i| {
+            //Note this is ridiculous DevX
+            acc += challenge.pow(BigInt::<1>::from(i));
+            acc
+        })
     }
 
     /// Test for computing qk given multilinear f
@@ -802,9 +801,7 @@ mod test {
 
         // Construct a random multilinear polynomial f, and (u,v) such that f(u) = v.
         let mut rng = test_rng();
-        let challenges: Vec<_> = (0..num_vars)
-            .map(|_| Fr::rand(&mut rng))
-            .collect();
+        let challenges: Vec<_> = (0..num_vars).map(|_| Fr::rand(&mut rng)).collect();
 
         let u_rev = {
             let mut res = challenges.clone();
