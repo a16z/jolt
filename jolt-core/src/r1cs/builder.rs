@@ -524,6 +524,11 @@ impl<I: ConstraintInput> OffsetEqConstraint<I> {
             b: (b.1, b.0.into()),
         }
     }
+
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self::new((LC::new(vec![]), false), (LC::new(vec![]), false), (LC::new(vec![]), false))
+    }
 }
 
 // TODO(sragss): More detailed documentation
@@ -534,24 +539,20 @@ pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
     /// Padded to the nearest power of 2
     uniform_repeat: usize,
 
-    offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
+    offset_equality_constraint: OffsetEqConstraint<I>,
 }
 
 impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     pub fn construct(
         uniform_builder: R1CSBuilder<F, I>,
         uniform_repeat: usize,
-        offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
+        offset_equality_constraint: OffsetEqConstraint<I>,
     ) -> Self {
         assert!(uniform_repeat.is_power_of_two());
-        assert!(
-            offset_equality_constraints.len() <= 1,
-            "Only support a single offset equality constraint"
-        );
         Self {
             uniform_builder,
             uniform_repeat,
-            offset_equality_constraints,
+            offset_equality_constraint: offset_equality_constraint,
         }
     }
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
@@ -603,7 +604,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     }
 
     pub(super) fn offset_eq_constraint_rows(&self) -> usize {
-        self.offset_equality_constraints.len() * self.uniform_repeat
+        self.uniform_repeat
     }
 
     /// Total number of rows used across all repeated constraints. Not padded to nearest power of two.
@@ -611,20 +612,6 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         self.offset_eq_constraint_rows() + self.uniform_repeat_constraint_rows()
     }
 
-    pub(super) fn uniform_rows(&self) -> usize {
-        self.uniform_builder.constraints.len()
-    }
-
-    /// Number of columns / variables in the uniform instance. Does not include constant column.
-    pub(super) fn uniform_columns(&self) -> usize {
-        I::COUNT + self.uniform_builder.num_aux()
-    }
-
-    /// Total number of columns / variables across all uniform steps + 1 constant.
-    pub(super) fn total_columns(&self) -> usize {
-        // Uniform variables + constant variable "1"
-        (self.uniform_columns() * self.uniform_repeat).next_power_of_two() * 2
-    }
 
     pub(super) fn uniform_repeat(&self) -> usize {
         self.uniform_repeat
@@ -636,12 +623,6 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     }
 
     pub fn materialize_offset_eq(&self) -> NonUniformR1CS<F> {
-        #[cfg(test)]
-        if self.offset_equality_constraints.len() == 0 {
-            return NonUniformR1CS::empty();
-        }
-        assert_eq!(self.offset_equality_constraints.len(), 1);
-
         // (a - b) * condition == 0
         // A: a - b
         // B: condition
@@ -650,7 +631,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let mut eq = SparseEqualityItem::<F>::empty();
         let mut condition = SparseEqualityItem::<F>::empty();
 
-        let constraint = &self.offset_equality_constraints[0];
+        let constraint = &self.offset_equality_constraint;
 
         let sorted_condition = constraint.condition.1.sorted_terms();
         sorted_condition
@@ -724,8 +705,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             .for_each(|aux_segment| assert_eq!(aux_segment.len(), self.uniform_repeat));
 
         let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
-        let offset_eq_constraint_rows = self.offset_eq_constraint_rows();
-        let constraint_rows = uniform_constraint_rows + offset_eq_constraint_rows;
+        let constraint_rows = self.constraint_rows();
 
         let (mut Az, mut Bz, mut Cz) = (
             unsafe_allocate_zero_vec(constraint_rows),
@@ -810,59 +790,57 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         // 2. offset_equality_constraints: Xz[uniform_constraint_rows..]
         // (a - b) * condition == 0
         // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
-        for (constraint_index, constraint) in self.offset_equality_constraints.iter().enumerate() {
-            for step_index in 0..(self.uniform_repeat) {
-                let index =
-                    uniform_constraint_rows + constraint_index * self.uniform_repeat + step_index;
+        let constraint = &self.offset_equality_constraint;
+        for step_index in 0..self.uniform_repeat {
+            let index = uniform_constraint_rows + step_index;
 
-                let condition_step_index = if constraint.condition.0 { step_index + 1 } else { step_index } ;
-                let condition = compute_lc(&constraint.condition.1, inputs, aux, condition_step_index);
-                Bz[index] = condition;
+            let condition_step_index = if constraint.condition.0 { step_index + 1 } else { step_index } ;
+            let condition = compute_lc(&constraint.condition.1, inputs, aux, condition_step_index);
+            Bz[index] = condition;
 
 
-                // TODO: For an honest prover eq should be zero for all non-padded rows. This should only be computed for the padded rows, once.
-                let eq_a_step_index = if constraint.a.0 { step_index + 1 } else { step_index } ;
-                let eq_a = compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index);
-                let eq_b_step_index = if constraint.b.0 { step_index + 1 } else { step_index } ;
-                let eq_b = compute_lc(&constraint.b.1, inputs, aux, eq_b_step_index);
-                let eq = eq_a - eq_b;
-                Az[index] = eq;
+            // TODO: For an honest prover eq should be zero for all non-padded rows. This should only be computed for the padded rows, once.
+            let eq_a_step_index = if constraint.a.0 { step_index + 1 } else { step_index } ;
+            let eq_a = compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index);
+            let eq_b_step_index = if constraint.b.0 { step_index + 1 } else { step_index } ;
+            let eq_b = compute_lc(&constraint.b.1, inputs, aux, eq_b_step_index);
+            let eq = eq_a - eq_b;
+            Az[index] = eq;
 
-                #[cfg(test)]
-                {
-                    Cz[index] = F::zero();
-                    if !eq.is_zero() && !condition.is_zero() {
-                        println!("step_index: {step_index}");
-                        println!("eq_a: {eq_a:?}");
-                        println!("eq_b: {eq_b:?}");
-                        println!("constraint.a: {:?}", constraint.a);
-                        println!("constraint.b: {:?}", constraint.b);
+            #[cfg(test)]
+            {
+                Cz[index] = F::zero();
+                if !eq.is_zero() && !condition.is_zero() {
+                    println!("step_index: {step_index}");
+                    println!("eq_a: {eq_a:?}");
+                    println!("eq_b: {eq_b:?}");
+                    println!("constraint.a: {:?}", constraint.a);
+                    println!("constraint.b: {:?}", constraint.b);
 
-                        for (offset, lc) in [&constraint.a, &constraint.b, &constraint.condition] {
-                            for term in lc.terms() {
-                                let offset_step_index = step_index + (*offset as usize);
-                                match term.0 {
-                                    Variable::Input(index) => {
-                                        if offset_step_index < self.uniform_repeat {
-                                            println!(
-                                                "{index:?}[offset = {offset}]: {:?}",
-                                                inputs[index.into()][offset_step_index]
-                                            );
-                                        }
-                                    }
-                                    Variable::Auxiliary(index) => {
+                    for (offset, lc) in [&constraint.a, &constraint.b, &constraint.condition] {
+                        for term in lc.terms() {
+                            let offset_step_index = step_index + (*offset as usize);
+                            match term.0 {
+                                Variable::Input(index) => {
+                                    if offset_step_index < self.uniform_repeat {
                                         println!(
-                                            "Aux({index})[offset = {offset}]: {:?}",
-                                            aux[index][offset_step_index]
+                                            "{index:?}[offset = {offset}]: {:?}",
+                                            inputs[index.into()][offset_step_index]
                                         );
                                     }
-                                    _ => continue,
                                 }
+                                Variable::Auxiliary(index) => {
+                                    println!(
+                                        "Aux({index})[offset = {offset}]: {:?}",
+                                        aux[index][offset_step_index]
+                                    );
+                                }
+                                _ => continue,
                             }
                         }
-
-                        panic!("eq should always be zero when condition is non-zero.");
                     }
+
+                    panic!("eq should always be zero when condition is non-zero.");
                 }
             }
         }
@@ -1296,7 +1274,7 @@ mod tests {
         assert_eq!(uniform_builder.next_aux, 1);
         let num_steps = 2;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, OffsetEqConstraint::empty());
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1307,9 +1285,9 @@ mod tests {
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(11 * 13)]]);
 
         let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
-        assert_eq!(az.len(), 2);
-        assert_eq!(bz.len(), 2);
-        assert_eq!(cz.len(), 2);
+        assert_eq!(az.len(), 4);
+        assert_eq!(bz.len(), 4);
+        assert_eq!(cz.len(), 4);
 
         combined_builder.assert_valid(&az, &bz, &cz);
     }
@@ -1341,7 +1319,7 @@ mod tests {
 
         let num_steps = 2;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, OffsetEqConstraint::empty());
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1368,9 +1346,9 @@ mod tests {
         );
 
         let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
-        assert_eq!(az.len(), 4 * 2);
-        assert_eq!(bz.len(), 4 * 2);
-        assert_eq!(cz.len(), 4 * 2);
+        assert_eq!(az.len(), 5 * 2);
+        assert_eq!(bz.len(), 5 * 2);
+        assert_eq!(cz.len(), 5 * 2);
 
         combined_builder.assert_valid(&az, &bz, &cz);
     }
@@ -1404,7 +1382,7 @@ mod tests {
                 (TestInputs::OpFlags0, true),
             )];
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, OffsetEqConstraint::empty());
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1446,14 +1424,14 @@ mod tests {
 
         // OpFlags0[n] = OpFlags0[n + 1];
         // PcIn[n] + 4 = PcIn[n + 1]
-        let non_uniform_constraints: Vec<OffsetEqConstraint<TestInputs>> =
-            vec![OffsetEqConstraint::new(
+        let non_uniform_constraint: OffsetEqConstraint<TestInputs> =
+            OffsetEqConstraint::new(
                 (Variable::Constant, false),
                 (TestInputs::OpFlags0, false),
                 (TestInputs::OpFlags0, true),
-            )];
+            );
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraint);
 
         let offset_eq = combined_builder.materialize_offset_eq();
         let mut expected_condition = SparseEqualityItem::<Fr>::empty();

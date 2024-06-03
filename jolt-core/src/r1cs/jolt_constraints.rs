@@ -262,7 +262,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 mod tests {
     use super::*;
 
-    use crate::r1cs::builder::CombinedUniformBuilder;
+    use crate::r1cs::builder::{CombinedUniformBuilder, OffsetEqConstraint};
 
     use ark_bn254::Fr;
     use strum::EnumCount;
@@ -276,7 +276,7 @@ mod tests {
 
         let num_steps = 1;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, OffsetEqConstraint::empty());
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction

@@ -138,7 +138,7 @@ pub fn simp_test_builder_key<F: JoltField>(
     let combined_builder = CombinedUniformBuilder::construct(
         uniform_builder,
         num_steps_pad,
-        vec![offset_eq_constraint],
+        offset_eq_constraint,
     );
     let key = UniformSpartanKey::from_builder(&combined_builder);
 
@@ -149,7 +149,7 @@ pub fn simp_test_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
     let (_, key) = simp_test_builder_key();
     let mut big_a = materialize_full_uniform(&key, &key.uniform_r1cs.a);
     let mut big_b = materialize_full_uniform(&key, &key.uniform_r1cs.b);
-    let mut big_c = materialize_full_uniform(&key, &key.uniform_r1cs.c);
+    let big_c = materialize_full_uniform(&key, &key.uniform_r1cs.c);
 
     // Written by hand from non-uniform constraints
     let row_0_index = 32 * 8;

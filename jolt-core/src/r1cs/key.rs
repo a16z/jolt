@@ -490,7 +490,7 @@ mod test {
         let num_steps: usize = 3;
         let num_steps_pad = 4;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, OffsetEqConstraint::empty());
         let key = UniformSpartanKey::from_builder(&combined_builder);
 
         let materialized_a = materialize_full_uniform(&key, &key.uniform_r1cs.a);
@@ -606,7 +606,7 @@ mod test {
         constraints.build_constraints(&mut uniform_builder);
         let num_steps_pad = 4;
         let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, vec![]);
+            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, OffsetEqConstraint::empty());
         let mut inputs = vec![vec![Fr::zero(); num_steps_pad]; TestInputs::COUNT];
 
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(1);
