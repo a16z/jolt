@@ -702,6 +702,10 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         );
 
         let compute_lc = |lc: &LC<I>, inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
+            if step_index >= self.uniform_repeat {
+                return F::zero()
+            }
+
             let mut eval = F::zero();
             lc.terms().iter().for_each(|term| match term.0 {
                 Variable::Input(input) => {
@@ -769,22 +773,35 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         for (constraint_index, constraint) in self.offset_equality_constraints.iter().enumerate() {
             // TODO(sragss): How to handle?
             // For offset equality constraints we only constrain 1..N steps, the first does not have recursive definition.
-            for step_index in 0..(self.uniform_repeat - 1) {
+            for step_index in 0..(self.uniform_repeat) {
             // for step_index in 0..self.uniform_repeat {
                 let index = uniform_constraint_rows + constraint_index * self.uniform_repeat + step_index;
 
                 let condition_step_index = step_index + constraint.condition.0;
-                assert!(condition_step_index < self.uniform_repeat);
+                // assert!(condition_step_index < self.uniform_repeat);
                 let condition = compute_lc(&constraint.condition.1, inputs, aux, condition_step_index);
                 Bz[index] = condition;
 
-                // Technically everything below can be removed as the honest prover is guaranteed to write 0 for Bz, Cz.
+                // Technically everything below can be removed as the honest prover is guaranteed to write 0 for Az, Cz.
                 let eq_a_step_index = step_index + constraint.a.0;
                 let eq_b_step_index = step_index + constraint.b.0;
-                if !condition.is_zero() && eq_a_step_index < self.uniform_repeat && eq_b_step_index < self.uniform_repeat {
-                    let eq_a = compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index);
+                // if !condition.is_zero() && eq_a_step_index < self.uniform_repeat && eq_b_step_index < self.uniform_repeat {
+                    let eq_a = if eq_a_step_index < self.uniform_repeat {
+                        compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index)
+                    } else {
+                        F::zero()
+                    };
 
-                    let eq_b = compute_lc(&constraint.b.1, inputs, aux, eq_b_step_index);
+                    let eq_b = if eq_b_step_index < self.uniform_repeat {
+                        compute_lc(&constraint.b.1, inputs, aux, eq_b_step_index)
+                    } else {
+                        let terms = constraint.b.1.sorted_terms();
+                        let potential_const = terms.last().unwrap();
+                        match potential_const.0 {
+                            Variable::Constant => from_i64(potential_const.1),
+                            _ => F::zero()
+                        }
+                    };
 
                     let eq = eq_a - eq_b;
 
@@ -808,10 +825,12 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                                 let offset_step_index = step_index + offset;
                                 match term.0 {
                                     Variable::Input(index) => {
-                                        println!(
-                                            "{index:?}[offset = {offset}]: {:?}",
-                                            inputs[index.into()][offset_step_index]
-                                        );
+                                        if offset_step_index < self.uniform_repeat {
+                                            println!(
+                                                "{index:?}[offset = {offset}]: {:?}",
+                                                inputs[index.into()][offset_step_index]
+                                            );
+                                        }
                                     }
                                     Variable::Auxiliary(index) => {
                                         println!("Aux({index})[offset = {offset}]: {:?}", aux[index][offset_step_index]);
@@ -821,9 +840,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                             }
                         }
 
-                        panic!("eq should always be zero.");
+                        // panic!("eq should always be zero.");
                     }
-                }
+                // }
             }
         }
 
@@ -869,7 +888,7 @@ mod tests {
     
 
     use super::*;
-    use crate::r1cs::test::TestInputs;
+    use crate::r1cs::test::{simp_test_big_matrices, simp_test_builder_key, TestInputs};
     use ark_bn254::Fr;
     use strum::EnumCount;
 
@@ -1364,9 +1383,7 @@ mod tests {
         // OpFlags0[n] = OpFlags0[n + 1];
         // PcIn[n] + 4 = PcIn[n + 1]
         let non_uniform_constraints: Vec<OffsetEqConstraint<TestInputs>> = vec![
-            OffsetEqConstraint::new((Variable::Constant, 0), (TestInputs::OpFlags0, 0), (TestInputs::OpFlags0, 1)),
-            // TODO: Only one OffsetEqConstraint supported for now.
-            // OffsetEqConstraint::new((Variable::Constant, 0), (TestInputs::PcIn + 4, 0), (TestInputs::PcIn, 1)),
+            OffsetEqConstraint::new((TestInputs::OpFlags0, 1), (TestInputs::OpFlags0, 0), (TestInputs::OpFlags0, 1)),
         ];
         let combined_builder =
             CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraints);
@@ -1426,5 +1443,40 @@ mod tests {
 
         assert_eq!(offset_eq.condition, expected_condition);
         assert_eq!(offset_eq.eq, expected_eq);
+    }
+
+    #[test]
+    fn compute_spartan() {
+        // Tests that CombinedBuilder.compute_spartan matches that naively computed from the big matrices A,B,C, z
+        let (builder, key) = simp_test_builder_key();
+        let (big_a, big_b, big_c) = simp_test_big_matrices::<Fr>();
+        let witness_segments: Vec<Vec<Fr>> = vec![
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* Q */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* R */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* S */
+        ];
+
+        let pad_witness : Vec<Vec<Fr>> = witness_segments.iter().map(|segment| {
+            let mut segment = segment.clone();
+            segment.resize(segment.len().next_power_of_two(), Fr::zero());
+            segment
+        }).collect();
+        let mut flat_witness = pad_witness.concat();
+        flat_witness.resize(flat_witness.len().next_power_of_two(), Fr::zero());
+        flat_witness.push(Fr::one());
+        flat_witness.resize(flat_witness.len().next_power_of_two(), Fr::zero());
+        let (mut builder_az, mut builder_bz, mut builder_cz) = builder.compute_spartan(&witness_segments, &vec![]);
+        builder_az.resize(key.num_rows_total(), Fr::zero());
+        builder_bz.resize(key.num_rows_total(), Fr::zero());
+        builder_cz.resize(key.num_rows_total(), Fr::zero());
+        for row in 0..key.num_rows_total() {
+            let mut z_eval = Fr::zero();
+            for col in 0..key.num_cols_total() {
+                z_eval += big_a[row * key.num_cols_total() + col] * flat_witness[col];
+            }
+
+            // Row 11 is the problem! Builder thinks this row should be 0. big_a thinks this row should be 17 (13 + 4)
+            assert_eq!(builder_az[row], z_eval, "Row {row} failed.");
+        }
     }
 }

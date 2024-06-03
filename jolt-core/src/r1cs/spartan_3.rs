@@ -285,7 +285,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
 
-        let mut verifier_transcript = transcript.clone();
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
                 &claim_inner_joint, // r_A * v_A + r_B * v_B + r_C * v_C
@@ -295,18 +294,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
-        println!("Prover intitial claim: {claim_inner_joint:?}");
-        println!("Prover inner sumcheck rlc_eval: {:?}", _claims_inner[0]);
-        println!("Prover inner sumcheck z_eval: {:?}", _claims_inner[1]);
-        println!("Prover inner sumcheck r: {inner_sumcheck_r:?}");
-        println!("Prover inner sumcheck r_rlc: {r_inner_sumcheck_RLC:?}");
-        println!("NUM CLAIMS {}", _claims_inner.len());
-        println!("Prover claim_inner_final_expected: {:?}", _claims_inner[0] * _claims_inner[1]);
-        let (claim, v_r) = inner_sumcheck_proof.verify(claim_inner_joint, key.num_cols_total().log_2(), 2, &mut verifier_transcript).expect("should verify");
-        println!("Prover claim {claim:?}");
-        println!("Prover r {v_r:?}");
-        // Check intiial claim
-        // Check local verifier output
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
@@ -393,7 +380,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .inner_sumcheck_proof
             .verify(claim_inner_joint, num_rounds_y, 2, transcript)
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
-        println!("Verifier initial claim: {claim_inner_joint:?}");
 
         // n_prefix = n_segments + 1
         // let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
@@ -410,18 +396,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * eval_c;
         let right_expected = eval_Z;
         let claim_inner_final_expected = left_expected * right_expected;
-        println!("Verifier inner sumcheck rlc_eval: {left_expected:?}");
-        println!("Verifier inner sumcheck z_eval: {right_expected:?}");
-        println!("Verifier inner sumcheck r: {inner_sumcheck_r:?}");
-        println!("Verifier inner sumcheck r_rlc: {r_inner_sumcheck_RLC:?}");
-        println!("Verifier claim_inner_final: {claim_inner_final:?}");
-        println!("Verifier claim_inner_fina_expected: {:?}", left_expected * right_expected);
         if claim_inner_final != claim_inner_final_expected {
             return Err(SpartanError::InvalidInnerSumcheckClaim);
         }
 
         let r_y_point = &inner_sumcheck_r[n_prefix..];
-        println!("Verifying spartan PCS");
         C::batch_verify(
             &self.opening_proof,
             generators,
@@ -436,53 +415,34 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     }
 }
 
-struct SparsePolynomial<F: JoltField> {
-    num_vars: usize,
-    Z: Vec<(usize, F)>,
-}
-
-impl<Scalar: JoltField> SparsePolynomial<Scalar> {
-    pub fn new(num_vars: usize, Z: Vec<(usize, Scalar)>) -> Self {
-        SparsePolynomial { num_vars, Z }
-    }
-
-    /// Computes the $\tilde{eq}$ extension polynomial.
-    /// return 1 when a == r, otherwise return 0.
-    fn compute_chi(a: &[bool], r: &[Scalar]) -> Scalar {
-        assert_eq!(a.len(), r.len());
-        let mut chi_i = Scalar::one();
-        for j in 0..r.len() {
-            if a[j] {
-                chi_i *= r[j];
-            } else {
-                chi_i *= Scalar::one() - r[j];
-            }
-        }
-        chi_i
-    }
-
-    // Takes O(n log n)
-    pub fn evaluate(&self, r: &[Scalar]) -> Scalar {
-        assert_eq!(self.num_vars, r.len());
-
-        (0..self.Z.len())
-            .into_par_iter()
-            .map(|i| {
-                let bits = get_bits(self.Z[0].0, r.len());
-                SparsePolynomial::compute_chi(&bits, r) * self.Z[i].1
-            })
-            .sum()
-    }
-}
-
-/// Returns the `num_bits` from n in a canonical order
-fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
-    (0..num_bits)
-        .map(|shift_amount| ((operand & (1 << (num_bits - shift_amount - 1))) > 0))
-        .collect::<Vec<bool>>()
-}
-
 #[cfg(test)]
-mod tests {
-    fn piecewise_mle() {}
+mod test {
+    use ark_bn254::Fr;
+
+    use crate::{poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme}, r1cs::test::{simp_test_builder_key, SimpTestIn}};
+
+    use super::*;
+
+    #[test]
+    fn integration() {
+        let (builder, key) = simp_test_builder_key();
+        let witness_segments: Vec<Vec<Fr>> = vec![
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* Q */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* R */
+            vec![Fr::one(), Fr::from(5), Fr::from(9), Fr::from(13)],  /* S */
+        ];
+
+        // Create a witness and commit
+        let witness_segments_ref: Vec<&[Fr]> = witness_segments.iter().map(|segment| segment.as_slice()).collect();
+        let gens = HyraxScheme::setup(&vec![CommitShape::new(16, BatchType::Small)]);
+        let witness_commitment = HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
+
+        // Prove spartan!
+        let mut prover_transcript = ProofTranscript::new(b"stuff");
+        let proof = UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<SimpTestIn>(builder, &key, witness_segments, &mut prover_transcript).unwrap();
+
+        let mut verifier_transcript = ProofTranscript::new(b"stuff");
+        let witness_commitment_ref: Vec<&_> = witness_commitment.iter().collect();
+        proof.verify_precommitted(&key, witness_commitment_ref, &gens, &mut verifier_transcript).expect("Spartan verifier failed");
+    }
 }
