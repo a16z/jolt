@@ -638,7 +638,7 @@ mod test {
         res -= v_evaluation;
 
         for (k, q_k_uni) in quotients.iter().enumerate() {
-            let z_partial = &z_challenge[&z_challenge.len() - k..];
+            let z_partial = &z_challenge[z_challenge.len() - k..];
             //This is a weird consequence of how things are done.. the univariate polys are of the multilinear commitment in lagrange basis. Therefore we evaluate as multilinear
             let q_k = DensePolynomial::new(q_k_uni.coeffs.clone());
             let q_k_eval = q_k.evaluate(z_partial);
@@ -740,17 +740,17 @@ mod test {
         // 𝜁 =  ̂q - ∑ₖ₌₀ⁿ⁻¹ yᵏ Xᵐ⁻ᵈᵏ⁻¹ ̂qₖ, m = N
         assert_eq!(
             zeta_x_scalars[0],
-            -x_challenge.pow(BigInt::<1>::from((n - 1)))
+            -x_challenge.pow(BigInt::<1>::from(n - 1))
         );
 
         assert_eq!(
             zeta_x_scalars[1],
-            -y_challenge * x_challenge.pow(BigInt::<1>::from((n - 1 - 1)))
+            -y_challenge * x_challenge.pow(BigInt::<1>::from(n - 1 - 1))
         );
 
         assert_eq!(
             zeta_x_scalars[2],
-            -y_challenge * y_challenge * x_challenge.pow(BigInt::<1>::from((n - 3 - 1)))
+            -y_challenge * y_challenge * x_challenge.pow(BigInt::<1>::from(n - 3 - 1))
         );
     }
 
@@ -821,8 +821,8 @@ mod test {
             let x_pow_2k = x_challenge.pow(BigInt::<1>::from((1 << k) as u64)); // x^{2^k}
             let x_pow_2kp1 = x_challenge.pow(BigInt::<1>::from((1 << (k + 1)) as u64)); // x^{2^{k+1}}
                                                                                         // x^{2^k} * \Phi_{n-k-1}(x^{2^{k+1}}) - u_k *  \Phi_{n-k}(x^{2^k})
-            let mut scalar = x_pow_2k * &phi::<Bn254>(&x_pow_2kp1, num_vars - k - 1)
-                - u_rev[k] * &phi::<Bn254>(&x_pow_2k, num_vars - k);
+            let mut scalar = x_pow_2k * phi::<Bn254>(&x_pow_2kp1, num_vars - k - 1)
+                - u_rev[k] * phi::<Bn254>(&x_pow_2k, num_vars - k);
             scalar *= z_challenge;
             scalar *= Fr::from(-1);
             assert_eq!(z_x_scalars[k], scalar);
