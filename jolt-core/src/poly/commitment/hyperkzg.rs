@@ -329,11 +329,6 @@ where
             let d_0: P::ScalarField = transcript.challenge_scalar(b"d");
             let d_1 = d_0 * d_0;
 
-            // Shorthand to convert from preprocessed G1 elements to non-preprocessed
-            // let from_ppG1 = |P: &P::G1Affine| <E::GE as DlogGroup>::group(P);
-            // // Shorthand to convert from preprocessed G2 elements to non-preprocessed
-            // let from_ppG2 = |P: &P::G2Affine| <<E::GE as PairingGroup>::G2 as DlogGroup>::group(P);
-
             assert_eq!(t, 3);
             assert_eq!(W.len(), 3);
             // We write a special case for t=3, since this what is required for
