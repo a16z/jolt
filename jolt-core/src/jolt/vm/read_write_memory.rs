@@ -1571,7 +1571,7 @@ where
             );
 
         let sumcheck_opening_proof =
-            C::prove(&generators, &polynomials.v_final, &r_sumcheck, transcript);
+            C::prove(generators, &polynomials.v_final, &r_sumcheck, transcript);
 
         Self {
             num_rounds,

@@ -58,7 +58,7 @@ impl<P: Pairing> SRS<P> {
     }
 
     pub fn trim(params: Arc<Self>, max_degree: usize) -> (KZGProverKey<P>, KZGVerifierKey<P>) {
-        assert!(params.g1_powers.len() > 0, "max_degree is 0");
+        assert!(!params.g1_powers.is_empty(), "max_degree is 0");
         assert!(
             max_degree < params.g1_powers.len(),
             "SRS length is less than size"
@@ -152,7 +152,7 @@ where
         }
         let c = <P::G1 as VariableBaseMSM>::msm(
             &pk.g1_powers()[..poly.coeffs.len()],
-            &poly.coeffs.as_slice(),
+            poly.coeffs.as_slice(),
         )
         .unwrap();
         Ok(c.into_affine())
@@ -170,7 +170,7 @@ where
         let (witness_poly, _) = poly.divide_with_remainder(&divisor).unwrap();
         let proof = <P::G1 as VariableBaseMSM>::msm(
             &pk.g1_powers()[..witness_poly.coeffs.len()],
-            &witness_poly.coeffs.as_slice(),
+            witness_poly.coeffs.as_slice(),
         )
         .unwrap();
         let evaluation = poly.evaluate(point);
