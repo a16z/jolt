@@ -58,7 +58,7 @@ impl<P: Pairing> SRS<P> {
     }
 
     pub fn trim(params: Arc<Self>, max_degree: usize) -> (KZGProverKey<P>, KZGVerifierKey<P>) {
-        assert!(params.g1_powers.is_empty(), "max_degree is 0");
+        assert!(!params.g1_powers.is_empty(), "max_degree is 0");
         assert!(
             max_degree < params.g1_powers.len(),
             "SRS length is less than size"
