@@ -549,9 +549,9 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
 
         let non_uniform_constraints = vec![OffsetEqConstraint::new(
-            (JoltIn::PcIn, 1),
-            (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), 0),
-            (4 * JoltIn::PcIn + PC_START_ADDRESS, 1),
+            (JoltIn::PcIn, true),
+            (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), false),
+            (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
         )];
         let combined_builder = CombinedUniformBuilder::construct(
             uniform_builder,

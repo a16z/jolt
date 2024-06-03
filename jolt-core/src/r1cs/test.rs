@@ -125,9 +125,9 @@ pub fn simp_test_builder_key<F: JoltField>(
     }
     // Q[n] + 4 - S[n+1] == 0
     let offset_eq_constraint = OffsetEqConstraint::new(
-        (SimpTestIn::S, 1),
-        (SimpTestIn::Q, 0),
-        (SimpTestIn::S + -4, 1),
+        (SimpTestIn::S, true),
+        (SimpTestIn::Q, false),
+        (SimpTestIn::S + -4, true),
     );
 
     let constraints = TestConstraints();

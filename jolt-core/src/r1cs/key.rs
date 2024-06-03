@@ -84,7 +84,7 @@ impl<F: JoltField> NonUniformR1CS<F> {
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, PartialEq)]
 pub struct SparseEqualityItem<F: JoltField> {
     /// uniform_col, offset, val
-    pub offset_vars: Vec<(usize, usize, F)>,
+    pub offset_vars: Vec<(usize, bool, F)>,
     pub constant: F,
 }
 
@@ -346,12 +346,10 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 let eq_step_offset_1 = plus_1_mle(r_row_step, r_col_step, steps_bits);
 
                 for (col, offset, coeff) in &non_uni.offset_vars {
-                    if *offset == 0 {
+                    if !offset {
                         non_uni_mle += *coeff * eq_step * eq_vars[*col];
-                    } else if *offset == 1 {
-                        non_uni_mle += *coeff * eq_step_offset_1 * eq_vars[*col]
                     } else {
-                        panic!("not supported")
+                        non_uni_mle += *coeff * eq_step_offset_1 * eq_vars[*col]
                     }
                 }
 
