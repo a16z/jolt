@@ -1,10 +1,6 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use strum::EnumCount;
-
 use crate::{
     poly::field::JoltField,
     r1cs::{
-        jolt_constraints::PC_START_ADDRESS,
         key::{SparseConstraints, UniformR1CS},
     },
     utils::thread::unsafe_allocate_zero_vec,
@@ -596,8 +592,6 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         aux
     }
 
-    // TODO(sragss): Prefix num_ for all below -- these generally need a rename
-
     /// Total number of rows used across all uniform constraints across all repeats. Repeat padded to 2, but repeat * num_constraints not, num_constraints not.
     pub(super) fn uniform_repeat_constraint_rows(&self) -> usize {
         self.uniform_repeat * self.uniform_builder.constraints.len()
@@ -692,7 +686,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     }
 
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
-    /// aux should be of the format [[Aux(0), Aux(0)], ... [Aux(self.next_aux - 1), ...]]
+    /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
     pub fn compute_spartan(&self, inputs: &[Vec<F>], aux: &[Vec<F>]) -> (Vec<F>, Vec<F>, Vec<F>) {
         assert_eq!(inputs.len(), I::COUNT);
         inputs
