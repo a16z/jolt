@@ -592,7 +592,6 @@ mod test {
     fn phi<P: Pairing>(challenge: &P::ScalarField, subscript: usize) -> P::ScalarField {
         let len = (1 << subscript) as u64;
         (0..len)
-            .into_iter()
             .fold(P::ScalarField::zero(), |mut acc, i| {
                 //Note this is ridiculous DevX
                 acc += challenge.pow(BigInt::<1>::from(i));
@@ -616,7 +615,6 @@ mod test {
         let multilinear_f =
             DensePolynomial::new((0..n).map(|_| Fr::rand(&mut rng)).collect::<Vec<_>>());
         let u_challenge = (0..num_vars)
-            .into_iter()
             .map(|_| Fr::rand(&mut rng))
             .collect::<Vec<_>>();
         let v_evaluation = multilinear_f.evaluate(&u_challenge);
@@ -743,17 +741,17 @@ mod test {
         // 𝜁 =  ̂q - ∑ₖ₌₀ⁿ⁻¹ yᵏ Xᵐ⁻ᵈᵏ⁻¹ ̂qₖ, m = N
         assert_eq!(
             zeta_x_scalars[0],
-            -x_challenge.pow(BigInt::<1>::from((n - 1) as u64))
+            -x_challenge.pow(BigInt::<1>::from((n - 1)))
         );
 
         assert_eq!(
             zeta_x_scalars[1],
-            -y_challenge * x_challenge.pow(BigInt::<1>::from((n - 1 - 1) as u64))
+            -y_challenge * x_challenge.pow(BigInt::<1>::from((n - 1 - 1)))
         );
 
         assert_eq!(
             zeta_x_scalars[2],
-            -y_challenge * y_challenge * x_challenge.pow(BigInt::<1>::from((n - 3 - 1) as u64))
+            -y_challenge * y_challenge * x_challenge.pow(BigInt::<1>::from((n - 3 - 1)))
         );
     }
 
@@ -805,7 +803,6 @@ mod test {
         // Construct a random multilinear polynomial f, and (u,v) such that f(u) = v.
         let mut rng = test_rng();
         let challenges: Vec<_> = (0..num_vars)
-            .into_iter()
             .map(|_| Fr::rand(&mut rng))
             .collect();
 
@@ -907,11 +904,11 @@ mod test {
                 let (pk, vk) = srs.trim(1 << num_vars);
                 let commitments: Vec<_> = polys
                     .iter()
-                    .map(|poly| Zeromorph::<Bn254>::commit(&pk, &poly).unwrap())
+                    .map(|poly| Zeromorph::<Bn254>::commit(&pk, poly).unwrap())
                     .collect();
 
-                let commitments_refs: Vec<_> = commitments.iter().map(|x| x).collect();
-                let polys_refs: Vec<_> = polys.iter().map(|x| x).collect();
+                let commitments_refs: Vec<_> = commitments.iter().collect();
+                let polys_refs: Vec<_> = polys.iter().collect();
 
                 let mut prover_transcript = ProofTranscript::new(b"TestEval");
                 let proof = Zeromorph::<Bn254>::batch_open(

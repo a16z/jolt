@@ -369,16 +369,7 @@ where
                 .collect::<Vec<P::ScalarField>>();
 
             let L = <P::G1 as VariableBaseMSM>::msm(
-                &[
-                    &C[..k],
-                    &[
-                        W[0].clone(),
-                        W[1].clone(),
-                        W[2].clone(),
-                        vk.kzg_vk.g1.clone(),
-                    ],
-                ]
-                .concat(),
+                &[&C[..k], &[W[0], W[1], W[2], vk.kzg_vk.g1]].concat(),
                 &[
                     &q_powers_multiplied[..k],
                     &[
@@ -395,7 +386,7 @@ where
             let R = W[0] + W[1] * d_0 + W[2] * d_1;
 
             // Check that e(L, vk.H) == e(R, vk.tau_H)
-            (P::pairing(&L, &vk.kzg_vk.g2)) == (P::pairing(&R, &vk.kzg_vk.beta_g2))
+            (P::pairing(L, vk.kzg_vk.g2)) == (P::pairing(R, vk.kzg_vk.beta_g2))
         };
         ////// END verify() closure helpers
 
@@ -480,7 +471,7 @@ where
             },
         );
         let poly = DensePolynomial::new(f_batched.Z.clone());
-        HyperKZG::<P>::open(&pk, &poly, &point, &batched_evaluation, transcript).unwrap()
+        HyperKZG::<P>::open(pk, &poly, point, &batched_evaluation, transcript).unwrap()
     }
 
     fn batch_verify(
@@ -506,11 +497,11 @@ where
             },
         );
         HyperKZG::<P>::verify(
-            &vk,
+            vk,
             &HyperKZGCommitment(batched_commitment.into_affine()),
-            &point,
+            point,
             &batched_eval,
-            &batch_proof,
+            batch_proof,
             transcript,
         )
     }
@@ -587,8 +578,8 @@ where
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
-        let eval = poly.evaluate(&opening_point);
-        HyperKZG::<P>::open(&setup.0, &poly, &opening_point, &eval, transcript).unwrap()
+        let eval = poly.evaluate(opening_point);
+        HyperKZG::<P>::open(&setup.0, poly, opening_point, &eval, transcript).unwrap()
     }
 
     fn batch_prove(
@@ -599,7 +590,7 @@ where
         _batch_type: BatchType,
         transcript: &mut ProofTranscript,
     ) -> Self::BatchedProof {
-        HyperKZG::<P>::batch_open(&setup.0, polynomials, &opening_point, &openings, transcript)
+        HyperKZG::<P>::batch_open(&setup.0, polynomials, opening_point, openings, transcript)
     }
 
     fn verify(
@@ -612,10 +603,10 @@ where
     ) -> Result<(), ProofVerifyError> {
         HyperKZG::<P>::verify(
             &setup.1,
-            &commitment,
-            &opening_point,
-            &opening,
-            &proof,
+            commitment,
+            opening_point,
+            opening,
+            proof,
             transcript,
         )
     }
@@ -633,7 +624,7 @@ where
             commitments,
             opening_point,
             openings,
-            &batch_proof,
+            batch_proof,
             transcript,
         )
     }
