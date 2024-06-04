@@ -3,6 +3,7 @@ use crate::{
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::ops::Range;
@@ -432,7 +433,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let prod = |values: &[F]| {
             assert_eq!(values.len(), 2);
 
-            values[0] * values[1]
+            mul_0_1_optimized(&values[0], &values[1])
         };
 
         let symbolic_inputs = vec![x.clone(), y.clone()];
@@ -500,6 +501,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
 }
 
 pub type OffsetLC<I> = (bool, LC<I>);
+
 pub struct OffsetEqConstraint<I: ConstraintInput> {
     condition: OffsetLC<I>,
     a: OffsetLC<I>,

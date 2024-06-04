@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
+use super::{builder::{CombinedUniformBuilder, OffsetEqConstraint}, ops::ConstraintInput};
 use digest::Digest;
 
 use crate::utils::math::Math;
@@ -110,8 +110,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let total_rows = constraint_builder.constraint_rows().next_power_of_two();
         let num_steps = constraint_builder.uniform_repeat().next_power_of_two();
 
-        // TODO(sragss): Need to digest non-uniform constraints as well.
-        let vk_digest = Self::digest(&uniform_r1cs, num_steps);
+        let vk_digest = Self::digest(&uniform_r1cs, &offset_eq_r1cs, num_steps);
 
         Self {
             uniform_r1cs,
@@ -391,14 +390,17 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Returns the digest of the r1cs shape
-    fn digest(uniform_r1cs: &UniformR1CS<F>, num_steps: usize) -> F {
-        let mut compressed_bytes = Vec::new();
+    fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &NonUniformR1CS<F>, num_steps: usize) -> F {
+        let mut hash_bytes = Vec::new();
         uniform_r1cs
-            .serialize_compressed(&mut compressed_bytes)
+            .serialize_compressed(&mut hash_bytes)
             .unwrap();
-        compressed_bytes.extend(num_steps.to_be_bytes().to_vec());
+        let mut offset_eq_bytes = Vec::new();
+        offset_eq.serialize_compressed(&mut offset_eq_bytes).unwrap();
+        hash_bytes.extend(offset_eq_bytes);
+        hash_bytes.extend(num_steps.to_be_bytes().to_vec());
         let mut hasher = Sha3_256::new();
-        hasher.input(compressed_bytes);
+        hasher.input(hash_bytes);
 
         let map_to_field = |digest: &[u8]| -> F {
             let bv = (0..250).map(|i| {
