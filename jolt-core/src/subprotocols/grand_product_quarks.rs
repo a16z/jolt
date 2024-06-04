@@ -6,6 +6,7 @@ use crate::poly::field::JoltField;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use itertools::Itertools;
 use thiserror::Error;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -87,8 +88,7 @@ impl<C: CommitmentScheme> QuarkGrandProduct<C> for QuarkGrandProductProof<C> {
         }
 
         // We pull out the co-efficient which instantiate the lower d polys for the sumcheck
-        let mut f_1_x = vec![C::Field::zero(); f_evals.len() / 2];
-        f_1_x.clone_from_slice(&f_evals[v_length..]);
+        let f_1_x = f_evals[v_length..].to_vec();
 
         let mut f_x_0 = Vec::new();
         let mut f_x_1 = Vec::new();
@@ -206,7 +206,6 @@ impl<C: CommitmentScheme> QuarkGrandProduct<C> for QuarkGrandProductProof<C> {
 
         //Next sample the tau and construct the evals poly
         let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", n_rounds);
-        let eq_poly = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         // To complete the sumcheck proof we have to validate that our polynomial openings match and are right.
         let (expected, r) = self
@@ -290,9 +289,15 @@ impl<C: CommitmentScheme> QuarkGrandProduct<C> for QuarkGrandProductProof<C> {
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
 
+        // Use the log(n) form to calculate eq(tau, r)
+        let eq_eval: C::Field = r
+            .iter()
+            .zip_eq(tau.iter())
+            .map(|(&r_gp, &r_sc)| r_gp * r_sc + (C::Field::one() - r_gp) * (C::Field::one() - r_sc))
+            .product();
+
         // Finally we check that in fact the polynomial bound by the sumcheck is equal to eq(tau, r)*(f(1, r) - f(r, 0)*f(r,1))
-        let eq_poly_r = eq_poly.evaluate(&r);
-        let result_from_openings = eq_poly_r * (*point_f_1_r - *point_f_r_0 * point_f_r_1);
+        let result_from_openings = eq_eval * (*point_f_1_r - *point_f_r_0 * point_f_r_1);
         if result_from_openings != expected {
             return Err(QuarkError::InvalidBinding);
         }
