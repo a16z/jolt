@@ -12,7 +12,7 @@ use jolt_core::host::{toolchain, ELFInstruction, Program};
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use syn::{Attribute, ItemFn};
-use toml_edit::{value, Array, DocumentMut, Item};
+use toml_edit::{value, Array, DocumentMut, Item, Value};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -182,7 +182,11 @@ fn preprocess_and_save(func_name: &str, output_file: &str) {
         .serialize(&mut Serializer::new(&mut buf))
         .unwrap();
 
-    let mut file = File::create(output_file).unwrap();
+    let target_dir = "target/wasm32-unknown-unknown/release";
+    fs::create_dir_all(target_dir).unwrap();
+
+    let output_path = format!("{}/{}", target_dir, output_file);
+    let mut file = File::create(&output_path).unwrap();
     file.write_all(&buf).unwrap();
 
     println!("Decoded data for {} saved to {}", func_name, output_file);
@@ -231,6 +235,85 @@ fn get_project_name() -> Option<String> {
     doc["package"]["name"].as_str().map(|s| s.replace("-", "_"))
 }
 
+fn generate_lib_rs_content() -> String {
+    let content = r#"
+use jolt::{tracer::ELFInstruction, Jolt, Proof, RV32IJoltVM};
+use rmp_serde::Deserializer;
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
+use web_sys::console;
+
+#[derive(Serialize, Deserialize)]
+pub struct DecodedData {
+    bytecode: Vec<ELFInstruction>,
+    memory_init: Vec<(u64, u8)>,
+}
+
+fn deserialize_from_bin<'a, T: Deserialize<'a>>(
+    data: &'a [u8],
+) -> Result<T, rmp_serde::decode::Error> {
+    let mut de = Deserializer::new(data);
+    Deserialize::deserialize(&mut de)
+}
+
+#[wasm_bindgen]
+pub fn verify_proof(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
+    console::log_1(&"Verifying proof...".into());
+
+    let decoded_preprocessing_data: DecodedData = match deserialize_from_bin(preprocessing_data) {
+        Ok(data) => data,
+        Err(e) => {
+            console::log_1(&format!("Failed to decode proof_data: {:?}", e).into());
+            return false;
+        }
+    };
+
+    let proof = match Proof::deserialize_from_bytes(proof_bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            console::log_1(&format!("Failed to deserialize proof from bytes: {:?}", e).into());
+            return false;
+        }
+    };
+
+    let preprocessing = RV32IJoltVM::preprocess(
+        decoded_preprocessing_data.bytecode,
+        decoded_preprocessing_data.memory_init,
+        1 << 20,
+        1 << 20,
+        1 << 24,
+    );
+
+    let result = RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments);
+
+    match result {
+        Ok(_is_valid) => {
+            console::log_1(&"Proof successfully VERIFIED".into());
+            true
+        }
+        Err(e) => {
+            console::log_1(&format!("Verification error: {:?}", e).into());
+            false
+        }
+    }
+}
+"#;
+
+    content.to_string()
+}
+
+fn write_lib_rs() -> Result<()> {
+    let lib_rs_path = "src/lib.rs";
+    let lib_rs_content = generate_lib_rs_content();
+
+    // Ensure the src directory exists
+    fs::create_dir_all("src")?;
+
+    let mut file = File::create(lib_rs_path)?;
+    file.write_all(lib_rs_content.as_bytes())?;
+    Ok(())
+}
+
 fn create_index_html(func_names: Vec<String>) -> std::io::Result<()> {
     let mut html_content = String::from(
         r#"
@@ -248,8 +331,10 @@ fn create_index_html(func_names: Vec<String>) -> std::io::Result<()> {
     for func_name in &func_names {
         html_content.push_str(&format!(
             r#"
-    <input type="file" id="proofFile_{}" />
-    <button id="verifyButton_{}">Verify Proof for {}</button>
+    <div style="margin-bottom: 10px;">
+        <input type="file" id="proofFile_{}" />
+        <button id="verifyButton_{}">Verify Proof for {}-Function</button>
+    </div>
 "#,
             func_name, func_name, func_name
         ));
@@ -285,7 +370,7 @@ fn create_index_html(func_names: Vec<String>) -> std::io::Result<()> {
                     console.log(proofData);
 
                     // Fetch preprocessing data and prepare wasm binary to json conversion
-                    const response = await fetch('{}_wasm.bin');
+                    const response = await fetch('target/wasm32-unknown-unknown/release/{}_wasm.bin')
                     const wasmBinary = await response.arrayBuffer();
                     const wasmData = new Uint8Array(wasmBinary);
 
@@ -334,11 +419,46 @@ fn modify_cargo_toml() -> Result<()> {
         lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
     }
 
+    // shouldnt be the case because the project is created with jolt new ...
+    if !doc.contains_key("dependencies") {
+        doc["dependencies"] = toml_edit::table();
+    }
+
+    let dependencies = doc["dependencies"].as_table_mut().unwrap();
+    dependencies.insert("wasm-bindgen", toml_edit::value("0.2.73"));
+    dependencies.insert("serde", {
+        let mut table = toml_edit::InlineTable::new();
+        table.insert("version", Value::from("1.0"));
+        let mut features_array = toml_edit::Array::new();
+        features_array.push("derive");
+        table.insert("features", Value::Array(features_array));
+        Item::Value(Value::InlineTable(table))
+    });
+    dependencies.insert("serde_json", toml_edit::value("1.0"));
+    dependencies.insert("serde-wasm-bindgen", toml_edit::value("=0.6.5"));
+    dependencies.insert("canonical", toml_edit::value("0.7.1"));
+    dependencies.insert("ark-serialize", toml_edit::value("0.4.2"));
+    dependencies.insert("web-sys", {
+        let mut table = toml_edit::InlineTable::new();
+        table.insert("version", Value::from("0.3"));
+        let mut features_array = toml_edit::Array::new();
+        features_array.push("console");
+        table.insert("features", Value::Array(features_array));
+        Item::Value(Value::InlineTable(table))
+    });
+    dependencies.insert("rmp-serde", toml_edit::value("1.3.0"));
+
     fs::write(cargo_toml_path, doc.to_string())?;
     Ok(())
 }
 
 fn create_wasm() {
+    // write an example lib.rs file
+    if let Err(e) = write_lib_rs() {
+        eprintln!("Failed to write src/lib.rs: {}", e);
+        return;
+    }
+
     // Update Cargo.toml
     if let Err(e) = modify_cargo_toml() {
         eprintln!("Failed to update Cargo.toml: {}", e);
@@ -376,7 +496,7 @@ fn create_wasm() {
         .is_ok();
 
     if !wasm_bindgen_installed {
-        //TODO: or install it automatically?
+        //TODO: or install it automatically?!
         eprintln!("wasm-bindgen is not installed. Please install it with `cargo install wasm-bindgen-cli`.");
         return;
     }
