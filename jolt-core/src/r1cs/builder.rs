@@ -690,14 +690,12 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan")]
     pub fn compute_spartan(&self, inputs: &[Vec<F>], aux: &[Vec<F>]) -> (Vec<F>, Vec<F>, Vec<F>) {
         assert_eq!(inputs.len(), I::COUNT);
-        inputs
-            .iter()
-            .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
-
         let num_aux = self.uniform_builder.num_aux();
         assert_eq!(aux.len(), num_aux);
-        aux.iter()
-            .for_each(|aux_segment| assert_eq!(aux_segment.len(), self.uniform_repeat));
+        inputs
+            .iter()
+            .chain(aux.iter())
+            .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
 
         let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
         // TODO(sragss): Allocation can overshoot by up to a factor of 2, Spartan could handle non-pow-2 Az,Bz,Cz
@@ -714,7 +712,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         drop(_span);
 
         let compute_lc_flat =
-            |lc: &LC<I>, flat_terms: &[F], inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
+            |lc: &LC<I>, flat_terms: &[F], step_index: usize| {
                 if step_index >= self.uniform_repeat {
                     // Assume all terms are 0, other than the constant
                     return lc.sorted_terms().last()
@@ -758,9 +756,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             let B = Bz[z_range.clone()].par_iter_mut();
             let C = Cz[z_range.clone()].par_iter_mut();
             steps.zip(A).zip(B).zip(C).for_each(|(((step, a), b), c)| {
-                *a = compute_lc_flat(&constraint.a, &a_lc_flat_terms, inputs, aux, step);
-                *b = compute_lc_flat(&constraint.b, &b_lc_flat_terms, inputs, aux, step);
-                *c = compute_lc_flat(&constraint.c, &c_lc_flat_terms, inputs, aux, step);
+                *a = compute_lc_flat(&constraint.a, &a_lc_flat_terms, step);
+                *b = compute_lc_flat(&constraint.b, &b_lc_flat_terms, step);
+                *c = compute_lc_flat(&constraint.c, &c_lc_flat_terms, step);
             });
         }
 
@@ -777,45 +775,15 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         for step_index in 0..self.uniform_repeat {
             let index = uniform_constraint_rows + step_index;
 
-            let condition_step_index = if constraint.condition.0 {
-                step_index + 1
-            } else {
-                step_index
-            };
-            let condition = compute_lc_flat(
-                &constraint.condition.1,
-                &condition_lc_flat_terms,
-                inputs,
-                aux,
-                condition_step_index,
-            );
+            let condition_step_index = step_index + if constraint.condition.0 { 1 } else { 0 };
+            let condition = compute_lc_flat(&constraint.condition.1, &condition_lc_flat_terms, condition_step_index);
             Bz[index] = condition;
 
             // TODO(sragss): For an honest prover eq should be zero for all non-padded rows. This need only be computed for the padded rows, once.
-            let eq_a_step_index = if constraint.a.0 {
-                step_index + 1
-            } else {
-                step_index
-            };
-            let eq_b_step_index = if constraint.b.0 {
-                step_index + 1
-            } else {
-                step_index
-            };
-            let eq_a = compute_lc_flat(
-                &constraint.a.1,
-                &a_lc_flat_terms,
-                inputs,
-                aux,
-                eq_a_step_index,
-            );
-            let eq_b = compute_lc_flat(
-                &constraint.b.1,
-                &b_lc_flat_terms,
-                inputs,
-                aux,
-                eq_b_step_index,
-            );
+            let eq_a_step = step_index + if constraint.a.0 { 1 } else { 0 };
+            let eq_b_step = step_index + if constraint.b.0 { 1 } else { 0 };
+            let eq_a = compute_lc_flat(&constraint.a.1, &a_lc_flat_terms, eq_a_step);
+            let eq_b = compute_lc_flat(&constraint.b.1, &b_lc_flat_terms, eq_b_step);
             let eq = eq_a - eq_b;
             Az[index] = eq;
         }
