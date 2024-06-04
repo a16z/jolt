@@ -428,7 +428,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         (jolt_proof, jolt_commitments)
     }
 
-    #[tracing::instrument(skip_all, name = "Jolt::verify")]
+    #[tracing::instrument(skip_all)]
     fn verify(
         mut preprocessing: JoltPreprocessing<F, PCS>,
         proof: JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
@@ -473,6 +473,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         Ok(())
     }
 
+    #[tracing::instrument(skip_all)]
     fn verify_instruction_lookups(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         generators: &PCS::Setup,
@@ -483,6 +484,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         InstructionLookupsProof::verify(preprocessing, generators, proof, commitment, transcript)
     }
 
+    #[tracing::instrument(skip_all)]
     fn verify_bytecode(
         preprocessing: &BytecodePreprocessing<F>,
         generators: &PCS::Setup,
@@ -499,6 +501,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         )
     }
 
+    #[tracing::instrument(skip_all)]
     fn verify_memory(
         preprocessing: &mut ReadWriteMemoryPreprocessing,
         generators: &PCS::Setup,
@@ -514,6 +517,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         ReadWriteMemoryProof::verify(proof, generators, preprocessing, commitment, transcript)
     }
 
+    #[tracing::instrument(skip_all)]
     fn verify_r1cs(
         generators: &PCS::Setup,
         proof: R1CSProof<F, PCS>,

@@ -3,7 +3,10 @@ use sha3::Sha3_256;
 
 use crate::{
     poly::{eq_poly::EqPolynomial, field::JoltField},
-    utils::{index_to_field_bitvector, mul_0_1_optimized, mul_0_optimized, thread::unsafe_allocate_zero_vec},
+    utils::{
+        index_to_field_bitvector, mul_0_1_optimized, mul_0_optimized,
+        thread::unsafe_allocate_zero_vec,
+    },
 };
 
 use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
@@ -153,9 +156,11 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // Computation strategy
         // 1. Compute the RLC of the repeated terms in A, B, C, and the constant column
         // 2. Expand this RLC to the full column y by multiplying by eq(rx_step, step_index) for each step
-        // 3. Add the non uniform constraint rows 
+        // 3. Add the non uniform constraint rows
 
-        let compute_repeated = | constraints: &SparseConstraints<F>, non_uni_constant: Option<F> | -> Vec<F> {
+        let compute_repeated = |constraints: &SparseConstraints<F>,
+                                non_uni_constant: Option<F>|
+         -> Vec<F> {
             // +1 for constant
             let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars + 1);
             for (row, col, val) in constraints.vars.iter() {
@@ -167,14 +172,18 @@ impl<F: JoltField> UniformSpartanKey<F> {
             }
 
             if let Some(non_uni_constant) = non_uni_constant {
-                evals[self.uniform_r1cs.num_vars] += eq_rx_constr[non_uniform_row] * non_uni_constant;
+                evals[self.uniform_r1cs.num_vars] +=
+                    eq_rx_constr[non_uniform_row] * non_uni_constant;
             }
 
             evals
         };
 
         let sm_a_r = compute_repeated(&self.uniform_r1cs.a, Some(self.offset_eq_r1cs.eq.constant));
-        let sm_b_r = compute_repeated(&self.uniform_r1cs.b, Some(self.offset_eq_r1cs.condition.constant));
+        let sm_b_r = compute_repeated(
+            &self.uniform_r1cs.b,
+            Some(self.offset_eq_r1cs.condition.constant),
+        );
         let sm_c_r = compute_repeated(&self.uniform_r1cs.c, None);
 
         let r_rlc_sq = r_rlc.square();
@@ -211,12 +220,17 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 let offset = if *is_offset { 1 } else { 0 };
 
                 // Ignores the offset overflow at the last step
-                let y_index_range = col * self.num_steps + offset .. (col + 1) * self.num_steps;
+                let y_index_range = col * self.num_steps + offset..(col + 1) * self.num_steps;
                 let steps = (0..self.num_steps).into_par_iter();
 
-                rlc[y_index_range].par_iter_mut().zip(steps).for_each(|(rlc_col, step_index)| {
-                    *rlc_col += mul_0_1_optimized(&r, coeff) * eq_rx_step[step_index] * eq_rx_constr[non_uni_constraint_row];
-                });
+                rlc[y_index_range]
+                    .par_iter_mut()
+                    .zip(steps)
+                    .for_each(|(rlc_col, step_index)| {
+                        *rlc_col += mul_0_1_optimized(&r, coeff)
+                            * eq_rx_step[step_index]
+                            * eq_rx_constr[non_uni_constraint_row];
+                    });
             }
         };
 
@@ -281,15 +295,12 @@ impl<F: JoltField> UniformSpartanKey<F> {
         // Deconstruct 'r' into representitive bits
         let (r_row, r_col) = r.split_at(total_rows_bits);
         let (r_row_constr, r_row_step) = r_row.split_at(constraint_rows_bits);
-        let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1); // TODO(sragss): correct?
+        let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1);
         assert_eq!(r_row_step.len(), r_col_step.len());
 
         let eq_rx_ry_ts = EqPolynomial::new(r_row_step.to_vec()).evaluate(r_col_step);
-        let eq_rx_con = EqPolynomial::evals(r_row_constr);
+        let eq_rx_constr = EqPolynomial::evals(r_row_constr);
         let eq_ry_var = EqPolynomial::evals(r_col_var);
-
-        // TODO(sragss): Must be able to dedupe
-        let eq_r_row = EqPolynomial::evals(r_row.clone());
 
         let compute = |constraints: &SparseConstraints<F>,
                        non_uni: Option<&SparseEqualityItem<F>>|
@@ -300,16 +311,15 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 .map(|(row, col, coeff)| {
                     // Note: row indexes constraints, col indexes vars
                     // TODO(sragss): eq_rx_ry_ts can be moved out of loop
-                    *coeff * eq_rx_ry_ts * eq_rx_con[*row] * eq_ry_var[*col]
+                    *coeff * eq_rx_ry_ts * eq_rx_constr[*row] * eq_ry_var[*col]
                 })
                 .sum();
 
             let constant_column = [vec![F::one()], vec![F::zero(); total_cols_bits - 1]].concat();
             let const_eq_outer = EqPolynomial::new(r_col.to_vec()).evaluate(&constant_column);
-            let const_eq_inners = EqPolynomial::evals(r_row_constr);
             let mut const_mle = F::zero();
             for (constraint_row, constant_coeff) in &constraints.consts {
-                const_mle += *constant_coeff * const_eq_inners[*constraint_row];
+                const_mle += *constant_coeff * eq_rx_constr[*constraint_row];
             }
             full_mle_evaluation += const_mle * const_eq_outer;
 
@@ -348,7 +358,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
             let non_uni_eq =
                 EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
-            assert_eq!(non_uni_eq, eq_rx_con[self.uniform_r1cs.num_rows]);
+            assert_eq!(non_uni_eq, eq_rx_constr[self.uniform_r1cs.num_rows]);
             let mut non_uni_mle = F::zero();
             // NUC
             if let Some(non_uni) = non_uni {
@@ -501,8 +511,11 @@ mod test {
         constraints.build_constraints(&mut uniform_builder);
         let num_steps: usize = 3;
         let num_steps_pad = 4;
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, OffsetEqConstraint::empty());
+        let combined_builder = CombinedUniformBuilder::construct(
+            uniform_builder,
+            num_steps_pad,
+            OffsetEqConstraint::empty(),
+        );
         let key = UniformSpartanKey::from_builder(&combined_builder);
 
         let materialized_a = materialize_full_uniform(&key, &key.uniform_r1cs.a);
@@ -617,8 +630,11 @@ mod test {
         let constraints = TestConstraints();
         constraints.build_constraints(&mut uniform_builder);
         let num_steps_pad = 4;
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, OffsetEqConstraint::empty());
+        let combined_builder = CombinedUniformBuilder::construct(
+            uniform_builder,
+            num_steps_pad,
+            OffsetEqConstraint::empty(),
+        );
         let mut inputs = vec![vec![Fr::zero(); num_steps_pad]; TestInputs::COUNT];
 
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(1);

@@ -275,8 +275,11 @@ mod tests {
         jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, OffsetEqConstraint::empty());
+        let combined_builder = CombinedUniformBuilder::construct(
+            uniform_builder,
+            num_steps,
+            OffsetEqConstraint::empty(),
+        );
         let mut inputs = vec![vec![Fr::zero(); num_steps]; JoltIn::COUNT];
 
         // ADD instruction

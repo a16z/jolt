@@ -135,11 +135,8 @@ pub fn simp_test_builder_key<F: JoltField>(
 
     let num_steps: usize = 3;
     let num_steps_pad = 4;
-    let combined_builder = CombinedUniformBuilder::construct(
-        uniform_builder,
-        num_steps_pad,
-        offset_eq_constraint,
-    );
+    let combined_builder =
+        CombinedUniformBuilder::construct(uniform_builder, num_steps_pad, offset_eq_constraint);
     let key = UniformSpartanKey::from_builder(&combined_builder);
 
     (combined_builder, key)

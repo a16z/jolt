@@ -123,6 +123,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
             1,
         )
     }
+    #[tracing::instrument(skip_all, name = "HyraxScheme::batch_verify")]
     fn batch_verify(
         batch_proof: &Self::BatchedProof,
         generators: &Self::Setup,
@@ -398,6 +399,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         Self { joint_proof, ratio }
     }
 
+    #[tracing::instrument(skip_all, name = "BatchedHyraxOpeningProof::verify")]
     pub fn verify(
         &self,
         pedersen_generators: &PedersenGenerators<G>,
