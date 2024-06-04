@@ -136,7 +136,6 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 
         cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_A);
 
-        // TODO(sragss): I don't understand how this constraint is possibly true unless Bytecode_Opcode is mis-labeled.
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
 
         let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
