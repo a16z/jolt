@@ -39,17 +39,14 @@ impl<P: Pairing> HyperKZGSRS<P> {
     }
 
     pub fn trim(self, max_degree: usize) -> (HyperKZGProverKey<P>, HyperKZGVerifierKey<P>) {
-        let (commit_pp, kzg_vk) = SRS::trim(self.0.clone(), max_degree);
-        (
-            HyperKZGProverKey { commit_pp },
-            HyperKZGVerifierKey { kzg_vk },
-        )
+        let (kzg_pk, kzg_vk) = SRS::trim(self.0.clone(), max_degree);
+        (HyperKZGProverKey { kzg_pk }, HyperKZGVerifierKey { kzg_vk })
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct HyperKZGProverKey<P: Pairing> {
-    pub commit_pp: KZGProverKey<P>,
+    pub kzg_pk: KZGProverKey<P>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -73,6 +70,217 @@ pub struct HyperKZGProof<P: Pairing> {
     v: Vec<Vec<P::ScalarField>>,
 }
 
+// On input f(x) and u compute the witness polynomial used to prove
+// that f(u) = v. The main part of this is to compute the
+// division (f(x) - f(u)) / (x - u), but we don't use a general
+// division algorithm, we make use of the fact that the division
+// never has a remainder, and that the denominator is always a linear
+// polynomial. The cost is (d-1) mults + (d-1) adds in P::ScalarField, where
+// d is the degree of f.
+//
+// We use the fact that if we compute the quotient of f(x)/(x-u),
+// there will be a remainder, but it'll be v = f(u).  Put another way
+// the quotient of f(x)/(x-u) and (f(x) - f(v))/(x-u) is the
+// same.  One advantage is that computing f(u) could be decoupled
+// from kzg_open, it could be done later or separate from computing W.
+fn kzg_open_no_rem<P: Pairing>(
+    f: &[P::ScalarField],
+    u: P::ScalarField,
+    pk: &HyperKZGProverKey<P>,
+) -> P::G1Affine
+where
+    <P as Pairing>::ScalarField: poly::field::JoltField,
+{
+    let h = compute_witness_polynomial::<P>(f, u);
+    UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(h)).unwrap()
+}
+
+fn compute_witness_polynomial<P: Pairing>(
+    f: &[P::ScalarField],
+    u: P::ScalarField,
+) -> Vec<P::ScalarField>
+where
+    <P as Pairing>::ScalarField: poly::field::JoltField,
+{
+    let d = f.len();
+
+    // Compute h(x) = f(x)/(x - u)
+    let mut h = vec![P::ScalarField::zero(); d];
+    for i in (1..d).rev() {
+        h[i - 1] = f[i] + h[i] * u;
+    }
+
+    h
+}
+
+fn scalar_vector_muladd<P: Pairing>(
+    a: &mut Vec<P::ScalarField>,
+    v: &Vec<P::ScalarField>,
+    s: P::ScalarField,
+) where
+    <P as Pairing>::ScalarField: poly::field::JoltField,
+{
+    assert!(a.len() >= v.len());
+    for i in 0..v.len() {
+        a[i] += s * v[i];
+    }
+}
+
+fn kzg_compute_batch_polynomial<P: Pairing>(
+    f: &[Vec<P::ScalarField>],
+    q_powers: Vec<P::ScalarField>,
+) -> Vec<P::ScalarField>
+where
+    <P as Pairing>::ScalarField: poly::field::JoltField,
+{
+    let k = f.len(); // Number of polynomials we're batching
+
+    // Compute B(x) = f[0] + q*f[1] + q^2 * f[2] + ... q^(k-1) * f[k-1]
+    let mut B = f[0].clone();
+    for i in 1..k {
+        scalar_vector_muladd::<P>(&mut B, &f[i], q_powers[i]); // B += q_powers[i] * f[i]
+    }
+
+    B
+}
+
+fn kzg_open_batch<P: Pairing>(
+    f: &[Vec<P::ScalarField>],
+    u: &[P::ScalarField],
+    pk: &HyperKZGProverKey<P>,
+    transcript: &mut ProofTranscript,
+) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
+where
+    <P as Pairing>::ScalarField: poly::field::JoltField,
+{
+    let k = f.len();
+    let t = u.len();
+
+    // The verifier needs f_i(u_j), so we compute them here
+    // (V will compute B(u_j) itself)
+    let mut v = vec![vec!(P::ScalarField::zero(); k); t];
+    v.par_iter_mut().enumerate().for_each(|(i, v_i)| {
+        // for each point u
+        v_i.par_iter_mut().zip_eq(f).for_each(|(v_ij, f)| {
+            // for each poly f
+            // for each poly f (except the last one - since it is constant)
+            let p = UniPoly::from_coeff(f.to_vec());
+            *v_ij = p.evaluate(&u[i]);
+        });
+    });
+
+    transcript.append_scalars(
+        b"v",
+        &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
+    );
+    let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(b"r", f.len());
+    let B = kzg_compute_batch_polynomial::<P>(f, q_powers);
+
+    // Now open B at u0, ..., u_{t-1}
+    let w = u
+        .into_par_iter()
+        .map(|ui| kzg_open_no_rem(&B, *ui, pk))
+        .collect::<Vec<P::G1Affine>>();
+
+    // The prover computes the challenge to keep the transcript in the same
+    // state as that of the verifier
+    transcript.append_points(
+        b"W",
+        &w.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
+    );
+    let _d_0: P::ScalarField = transcript.challenge_scalar(b"d");
+
+    (w, v)
+}
+
+// vk is hashed in transcript already, so we do not add it here
+fn kzg_verify_batch<P: Pairing>(
+    vk: &HyperKZGVerifierKey<P>,
+    C: &Vec<P::G1Affine>,
+    W: &Vec<P::G1Affine>,
+    u: &Vec<P::ScalarField>,
+    v: &Vec<Vec<P::ScalarField>>,
+    transcript: &mut ProofTranscript,
+) -> bool
+where
+    <P as Pairing>::ScalarField: poly::field::JoltField,
+{
+    let k = C.len();
+    let t = u.len();
+
+    transcript.append_scalars(
+        b"v",
+        &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
+    );
+    let q_powers = transcript.challenge_scalar_powers(b"r", k);
+
+    transcript.append_points(
+        b"W",
+        &W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
+    );
+    let d_0: P::ScalarField = transcript.challenge_scalar(b"d");
+    let d_1 = d_0 * d_0;
+
+    assert_eq!(t, 3);
+    assert_eq!(W.len(), 3);
+    // We write a special case for t=3, since this what is required for
+    // hyperkzg. Following the paper directly, we must compute:
+    // let L0 = C_B - vk.G * B_u[0] + W[0] * u[0];
+    // let L1 = C_B - vk.G * B_u[1] + W[1] * u[1];
+    // let L2 = C_B - vk.G * B_u[2] + W[2] * u[2];
+    // let R0 = -W[0];
+    // let R1 = -W[1];
+    // let R2 = -W[2];
+    // let L = L0 + L1*d_0 + L2*d_1;
+    // let R = R0 + R1*d_0 + R2*d_1;
+    //
+    // We group terms to reduce the number of scalar mults (to seven):
+    // In Rust, we could use MSMs for these, and speed up verification.
+    //
+    // Note, that while computing L, the intermediate computation of C_B together with computing
+    // L0, L1, L2 can be replaced by single MSM of C with the powers of q multiplied by (1 + d_0 + d_1)
+    // with additionally concatenated inputs for scalars/bases.
+
+    let q_power_multiplier = P::ScalarField::one() + d_0 + d_1;
+
+    let q_powers_multiplied: Vec<P::ScalarField> = q_powers
+        .par_iter()
+        .map(|q_power| *q_power * q_power_multiplier)
+        .collect();
+
+    // Compute the batched openings
+    // compute B(u_i) = v[i][0] + q*v[i][1] + ... + q^(t-1) * v[i][t-1]
+    let B_u = v
+        .into_par_iter()
+        .map(|v_i| {
+            v_i.into_par_iter()
+                .zip(q_powers.par_iter())
+                .map(|(a, b)| *a * b)
+                .sum()
+        })
+        .collect::<Vec<P::ScalarField>>();
+
+    let L = <P::G1 as VariableBaseMSM>::msm(
+        &[&C[..k], &[W[0], W[1], W[2], vk.kzg_vk.g1]].concat(),
+        &[
+            &q_powers_multiplied[..k],
+            &[
+                u[0],
+                (u[1] * d_0),
+                (u[2] * d_1),
+                -(B_u[0] + d_0 * B_u[1] + d_1 * B_u[2]),
+            ],
+        ]
+        .concat(),
+    )
+    .unwrap();
+
+    let R = W[0] + W[1] * d_0 + W[2] * d_1;
+
+    // Check that e(L, vk.H) == e(R, vk.tau_H)
+    (P::pairing(L, vk.kzg_vk.g2)) == (P::pairing(R, vk.kzg_vk.beta_g2))
+}
+
 #[derive(Clone)]
 pub struct HyperKZG<P: Pairing> {
     _phantom: PhantomData<P>,
@@ -90,14 +298,14 @@ where
         pp: &HyperKZGProverKey<P>,
         poly: &DensePolynomial<P::ScalarField>,
     ) -> Result<HyperKZGCommitment<P>, ProofVerifyError> {
-        if pp.commit_pp.g1_powers().len() < poly.Z.len() {
+        if pp.kzg_pk.g1_powers().len() < poly.Z.len() {
             return Err(ProofVerifyError::KeyLengthError(
-                pp.commit_pp.g1_powers().len(),
+                pp.kzg_pk.g1_powers().len(),
                 poly.Z.len(),
             ));
         }
         Ok(HyperKZGCommitment(UnivariateKZG::commit(
-            &pp.commit_pp,
+            &pp.kzg_pk,
             &UniPoly::from_coeff(poly.Z.clone()),
         )?))
     }
@@ -110,131 +318,6 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<HyperKZGProof<P>, ProofVerifyError> {
         let x: Vec<P::ScalarField> = point.to_vec();
-
-        //////////////// begin helper closures //////////
-        let kzg_open = |f: &[P::ScalarField], u: P::ScalarField| -> P::G1Affine {
-            // On input f(x) and u compute the witness polynomial used to prove
-            // that f(u) = v. The main part of this is to compute the
-            // division (f(x) - f(u)) / (x - u), but we don't use a general
-            // division algorithm, we make use of the fact that the division
-            // never has a remainder, and that the denominator is always a linear
-            // polynomial. The cost is (d-1) mults + (d-1) adds in P::ScalarField, where
-            // d is the degree of f.
-            //
-            // We use the fact that if we compute the quotient of f(x)/(x-u),
-            // there will be a remainder, but it'll be v = f(u).  Put another way
-            // the quotient of f(x)/(x-u) and (f(x) - f(v))/(x-u) is the
-            // same.  One advantage is that computing f(u) could be decoupled
-            // from kzg_open, it could be done later or separate from computing W.
-
-            let compute_witness_polynomial =
-                |f: &[P::ScalarField], u: P::ScalarField| -> Vec<P::ScalarField> {
-                    let d = f.len();
-
-                    // Compute h(x) = f(x)/(x - u)
-                    let mut h = vec![P::ScalarField::zero(); d];
-                    for i in (1..d).rev() {
-                        h[i - 1] = f[i] + h[i] * u;
-                    }
-
-                    h
-                };
-
-            let h = compute_witness_polynomial(f, u);
-
-            UnivariateKZG::commit(&pk.commit_pp, &UniPoly::from_coeff(h)).unwrap()
-        };
-
-        let kzg_open_batch = |f: &[Vec<P::ScalarField>],
-                              u: &[P::ScalarField],
-                              transcript: &mut ProofTranscript|
-         -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>) {
-            let poly_eval = |f: &[P::ScalarField], u: P::ScalarField| -> P::ScalarField {
-                let mut v = f[0];
-                let mut u_power = P::ScalarField::one();
-
-                for fi in f.iter().skip(1) {
-                    u_power *= u;
-                    v += u_power * fi;
-                }
-
-                v
-            };
-
-            let scalar_vector_muladd =
-                |a: &mut Vec<P::ScalarField>, v: &Vec<P::ScalarField>, s: P::ScalarField| {
-                    assert!(a.len() >= v.len());
-                    for i in 0..v.len() {
-                        a[i] += s * v[i];
-                    }
-                };
-
-            let kzg_compute_batch_polynomial = |f: &[Vec<P::ScalarField>],
-                                                q: P::ScalarField|
-             -> Vec<P::ScalarField> {
-                let k = f.len(); // Number of polynomials we're batching
-
-                let batch_challenge_powers = |q: P::ScalarField, k: usize| -> Vec<P::ScalarField> {
-                    // Compute powers of q : (1, q, q^2, ..., q^(k-1))
-                    let mut q_powers = vec![P::ScalarField::one(); k];
-                    for i in 1..k {
-                        q_powers[i] = q_powers[i - 1] * q;
-                    }
-                    q_powers
-                };
-
-                let q_powers = batch_challenge_powers(q, k);
-
-                // Compute B(x) = f[0] + q*f[1] + q^2 * f[2] + ... q^(k-1) * f[k-1]
-                let mut B = f[0].clone();
-                for i in 1..k {
-                    scalar_vector_muladd(&mut B, &f[i], q_powers[i]); // B += q_powers[i] * f[i]
-                }
-
-                B
-            };
-            ///////// END kzg_open_batch closure helpers
-
-            let k = f.len();
-            let t = u.len();
-
-            // The verifier needs f_i(u_j), so we compute them here
-            // (V will compute B(u_j) itself)
-            let mut v = vec![vec!(P::ScalarField::zero(); k); t];
-            v.par_iter_mut().enumerate().for_each(|(i, v_i)| {
-                // for each point u
-                v_i.par_iter_mut().zip_eq(f).for_each(|(v_ij, f)| {
-                    // for each poly f
-                    // for each poly f (except the last one - since it is constant)
-                    *v_ij = poly_eval(f, u[i]);
-                });
-            });
-
-            transcript.append_scalars(
-                b"v",
-                &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
-            );
-            let q = transcript.challenge_scalar(b"r");
-            let B = kzg_compute_batch_polynomial(f, q);
-
-            // Now open B at u0, ..., u_{t-1}
-            let w = u
-                .into_par_iter()
-                .map(|ui| kzg_open(&B, *ui))
-                .collect::<Vec<P::G1Affine>>();
-
-            // The prover computes the challenge to keep the transcript in the same
-            // state as that of the verifier
-            transcript.append_points(
-                b"W",
-                &w.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
-            );
-            let _d_0: P::ScalarField = transcript.challenge_scalar(b"d");
-
-            (w, v)
-        };
-
-        ///// END helper closures //////////
 
         let ell = x.len();
         let n = poly.len();
@@ -262,8 +345,7 @@ where
         let com: Vec<P::G1Affine> = (1..polys.len())
             .into_par_iter()
             .map(|i| {
-                UnivariateKZG::commit(&pk.commit_pp, &UniPoly::from_coeff(polys[i].clone()))
-                    .unwrap()
+                UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(polys[i].clone())).unwrap()
             })
             .collect();
 
@@ -278,7 +360,7 @@ where
         let u = vec![r, -r, r * r];
 
         // Phase 3 -- create response
-        let (w, v) = kzg_open_batch(&polys, &u, transcript);
+        let (w, v) = kzg_open_batch(&polys, &u, pk, transcript);
 
         Ok(HyperKZGProof { com, w, v })
     }
@@ -294,101 +376,6 @@ where
     ) -> Result<(), ProofVerifyError> {
         let x = point.to_vec();
         let y = P_of_x;
-
-        // vk is hashed in transcript already, so we do not add it here
-        let kzg_verify_batch = |vk: &HyperKZGVerifierKey<P>,
-                                C: &Vec<P::G1Affine>,
-                                W: &Vec<P::G1Affine>,
-                                u: &Vec<P::ScalarField>,
-                                v: &Vec<Vec<P::ScalarField>>,
-                                transcript: &mut ProofTranscript|
-         -> bool {
-            let k = C.len();
-            let t = u.len();
-
-            transcript.append_scalars(
-                b"v",
-                &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
-            );
-            let q = transcript.challenge_scalar(b"r");
-            let batch_challenge_powers = |q: P::ScalarField, k: usize| -> Vec<P::ScalarField> {
-                // Compute powers of q : (1, q, q^2, ..., q^(k-1))
-                let mut q_powers = vec![P::ScalarField::one(); k];
-                for i in 1..k {
-                    q_powers[i] = q_powers[i - 1] * q;
-                }
-                q_powers
-            };
-
-            let q_powers = batch_challenge_powers(q, k);
-
-            transcript.append_points(
-                b"W",
-                &W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
-            );
-            let d_0: P::ScalarField = transcript.challenge_scalar(b"d");
-            let d_1 = d_0 * d_0;
-
-            assert_eq!(t, 3);
-            assert_eq!(W.len(), 3);
-            // We write a special case for t=3, since this what is required for
-            // hyperkzg. Following the paper directly, we must compute:
-            // let L0 = C_B - vk.G * B_u[0] + W[0] * u[0];
-            // let L1 = C_B - vk.G * B_u[1] + W[1] * u[1];
-            // let L2 = C_B - vk.G * B_u[2] + W[2] * u[2];
-            // let R0 = -W[0];
-            // let R1 = -W[1];
-            // let R2 = -W[2];
-            // let L = L0 + L1*d_0 + L2*d_1;
-            // let R = R0 + R1*d_0 + R2*d_1;
-            //
-            // We group terms to reduce the number of scalar mults (to seven):
-            // In Rust, we could use MSMs for these, and speed up verification.
-            //
-            // Note, that while computing L, the intermediate computation of C_B together with computing
-            // L0, L1, L2 can be replaced by single MSM of C with the powers of q multiplied by (1 + d_0 + d_1)
-            // with additionally concatenated inputs for scalars/bases.
-
-            let q_power_multiplier = P::ScalarField::one() + d_0 + d_1;
-
-            let q_powers_multiplied: Vec<P::ScalarField> = q_powers
-                .par_iter()
-                .map(|q_power| *q_power * q_power_multiplier)
-                .collect();
-
-            // Compute the batched openings
-            // compute B(u_i) = v[i][0] + q*v[i][1] + ... + q^(t-1) * v[i][t-1]
-            let B_u = v
-                .into_par_iter()
-                .map(|v_i| {
-                    v_i.into_par_iter()
-                        .zip(q_powers.par_iter())
-                        .map(|(a, b)| *a * b)
-                        .sum()
-                })
-                .collect::<Vec<P::ScalarField>>();
-
-            let L = <P::G1 as VariableBaseMSM>::msm(
-                &[&C[..k], &[W[0], W[1], W[2], vk.kzg_vk.g1]].concat(),
-                &[
-                    &q_powers_multiplied[..k],
-                    &[
-                        u[0],
-                        (u[1] * d_0),
-                        (u[2] * d_1),
-                        -(B_u[0] + d_0 * B_u[1] + d_1 * B_u[2]),
-                    ],
-                ]
-                .concat(),
-            )
-            .unwrap();
-
-            let R = W[0] + W[1] * d_0 + W[2] * d_1;
-
-            // Check that e(L, vk.H) == e(R, vk.tau_H)
-            (P::pairing(L, vk.kzg_vk.g2)) == (P::pairing(R, vk.kzg_vk.beta_g2))
-        };
-        ////// END verify() closure helpers
 
         let ell = x.len();
 
@@ -529,14 +516,13 @@ where
 
     fn commit(poly: &DensePolynomial<Self::Field>, setup: &Self::Setup) -> Self::Commitment {
         assert!(
-            setup.0.commit_pp.g1_powers().len() > poly.Z.len(),
+            setup.0.kzg_pk.g1_powers().len() > poly.Z.len(),
             "COMMIT KEY LENGTH ERROR {}, {}",
-            setup.0.commit_pp.g1_powers().len(),
+            setup.0.kzg_pk.g1_powers().len(),
             poly.Z.len()
         );
         HyperKZGCommitment(
-            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(poly.Z.clone()))
-                .unwrap(),
+            UnivariateKZG::commit(&setup.0.kzg_pk, &UniPoly::from_coeff(poly.Z.clone())).unwrap(),
         )
     }
 
@@ -552,13 +538,13 @@ where
         let iter = evals.iter();
         iter.map(|evals| {
             assert!(
-                gens.0.commit_pp.g1_powers().len() > evals.len(),
+                gens.0.kzg_pk.g1_powers().len() > evals.len(),
                 "COMMIT KEY LENGTH ERROR {}, {}",
-                gens.0.commit_pp.g1_powers().len(),
+                gens.0.kzg_pk.g1_powers().len(),
                 evals.len()
             );
             HyperKZGCommitment(
-                UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
+                UnivariateKZG::commit(&gens.0.kzg_pk, &UniPoly::from_coeff(evals.to_vec()))
                     .unwrap(),
             )
         })
@@ -567,8 +553,7 @@ where
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {
         HyperKZGCommitment(
-            UnivariateKZG::commit(&setup.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
-                .unwrap(),
+            UnivariateKZG::commit(&setup.0.kzg_pk, &UniPoly::from_coeff(evals.to_vec())).unwrap(),
         )
     }
 
