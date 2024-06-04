@@ -19,7 +19,7 @@ use common::{
     rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS},
 };
 use strum::EnumCount;
-use tracer::ELFInstruction;
+pub use tracer::ELFInstruction;
 
 use crate::{
     field::JoltField,

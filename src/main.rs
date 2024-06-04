@@ -8,7 +8,10 @@ use eyre::Result;
 use rand::prelude::SliceRandom;
 use sysinfo::System;
 
-use jolt_core::host::toolchain;
+use jolt_core::host::{toolchain, ELFInstruction, Program};
+use rmp_serde::Serializer;
+use serde::{Deserialize, Serialize};
+use syn::{Attribute, ItemFn};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -26,6 +29,8 @@ enum Command {
     },
     /// Installs the required RISC-V toolchains for Rust
     InstallToolchain,
+    /// Handles preprocessing and generates WASM compatible files
+    CreateWasm,
 }
 
 fn main() {
@@ -33,6 +38,7 @@ fn main() {
     match cli.command {
         Command::New { name } => create_project(name),
         Command::InstallToolchain => install_toolchain(),
+        Command::CreateWasm => create_wasm(),
     }
 }
 
@@ -144,6 +150,87 @@ fn display_sysinfo() {
         "RAM:            {:.2} GB",
         sys.total_memory() as f64 / 1_000_000_000.0
     );
+}
+
+#[derive(Serialize, Deserialize)]
+struct DecodedData {
+    bytecode: Vec<ELFInstruction>,
+    memory_init: Vec<(u64, u8)>,
+}
+
+fn preprocess_and_save(func_name: &str, output_file: &str) {
+    println!("Preprocessing {}...", func_name);
+    let mut program = Program::new("guest");
+    program.set_func(func_name);
+    program.set_std(false);
+    // Set memory and stack sizes to 10MB and 4KB respectively
+    // TODO: Make these configurable
+    program.set_memory_size(10485760u64);
+    program.set_stack_size(4096u64);
+    program.set_max_input_size(4096u64);
+    program.set_max_output_size(4096u64);
+
+    let (bytecode, memory_init) = program.decode();
+    let decoded_data = DecodedData {
+        bytecode,
+        memory_init,
+    };
+
+    let mut buf = Vec::new();
+    decoded_data
+        .serialize(&mut Serializer::new(&mut buf))
+        .unwrap();
+
+    let mut file = File::create(output_file).unwrap();
+    file.write_all(&buf).unwrap();
+
+    println!("Decoded data for {} saved to {}", func_name, output_file);
+}
+
+fn extract_provable_functions() -> Vec<String> {
+    println!("Extracting provable functions from \"guest/src/lib.rs\"...",);
+    let content = fs::read_to_string("guest/src/lib.rs").expect("Unable to read file");
+    let syntax: syn::File = syn::parse_file(&content).expect("Unable to parse file");
+
+    syntax
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let syn::Item::Fn(ItemFn { attrs, sig, .. }) = item {
+                for attr in attrs {
+                    if is_provable(&attr) {
+                        println!("Found provable function: {}", sig.ident);
+                        return Some(sig.ident.to_string());
+                    }
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+fn is_provable(attr: &Attribute) -> bool {
+    if let Some(first_segment) = attr.path().segments.first() {
+        if first_segment.ident == "jolt" {
+            if let Some(second_segment) = attr.path().segments.iter().nth(1) {
+                if second_segment.ident == "provable" {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn create_wasm() {
+    println!("Creating wasm files...");
+    let func_names = extract_provable_functions();
+
+    for func_name in func_names {
+        let output_file = format!("{}_{}.bin", &func_name, "wasm");
+        preprocess_and_save(&func_name, &output_file);
+    }
 }
 
 const RUST_TOOLCHAIN: &str = include_str!("../rust-toolchain.toml");
