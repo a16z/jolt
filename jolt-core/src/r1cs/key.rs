@@ -2,13 +2,18 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
 use crate::{
-    poly::{eq_poly::EqPolynomial, field::JoltField}, r1cs::special_polys::{eq_plus_one, SparsePolynomial}, utils::{
-        index_to_field_bitvector, mul_0_1_optimized, mul_0_optimized,
+    poly::{eq_poly::EqPolynomial, field::JoltField},
+    r1cs::special_polys::{eq_plus_one, SparsePolynomial},
+    utils::{
+        index_to_field_bitvector, mul_0_1_optimized,
         thread::unsafe_allocate_zero_vec,
-    }
+    },
 };
 
-use super::{builder::{CombinedUniformBuilder, OffsetEqConstraint}, ops::ConstraintInput};
+use super::{
+    builder::CombinedUniformBuilder,
+    ops::ConstraintInput,
+};
 use digest::Digest;
 
 use crate::utils::math::Math;
@@ -303,46 +308,57 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let constant_column = index_to_field_bitvector(self.num_cols_total() / 2, total_cols_bits);
         let col_eq_constant = EqPolynomial::new(r_col.to_vec()).evaluate(&constant_column);
 
-        let non_uni_constraint_index = index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
-        let row_constr_eq_non_uni = EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
-        assert_eq!(row_constr_eq_non_uni, eq_rx_constr[self.uniform_r1cs.num_rows]);
+        let non_uni_constraint_index =
+            index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
+        let row_constr_eq_non_uni =
+            EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
+        assert_eq!(
+            row_constr_eq_non_uni,
+            eq_rx_constr[self.uniform_r1cs.num_rows]
+        );
 
-        let compute = |constraints: &SparseConstraints<F>,
-                       non_uni: Option<&SparseEqualityItem<F>>|
-         -> F {
-            let mut full_mle_evaluation: F = constraints
-                .vars
-                .iter()
-                .map(|(row, col, coeff)| {
-                    *coeff * eq_rx_constr[*row] * eq_ry_var[*col]
-                })
-                .sum::<F>() * eq_rx_ry_step;
+        let compute =
+            |constraints: &SparseConstraints<F>, non_uni: Option<&SparseEqualityItem<F>>| -> F {
+                let mut full_mle_evaluation: F = constraints
+                    .vars
+                    .iter()
+                    .map(|(row, col, coeff)| *coeff * eq_rx_constr[*row] * eq_ry_var[*col])
+                    .sum::<F>()
+                    * eq_rx_ry_step;
 
-            full_mle_evaluation += constraints.consts.iter().map(|(constraint_row, constant_coeff)| {
-                *constant_coeff * eq_rx_constr[*constraint_row]
-            }).sum::<F>() * col_eq_constant;
+                full_mle_evaluation += constraints
+                    .consts
+                    .iter()
+                    .map(|(constraint_row, constant_coeff)| {
+                        *constant_coeff * eq_rx_constr[*constraint_row]
+                    })
+                    .sum::<F>()
+                    * col_eq_constant;
 
+                // Non uniform
+                let mut non_uni_mle = F::zero();
+                if let Some(non_uni) = non_uni {
+                    let eq_step_offset_1 = eq_plus_one(r_row_step, r_col_step, steps_bits);
 
-            // Non uniform
-            let mut non_uni_mle = F::zero();
-            if let Some(non_uni) = non_uni {
-                let eq_step_offset_1 = eq_plus_one(r_row_step, r_col_step, steps_bits);
+                    non_uni_mle = non_uni
+                        .offset_vars
+                        .iter()
+                        .map(|(col, offset, coeff)| {
+                            if !offset {
+                                *coeff * eq_ry_var[*col] * eq_rx_ry_step
+                            } else {
+                                *coeff * eq_ry_var[*col] * eq_step_offset_1
+                            }
+                        })
+                        .sum::<F>();
 
-                non_uni_mle = non_uni.offset_vars.iter().map(|(col, offset, coeff)| {
-                    if !offset {
-                        *coeff * eq_ry_var[*col] * eq_rx_ry_step
-                    } else {
-                        *coeff * eq_ry_var[*col] * eq_step_offset_1
-                    }
-                }).sum::<F>();
+                    non_uni_mle += non_uni.constant * col_eq_constant;
+                }
 
-                non_uni_mle += non_uni.constant * col_eq_constant;
-            }
+                full_mle_evaluation += non_uni_mle * row_constr_eq_non_uni;
 
-            full_mle_evaluation += non_uni_mle * row_constr_eq_non_uni;
-
-            full_mle_evaluation
-        };
+                full_mle_evaluation
+            };
 
         (
             compute(&self.uniform_r1cs.a, Some(&self.offset_eq_r1cs.eq)),
@@ -354,11 +370,11 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// Returns the digest of the r1cs shape
     fn digest(uniform_r1cs: &UniformR1CS<F>, offset_eq: &NonUniformR1CS<F>, num_steps: usize) -> F {
         let mut hash_bytes = Vec::new();
-        uniform_r1cs
-            .serialize_compressed(&mut hash_bytes)
-            .unwrap();
+        uniform_r1cs.serialize_compressed(&mut hash_bytes).unwrap();
         let mut offset_eq_bytes = Vec::new();
-        offset_eq.serialize_compressed(&mut offset_eq_bytes).unwrap();
+        offset_eq
+            .serialize_compressed(&mut offset_eq_bytes)
+            .unwrap();
         hash_bytes.extend(offset_eq_bytes);
         hash_bytes.extend(num_steps.to_be_bytes().to_vec());
         let mut hasher = Sha3_256::new();
@@ -386,7 +402,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -397,8 +412,7 @@ mod test {
         r1cs::{
             builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
             test::{
-                materialize_full_uniform, simp_test_big_matrices,
-                simp_test_builder_key, TestInputs,
+                materialize_full_uniform, simp_test_big_matrices, simp_test_builder_key, TestInputs,
             },
         },
         utils::{index_to_field_bitvector, math::Math},
@@ -419,7 +433,7 @@ mod test {
 
         let constraints = TestConstraints();
         constraints.build_constraints(&mut uniform_builder);
-        let num_steps: usize = 3;
+        let _num_steps: usize = 3;
         let num_steps_pad = 4;
         let combined_builder = CombinedUniformBuilder::construct(
             uniform_builder,

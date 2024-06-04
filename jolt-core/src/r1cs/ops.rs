@@ -51,8 +51,10 @@ impl<I: ConstraintInput> LC<I> {
     }
 
     pub fn terms_in_field<F: JoltField>(&self) -> Vec<F> {
-        self.terms().iter().map(|term| from_i64::<F>(term.1)).collect()
-
+        self.terms()
+            .iter()
+            .map(|term| from_i64::<F>(term.1))
+            .collect()
     }
 
     pub fn sorted_terms(&self) -> Vec<Term<I>> {

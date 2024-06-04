@@ -3,7 +3,6 @@ use crate::{
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 use std::fmt::Debug;
 use std::ops::Range;
@@ -713,32 +712,33 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         drop(_enter);
         drop(_span);
 
-        let compute_lc_flat =
-            |lc: &LC<I>, flat_terms: &[F], step_index: usize| {
-                if step_index >= self.uniform_repeat {
-                    // Assume all terms are 0, other than the constant
-                    return lc.sorted_terms().last()
-                        .filter(|term| matches!(term.0, Variable::Constant))
-                        .map(|term| from_i64(term.1))
-                        .unwrap_or_else(F::zero)
-                }
+        let compute_lc_flat = |lc: &LC<I>, flat_terms: &[F], step_index: usize| {
+            if step_index >= self.uniform_repeat {
+                // Assume all terms are 0, other than the constant
+                return lc
+                    .sorted_terms()
+                    .last()
+                    .filter(|term| matches!(term.0, Variable::Constant))
+                    .map(|term| from_i64(term.1))
+                    .unwrap_or_else(F::zero);
+            }
 
-                lc.terms()
-                    .iter()
-                    .enumerate()
-                    .map(|(term_index, term)| match term.0 {
-                        Variable::Input(input) => mul_0_1_optimized(
-                            &flat_terms[term_index],
-                            &inputs[input.into()][step_index],
-                        ),
-                        Variable::Auxiliary(aux_index) => {
-                            assert!(aux_index < self.uniform_builder.num_aux());
-                            mul_0_1_optimized(&flat_terms[term_index], &aux[aux_index][step_index])
-                        }
-                        Variable::Constant => flat_terms[term_index],
-                    })
-                    .sum()
-            };
+            lc.terms()
+                .iter()
+                .enumerate()
+                .map(|(term_index, term)| match term.0 {
+                    Variable::Input(input) => mul_0_1_optimized(
+                        &flat_terms[term_index],
+                        &inputs[input.into()][step_index],
+                    ),
+                    Variable::Auxiliary(aux_index) => {
+                        assert!(aux_index < self.uniform_builder.num_aux());
+                        mul_0_1_optimized(&flat_terms[term_index], &aux[aux_index][step_index])
+                    }
+                    Variable::Constant => flat_terms[term_index],
+                })
+                .sum()
+        };
 
         // uniform_constraints: Xz[0..uniform_constraint_rows]
         // TODO(sragss): Attempt moving onto key and computing from materialized rows rather than linear combos
@@ -770,15 +770,18 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let _span = tracing::span!(tracing::Level::TRACE, "offset eq");
         let _enter = _span.enter();
         let constraint = &self.offset_equality_constraint;
-        let condition_lc_flat_terms: Vec<F> = constraint
-            .condition.1.terms_in_field();
+        let condition_lc_flat_terms: Vec<F> = constraint.condition.1.terms_in_field();
         let a_lc_flat_terms: Vec<F> = constraint.a.1.terms_in_field();
         let b_lc_flat_terms: Vec<F> = constraint.b.1.terms_in_field();
         for step_index in 0..self.uniform_repeat {
             let index = uniform_constraint_rows + step_index;
 
             let condition_step_index = step_index + if constraint.condition.0 { 1 } else { 0 };
-            let condition = compute_lc_flat(&constraint.condition.1, &condition_lc_flat_terms, condition_step_index);
+            let condition = compute_lc_flat(
+                &constraint.condition.1,
+                &condition_lc_flat_terms,
+                condition_step_index,
+            );
             Bz[index] = condition;
 
             // TODO(sragss): For an honest prover eq should be zero for all non-padded rows. This need only be computed for the padded rows, once.
@@ -823,7 +826,6 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use crate::r1cs::test::{simp_test_big_matrices, simp_test_builder_key, TestInputs};
     use ark_bn254::Fr;
@@ -1322,16 +1324,15 @@ mod tests {
 
         // OpFlags0[n] = OpFlags0[n + 1];
         // PcIn[n] + 4 = PcIn[n + 1]
-        let non_uniform_constraints: Vec<OffsetEqConstraint<TestInputs>> =
-            vec![OffsetEqConstraint::new(
+        let non_uniform_constraint: OffsetEqConstraint<TestInputs> = OffsetEqConstraint::new(
                 (TestInputs::OpFlags0, true),
                 (TestInputs::OpFlags0, false),
                 (TestInputs::OpFlags0, true),
-            )];
+            );
         let combined_builder = CombinedUniformBuilder::construct(
             uniform_builder,
             num_steps,
-            OffsetEqConstraint::empty(),
+            non_uniform_constraint,
         );
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
@@ -1425,13 +1426,19 @@ mod tests {
         builder_bz.resize(key.num_rows_total(), Fr::zero());
         builder_cz.resize(key.num_rows_total(), Fr::zero());
         for row in 0..key.num_rows_total() {
-            let mut z_eval = Fr::zero();
+            let mut az_eval = Fr::zero();
+            let mut bz_eval = Fr::zero();
+            let mut cz_eval = Fr::zero();
             for col in 0..key.num_cols_total() {
-                z_eval += big_a[row * key.num_cols_total() + col] * flat_witness[col];
+                az_eval += big_a[row * key.num_cols_total() + col] * flat_witness[col];
+                bz_eval += big_b[row * key.num_cols_total() + col] * flat_witness[col];
+                cz_eval += big_c[row * key.num_cols_total() + col] * flat_witness[col];
             }
 
             // Row 11 is the problem! Builder thinks this row should be 0. big_a thinks this row should be 17 (13 + 4)
-            assert_eq!(builder_az[row], z_eval, "Row {row} failed.");
+            assert_eq!(builder_az[row], az_eval, "Row {row} failed in az_eval.");
+            assert_eq!(builder_bz[row], bz_eval, "Row {row} failed in bz_eval.");
+            assert_eq!(builder_cz[row], cz_eval, "Row {row} failed in cz_eval.");
         }
     }
 }

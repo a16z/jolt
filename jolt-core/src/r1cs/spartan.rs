@@ -173,7 +173,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         assert_eq!(witness_segments.len(), key.uniform_r1cs.num_vars);
-        let padded_num_rows = constraint_builder.constraint_rows().next_power_of_two();
         witness_segments
             .iter()
             .for_each(|segment| assert_eq!(segment.len(), key.num_steps));

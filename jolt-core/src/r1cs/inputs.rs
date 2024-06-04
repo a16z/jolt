@@ -86,85 +86,84 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
     }
 
     #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_trace_len_chunks")]
-    pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
+    pub fn clone_to_trace_len_chunks(&self) -> Vec<Vec<F>> {
         let mut chunks: Vec<Vec<F>> = Vec::new();
 
         let pc_chunks = self
             .pc
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(pc_chunks);
 
         let bytecode_a_chunks = self
             .bytecode_a
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(bytecode_a_chunks);
 
         let bytecode_v_chunks = self
             .bytecode_v
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(bytecode_v_chunks);
 
         let memreg_a_rw_chunks = self
             .memreg_a_rw
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(memreg_a_rw_chunks);
 
         let memreg_v_reads_chunks = self
             .memreg_v_reads
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
         chunks.par_extend(memreg_v_reads_chunks);
 
         let memreg_v_writes_chunks = self
             .memreg_v_writes
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
         chunks.par_extend(memreg_v_writes_chunks);
 
         let chunks_x_chunks = self
             .chunks_x
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(chunks_x_chunks);
 
         let chunks_y_chunks = self
             .chunks_y
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(chunks_y_chunks);
 
         let chunks_query_chunks = self
             .chunks_query
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(chunks_query_chunks);
 
         let lookup_outputs_chunks = self
             .lookup_outputs
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(lookup_outputs_chunks);
 
         let circuit_flags_bits_chunks = self
             .circuit_flags_bits
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(circuit_flags_bits_chunks);
 
         let instruction_flags_bits_chunks = self
             .instruction_flags_bits
-            .par_chunks(padded_trace_len)
+            .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(instruction_flags_bits_chunks);
         chunks
     }
 }
 
-// TODO(sragss): Reprivatize.
 /// Commitments unique to R1CS.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct R1CSCommitment<C: CommitmentScheme> {

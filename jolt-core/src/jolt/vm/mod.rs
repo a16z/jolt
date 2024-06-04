@@ -6,7 +6,7 @@ use crate::r1cs::builder::{OffsetEqConstraint, R1CSConstraintBuilder};
 use crate::r1cs::jolt_constraints::{
     JoltConstraints, JoltIn, PC_BRANCH_AUX_INDEX, PC_START_ADDRESS,
 };
-use crate::r1cs::ops::{Variable, LC};
+use crate::r1cs::ops::Variable;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -552,7 +552,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             polynomials,
             circuit_flags,
         );
-        let mut inputs_flat: Vec<Vec<F>> = inputs.clone_to_trace_len_chunks(padded_trace_length);
+        let mut inputs_flat: Vec<Vec<F>> = inputs.clone_to_trace_len_chunks();
 
         let non_uniform_constraint = OffsetEqConstraint::new(
             (JoltIn::PcIn, true),

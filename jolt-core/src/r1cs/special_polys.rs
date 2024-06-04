@@ -1,7 +1,6 @@
 use crate::poly::field::JoltField;
 use rayon::prelude::*;
 
-
 pub struct SparsePolynomial<F: JoltField> {
     num_vars: usize,
     Z: Vec<(usize, F)>,
@@ -48,8 +47,6 @@ fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
         .collect::<Vec<bool>>()
 }
 
-
-
 /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
 That is, it ignores the case where x is all 1s, outputting 0.
 Assumes x and y are provided big-endian. */
@@ -70,10 +67,7 @@ pub fn eq_plus_one<F: JoltField>(x: &[F], y: &[F], l: usize) -> F {
                 .product::<F>();
             let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
             let higher_bits_product = ((k + 1)..l)
-                .map(|i| {
-                    x[l - 1 - i] * y[l - 1 - i]
-                        + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
-                })
+                .map(|i| x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i]))
                 .product::<F>();
             lower_bits_product * kth_bit_product * higher_bits_product
         })
