@@ -12,6 +12,7 @@ use jolt_core::host::{toolchain, ELFInstruction, Program};
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 use syn::{Attribute, ItemFn};
+use toml_edit::{value, Array, DocumentMut, Item};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -223,13 +224,94 @@ fn is_provable(attr: &Attribute) -> bool {
     false
 }
 
+fn get_project_name() -> Option<String> {
+    let cargo_toml_path = "Cargo.toml";
+    let content = fs::read_to_string(cargo_toml_path).ok()?;
+    let doc = content.parse::<DocumentMut>().ok()?;
+    doc["package"]["name"].as_str().map(|s| s.replace("-", "_"))
+}
+
+fn modify_cargo_toml() -> Result<()> {
+    let cargo_toml_path = "Cargo.toml";
+    let content = fs::read_to_string(cargo_toml_path)?;
+    let mut doc = content.parse::<DocumentMut>()?;
+
+    if !doc.contains_key("lib") {
+        doc["lib"] = toml_edit::table();
+    }
+
+    let lib_section = doc["lib"].as_table_mut().unwrap();
+    if !lib_section.contains_key("crate-type") {
+        let mut array = Array::new();
+        array.push("cdylib");
+        // better way to do this?
+        lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
+    }
+
+    fs::write(cargo_toml_path, doc.to_string())?;
+    Ok(())
+}
+
 fn create_wasm() {
+    // Update Cargo.toml
+    if let Err(e) = modify_cargo_toml() {
+        eprintln!("Failed to update Cargo.toml: {}", e);
+        return;
+    }
+
     println!("Creating wasm files...");
     let func_names = extract_provable_functions();
 
+    // TODO: any better solution for this?
     for func_name in func_names {
         let output_file = format!("{}_{}.bin", &func_name, "wasm");
         preprocess_and_save(&func_name, &output_file);
+    }
+
+    // Build the project for the wasm32 target
+    let build_status = std::process::Command::new("cargo")
+        .args(&["build", "--release", "--target", "wasm32-unknown-unknown"])
+        .status()
+        .expect("Failed to build the project for wasm32 target");
+
+    if !build_status.success() {
+        eprintln!("cargo build failed");
+        return;
+    }
+
+    // Check if wasm-bindgen is installed
+    let wasm_bindgen_installed = std::process::Command::new("wasm-bindgen")
+        .arg("--version")
+        .status()
+        .is_ok();
+
+    if !wasm_bindgen_installed {
+        //TODO: or install it automatically?
+        eprintln!("wasm-bindgen is not installed. Please install it with `cargo install wasm-bindgen-cli`.");
+        return;
+    }
+
+    // Get the project name vecause we need it for the wasm-bindgen command
+    let project_name = match get_project_name() {
+        Some(name) => name,
+        None => {
+            eprintln!("Failed to get the project name from Cargo.toml");
+            return;
+        }
+    };
+
+    // then run wasm-bindgen
+    let wasm_file = format!(
+        "target/wasm32-unknown-unknown/release/{}.wasm",
+        project_name
+    );
+    let wasm_bindgen_status = std::process::Command::new("wasm-bindgen")
+        .args(&["--target", "web", "--out-dir", "./out", &wasm_file])
+        .status()
+        .expect("Failed to run wasm-bindgen");
+
+    if !wasm_bindgen_status.success() {
+        eprintln!("wasm-bindgen failed");
     }
 }
 
