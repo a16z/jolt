@@ -38,20 +38,6 @@ pub struct R1CSInputs<'a, F: JoltField> {
     instruction_flags_bits: Vec<F>,
 }
 
-// #[derive(Clone, Debug, Default)]
-// pub struct R1CSStepInputs<F: JoltField> {
-//     pub padded_trace_len: usize,
-//     pub input_pc: F,
-//     pub bytecode_v: Vec<F>,
-//     pub memreg_v_reads: Vec<F>,
-//     pub memreg_v_writes: Vec<F>,
-//     pub chunks_y: Vec<F>,
-//     pub chunks_query: Vec<F>,
-//     pub lookup_outputs: Vec<F>,
-//     pub circuit_flags_bits: Vec<F>,
-//     pub instruction_flags_bits: Vec<F>,
-// }
-
 impl<'a, F: JoltField> R1CSInputs<'a, F> {
     #[tracing::instrument(skip_all, name = "R1CSInputs::new")]
     pub fn new(
