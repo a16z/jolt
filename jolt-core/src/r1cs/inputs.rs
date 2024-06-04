@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::key::UniformSpartanKey;
-use super::spartan_3::{SpartanError, UniformSpartanProof};
+use super::spartan::{SpartanError, UniformSpartanProof};
 
 use crate::poly::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

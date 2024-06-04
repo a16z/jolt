@@ -7,7 +7,7 @@ use crate::r1cs::jolt_constraints::{
     JoltConstraints, JoltIn, PC_BRANCH_AUX_INDEX, PC_START_ADDRESS,
 };
 use crate::r1cs::ops::{Variable, LC};
-use crate::r1cs::spartan_3::{self, UniformSpartanProof};
+use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -373,7 +373,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             circuit_flags,
             &preprocessing.generators,
         );
-        let spartan_key = spartan_3::UniformSpartanProof::<F, PCS>::setup_precommitted(
+        let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
             &r1cs_builder,
             padded_trace_length,
         );

@@ -485,7 +485,7 @@ mod test {
         r1cs::{
             builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
             ops::from_i64,
-            spartan_3::UniformSpartanProof,
+            spartan::UniformSpartanProof,
             test::{
                 materialize_all, materialize_full_uniform, simp_test_big_matrices,
                 simp_test_builder_key, SimpTestIn, TestInputs,
