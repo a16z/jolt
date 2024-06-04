@@ -77,19 +77,21 @@ impl<I: ConstraintInput> Constraint<I> {
     }
 }
 
+type AuxComputationFunction<F> = dyn Fn(&[F]) -> F + Send + Sync;
+
 struct AuxComputation<F: JoltField, I: ConstraintInput> {
     output: Variable<I>,
     symbolic_inputs: Vec<LC<I>>,
     flat_vars: Vec<Variable<I>>,
     input_to_flat: Vec<Option<Range<usize>>>,
-    compute: Box<dyn Fn(&[F]) -> F + Send + Sync>,
+    compute: Box<AuxComputationFunction<F>>,
 }
 
 impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
     fn new(
         output: Variable<I>,
         symbolic_inputs: Vec<LC<I>>,
-        compute: Box<dyn Fn(&[F]) -> F + Send + Sync>,
+        compute: Box<AuxComputationFunction<F>>,
     ) -> Self {
         let flat_var_count: usize = symbolic_inputs.iter().map(|input| input.num_vars()).sum();
         let mut flat_vars = Vec::with_capacity(flat_var_count);
@@ -185,7 +187,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     fn allocate_aux(
         &mut self,
         symbolic_inputs: Vec<LC<I>>,
-        compute: Box<dyn Fn(&[F]) -> F + Send + Sync>,
+        compute: Box<AuxComputationFunction<F>>,
     ) -> Variable<I> {
         let new_aux = Variable::Auxiliary(self.next_aux);
         self.next_aux += 1;
