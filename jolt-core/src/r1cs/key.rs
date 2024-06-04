@@ -2,11 +2,10 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
 use crate::{
-    poly::{eq_poly::EqPolynomial, field::JoltField},
-    utils::{
+    poly::{eq_poly::EqPolynomial, field::JoltField}, r1cs::special_polys::{eq_plus_one, SparsePolynomial}, utils::{
         index_to_field_bitvector, mul_0_1_optimized, mul_0_optimized,
         thread::unsafe_allocate_zero_vec,
-    },
+    }
 };
 
 use super::{builder::{CombinedUniformBuilder, OffsetEqConstraint}, ops::ConstraintInput};
@@ -297,9 +296,16 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let (r_col_var, r_col_step) = r_col.split_at(uniform_cols_bits + 1);
         assert_eq!(r_row_step.len(), r_col_step.len());
 
-        let eq_rx_ry_ts = EqPolynomial::new(r_row_step.to_vec()).evaluate(r_col_step);
+        let eq_rx_ry_step = EqPolynomial::new(r_row_step.to_vec()).evaluate(r_col_step);
         let eq_rx_constr = EqPolynomial::evals(r_row_constr);
         let eq_ry_var = EqPolynomial::evals(r_col_var);
+
+        let constant_column = index_to_field_bitvector(self.num_cols_total() / 2, total_cols_bits);
+        let col_eq_constant = EqPolynomial::new(r_col.to_vec()).evaluate(&constant_column);
+
+        let non_uni_constraint_index = index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
+        let row_constr_eq_non_uni = EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
+        assert_eq!(row_constr_eq_non_uni, eq_rx_constr[self.uniform_r1cs.num_rows]);
 
         let compute = |constraints: &SparseConstraints<F>,
                        non_uni: Option<&SparseEqualityItem<F>>|
@@ -308,76 +314,32 @@ impl<F: JoltField> UniformSpartanKey<F> {
                 .vars
                 .iter()
                 .map(|(row, col, coeff)| {
-                    // Note: row indexes constraints, col indexes vars
-                    // TODO(sragss): eq_rx_ry_ts can be moved out of loop
-                    *coeff * eq_rx_ry_ts * eq_rx_constr[*row] * eq_ry_var[*col]
+                    *coeff * eq_rx_constr[*row] * eq_ry_var[*col]
                 })
-                .sum();
+                .sum::<F>() * eq_rx_ry_step;
 
-            let constant_column = [vec![F::one()], vec![F::zero(); total_cols_bits - 1]].concat();
-            let const_eq_outer = EqPolynomial::new(r_col.to_vec()).evaluate(&constant_column);
-            let mut const_mle = F::zero();
-            for (constraint_row, constant_coeff) in &constraints.consts {
-                const_mle += *constant_coeff * eq_rx_constr[*constraint_row];
-            }
-            full_mle_evaluation += const_mle * const_eq_outer;
+            full_mle_evaluation += constraints.consts.iter().map(|(constraint_row, constant_coeff)| {
+                *constant_coeff * eq_rx_constr[*constraint_row]
+            }).sum::<F>() * col_eq_constant;
 
-            /* This MLE is 1 if y = x + 1 for x in the range [0... 2^l-2].
-            That is, it ignores the case where x is all 1s, outputting 0.
-            Assumes x and y are provided big-endian. */
-            let plus_1_mle = |x: &[F], y: &[F], l: usize| -> F {
-                let one = F::from_u64(1_u64).unwrap();
-
-                /* If y+1 = x, then the two bit vectors are of the following form.
-                    Let k be the longest suffix of 1s in x.
-                    In y, those k bits are 0.
-                    Then, the next bit in x is 0 and the next bit in y is 1.
-                    The remaining higher bits are the same in x and y.
-                */
-                (0..l)
-                    .into_par_iter()
-                    .map(|k| {
-                        let lower_bits_product = (0..k)
-                            .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
-                            .product::<F>();
-                        let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
-                        let higher_bits_product = ((k + 1)..l)
-                            .map(|i| {
-                                x[l - 1 - i] * y[l - 1 - i]
-                                    + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
-                            })
-                            .product::<F>();
-                        lower_bits_product * kth_bit_product * higher_bits_product
-                    })
-                    .sum()
-            };
 
             // Non uniform
-            let non_uni_constraint_index =
-                index_to_field_bitvector(self.uniform_r1cs.num_rows, constraint_rows_bits);
-            let non_uni_eq =
-                EqPolynomial::new(r_row_constr.to_vec()).evaluate(&non_uni_constraint_index);
-            assert_eq!(non_uni_eq, eq_rx_constr[self.uniform_r1cs.num_rows]);
             let mut non_uni_mle = F::zero();
-            // NUC
             if let Some(non_uni) = non_uni {
-                let eq_vars = EqPolynomial::evals(r_col_var);
-                let eq_step = eq_rx_ry_ts;
-                // TODO(sragss): Move logic
-                let eq_step_offset_1 = plus_1_mle(r_row_step, r_col_step, steps_bits);
+                let eq_step_offset_1 = eq_plus_one(r_row_step, r_col_step, steps_bits);
 
-                for (col, offset, coeff) in &non_uni.offset_vars {
+                non_uni_mle = non_uni.offset_vars.iter().map(|(col, offset, coeff)| {
                     if !offset {
-                        non_uni_mle += *coeff * eq_step * eq_vars[*col];
+                        *coeff * eq_ry_var[*col] * eq_rx_ry_step
                     } else {
-                        non_uni_mle += *coeff * eq_step_offset_1 * eq_vars[*col]
+                        *coeff * eq_ry_var[*col] * eq_step_offset_1
                     }
-                }
+                }).sum::<F>();
 
-                non_uni_mle += non_uni.constant * const_eq_outer;
+                non_uni_mle += non_uni.constant * col_eq_constant;
             }
 
-            full_mle_evaluation += non_uni_mle * non_uni_eq;
+            full_mle_evaluation += non_uni_mle * row_constr_eq_non_uni;
 
             full_mle_evaluation
         };
@@ -424,76 +386,22 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 }
 
-struct SparsePolynomial<F: JoltField> {
-    num_vars: usize,
-    Z: Vec<(usize, F)>,
-}
-
-impl<Scalar: JoltField> SparsePolynomial<Scalar> {
-    pub fn new(num_vars: usize, Z: Vec<(usize, Scalar)>) -> Self {
-        SparsePolynomial { num_vars, Z }
-    }
-
-    /// Computes the $\tilde{eq}$ extension polynomial.
-    /// return 1 when a == r, otherwise return 0.
-    fn compute_chi(a: &[bool], r: &[Scalar]) -> Scalar {
-        assert_eq!(a.len(), r.len());
-        let mut chi_i = Scalar::one();
-        for j in 0..r.len() {
-            if a[j] {
-                chi_i *= r[j];
-            } else {
-                chi_i *= Scalar::one() - r[j];
-            }
-        }
-        chi_i
-    }
-
-    // Takes O(n log n)
-    pub fn evaluate(&self, r: &[Scalar]) -> Scalar {
-        assert_eq!(self.num_vars, r.len());
-
-        (0..self.Z.len())
-            .into_par_iter()
-            .map(|i| {
-                let bits = get_bits(self.Z[0].0, r.len());
-                SparsePolynomial::compute_chi(&bits, r) * self.Z[i].1
-            })
-            .sum()
-    }
-}
-
-/// Returns the `num_bits` from n in a canonical order
-fn get_bits(operand: usize, num_bits: usize) -> Vec<bool> {
-    (0..num_bits)
-        .map(|shift_amount| ((operand & (1 << (num_bits - shift_amount - 1))) > 0))
-        .collect::<Vec<bool>>()
-}
 
 #[cfg(test)]
 mod test {
     use super::*;
     use ark_bn254::Fr;
-    use merlin::Transcript;
 
     use crate::{
-        poly::{
-            commitment::{
-                commitment_scheme::{BatchType, CommitShape, CommitmentScheme},
-                hyrax::HyraxScheme,
-            },
-            dense_mlpoly::DensePolynomial,
-        },
+        poly::dense_mlpoly::DensePolynomial,
         r1cs::{
             builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
-            ops::from_i64,
-            spartan::UniformSpartanProof,
             test::{
-                materialize_all, materialize_full_uniform, simp_test_big_matrices,
-                simp_test_builder_key, SimpTestIn, TestInputs,
+                materialize_full_uniform, simp_test_big_matrices,
+                simp_test_builder_key, TestInputs,
             },
         },
-        utils::{index_to_field_bitvector, math::Math, transcript::ProofTranscript},
+        utils::{index_to_field_bitvector, math::Math},
     };
     use strum::EnumCount;
 
