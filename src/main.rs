@@ -231,6 +231,92 @@ fn get_project_name() -> Option<String> {
     doc["package"]["name"].as_str().map(|s| s.replace("-", "_"))
 }
 
+fn create_index_html(func_names: Vec<String>) -> std::io::Result<()> {
+    let mut html_content = String::from(
+        r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jolt x WASMn</title>
+</head>
+<body>
+    <h1>Jolt x WASM</h1>
+"#,
+    );
+
+    for func_name in &func_names {
+        html_content.push_str(&format!(
+            r#"
+    <input type="file" id="proofFile_{}" />
+    <button id="verifyButton_{}">Verify Proof for {}</button>
+"#,
+            func_name, func_name, func_name
+        ));
+    }
+
+    html_content.push_str(&format!(
+        r#"
+    <script type="module">
+        import init, {{ verify_proof }} from './out/{}.js';
+
+        async function run() {{
+            await init();
+"#,
+        get_project_name().unwrap()
+    ));
+
+    for func_name in &func_names {
+        html_content.push_str(&format!(
+            r#"
+            document.getElementById('verifyButton_{}').addEventListener('click', async () => {{
+                const fileInput = document.getElementById('proofFile_{}');
+                if (fileInput.files.length === 0) {{
+                    alert("Please select a proof file first.");
+                    return;
+                }}
+
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+
+                reader.onload = async (event) => {{
+                    const proofArrayBuffer = event.target.result;
+                    const proofData = new Uint8Array(proofArrayBuffer);
+                    console.log(proofData);
+
+                    // Fetch preprocessing data and prepare wasm binary to json conversion
+                    const response = await fetch('{}_wasm.bin');
+                    const wasmBinary = await response.arrayBuffer();
+                    const wasmData = new Uint8Array(wasmBinary);
+
+                    const result = verify_proof(wasmData, proofData);
+                    console.log(result);
+                    alert(result ? "Proof is valid!" : "Proof is invalid.");
+                }};
+
+                reader.readAsArrayBuffer(file);
+            }});
+"#,
+            func_name, func_name, func_name
+        ));
+    }
+
+    html_content.push_str(
+        r#"
+        }
+
+        run();
+    </script>
+</body>
+</html>
+"#,
+    );
+
+    let mut file = File::create("index.html")?;
+    file.write_all(html_content.as_bytes())?;
+    Ok(())
+}
+
 fn modify_cargo_toml() -> Result<()> {
     let cargo_toml_path = "Cargo.toml";
     let content = fs::read_to_string(cargo_toml_path)?;
@@ -263,9 +349,13 @@ fn create_wasm() {
     let func_names = extract_provable_functions();
 
     // TODO: any better solution for this?
-    for func_name in func_names {
+    for func_name in func_names.clone() {
         let output_file = format!("{}_{}.bin", &func_name, "wasm");
         preprocess_and_save(&func_name, &output_file);
+    }
+
+    if let Err(e) = create_index_html(func_names) {
+        eprintln!("Failed to create index.html: {}", e);
     }
 
     // Build the project for the wasm32 target
