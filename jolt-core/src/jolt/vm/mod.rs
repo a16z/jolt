@@ -428,6 +428,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         (jolt_proof, jolt_commitments)
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::verify")]
     fn verify(
         mut preprocessing: JoltPreprocessing<F, PCS>,
         proof: JoltProof<C, M, F, PCS, Self::InstructionSet, Self::Subtables>,
@@ -524,6 +525,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             .map_err(|e| ProofVerifyError::SpartanError(e.to_string()))
     }
 
+    #[tracing::instrument(skip_all, name = "Jolt::r1cs_setup")]
     fn r1cs_setup(
         padded_trace_length: usize,
         memory_start: u64,
@@ -546,7 +548,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             polynomials,
             circuit_flags,
         );
-        let mut inputs_flat = inputs.clone_to_trace_len_chunks(padded_trace_length);
+        let mut inputs_flat: Vec<Vec<F>> = inputs.clone_to_trace_len_chunks(padded_trace_length);
 
         let non_uniform_constraint = OffsetEqConstraint::new(
             (JoltIn::PcIn, true),
@@ -605,6 +607,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
     }
 
     // Assemble the R1CS inputs from across other Jolt structs.
+    #[tracing::instrument(skip_all, name = "Jolt::r1cs_construct_inputs")]
     fn r1cs_construct_inputs<'a>(
         padded_trace_length: usize,
         instructions: &'a [JoltTraceStep<Self::InstructionSet>],

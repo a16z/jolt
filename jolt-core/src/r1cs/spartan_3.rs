@@ -12,9 +12,7 @@ use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use rayon::prelude::*;
-use sha3::Digest;
 
-use strum::EnumCount;
 use thiserror::Error;
 
 use crate::{
@@ -23,7 +21,6 @@ use crate::{
 };
 
 use super::builder::CombinedUniformBuilder;
-use super::jolt_constraints::JoltIn;
 use super::ops::ConstraintInput;
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -188,21 +185,18 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let num_rounds_y = key.num_cols_total().log_2();
 
         // outer sum-check
-
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Vec<F>>();
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
-        // TODO(sragss): This snippet makes prove JoltInputs dependent.
         let inputs = &segmented_padded_witness.segments[0..I::COUNT];
         let aux = &segmented_padded_witness.segments[I::COUNT..];
-        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan(inputs, aux);
-
-        // TODO(sragss): Explicitly left because this is wasteful. Should likely deal with through more intelligent DensePaddedPolynomial.
-        az.resize(padded_num_rows, F::zero());
-        bz.resize(padded_num_rows, F::zero());
-        cz.resize(padded_num_rows, F::zero());
+        let (az, bz, cz) = constraint_builder.compute_spartan(inputs, aux);
+        // TODO: Do not require these padded, Sumcheck should handle sparsity.
+        assert!(az.len().is_power_of_two());
+        assert!(bz.len().is_power_of_two());
+        assert!(cz.len().is_power_of_two());
 
         let mut poly_Az = DensePolynomial::new(az);
         let mut poly_Bz = DensePolynomial::new(bz);

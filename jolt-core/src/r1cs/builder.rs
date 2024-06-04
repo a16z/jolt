@@ -1,9 +1,7 @@
 use crate::{
     poly::field::JoltField,
-    r1cs::{
-        key::{SparseConstraints, UniformR1CS},
-    },
-    utils::thread::unsafe_allocate_zero_vec,
+    r1cs::key::{SparseConstraints, UniformR1CS},
+    utils::{mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
 use rayon::prelude::*;
 use std::fmt::Debug;
@@ -552,14 +550,14 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         }
     }
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
+    #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_aux")]
     pub fn compute_aux(&self, inputs: &[Vec<F>]) -> Vec<Vec<F>> {
         assert_eq!(inputs.len(), I::COUNT);
         inputs
             .iter()
             .for_each(|inner_input| assert_eq!(inner_input.len(), self.uniform_repeat));
 
-        // let aux_len = self.next_aux * padded_trace_len;
-        let mut aux = vec![vec![F::zero(); self.uniform_repeat]; self.uniform_builder.num_aux()];
+        let mut aux = vec![vec![]; self.uniform_builder.num_aux()];
 
         for (aux_index, aux_compute) in self.uniform_builder.aux_computations.iter().enumerate() {
             match aux_compute.output {
@@ -687,6 +685,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
+    #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan")]
     pub fn compute_spartan(&self, inputs: &[Vec<F>], aux: &[Vec<F>]) -> (Vec<F>, Vec<F>, Vec<F>) {
         assert_eq!(inputs.len(), I::COUNT);
         inputs
@@ -699,15 +698,21 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             .for_each(|aux_segment| assert_eq!(aux_segment.len(), self.uniform_repeat));
 
         let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
-        let constraint_rows = self.constraint_rows();
+        // TODO(sragss): Allocation can overshoot by up to a factor of 2, Spartan could handle non-pow-2 Az,Bz,Cz
+        let constraint_rows = self.constraint_rows().next_power_of_two();
 
+        let _span = tracing::span!(tracing::Level::TRACE, "alloc Az, Bz, Cz");
+        let _enter = _span.enter();
         let (mut Az, mut Bz, mut Cz) = (
             unsafe_allocate_zero_vec(constraint_rows),
             unsafe_allocate_zero_vec(constraint_rows),
             unsafe_allocate_zero_vec(constraint_rows),
         );
+        drop(_enter);
+        drop(_span);
 
-        let compute_lc = |lc: &LC<I>, inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
+
+        let compute_lc_flat = |lc: &LC<I>, flat_terms: &[F], inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
             if step_index >= self.uniform_repeat {
                 // Assume all terms are 0, other than the constant
                 let sorted_terms = lc.sorted_terms();
@@ -719,124 +724,68 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 return F::zero();
             }
 
-            let mut eval = F::zero();
-            lc.terms().iter().for_each(|term| match term.0 {
+            lc.terms().iter().enumerate().map(|(term_index, term)| match term.0 {
                 Variable::Input(input) => {
-                    eval += from_i64::<F>(term.1) * inputs[input.into()][step_index];
+                    mul_0_1_optimized(&flat_terms[term_index], &inputs[input.into()][step_index])
                 }
                 Variable::Auxiliary(aux_index) => {
                     assert!(aux_index < self.uniform_builder.num_aux());
-                    eval += from_i64::<F>(term.1) * aux[aux_index][step_index];
+                    mul_0_1_optimized(&flat_terms[term_index], &aux[aux_index][step_index])
                 }
                 Variable::Constant => {
-                    eval += from_i64::<F>(term.1);
+                    flat_terms[term_index]
                 }
-            });
-            eval
+            }).sum()
         };
 
-        // 1. uniform_constraints: Xz[offset_eq_constraint_rows..uniform_constraint_rows]
-        // TODO(sragss): Could either materialize then multiply or do it directly from the constraints. Should compare performance
+        // uniform_constraints: Xz[0..uniform_constraint_rows]
+        // TODO(sragss): Attempt moving onto key and computing from materialized rows rather than linear combos
         for (constraint_index, constraint) in self.uniform_builder.constraints.iter().enumerate() {
-            for step_index in 0..self.uniform_repeat {
-                let z_index = constraint_index * self.uniform_repeat + step_index;
-                Az[z_index] = compute_lc(&constraint.a, inputs, aux, step_index);
-                Bz[z_index] = compute_lc(&constraint.b, inputs, aux, step_index);
-                Cz[z_index] = compute_lc(&constraint.c, inputs, aux, step_index);
+            let _span = tracing::span!(tracing::Level::TRACE, "compute_constraint");
+            let _enter = _span.enter();
+            let a_lc_flat_terms: Vec<F> = constraint.a.terms().iter().map(|term| from_i64::<F>(term.1)).collect();
+            let b_lc_flat_terms: Vec<F> = constraint.b.terms().iter().map(|term| from_i64::<F>(term.1)).collect();
+            let c_lc_flat_terms: Vec<F> = constraint.c.terms().iter().map(|term| from_i64::<F>(term.1)).collect();
 
-                #[cfg(test)]
-                {
-                    if Az[z_index] * Bz[z_index] != Cz[z_index] {
-                        println!("Constraint mismatch at step {step_index}!");
-                        println!("Constraint Index: {constraint_index}");
-                        println!("Constraint: {constraint:?}");
-                        println!("Az: {:?}", Az[z_index]);
-                        println!("Bz: {:?}", Bz[z_index]);
-                        println!("Cz: {:?}", Cz[z_index]);
+            let z_start = constraint_index * self.uniform_repeat;
+            let z_end = (constraint_index + 1) * self.uniform_repeat;
+            let z_range = z_start..z_end;
 
-                        // Print all relevant term evaluations
-                        for terms in [
-                            constraint.a.terms(),
-                            constraint.b.terms(),
-                            constraint.c.terms(),
-                        ] {
-                            for term in terms {
-                                match term.0 {
-                                    Variable::Input(index) => {
-                                        println!(
-                                            "{index:?}: {:?}",
-                                            inputs[index.into()][step_index]
-                                        );
-                                    }
-                                    Variable::Auxiliary(index) => {
-                                        println!("Aux({index}): {:?}", aux[index][step_index]);
-                                    }
-                                    _ => continue,
-                                }
-                            }
-                        }
-                        panic!();
-                    }
-                }
-            }
+            let steps = (0..self.uniform_repeat).into_par_iter();
+            let A = Az[z_range.clone()].par_iter_mut();
+            let B = Bz[z_range.clone()].par_iter_mut();
+            let C = Cz[z_range.clone()].par_iter_mut();
+            steps.zip(A).zip(B).zip(C).for_each(|(((step, a), b), c)| {
+                *a = compute_lc_flat(&constraint.a, &a_lc_flat_terms, inputs, aux, step);
+                *b = compute_lc_flat(&constraint.b, &b_lc_flat_terms, inputs, aux, step);
+                *c = compute_lc_flat(&constraint.c, &c_lc_flat_terms, inputs, aux, step);
+            });
         }
 
-        // 2. offset_equality_constraints: Xz[uniform_constraint_rows..]
+        // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
         // (a - b) * condition == 0
         // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
+        let _span = tracing::span!(tracing::Level::TRACE, "offset eq");
+        let _enter = _span.enter();
         let constraint = &self.offset_equality_constraint;
+        let condition_lc_flat_terms: Vec<F> = constraint.condition.1.terms().iter().map(|term| from_i64::<F>(term.1)).collect();
+        let a_lc_flat_terms: Vec<F> = constraint.a.1.terms().iter().map(|term| from_i64::<F>(term.1)).collect();
+        let b_lc_flat_terms: Vec<F> = constraint.b.1.terms().iter().map(|term| from_i64::<F>(term.1)).collect();
         for step_index in 0..self.uniform_repeat {
             let index = uniform_constraint_rows + step_index;
 
             let condition_step_index = if constraint.condition.0 { step_index + 1 } else { step_index } ;
-            let condition = compute_lc(&constraint.condition.1, inputs, aux, condition_step_index);
+            let condition = compute_lc_flat(&constraint.condition.1, &condition_lc_flat_terms, inputs, aux, condition_step_index);
             Bz[index] = condition;
 
 
-            // TODO: For an honest prover eq should be zero for all non-padded rows. This should only be computed for the padded rows, once.
+            // TODO(sragss): For an honest prover eq should be zero for all non-padded rows. This need only be computed for the padded rows, once.
             let eq_a_step_index = if constraint.a.0 { step_index + 1 } else { step_index } ;
-            let eq_a = compute_lc(&constraint.a.1, inputs, aux, eq_a_step_index);
             let eq_b_step_index = if constraint.b.0 { step_index + 1 } else { step_index } ;
-            let eq_b = compute_lc(&constraint.b.1, inputs, aux, eq_b_step_index);
+            let eq_a = compute_lc_flat(&constraint.a.1, &a_lc_flat_terms, inputs, aux, eq_a_step_index);
+            let eq_b = compute_lc_flat(&constraint.b.1, &b_lc_flat_terms, inputs, aux, eq_b_step_index);
             let eq = eq_a - eq_b;
             Az[index] = eq;
-
-            #[cfg(test)]
-            {
-                Cz[index] = F::zero();
-                if !eq.is_zero() && !condition.is_zero() {
-                    println!("step_index: {step_index}");
-                    println!("eq_a: {eq_a:?}");
-                    println!("eq_b: {eq_b:?}");
-                    println!("constraint.a: {:?}", constraint.a);
-                    println!("constraint.b: {:?}", constraint.b);
-
-                    for (offset, lc) in [&constraint.a, &constraint.b, &constraint.condition] {
-                        for term in lc.terms() {
-                            let offset_step_index = step_index + (*offset as usize);
-                            match term.0 {
-                                Variable::Input(index) => {
-                                    if offset_step_index < self.uniform_repeat {
-                                        println!(
-                                            "{index:?}[offset = {offset}]: {:?}",
-                                            inputs[index.into()][offset_step_index]
-                                        );
-                                    }
-                                }
-                                Variable::Auxiliary(index) => {
-                                    println!(
-                                        "Aux({index})[offset = {offset}]: {:?}",
-                                        aux[index][offset_step_index]
-                                    );
-                                }
-                                _ => continue,
-                            }
-                        }
-                    }
-
-                    panic!("eq should always be zero when condition is non-zero.");
-                }
-            }
         }
 
         (Az, Bz, Cz)
@@ -845,7 +794,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     #[cfg(test)]
     pub fn assert_valid(&self, az: &[F], bz: &[F], cz: &[F]) {
         let rows = az.len();
-        let expected_rows = self.constraint_rows();
+        let expected_rows = self.constraint_rows().next_power_of_two();
         assert_eq!(az.len(), expected_rows);
         assert_eq!(bz.len(), expected_rows);
         assert_eq!(cz.len(), expected_rows);
@@ -868,10 +817,6 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             }
         }
     }
-}
-
-fn usize_plus_i64(a: usize, b: i64) -> usize {
-    b.checked_add(a as i64).unwrap() as usize
 }
 
 #[cfg(test)]
@@ -1340,9 +1285,9 @@ mod tests {
         );
 
         let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
-        assert_eq!(az.len(), 5 * 2);
-        assert_eq!(bz.len(), 5 * 2);
-        assert_eq!(cz.len(), 5 * 2);
+        assert_eq!(az.len(), 16);
+        assert_eq!(bz.len(), 16);
+        assert_eq!(cz.len(), 16);
 
         combined_builder.assert_valid(&az, &bz, &cz);
     }

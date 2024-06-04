@@ -150,15 +150,20 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let eq_rx_constr = EqPolynomial::evals(r_constr);
         let non_uniform_row = self.uniform_r1cs.num_rows;
 
+        // Computation strategy
+        // 1. Compute the RLC of the repeated terms in A, B, C, and the constant column
+        // 2. Expand this RLC to the full column y by multiplying by eq(rx_step, step_index) for each step
+        // 3. Add the non uniform constraint rows 
+
         let compute_repeated = | constraints: &SparseConstraints<F>, non_uni_constant: Option<F> | -> Vec<F> {
             // +1 for constant
             let mut evals = unsafe_allocate_zero_vec(self.uniform_r1cs.num_vars + 1);
             for (row, col, val) in constraints.vars.iter() {
-                evals[*col] += eq_rx_constr[*row] * val;
+                evals[*col] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
             }
 
             for (row, val) in constraints.consts.iter() {
-                evals[self.uniform_r1cs.num_vars] += eq_rx_constr[*row] * val;
+                evals[self.uniform_r1cs.num_vars] += mul_0_1_optimized(val, &eq_rx_constr[*row]);
             }
 
             if let Some(non_uni_constant) = non_uni_constant {
@@ -177,22 +182,25 @@ impl<F: JoltField> UniformSpartanKey<F> {
             .iter()
             .zip(sm_b_r.iter())
             .zip(sm_c_r.iter())
-            .map(|((a, b), c)| *a + mul_0_optimized(b, &r_rlc) + mul_0_optimized(c, &r_rlc_sq))
+            .map(|((a, b), c)| *a + mul_0_1_optimized(b, &r_rlc) + mul_0_1_optimized(c, &r_rlc_sq))
             .collect::<Vec<F>>();
 
         let mut rlc = unsafe_allocate_zero_vec(self.num_cols_total());
 
-
-        rlc.par_chunks_mut(self.num_steps)
-            .take(self.uniform_r1cs.num_vars)
-            .enumerate()
-            .for_each(|(var_index, var_chunk)| {
-                if !sm_rlc[var_index].is_zero() {
-                    for (step_index, item) in var_chunk.iter_mut().enumerate() {
-                        *item = eq_rx_step[step_index] * sm_rlc[var_index];
+        {
+            let span = tracing::span!(tracing::Level::INFO, "big_rlc_computation");
+            let _guard = span.enter();
+            rlc.par_chunks_mut(self.num_steps)
+                .take(self.uniform_r1cs.num_vars)
+                .enumerate()
+                .for_each(|(var_index, var_chunk)| {
+                    if !sm_rlc[var_index].is_zero() {
+                        for (step_index, item) in var_chunk.iter_mut().enumerate() {
+                            *item = mul_0_1_optimized(&eq_rx_step[step_index], &sm_rlc[var_index]);
+                        }
                     }
-                }
-            });
+                });
+        }
 
         rlc[self.num_vars_total()] = sm_rlc[self.uniform_r1cs.num_vars]; // constant
 
@@ -200,25 +208,30 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let non_uni_constraint_row = self.uniform_r1cs.num_rows;
         let update_non_uni = |rlc: &mut Vec<F>, offset: &SparseEqualityItem<F>, r: F| {
             for (col, is_offset, coeff) in offset.offset_vars.iter() {
-                for step_index in 0..self.num_steps {
-                    let mut y_index = col * self.num_steps + step_index;
-                    if *is_offset {
-                        y_index += 1;
-                    }
-                    // Avoid the last row for offset as it overflows into the next variable / padding
-                    if y_index < (col + 1) * self.num_steps {
-                        rlc[y_index] += mul_0_1_optimized(&r, coeff) * eq_rx_step[step_index] * eq_rx_constr[non_uni_constraint_row];
-                    }
-                }
+                let offset = if *is_offset { 1 } else { 0 };
+
+                // Ignores the offset overflow at the last step
+                let y_index_range = col * self.num_steps + offset .. (col + 1) * self.num_steps;
+                let steps = (0..self.num_steps).into_par_iter();
+
+                rlc[y_index_range].par_iter_mut().zip(steps).for_each(|(rlc_col, step_index)| {
+                    *rlc_col += mul_0_1_optimized(&r, coeff) * eq_rx_step[step_index] * eq_rx_constr[non_uni_constraint_row];
+                });
             }
         };
-        update_non_uni(&mut rlc, &self.offset_eq_r1cs.eq, F::one());
-        update_non_uni(&mut rlc, &self.offset_eq_r1cs.condition, r_rlc);
+
+        {
+            let span = tracing::span!(tracing::Level::INFO, "update_non_uniform");
+            let _guard = span.enter();
+            update_non_uni(&mut rlc, &self.offset_eq_r1cs.eq, F::one());
+            update_non_uni(&mut rlc, &self.offset_eq_r1cs.condition, r_rlc);
+        }
 
         rlc
     }
 
     /// Evaluates the full expanded witness vector at 'r' using evaluations of segments.
+    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_z_mle")]
     pub fn evaluate_z_mle(&self, segment_evals: &[F], r: &[F]) -> F {
         assert_eq!(self.uniform_r1cs.num_vars, segment_evals.len());
         assert_eq!(r.len(), self.full_z_len().log_2());
@@ -255,6 +268,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Evaluates A(r), B(r), C(r) efficiently using their small uniform representations.
+    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_r1cs_matrix_mles")]
     pub fn evaluate_r1cs_matrix_mles(&self, r: &[F]) -> (F, F, F) {
         let total_rows_bits = self.num_rows_total().log_2();
         let total_cols_bits = self.num_cols_total().log_2();

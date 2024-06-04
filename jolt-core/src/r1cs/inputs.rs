@@ -99,56 +99,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         }
     }
 
-    // fn push_to_step<T: Borrow<F>>(&self, data: &Vec<T>, step: &mut Vec<F>, step_index: usize) {
-    //     let num_vals = data.len() / self.padded_trace_len;
-    //     for var_index in 0..num_vals {
-    //         step.push(*data[var_index * self.padded_trace_len + step_index].borrow());
-    //     }
-    // }
-
-    // pub fn clone_step(&self, step_index: usize) -> R1CSStepInputs<F> {
-    //     let program_counter = if step_index > 0 && self.bytecode_a[step_index].is_zero() {
-    //         F::zero()
-    //     } else {
-    //         self.bytecode_a[step_index]
-    //     };
-
-    //     let mut output = R1CSStepInputs {
-    //         padded_trace_len: self.padded_trace_len,
-    //         input_pc: program_counter,
-    //         bytecode_v: Vec::with_capacity(6),
-    //         memreg_v_reads: Vec::with_capacity(7),
-    //         memreg_v_writes: Vec::with_capacity(7),
-    //         chunks_y: Vec::with_capacity(4),
-    //         chunks_query: Vec::with_capacity(4),
-    //         lookup_outputs: Vec::with_capacity(2),
-    //         circuit_flags_bits: Vec::with_capacity(NUM_CIRCUIT_FLAGS),
-    //         instruction_flags_bits: Vec::with_capacity(RV32I::COUNT),
-    //     };
-    //     self.push_to_step(&self.bytecode_v, &mut output.bytecode_v, step_index);
-    //     self.push_to_step(&self.memreg_v_reads, &mut output.memreg_v_reads, step_index);
-    //     self.push_to_step(
-    //         &self.memreg_v_writes,
-    //         &mut output.memreg_v_writes,
-    //         step_index,
-    //     );
-    //     self.push_to_step(&self.chunks_y, &mut output.chunks_y, step_index);
-    //     self.push_to_step(&self.chunks_query, &mut output.chunks_query, step_index);
-    //     self.push_to_step(&self.lookup_outputs, &mut output.lookup_outputs, step_index);
-    //     self.push_to_step(
-    //         &self.circuit_flags_bits,
-    //         &mut output.circuit_flags_bits,
-    //         step_index,
-    //     );
-    //     self.push_to_step(
-    //         &self.instruction_flags_bits,
-    //         &mut output.instruction_flags_bits,
-    //         step_index,
-    //     );
-
-    //     output
-    // }
-
+    #[tracing::instrument(skip_all, name = "R1CSInputs::clone_to_trace_len_chunks")]
     pub fn clone_to_trace_len_chunks(&self, padded_trace_len: usize) -> Vec<Vec<F>> {
         let mut chunks: Vec<Vec<F>> = Vec::new();
 
@@ -264,6 +215,24 @@ pub struct R1CSProof<F: JoltField, C: CommitmentScheme<Field = F>> {
 }
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
+    #[tracing::instrument(skip_all, name = "R1CSProof::verify")]
+    pub fn verify(
+        &self,
+        generators: &C::Setup,
+        jolt_commitments: JoltCommitments<C>,
+        C: usize,
+        transcript: &mut ProofTranscript,
+    ) -> Result<(), SpartanError> {
+        let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
+        self.proof.verify_precommitted(
+            &self.key,
+            witness_segment_commitments,
+            generators,
+            transcript,
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "R1CSProof::format_commitments")]
     fn format_commitments(jolt_commitments: &JoltCommitments<C>, C: usize) -> Vec<&C::Commitment> {
         let r1cs_commitments = &jolt_commitments.r1cs;
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
@@ -307,21 +276,5 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().aux.iter());
 
         combined_commitments
-    }
-
-    pub fn verify(
-        &self,
-        generators: &C::Setup,
-        jolt_commitments: JoltCommitments<C>,
-        C: usize,
-        transcript: &mut ProofTranscript,
-    ) -> Result<(), SpartanError> {
-        let witness_segment_commitments = Self::format_commitments(&jolt_commitments, C);
-        self.proof.verify_precommitted(
-            &self.key,
-            witness_segment_commitments,
-            generators,
-            transcript,
-        )
     }
 }
