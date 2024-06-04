@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::assertions_on_result_states)]
 #![allow(clippy::needless_range_loop)]
+#![allow(clippy::from_over_into)]
 #![feature(extend_one)]
 #![feature(associated_type_defaults)]
 #![allow(incomplete_features)]

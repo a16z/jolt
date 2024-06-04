@@ -1,8 +1,10 @@
+///! Defines the Linear Combination (LC) object and associated operations.
+///! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
+
 use crate::poly::field::JoltField;
-/// Defines the Linear Combination (LC) object and associated operations.
-/// A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
+
 
 pub trait ConstraintInput:
     Clone
@@ -366,102 +368,102 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 ($crate::r1cs::ops::Variable::Input(self), 1)
             }
         }
-        impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1)
+        impl Into<$crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> $crate::r1cs::ops::Term<$ConcreteInput> {
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1)
             }
         }
 
-        impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
-            fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self.0), self.1)
+        impl Into<$crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
+            fn into(self) -> $crate::r1cs::ops::Term<$ConcreteInput> {
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.0), self.1)
             }
         }
 
-        impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1).into()
+        impl Into<$crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
+            fn into(self) -> $crate::r1cs::ops::LC<$ConcreteInput> {
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1).into()
             }
         }
 
-        impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
-            fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
-                let terms: Vec<crate::r1cs::ops::Term<$ConcreteInput>> =
+        impl Into<$crate::r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
+            fn into(self) -> $crate::r1cs::ops::LC<$ConcreteInput> {
+                let terms: Vec<$crate::r1cs::ops::Term<$ConcreteInput>> =
                     self.into_iter().map(Into::into).collect();
-                crate::r1cs::ops::LC::new(terms)
+                $crate::r1cs::ops::LC::new(terms)
             }
         }
 
         impl std::ops::Add for $ConcreteInput {
-            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: Self) -> Self::Output {
-                crate::r1cs::ops::LC::sum2(self, other)
+                $crate::r1cs::ops::LC::sum2(self, other)
             }
         }
 
-        impl std::ops::Add<$ConcreteInput> for crate::r1cs::ops::Term<$ConcreteInput> {
-            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+        impl std::ops::Add<$ConcreteInput> for $crate::r1cs::ops::Term<$ConcreteInput> {
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: $ConcreteInput) -> Self::Output {
-                let other_term: crate::r1cs::ops::Term<$ConcreteInput> = other.into();
-                crate::r1cs::ops::LC::sum2(self, other_term)
+                let other_term: $crate::r1cs::ops::Term<$ConcreteInput> = other.into();
+                $crate::r1cs::ops::LC::sum2(self, other_term)
             }
         }
 
-        impl std::ops::Add<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+        impl std::ops::Add<$crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
-            fn add(self, other: crate::r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
+            fn add(self, other: $crate::r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
                 other + self
             }
         }
 
-        impl std::ops::Add<$ConcreteInput> for crate::r1cs::ops::LC<$ConcreteInput> {
-            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+        impl std::ops::Add<$ConcreteInput> for $crate::r1cs::ops::LC<$ConcreteInput> {
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, other: $ConcreteInput) -> Self::Output {
-                let other_term: crate::r1cs::ops::Term<$ConcreteInput> = other.into();
-                let mut combined_terms: Vec<crate::r1cs::ops::Term<$ConcreteInput>> =
+                let other_term: $crate::r1cs::ops::Term<$ConcreteInput> = other.into();
+                let mut combined_terms: Vec<$crate::r1cs::ops::Term<$ConcreteInput>> =
                     self.terms().to_vec();
                 combined_terms.push(other_term);
-                crate::r1cs::ops::LC::new(combined_terms)
+                $crate::r1cs::ops::LC::new(combined_terms)
             }
         }
 
         impl std::ops::Mul<i64> for $ConcreteInput {
-            type Output = crate::r1cs::ops::Term<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::Term<$ConcreteInput>;
 
             fn mul(self, rhs: i64) -> Self::Output {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), rhs)
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), rhs)
             }
         }
 
         impl std::ops::Mul<$ConcreteInput> for i64 {
-            type Output = crate::r1cs::ops::Term<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::Term<$ConcreteInput>;
 
             fn mul(self, rhs: $ConcreteInput) -> Self::Output {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(rhs), self)
+                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs), self)
             }
         }
 
         impl std::ops::Add<i64> for $ConcreteInput {
-            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, rhs: i64) -> Self::Output {
-                let term1 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1);
-                let term2 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Constant, rhs);
-                crate::r1cs::ops::LC::new(vec![term1, term2])
+                let term1 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1);
+                let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, rhs);
+                $crate::r1cs::ops::LC::new(vec![term1, term2])
             }
         }
 
         impl std::ops::Add<$ConcreteInput> for i64 {
-            type Output = crate::r1cs::ops::LC<$ConcreteInput>;
+            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
             fn add(self, rhs: $ConcreteInput) -> Self::Output {
-                let term1 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(rhs), 1);
-                let term2 = crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Constant, self);
-                crate::r1cs::ops::LC::new(vec![term1, term2])
+                let term1 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs), 1);
+                let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, self);
+                $crate::r1cs::ops::LC::new(vec![term1, term2])
             }
         }
     };
