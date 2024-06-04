@@ -529,8 +529,7 @@ impl<I: ConstraintInput> OffsetEqConstraint<I> {
     }
 }
 
-// TODO(sragss): More detailed documentation
-/// Represents full matrices (A, B, C) with `uniform_builder` being repeated `uniform_repeat` times and `uniform_repeat - 1` "cross-uniform" constraints.
+// TODO(sragss): Detailed documentation with wiki.
 pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
     uniform_builder: R1CSBuilder<F, I>,
 
@@ -718,13 +717,10 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             |lc: &LC<I>, flat_terms: &[F], inputs: &[Vec<F>], aux: &[Vec<F>], step_index: usize| {
                 if step_index >= self.uniform_repeat {
                     // Assume all terms are 0, other than the constant
-                    let sorted_terms = lc.sorted_terms();
-                    if let Some(term) = sorted_terms.last() {
-                        if matches!(term.0, Variable::Constant) {
-                            return from_i64(term.1);
-                        }
-                    }
-                    return F::zero();
+                    return lc.sorted_terms().last()
+                        .filter(|term| matches!(term.0, Variable::Constant))
+                        .map(|term| from_i64(term.1))
+                        .unwrap_or_else(F::zero)
                 }
 
                 lc.terms()
@@ -749,24 +745,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         for (constraint_index, constraint) in self.uniform_builder.constraints.iter().enumerate() {
             let _span = tracing::span!(tracing::Level::TRACE, "compute_constraint");
             let _enter = _span.enter();
-            let a_lc_flat_terms: Vec<F> = constraint
-                .a
-                .terms()
-                .iter()
-                .map(|term| from_i64::<F>(term.1))
-                .collect();
-            let b_lc_flat_terms: Vec<F> = constraint
-                .b
-                .terms()
-                .iter()
-                .map(|term| from_i64::<F>(term.1))
-                .collect();
-            let c_lc_flat_terms: Vec<F> = constraint
-                .c
-                .terms()
-                .iter()
-                .map(|term| from_i64::<F>(term.1))
-                .collect();
+            let a_lc_flat_terms: Vec<F> = constraint.a.terms_in_field();
+            let b_lc_flat_terms: Vec<F> = constraint.b.terms_in_field();
+            let c_lc_flat_terms: Vec<F> = constraint.c.terms_in_field();
 
             let z_start = constraint_index * self.uniform_repeat;
             let z_end = (constraint_index + 1) * self.uniform_repeat;
@@ -790,26 +771,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let _enter = _span.enter();
         let constraint = &self.offset_equality_constraint;
         let condition_lc_flat_terms: Vec<F> = constraint
-            .condition
-            .1
-            .terms()
-            .iter()
-            .map(|term| from_i64::<F>(term.1))
-            .collect();
-        let a_lc_flat_terms: Vec<F> = constraint
-            .a
-            .1
-            .terms()
-            .iter()
-            .map(|term| from_i64::<F>(term.1))
-            .collect();
-        let b_lc_flat_terms: Vec<F> = constraint
-            .b
-            .1
-            .terms()
-            .iter()
-            .map(|term| from_i64::<F>(term.1))
-            .collect();
+            .condition.1.terms_in_field();
+        let a_lc_flat_terms: Vec<F> = constraint.a.1.terms_in_field();
+        let b_lc_flat_terms: Vec<F> = constraint.b.1.terms_in_field();
         for step_index in 0..self.uniform_repeat {
             let index = uniform_constraint_rows + step_index;
 
