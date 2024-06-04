@@ -1,5 +1,5 @@
-///! Defines the Linear Combination (LC) object and associated operations.
-///! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
+//! Defines the Linear Combination (LC) object and associated operations.
+//! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
 use crate::poly::field::JoltField;
 use std::fmt::Debug;
