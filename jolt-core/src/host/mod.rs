@@ -32,7 +32,9 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
-use self::{analyze::ProgramSummary, toolchain::install_toolchain};
+use self::analyze::ProgramSummary;
+#[cfg(not(target_arch = "wasm32"))]
+use self::toolchain::install_toolchain;
 
 pub mod analyze;
 pub mod toolchain;
@@ -97,6 +99,7 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
+            #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
             self.save_linker();
 
