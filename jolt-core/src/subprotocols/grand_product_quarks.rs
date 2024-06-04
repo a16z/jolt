@@ -100,6 +100,7 @@ impl<C: CommitmentScheme> QuarkGrandProduct<C> for QuarkGrandProductProof<C> {
             }
         }
 
+        // f(1, ..., 1, 0) = P
         let product = f_evals[2 * v_length - 2];
         let f = DensePolynomial::new(f_evals);
 
