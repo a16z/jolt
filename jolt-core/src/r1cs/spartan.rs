@@ -443,7 +443,13 @@ mod test {
         let proof =
             UniformSpartanProof::<Fr, HyraxScheme<ark_bn254::G1Projective>>::prove_precommitted::<
                 SimpTestIn,
-            >(&gens, builder, &key, witness_segments, &mut prover_transcript)
+            >(
+                &gens,
+                builder,
+                &key,
+                witness_segments,
+                &mut prover_transcript,
+            )
             .unwrap();
 
         let mut verifier_transcript = ProofTranscript::new(b"stuff");

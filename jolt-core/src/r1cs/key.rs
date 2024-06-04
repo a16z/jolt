@@ -4,16 +4,10 @@ use sha3::Sha3_256;
 use crate::{
     poly::{eq_poly::EqPolynomial, field::JoltField},
     r1cs::special_polys::{eq_plus_one, SparsePolynomial},
-    utils::{
-        index_to_field_bitvector, mul_0_1_optimized,
-        thread::unsafe_allocate_zero_vec,
-    },
+    utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };
 
-use super::{
-    builder::CombinedUniformBuilder,
-    ops::ConstraintInput,
-};
+use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
 use digest::Digest;
 
 use crate::utils::math::Math;

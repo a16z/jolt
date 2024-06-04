@@ -1327,15 +1327,12 @@ mod tests {
         // OpFlags0[n] = OpFlags0[n + 1];
         // PcIn[n] + 4 = PcIn[n + 1]
         let non_uniform_constraint: OffsetEqConstraint<TestInputs> = OffsetEqConstraint::new(
-                (TestInputs::OpFlags0, true),
-                (TestInputs::OpFlags0, false),
-                (TestInputs::OpFlags0, true),
-            );
-        let combined_builder = CombinedUniformBuilder::construct(
-            uniform_builder,
-            num_steps,
-            non_uniform_constraint,
+            (TestInputs::OpFlags0, true),
+            (TestInputs::OpFlags0, false),
+            (TestInputs::OpFlags0, true),
         );
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraint);
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);

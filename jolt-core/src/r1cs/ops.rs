@@ -5,7 +5,6 @@ use crate::poly::field::JoltField;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 
-
 pub trait ConstraintInput:
     Clone
     + Copy
