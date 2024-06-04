@@ -39,12 +39,33 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
     /// First - Extends the evals of v to create an f poly, then commits to it and evals
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
     /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
-    fn prove_grand_product(
-        &mut self,
+    fn prove(
         v: &DensePolynomial<C::Field>,
         transcript: &mut ProofTranscript,
         setup: &C::Setup,
-    ) -> (QuarkGrandProductProof<C>, C::Field) {
+    ) -> (Self, C::Field);
+
+    /// Verifies the given grand product proof.
+    fn verify(
+        self,
+        claim: &C::Field,
+        transcript: &mut ProofTranscript,
+        n_rounds: usize,
+        setup: &C::Setup,
+    ) -> Result<(), QuarkError>;
+}
+
+
+impl<C: CommitmentScheme> QuarkGrandProduct<C> for QuarkGrandProductProof<C> {
+    /// Computes a grand product proof using the Section 5 technique from Quarks Paper
+    /// First - Extends the evals of v to create an f poly, then commits to it and evals
+    /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
+    /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
+    fn prove(
+        v: &DensePolynomial<C::Field>,
+        transcript: &mut ProofTranscript,
+        setup: &C::Setup,
+    ) -> (Self, C::Field) {
         let v_length = v.len();
         let v_variables = v_length.log_2();
 
@@ -53,20 +74,21 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
             v_variables.pow2(),
             "Only grand products on length power of two are currently supported"
         );
+
         let mut f_evals = vec![C::Field::zero(); 2 * v_length];
         let (evals, _) = v.split_evals(v.len());
         f_evals[..v_length].clone_from_slice(evals);
 
         // Todo (aleph_v) - problems when f length is equal to the usize
         for i in v_length..2 * v_length {
-            let i_shift_mod = (i << 1) % 2 * v_length;
+            let i_shift_mod = (i << 1) % (2 * v_length);
             // The transform follows the logic of the paper and to accumulate
             // the partial sums into the correct indices.
             f_evals[i] = f_evals[i_shift_mod] * f_evals[i_shift_mod + 1]
         }
 
         // We pull out the co-efficient which instantiate the lower d polys for the sumcheck
-        let mut f_1_x = Vec::new();
+        let mut f_1_x = vec![C::Field::zero(); f_evals.len()/2];
         f_1_x.clone_from_slice(&f_evals[v_length..]);
 
         let mut f_x_0 = Vec::new();
@@ -122,37 +144,37 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
         let mut challenge_0_x = vec![C::Field::zero()];
         challenge_0_x.append(&mut x.clone());
         let point_0_x = f.evaluate(&challenge_0_x);
-        let proof_0_x = C::prove(&f, &challenge_0_x, transcript);
+        let proof_0_x = C::prove(&setup,&f, &challenge_0_x, transcript);
         let claimed_eval_f_0_r = (point_0_x, proof_0_x);
 
         let mut challenge_1_x = vec![C::Field::one()];
         challenge_1_x.append(&mut x.clone());
         let point_1_x = f.evaluate(&challenge_1_x);
-        let proof_1_x = C::prove(&f, &challenge_1_x, transcript);
+        let proof_1_x = C::prove(&setup,&f, &challenge_1_x, transcript);
         let claimed_eval_f_1_r = (point_1_x, proof_1_x);
 
         let mut challenge_x_0 = x.clone();
         challenge_x_0.push(C::Field::zero());
         let point_x_0 = f.evaluate(&challenge_x_0);
-        let proof_x_0 = C::prove(&f, &challenge_x_0, transcript);
+        let proof_x_0 = C::prove(&setup,&f, &challenge_x_0, transcript);
         let claimed_eval_f_r_0 = (point_x_0, proof_x_0);
 
         let mut challenge_x_1 = x.clone();
         challenge_x_1.push(C::Field::one());
         let point_x_1 = f.evaluate(&challenge_x_1);
-        let proof_x_1 = C::prove(&f, &challenge_x_1, transcript);
+        let proof_x_1 = C::prove(&setup,&f, &challenge_x_1, transcript);
         let claimed_eval_f_r_1 = (point_x_1, proof_x_1);
 
         let mut challenge_sum = vec![C::Field::one(); x.len()];
         challenge_sum.push(C::Field::zero());
         // Here we don't calculate an eval because we should know it from the product recorded above
-        let sum_opening = C::prove(&f, &challenge_sum, transcript);
+        let sum_opening = C::prove(&setup,&f, &challenge_sum, transcript);
 
         // Here we don't calculate an eval because it should be equal to f(0, x) which is the first point we open
-        let v_opening_proof = C::prove(v, &x, transcript);
+        let v_opening_proof = C::prove(&setup,v, &x, transcript);
 
         (
-            QuarkGrandProductProof::<C> {
+            Self {
                 sumcheck_proof,
                 v_commitment,
                 f_commitment,
@@ -168,8 +190,8 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
     }
 
     /// Verifies the given grand product proof.
-    fn verify_grand_product(
-        proof: QuarkGrandProductProof<C>,
+    fn verify(
+        self,
         claim: &C::Field,
         transcript: &mut ProofTranscript,
         n_rounds: usize,
@@ -177,10 +199,10 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
     ) -> Result<(), QuarkError> {
         // First we append the claimed values for the commitment and the product
         transcript.append_scalar(b"grand product claim", claim);
-        proof
+        self
             .v_commitment
             .append_to_transcript(b"v commitment", transcript);
-        proof
+        self
             .f_commitment
             .append_to_transcript(b"f commitment", transcript);
 
@@ -189,7 +211,7 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
         let eq_poly = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         // To complete the sumcheck proof we have to validate that our polynomial openings match and are right.
-        let (expected, r) = proof
+        let (expected, r) = self
             .sumcheck_proof
             .verify(C::Field::zero(), n_rounds, 3, transcript)
             .map_err(|_| QuarkError::InvalidQuarkSumcheck)?;
@@ -198,62 +220,51 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
         let mut challenge_0_r = vec![C::Field::zero()];
         challenge_0_r.append(&mut r.clone());
         C::verify(
-            &proof.claimed_eval_f_0_r.1,
+            &self.claimed_eval_f_0_r.1,
             setup,
             transcript,
             &challenge_0_r,
-            &proof.claimed_eval_f_0_r.0,
-            &proof.f_commitment,
+            &self.claimed_eval_f_0_r.0,
+            &self.f_commitment,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
 
         let mut challenge_1_r = vec![C::Field::one()];
         challenge_1_r.append(&mut r.clone());
-        let point_f_1_r = &proof.claimed_eval_f_1_r.0;
+        let point_f_1_r = &self.claimed_eval_f_1_r.0;
         C::verify(
-            &proof.claimed_eval_f_1_r.1,
+            &self.claimed_eval_f_1_r.1,
             setup,
             transcript,
             &challenge_1_r,
             point_f_1_r,
-            &proof.f_commitment,
+            &self.f_commitment,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
 
         let mut challenge_r_0 = r.clone();
         challenge_r_0.push(C::Field::zero());
-        let point_f_r_0 = &proof.claimed_eval_f_r_0.0;
+        let point_f_r_0 = &self.claimed_eval_f_r_0.0;
         C::verify(
-            &proof.claimed_eval_f_r_0.1,
+            &self.claimed_eval_f_r_0.1,
             setup,
             transcript,
             &challenge_r_0,
             point_f_r_0,
-            &proof.f_commitment,
+            &self.f_commitment,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
 
         let mut challenge_r_1 = r.clone();
         challenge_r_1.push(C::Field::one());
-        let point_f_r_1 = &proof.claimed_eval_f_r_1.0;
+        let point_f_r_1 = &self.claimed_eval_f_r_1.0;
         C::verify(
-            &proof.claimed_eval_f_r_1.1,
+            &self.claimed_eval_f_r_1.1,
             setup,
             transcript,
             &challenge_r_1,
             point_f_r_1,
-            &proof.f_commitment,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        // Now we enforce that f(0, r) = v(r) via an opening proof on v
-        C::verify(
-            &proof.v_opening_proof,
-            setup,
-            transcript,
-            &r,
-            &proof.claimed_eval_f_0_r.0,
-            &proof.v_commitment,
+            &self.f_commitment,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
 
@@ -261,12 +272,23 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
         let mut challenge_sum = vec![C::Field::one(); r.len()];
         challenge_sum.push(C::Field::zero());
         C::verify(
-            &proof.sum_opening,
+            &self.sum_opening,
             setup,
             transcript,
             &challenge_sum,
             claim,
-            &proof.f_commitment,
+            &self.f_commitment,
+        )
+        .map_err(|_| QuarkError::InvalidOpeningProof)?;
+
+        // Now we enforce that f(0, r) = v(r) via an opening proof on v
+        C::verify(
+            &self.v_opening_proof,
+            setup,
+            transcript,
+            &r,
+            &self.claimed_eval_f_0_r.0,
+            &self.v_commitment,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
 
@@ -282,9 +304,40 @@ pub trait QuarkGrandProduct<C: CommitmentScheme>: Sized {
 }
 
 #[cfg(test)]
-mod grand_product_tests {
+mod quark_grand_product_tests {
     use super::*;
-    use ark_bn254::Fr;
-    use ark_std::test_rng;
-    use rand_core::RngCore;
+    use ark_bn254::{Bn254, Fr};
+    use crate::poly::commitment::zeromorph::*;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn quark_e2e() {
+        const LAYER_SIZE: usize = 1 << 8;
+
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9 as u64);
+        
+        let leaves: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+                .take(LAYER_SIZE)
+                .collect();
+        let known_product: Fr = leaves.iter().product();
+        let v = DensePolynomial::new(leaves);
+        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+
+        let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
+        let setup = srs.trim(1 << 9);
+
+        let (proof, product) = QuarkGrandProductProof::<Zeromorph<Bn254>>::prove(
+            &v,
+            &mut transcript,
+            &setup
+        );
+
+        assert_eq!(&product, &known_product, "Not the product of v");
+
+        // Note resetting the transcript is important
+        transcript = ProofTranscript::new(b"test_transcript");
+        let result = proof.verify(&product, &mut transcript, 8, &setup);
+
+        assert_eq!(result, Ok(()), "Proof doesn't verify");
+    }
 }
