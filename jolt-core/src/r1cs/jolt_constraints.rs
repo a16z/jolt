@@ -8,6 +8,8 @@ use super::{
     ops::{ConstraintInput, Variable, LC},
 };
 
+// TODO(#377): Dedupe OpFlags / CircuitFlags
+// TODO(#378): Explicit unit test for comparing OpFlags and InstructionFlags
 #[allow(non_camel_case_types)]
 #[derive(
     strum_macros::EnumIter,
@@ -65,11 +67,8 @@ pub enum JoltIn {
 
     LookupOutput,
 
-    // TODO(sragss): Dedupe OpFlags / CircuitFlags
-    // TODO(sragss): Explicit unit test for comparing OpFlags and InstructionFlags
-    // TODO(sragss): Better name for first.
     // Should match rv_trace.to_circuit_flags()
-    OpFlags0,
+    OpFlags_IsRs1Rs2,
     OpFlags_IsImm,
     OpFlags_IsLoad,
     OpFlags_IsStore,
@@ -78,7 +77,7 @@ pub enum JoltIn {
     OpFlags_LookupOutToRd,
     OpFlags_SignImm,
     OpFlags_IsConcat,
-    OpFlags_IsVirtualSequence, // TODO(moodlezoup / arasuarun): Better name?
+    OpFlags_IsVirtualSequence,
     OpFlags_IsVirtual,
 
     // Instruction Flags
@@ -129,7 +128,7 @@ impl JoltConstraints {
 impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltIn::OpFlags0, JoltIn::IF_MulHu);
+        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_MulHu);
         for flag in flags {
             cs.constrain_binary(flag);
         }
@@ -139,7 +138,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
 
         let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltIn::OpFlags0, real_pc, JoltIn::RAM_Read_RS1);
+        let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RAM_Read_RS1);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
             JoltIn::Bytecode_Imm,
@@ -297,7 +296,7 @@ mod tests {
 
         // rv_trace::to_circuit_flags
         // all zero for ADD
-        inputs[JoltIn::OpFlags0 as usize][0] = Fr::zero(); // first_operand = rs1
+        inputs[JoltIn::OpFlags_IsRs1Rs2 as usize][0] = Fr::zero(); // first_operand = rs1
         inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
         let aux = combined_builder.compute_aux(&inputs);
