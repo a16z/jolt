@@ -362,8 +362,8 @@ macro_rules! impl_r1cs_input_lc_conversions {
         }
 
         impl Into<($crate::r1cs::ops::Variable<$ConcreteInput>, i64)> for $ConcreteInput {
-            fn into(self) -> (crate::r1cs::ops::Variable<$ConcreteInput>, i64) {
-                (crate::r1cs::ops::Variable::Input(self), 1)
+            fn into(self) -> ($crate::r1cs::ops::Variable<$ConcreteInput>, i64) {
+                ($crate::r1cs::ops::Variable::Input(self), 1)
             }
         }
         impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
