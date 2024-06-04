@@ -384,18 +384,21 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         jolt_commitments.append_to_transcript(&mut transcript);
 
         let bytecode_proof = BytecodeProof::prove_memory_checking(
+            &preprocessing.generators,
             &preprocessing.bytecode,
             &jolt_polynomials.bytecode,
             &mut transcript,
         );
 
         let instruction_proof = InstructionLookupsProof::prove(
+            &preprocessing.generators,
             &jolt_polynomials.instruction_lookups,
             &preprocessing.instruction_lookups,
             &mut transcript,
         );
 
         let memory_proof = ReadWriteMemoryProof::prove(
+            &preprocessing.generators,
             &preprocessing.read_write_memory,
             &jolt_polynomials,
             &program_io,
@@ -405,6 +408,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         drop_in_background_thread(jolt_polynomials);
 
         let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
+            &preprocessing.generators,
             r1cs_builder,
             &spartan_key,
             witness_segments,

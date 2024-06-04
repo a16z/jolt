@@ -82,6 +82,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         HyraxCommitment::commit_slice(eval_slice, generators)
     }
     fn prove(
+        _setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
@@ -90,6 +91,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         HyraxOpeningProof::prove(poly, opening_point, 1, transcript)
     }
     fn batch_prove(
+        _setup: &Self::Setup,
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],

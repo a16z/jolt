@@ -101,6 +101,7 @@ where
     #[tracing::instrument(skip_all, name = "MemoryCheckingProver::prove_memory_checking")]
     /// Generates a memory checking proof for the given committed polynomials.
     fn prove_memory_checking(
+        generators: &C::Setup,
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
@@ -116,6 +117,7 @@ where
 
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
+            generators,
             polynomials,
             &r_read_write,
             &read_write_openings,
@@ -123,6 +125,7 @@ where
         );
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
+            generators,
             polynomials,
             &r_init_final,
             &init_final_openings,
