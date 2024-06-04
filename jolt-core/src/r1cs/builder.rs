@@ -1421,7 +1421,7 @@ mod tests {
         flat_witness.push(Fr::one());
         flat_witness.resize(flat_witness.len().next_power_of_two(), Fr::zero());
         let (mut builder_az, mut builder_bz, mut builder_cz) =
-            builder.compute_spartan(&witness_segments, &vec![]);
+            builder.compute_spartan(&witness_segments, &[]);
         builder_az.resize(key.num_rows_total(), Fr::zero());
         builder_bz.resize(key.num_rows_total(), Fr::zero());
         builder_cz.resize(key.num_rows_total(), Fr::zero());

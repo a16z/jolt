@@ -434,7 +434,7 @@ mod test {
             .iter()
             .map(|segment| segment.as_slice())
             .collect();
-        let gens = HyraxScheme::setup(&vec![CommitShape::new(16, BatchType::Small)]);
+        let gens = HyraxScheme::setup(&[CommitShape::new(16, BatchType::Small)]);
         let witness_commitment =
             HyraxScheme::batch_commit(&witness_segments_ref, &gens, BatchType::Small);
 

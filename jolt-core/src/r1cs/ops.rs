@@ -350,45 +350,52 @@ impl<I: ConstraintInput> std::ops::Add<Variable<I>> for LC<I> {
 #[macro_export]
 macro_rules! impl_r1cs_input_lc_conversions {
     ($ConcreteInput:ty) => {
-        impl Into<usize> for $ConcreteInput {
-            fn into(self) -> usize {
-                self as usize
+        impl From<usize> for $ConcreteInput {
+            fn from(val: usize) -> Self {
+                val as Self
             }
         }
-        impl Into<$crate::r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> $crate::r1cs::ops::Variable<$ConcreteInput> {
-                crate::r1cs::ops::Variable::Input(self)
-            }
-        }
-
-        impl Into<(crate::r1cs::ops::Variable<$ConcreteInput>, i64)> for $ConcreteInput {
-            fn into(self) -> (crate::r1cs::ops::Variable<$ConcreteInput>, i64) {
-                (crate::r1cs::ops::Variable::Input(self), 1)
-            }
-        }
-        impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1)
+        impl From<$crate::r1cs::ops::Variable<$ConcreteInput>> for $ConcreteInput {
+            fn from(val: $crate::r1cs::ops::Variable<$ConcreteInput>) -> Self {
+                match val {
+                    $crate::r1cs::ops::Variable::Input(self) => self,
+                    _ => panic!("Invalid conversion"),
+                }
             }
         }
 
-        impl Into<crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
-            fn into(self) -> crate::r1cs::ops::Term<$ConcreteInput> {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self.0), self.1)
+        impl From<($crate::r1cs::ops::Variable<$ConcreteInput>, i64)> for $ConcreteInput {
+            fn from(val: (crate::r1cs::ops::Variable<$ConcreteInput>, i64)) -> Self {
+                match val.0 {
+                    crate::r1cs::ops::Variable::Input(self) => self,
+                    _ => panic!("Invalid conversion"),
+                }
+            }
+        }
+        impl From<crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
+            fn from(val: crate::r1cs::ops::Term<$ConcreteInput>) -> Self {
+                match val.0 {
+                    crate::r1cs::ops::Variable::Input(self) => self,
+                    _ => panic!("Invalid conversion"),
+                }
             }
         }
 
-        impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
-            fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
-                crate::r1cs::ops::Term(crate::r1cs::ops::Variable::Input(self), 1).into()
+        impl From<crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
+            fn from(val: crate::r1cs::ops::Term<$ConcreteInput>) -> Self {
+                (val.0.into(), val.1)
             }
         }
 
-        impl Into<crate::r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
-            fn into(self) -> crate::r1cs::ops::LC<$ConcreteInput> {
-                let terms: Vec<crate::r1cs::ops::Term<$ConcreteInput>> =
-                    self.into_iter().map(Into::into).collect();
-                crate::r1cs::ops::LC::new(terms)
+        impl From<crate::r1cs::ops::LC<$ConcreteInput>> for $ConcreteInput {
+            fn from(val: crate::r1cs::ops::LC<$ConcreteInput>) -> Self {
+                val.0.into()
+            }
+        }
+
+        impl From<crate::r1cs::ops::LC<$ConcreteInput>> for Vec<$ConcreteInput> {
+            fn from(val: crate::r1cs::ops::LC<$ConcreteInput>) -> Self {
+                val.0.into_iter().map(|term| term.into()).collect()
             }
         }
 
