@@ -113,7 +113,7 @@ impl<C: CommitmentScheme> QuarkGrandProduct<C> for QuarkGrandProductProof<C> {
 
         // Now we do the sumcheck using the prove arbitrary
 
-        // First insatiate our polynomials
+        // First instantiate our polynomials
         let tau = transcript.challenge_vector(b"element for eval poly", v_variables);
         let evals = DensePolynomial::new(EqPolynomial::evals(&tau));
         let mut sumcheck_polys = vec![
