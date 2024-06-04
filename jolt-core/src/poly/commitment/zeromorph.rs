@@ -5,6 +5,8 @@ use std::{iter, marker::PhantomData};
 
 use crate::msm::VariableBaseMSM;
 use crate::poly::{self, dense_mlpoly::DensePolynomial, unipoly::UniPoly};
+use crate::utils::mul_0_1_optimized;
+use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{
     errors::ProofVerifyError,
     transcript::{AppendToTranscript, ProofTranscript},
@@ -17,6 +19,7 @@ use itertools::izip;
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 use rand_core::{CryptoRng, RngCore};
 use std::sync::Arc;
+use tracing::trace_span;
 
 use rayon::prelude::*;
 
@@ -136,11 +139,7 @@ where
     let q_hat = quotients.iter().enumerate().fold(
         vec![P::ScalarField::zero(); 1 << num_vars],
         |mut q_hat, (idx, q)| {
-            #[cfg(feature = "multicore")]
             let q_hat_iter = q_hat[(1 << num_vars) - (1 << idx)..].par_iter_mut();
-
-            #[cfg(not(feature = "multicore"))]
-            let q_hat_iter = q_hat[(1 << num_vars) - (1 << idx)..].iter_mut();
             q_hat_iter.zip(&q.coeffs).for_each(|(q_hat, q)| {
                 *q_hat += scalar * q;
             });
@@ -243,6 +242,7 @@ where
         ))
     }
 
+    #[tracing::instrument(skip_all, name = "Zeromorph::open")]
     pub fn open(
         pp: &ZeromorphProverKey<P>,
         poly: &DensePolynomial<P::ScalarField>,
@@ -268,7 +268,6 @@ where
         assert_eq!(remainder, *eval);
 
         // Compute the multilinear quotients q_k = q_k(X_0, ..., X_{k-1})
-        // TODO: multicore gate
         let q_k_com: Vec<P::G1Affine> = quotients
             .par_iter()
             .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())
@@ -323,6 +322,7 @@ where
         })
     }
 
+    #[tracing::instrument(skip_all, name = "Zeromorph::batch_open")]
     fn batch_open(
         pk: &ZeromorphProverKey<P>,
         polynomials: &[&DensePolynomial<P::ScalarField>],
@@ -333,24 +333,43 @@ where
         let num_vars = point.len();
         let n = 1 << num_vars;
 
-        //TODO(pat): produce powers in parallel
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
         let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
+        let mut rho_powers = vec![P::ScalarField::one()];
+        for i in 1..polynomials.len() {
+            rho_powers.push(rho_powers[i - 1] * rho);
+        }
+
         // Compute batching of unshifted polynomials f_i, and batched eval v_i:
-        let mut scalar = P::ScalarField::one();
-        let (f_batched, batched_evaluation) = (0..polynomials.len()).fold(
-            (
-                DensePolynomial::new(vec![P::ScalarField::zero(); n]),
-                P::ScalarField::zero(),
-            ),
-            |(mut f_batched, mut batched_evaluation), i| {
-                f_batched += &(polynomials[i].clone() * scalar);
-                batched_evaluation += scalar * evals[i];
-                scalar *= rho;
-                (f_batched, batched_evaluation)
-            },
-        );
-        let poly = DensePolynomial::new(f_batched.Z.clone());
+        let batched_evaluation = rho_powers
+            .iter()
+            .zip(evals.iter())
+            .map(|(scalar, eval)| *scalar * eval)
+            .sum();
+
+        let span = trace_span!("f_batched");
+        let enter = span.enter();
+        let num_chunks = rayon::current_num_threads().next_power_of_two();
+        let chunk_size = n / num_chunks;
+        let f_batched = (0..num_chunks)
+            .into_par_iter()
+            .flat_map_iter(|chunk_index| {
+                let mut chunk = unsafe_allocate_zero_vec::<P::ScalarField>(chunk_size);
+                for (coeff, poly) in rho_powers.iter().zip(polynomials.iter()) {
+                    for (rlc, poly_eval) in chunk
+                        .iter_mut()
+                        .zip(poly.evals_ref()[chunk_index * chunk_size..].iter())
+                    {
+                        *rlc += mul_0_1_optimized(poly_eval, coeff);
+                    }
+                }
+                chunk
+            })
+            .collect::<Vec<_>>();
+        drop(enter);
+        drop(span);
+
+        let poly = DensePolynomial::new(f_batched);
         Zeromorph::<P>::open(pk, &poly, point, &batched_evaluation, transcript).unwrap()
     }
 
@@ -491,23 +510,21 @@ where
         _batch_type: BatchType,
     ) -> Vec<Self::Commitment> {
         // TODO: assert lengths are valid
-        #[cfg(feature = "multicore")]
-        let iter = evals.par_iter();
-        #[cfg(not(feature = "multicore"))]
-        let iter = evals.iter();
-        iter.map(|evals| {
-            assert!(
-                gens.0.commit_pp.g1_powers().len() > evals.len(),
-                "COMMIT KEY LENGTH ERROR {}, {}",
-                gens.0.commit_pp.g1_powers().len(),
-                evals.len()
-            );
-            ZeromorphCommitment(
-                UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
-                    .unwrap(),
-            )
-        })
-        .collect::<Vec<_>>()
+        evals
+            .par_iter()
+            .map(|evals| {
+                assert!(
+                    gens.0.commit_pp.g1_powers().len() > evals.len(),
+                    "COMMIT KEY LENGTH ERROR {}, {}",
+                    gens.0.commit_pp.g1_powers().len(),
+                    evals.len()
+                );
+                ZeromorphCommitment(
+                    UnivariateKZG::commit(&gens.0.commit_pp, &UniPoly::from_coeff(evals.to_vec()))
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
     }
 
     fn commit_slice(evals: &[Self::Field], setup: &Self::Setup) -> Self::Commitment {

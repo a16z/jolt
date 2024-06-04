@@ -57,6 +57,7 @@ impl<F: JoltField> UniPoly<F> {
 
     /// Divide self by another polynomial, and returns the
     /// quotient and remainder.
+    #[tracing::instrument(skip_all, name = "UniPoly::divide_with_remainder")]
     pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
         if self.is_zero() {
             Some((Self::zero(), Self::zero()))
@@ -114,6 +115,7 @@ impl<F: JoltField> UniPoly<F> {
         (0..self.coeffs.len()).map(|i| self.coeffs[i]).sum()
     }
 
+    #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
     pub fn evaluate(&self, r: &F) -> F {
         let mut eval = self.coeffs[0];
         let mut power = *r;
@@ -171,10 +173,7 @@ impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: F) -> Self {
-        #[cfg(feature = "multicore")]
         let iter = self.coeffs.into_par_iter();
-        #[cfg(not(feature = "multicore"))]
-        let iter = self.coeffs.iter();
         Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
     }
 }
@@ -183,10 +182,7 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: &F) -> Self {
-        #[cfg(feature = "multicore")]
         let iter = self.coeffs.into_par_iter();
-        #[cfg(not(feature = "multicore"))]
-        let iter = self.coeffs.iter();
         Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
     }
 }
