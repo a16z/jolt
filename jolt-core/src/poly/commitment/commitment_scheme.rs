@@ -63,11 +63,13 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
         Self::batch_commit(&slices, setup, batch_type)
     }
     fn prove(
+        setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field], // point at which the polynomial is evaluated
         transcript: &mut ProofTranscript,
     ) -> Self::Proof;
     fn batch_prove(
+        setup: &Self::Setup,
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],

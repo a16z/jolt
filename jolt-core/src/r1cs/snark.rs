@@ -399,12 +399,18 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
 
     #[tracing::instrument(skip_all, name = "R1CSProof::prove")]
     pub fn prove(
+        generators: &C::Setup,
         key: UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
     ) -> Result<Self, SpartanError> {
         // TODO(sragss): Fiat shamir (relevant) commitments
-        let proof = UniformSpartanProof::prove_precommitted(&key, witness_segments, transcript)?;
+        let proof = UniformSpartanProof::prove_precommitted(
+            generators,
+            &key,
+            witness_segments,
+            transcript,
+        )?;
         Ok(R1CSProof::<F, C> { proof, key })
     }
 
