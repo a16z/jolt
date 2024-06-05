@@ -1,8 +1,8 @@
 #![allow(clippy::len_without_is_empty)]
 
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::field::JoltField;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::math::Math;
@@ -212,7 +212,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .zip(poly_Cz.evals_ref())
                 .enumerate()
             {
-                if *az * bz != *cz {
+                if *az * *bz != *cz {
                     let padded_segment_len = segmented_padded_witness.segment_len;
                     let error_segment_index = i / padded_segment_len;
                     let error_step_index = i % padded_segment_len;

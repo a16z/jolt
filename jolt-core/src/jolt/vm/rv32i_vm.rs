@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -160,12 +160,14 @@ mod tests {
 
     use std::collections::HashSet;
 
+    use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
     use crate::poly::commitment::commitment_scheme::CommitmentScheme;
     use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::hyrax::HyraxScheme;
+    use crate::poly::commitment::mock::MockCommitScheme;
     use crate::poly::commitment::zeromorph::Zeromorph;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
@@ -201,7 +203,24 @@ mod tests {
     }
 
     #[test]
+    fn fib_e2e_mock() {
+        type Field = ark_bn254::Fr;
+        fib_e2e::<Field, MockCommitScheme<Field>>();
+    }
+
+    #[test]
     fn fib_e2e_hyrax() {
+        fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
+    }
+
+    // TODO(sragss): Finish Binius.
+    // #[test]
+    // fn fib_e2e_binius() {
+    //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
+    //     fib_e2e::<Field, MockCommitScheme<Field>>();
+    // }
+
+    fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("fibonacci-guest");

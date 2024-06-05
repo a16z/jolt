@@ -1,5 +1,5 @@
+use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -1256,7 +1256,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]

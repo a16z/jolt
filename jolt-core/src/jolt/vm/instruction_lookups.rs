@@ -1,4 +1,3 @@
-use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
@@ -7,6 +6,7 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
 
+use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
@@ -436,8 +436,8 @@ where
     fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
         let (a, v, t, flag) = *inputs;
         match flag {
-            Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + F::one() - val,
-            None => t * gamma.square() + v * *gamma + a - tau,
+            Some(val) => val * (t * gamma.square() + v * *gamma + a - *tau) + F::one() - val,
+            None => t * gamma.square() + v * *gamma + a - *tau,
         }
     }
 
@@ -464,7 +464,8 @@ where
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+                            - *tau
                     })
                     .collect();
                 let write_fingerprints = read_fingerprints
@@ -486,7 +487,7 @@ where
                         let v = &subtable[i];
                         // let t = F::zero();
                         // Compute h(a,v,t) where t == 0
-                        mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(v, gamma) + *a - *tau
                     })
                     .collect();
 
@@ -1251,7 +1252,7 @@ where
                     running
                         .iter()
                         .zip(new.iter())
-                        .map(|(r, n)| *r + n)
+                        .map(|(r, n)| *r + *n)
                         .collect()
                 },
             );
@@ -1353,7 +1354,7 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<usize>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<usize>> = ops

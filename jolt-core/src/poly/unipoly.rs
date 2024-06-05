@@ -1,8 +1,8 @@
 #![allow(dead_code)]
+use crate::field::JoltField;
 use std::cmp::Ordering;
 use std::ops::{AddAssign, Index, IndexMut, Mul, MulAssign};
 
-use crate::poly::field::JoltField;
 use crate::utils::gaussian_elimination::gaussian_elimination;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
@@ -57,6 +57,7 @@ impl<F: JoltField> UniPoly<F> {
 
     /// Divide self by another polynomial, and returns the
     /// quotient and remainder.
+    #[tracing::instrument(skip_all, name = "UniPoly::divide_with_remainder")]
     pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
         if self.is_zero() {
             Some((Self::zero(), Self::zero()))
@@ -76,7 +77,7 @@ impl<F: JoltField> UniPoly<F> {
                 quotient[cur_q_degree] = cur_q_coeff;
 
                 for (i, div_coeff) in divisor.coeffs.iter().enumerate() {
-                    remainder.coeffs[cur_q_degree + i] -= &(cur_q_coeff * div_coeff);
+                    remainder.coeffs[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
                 }
                 while let Some(true) = remainder.coeffs.last().map(|c| c == &F::zero()) {
                     remainder.coeffs.pop();
@@ -114,12 +115,13 @@ impl<F: JoltField> UniPoly<F> {
         (0..self.coeffs.len()).map(|i| self.coeffs[i]).sum()
     }
 
+    #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
     pub fn evaluate(&self, r: &F) -> F {
         let mut eval = self.coeffs[0];
         let mut power = *r;
         for i in 1..self.coeffs.len() {
             eval += power * self.coeffs[i];
-            power *= r;
+            power *= *r;
         }
         eval
     }
@@ -141,7 +143,7 @@ impl<F: JoltField> UniPoly<F> {
     }
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c += rhs);
+        self.coeffs.par_iter_mut().for_each(|c| *c += *rhs);
     }
 }
 
@@ -158,7 +160,7 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
         let ordering = self.coeffs.len().cmp(&rhs.coeffs.len());
         #[allow(clippy::disallowed_methods)]
         for (lhs, rhs) in self.coeffs.iter_mut().zip(&rhs.coeffs) {
-            *lhs += rhs;
+            *lhs += *rhs;
         }
         if matches!(ordering, Ordering::Less) {
             self.coeffs
@@ -171,10 +173,7 @@ impl<F: JoltField> Mul<F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: F) -> Self {
-        #[cfg(feature = "multicore")]
         let iter = self.coeffs.into_par_iter();
-        #[cfg(not(feature = "multicore"))]
-        let iter = self.coeffs.iter();
         Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
     }
 }
@@ -183,11 +182,8 @@ impl<F: JoltField> Mul<&F> for UniPoly<F> {
     type Output = Self;
 
     fn mul(self, rhs: &F) -> Self {
-        #[cfg(feature = "multicore")]
         let iter = self.coeffs.into_par_iter();
-        #[cfg(not(feature = "multicore"))]
-        let iter = self.coeffs.iter();
-        Self::from_coeff(iter.map(|c| c * rhs).collect::<Vec<_>>())
+        Self::from_coeff(iter.map(|c| c * *rhs).collect::<Vec<_>>())
     }
 }
 
@@ -207,7 +203,7 @@ impl<F: JoltField> IndexMut<usize> for UniPoly<F> {
 
 impl<F: JoltField> MulAssign<&F> for UniPoly<F> {
     fn mul_assign(&mut self, rhs: &F) {
-        self.coeffs.par_iter_mut().for_each(|c| *c *= rhs);
+        self.coeffs.par_iter_mut().for_each(|c| *c *= *rhs);
     }
 }
 
@@ -315,7 +311,7 @@ mod tests {
             let mut result = vec![F::zero(); ours.degree() + other.degree() + 1];
             for (i, self_coeff) in ours.coeffs.iter().enumerate() {
                 for (j, other_coeff) in other.coeffs.iter().enumerate() {
-                    result[i + j] += &(*self_coeff * other_coeff);
+                    result[i + j] += *self_coeff * *other_coeff;
                 }
             }
             UniPoly::from_coeff(result)

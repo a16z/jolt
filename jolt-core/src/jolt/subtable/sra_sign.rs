@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -85,8 +85,10 @@ impl<F: JoltField, const WORD_SIZE: usize> LassoSubtable<F> for SraSignSubtable<
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
+        field::binius::BiniusField,
         jolt::subtable::{sra_sign::SraSignSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
@@ -96,5 +98,12 @@ mod test {
       SraSignSubtable<Fr, 32>,
       Fr,
       256
+    );
+
+    subtable_materialize_mle_parity_test!(
+        sra_sign_binius_materialize_mle_parity,
+        SraSignSubtable<BiniusField<BinaryField128b>, 32>,
+        BiniusField<BinaryField128b>,
+        1 << 16
     );
 }

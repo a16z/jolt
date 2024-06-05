@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use rayon::prelude::*;
 
 pub struct SparsePolynomial<F: JoltField> {

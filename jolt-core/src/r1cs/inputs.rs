@@ -14,7 +14,7 @@ use crate::{
 use super::key::UniformSpartanKey;
 use super::spartan::{SpartanError, UniformSpartanProof};
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::MEMORY_OPS_PER_INSTRUCTION;
 use rayon::prelude::*;

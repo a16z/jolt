@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use core::{str::FromStr, u8};
+use core::str::FromStr;
 use std::{
     fs::{self, File},
     io::{self, Write},
@@ -22,11 +22,11 @@ use strum::EnumCount;
 use tracer::ELFInstruction;
 
 use crate::{
+    field::JoltField,
     jolt::{
         instruction::{mulh::MULHInstruction, VirtualInstructionSequence},
         vm::{bytecode::BytecodeRow, rv32i_vm::RV32I, JoltTraceStep},
     },
-    poly::field::JoltField,
     utils::thread::unsafe_allocate_zero_vec,
 };
 

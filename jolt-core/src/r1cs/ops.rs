@@ -1,7 +1,7 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 
@@ -94,7 +94,7 @@ impl<I: ConstraintInput> LC<I> {
 
         let mut var_index = 0;
         let mut result = F::zero();
-        for (_term_index, term) in self.terms().iter().enumerate() {
+        for term in self.terms().iter() {
             match term.0 {
                 Variable::Input(_) => {
                     result += values[var_index] * from_i64::<F>(term.1);
@@ -488,7 +488,7 @@ macro_rules! enum_range {
     ($start:path, $end:path) => {{
         let mut arr = [$start; ($end as usize) - ($start as usize) + 1];
         for i in ($start as usize)..=($end as usize) {
-            arr[i - ($start as usize)] = unsafe { std::mem::transmute::<usize, _>(i) };
+            arr[i - ($start as usize)] = i.into();
         }
         arr
     }};
@@ -524,6 +524,7 @@ macro_rules! enum_range {
 macro_rules! input_range {
     ($start:path, $end:path) => {{
         let mut arr = [Variable::Input($start); ($end as usize) - ($start as usize) + 1];
+        #[allow(clippy::missing_transmute_annotations)]
         for i in ($start as usize)..=($end as usize) {
             arr[i - ($start as usize)] =
                 Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
@@ -533,7 +534,9 @@ macro_rules! input_range {
     ($start:path, $end:path) => {{
         let mut arr =
             [$crate::r1cs::ops::Variable::Input($start); ($end as usize) - ($start as usize) + 1];
+        #[allow(clippy::missing_transmute_annotations)]
         for i in ($start as usize)..=($end as usize) {
+            #[allow(clippy::missing_transmute_annotations)]
             arr[i - ($start as usize)] =
                 Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
         }

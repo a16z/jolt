@@ -2,7 +2,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha3::Sha3_256;
 
 use crate::{
-    poly::{eq_poly::EqPolynomial, field::JoltField},
+    field::JoltField,
+    poly::eq_poly::EqPolynomial,
     r1cs::special_polys::{eq_plus_one, SparsePolynomial},
     utils::{index_to_field_bitvector, mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };

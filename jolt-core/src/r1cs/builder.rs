@@ -1,5 +1,5 @@
 use crate::{
-    poly::field::JoltField,
+    field::JoltField,
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{mul_0_1_optimized, thread::unsafe_allocate_zero_vec},
 };

@@ -1,6 +1,6 @@
 use crate::{
-    assert_static_aux_index, impl_r1cs_input_lc_conversions, input_range, jolt::vm::rv32i_vm::C,
-    poly::field::JoltField,
+    assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
+    jolt::vm::rv32i_vm::C,
 };
 
 use super::{

@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
 use crate::r1cs::builder::{OffsetEqConstraint, R1CSConstraintBuilder};
 use crate::r1cs::jolt_constraints::{

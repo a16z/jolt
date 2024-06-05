@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -85,10 +85,7 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
             };
 
             let shift_x_by_k = (m..chunk_length)
-                .enumerate()
-                .map(|(_, j)| {
-                    F::from_u64(1_u64 << (b * CHUNK_INDEX + j - k)).unwrap() * x[b - 1 - j]
-                })
+                .map(|j| F::from_u64(1_u64 << (b * CHUNK_INDEX + j - k)).unwrap() * x[b - 1 - j])
                 .fold(F::zero(), |acc, val: F| acc + val);
 
             result += eq_term * shift_x_by_k;
@@ -100,8 +97,10 @@ impl<F: JoltField, const CHUNK_INDEX: usize, const WORD_SIZE: usize> LassoSubtab
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
+        field::binius::BiniusField,
         jolt::subtable::{srl::SrlSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
@@ -110,4 +109,11 @@ mod test {
     subtable_materialize_mle_parity_test!(srl_materialize_mle_parity1, SrlSubtable<Fr, 1, 32>, Fr, 1 << 10);
     subtable_materialize_mle_parity_test!(srl_materialize_mle_parity2, SrlSubtable<Fr, 2, 32>, Fr, 1 << 10);
     subtable_materialize_mle_parity_test!(srl_materialize_mle_parity3, SrlSubtable<Fr, 3, 32>, Fr, 1 << 10);
+
+    subtable_materialize_mle_parity_test!(
+        srl_binius_materialize_mle_parity3,
+        SrlSubtable<BiniusField<BinaryField128b>, 3, 32>,
+        BiniusField<BinaryField128b>,
+        1 << 16
+    );
 }
