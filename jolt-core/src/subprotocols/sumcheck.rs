@@ -1,8 +1,8 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
+use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::field::JoltField;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;

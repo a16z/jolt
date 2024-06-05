@@ -3,8 +3,9 @@
 
 use std::{iter, marker::PhantomData};
 
+use crate::field;
 use crate::msm::VariableBaseMSM;
-use crate::poly::{self, dense_mlpoly::DensePolynomial, unipoly::UniPoly};
+use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{
@@ -84,7 +85,7 @@ fn compute_multilinear_quotients<P: Pairing>(
     point: &[P::ScalarField],
 ) -> (Vec<UniPoly<P::ScalarField>>, P::ScalarField)
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let num_var = poly.get_num_vars();
     assert_eq!(num_var, point.len());
@@ -109,7 +110,7 @@ where
                 .par_iter_mut()
                 .zip(remainder_hi)
                 .for_each(|(r_lo, r_hi)| {
-                    *r_lo += (*r_hi - r_lo as &_) * x_i;
+                    *r_lo += (*r_hi - *r_lo) * *x_i;
                 });
 
             remainder.truncate(1 << (num_var - 1 - i));
@@ -127,7 +128,7 @@ fn compute_batched_lifted_degree_quotient<P: Pairing>(
     y_challenge: &P::ScalarField,
 ) -> (UniPoly<P::ScalarField>, usize)
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let num_vars = quotients.len();
 
@@ -141,9 +142,9 @@ where
         |mut q_hat, (idx, q)| {
             let q_hat_iter = q_hat[(1 << num_vars) - (1 << idx)..].par_iter_mut();
             q_hat_iter.zip(&q.coeffs).for_each(|(q_hat, q)| {
-                *q_hat += scalar * q;
+                *q_hat += scalar * *q;
             });
-            scalar *= y_challenge;
+            scalar *= *y_challenge;
             q_hat
         },
     );
@@ -158,7 +159,7 @@ fn eval_and_quotient_scalars<P: Pairing>(
     challenges: &[P::ScalarField],
 ) -> (P::ScalarField, (Vec<P::ScalarField>, Vec<P::ScalarField>))
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let num_vars = challenges.len();
 
@@ -173,7 +174,7 @@ where
             .rev()
             .skip(1)
             .scan(P::ScalarField::one(), |acc, pow_x| {
-                *acc *= pow_x;
+                *acc *= *pow_x;
                 Some(*acc)
             })
             .collect::<Vec<_>>();
@@ -190,7 +191,7 @@ where
         batch_inversion(&mut v_denoms);
         v_denoms
             .iter()
-            .map(|v_denom| v_numer * v_denom)
+            .map(|v_denom| v_numer * *v_denom)
             .collect::<Vec<_>>()
     };
 
@@ -206,7 +207,7 @@ where
     .map(|(power_of_y, offset_of_x, square_of_x, v_i, v_j, u_i)| {
         (
             -(power_of_y * offset_of_x),
-            -(z_challenge * (square_of_x * v_j - *u_i * v_i)),
+            -(z_challenge * (square_of_x * *v_j - *u_i * *v_i)),
         )
     })
     .unzip();
@@ -221,7 +222,7 @@ pub struct Zeromorph<P: Pairing> {
 
 impl<P: Pairing> Zeromorph<P>
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"Zeromorph"
@@ -301,7 +302,7 @@ where
         let mut f = UniPoly::from_coeff(poly.Z.clone());
         f *= &z_challenge;
         f += &q_hat;
-        f[0] += eval_scalar * eval;
+        f[0] += eval_scalar * *eval;
         quotients
             .into_iter()
             .zip(degree_check_q_scalars)
@@ -344,7 +345,7 @@ where
         let batched_evaluation = rho_powers
             .iter()
             .zip(evals.iter())
-            .map(|(scalar, eval)| *scalar * eval)
+            .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
         let span = trace_span!("f_batched");
@@ -389,7 +390,7 @@ where
         let (batched_eval, batched_commitment) = evals.iter().zip(commitments.iter()).fold(
             (P::ScalarField::zero(), P::G1::zero()),
             |(mut batched_evaluation, mut batched_commitment), (opening, commitment)| {
-                batched_evaluation += scalar * opening;
+                batched_evaluation += scalar * *opening;
                 batched_commitment += commitment.0 * scalar;
                 scalar *= rho;
                 (batched_evaluation, batched_commitment)
@@ -442,7 +443,7 @@ where
                 *scalar += zm_poly_q_scalar;
             });
         let scalars = [
-            vec![P::ScalarField::one(), z_challenge, eval_scalar * eval],
+            vec![P::ScalarField::one(), z_challenge, eval_scalar * *eval],
             q_scalars,
         ]
         .concat();
@@ -473,7 +474,7 @@ where
 
 impl<P: Pairing> CommitmentScheme for Zeromorph<P>
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     type Field = P::ScalarField;
     type Setup = (ZeromorphProverKey<P>, ZeromorphVerifierKey<P>);

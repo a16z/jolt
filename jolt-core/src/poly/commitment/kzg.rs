@@ -1,5 +1,6 @@
+use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::{field::JoltField, unipoly::UniPoly};
+use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};

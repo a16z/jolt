@@ -1,7 +1,8 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::{
-    poly::{dense_mlpoly::DensePolynomial, field::JoltField},
+    field::JoltField,
+    poly::dense_mlpoly::DensePolynomial,
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, ProofTranscript},

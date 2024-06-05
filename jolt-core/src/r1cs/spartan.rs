@@ -1,8 +1,8 @@
 #![allow(clippy::len_without_is_empty)]
 
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -273,7 +273,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .zip(poly_Cz.evals_ref())
                 .enumerate()
             {
-                if *az * bz != *cz {
+                if *az * *bz != *cz {
                     let padded_segment_len = segmented_padded_witness.segment_len;
                     let error_segment_index = i / padded_segment_len;
                     let error_step_index = i % padded_segment_len;
@@ -351,7 +351,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             let compute_eval_table_sparse_single = |small_M: &Vec<(usize, usize, F)>| -> Vec<F> {
                 let mut small_M_evals = vec![F::zero(); key.shape_single_step.num_vars + 1];
                 for (row, col, val) in small_M.iter() {
-                    small_M_evals[*col] += eq_rx_con[*row] * val;
+                    small_M_evals[*col] += eq_rx_con[*row] * *val;
                 }
                 small_M_evals
             };

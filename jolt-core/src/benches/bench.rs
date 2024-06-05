@@ -1,3 +1,4 @@
+use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
@@ -5,7 +6,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
-use crate::poly::field::JoltField;
 use ark_bn254::{Bn254, Fr, G1Projective};
 use serde::Serialize;
 

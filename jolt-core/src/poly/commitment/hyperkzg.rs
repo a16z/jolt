@@ -11,12 +11,13 @@ use super::{
     commitment_scheme::{BatchType, CommitmentScheme},
     kzg::{KZGProverKey, KZGVerifierKey, UnivariateKZG},
 };
+use crate::field;
 use crate::poly::commitment::commitment_scheme::CommitShape;
 use crate::utils::mul_0_1_optimized;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::{
     msm::VariableBaseMSM,
-    poly::{self, commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
+    poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
     utils::{
         errors::ProofVerifyError,
         transcript::{AppendToTranscript, ProofTranscript},
@@ -92,7 +93,7 @@ fn kzg_open_no_rem<P: Pairing>(
     pk: &HyperKZGProverKey<P>,
 ) -> P::G1Affine
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let h = compute_witness_polynomial::<P>(f, u);
     UnivariateKZG::commit(&pk.kzg_pk, &UniPoly::from_coeff(h)).unwrap()
@@ -103,7 +104,7 @@ fn compute_witness_polynomial<P: Pairing>(
     u: P::ScalarField,
 ) -> Vec<P::ScalarField>
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let d = f.len();
 
@@ -117,11 +118,11 @@ where
 }
 
 fn scalar_vector_muladd<P: Pairing>(
-    a: &mut Vec<P::ScalarField>,
-    v: &Vec<P::ScalarField>,
+    a: &mut [P::ScalarField],
+    v: &[P::ScalarField],
     s: P::ScalarField,
 ) where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     assert!(a.len() >= v.len());
     for i in 0..v.len() {
@@ -134,7 +135,7 @@ fn kzg_compute_batch_polynomial<P: Pairing>(
     q_powers: Vec<P::ScalarField>,
 ) -> Vec<P::ScalarField>
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let k = f.len(); // Number of polynomials we're batching
 
@@ -154,7 +155,7 @@ fn kzg_open_batch<P: Pairing>(
     transcript: &mut ProofTranscript,
 ) -> (Vec<P::G1Affine>, Vec<Vec<P::ScalarField>>)
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let k = f.len();
     let t = u.len();
@@ -199,14 +200,14 @@ where
 // vk is hashed in transcript already, so we do not add it here
 fn kzg_verify_batch<P: Pairing>(
     vk: &HyperKZGVerifierKey<P>,
-    C: &Vec<P::G1Affine>,
-    W: &Vec<P::G1Affine>,
-    u: &Vec<P::ScalarField>,
-    v: &Vec<Vec<P::ScalarField>>,
+    C: &[P::G1Affine],
+    W: &[P::G1Affine],
+    u: &[P::ScalarField],
+    v: &[Vec<P::ScalarField>],
     transcript: &mut ProofTranscript,
 ) -> bool
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     let k = C.len();
     let t = u.len();
@@ -258,7 +259,7 @@ where
         .map(|v_i| {
             v_i.into_par_iter()
                 .zip(q_powers.par_iter())
-                .map(|(a, b)| *a * b)
+                .map(|(a, b)| *a * *b)
                 .sum()
         })
         .collect::<Vec<P::ScalarField>>();
@@ -291,7 +292,7 @@ pub struct HyperKZG<P: Pairing> {
 
 impl<P: Pairing> HyperKZG<P>
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     pub fn protocol_name() -> &'static [u8] {
         b"HyperKZG"
@@ -456,7 +457,7 @@ where
         let batched_evaluation = rho_powers
             .iter()
             .zip(evals.iter())
-            .map(|(scalar, eval)| *scalar * eval)
+            .map(|(scalar, eval)| *scalar * *eval)
             .sum();
 
         let span = trace_span!("f_batched");
@@ -501,7 +502,7 @@ where
         let (batched_eval, batched_commitment) = evals.iter().zip(commitments.iter()).fold(
             (P::ScalarField::zero(), P::G1::zero()),
             |(mut batched_evaluation, mut batched_commitment), (opening, commitment)| {
-                batched_evaluation += scalar * opening;
+                batched_evaluation += scalar * *opening;
                 batched_commitment += commitment.0 * scalar;
                 scalar *= rho;
                 (batched_evaluation, batched_commitment)
@@ -520,7 +521,7 @@ where
 
 impl<P: Pairing> CommitmentScheme for HyperKZG<P>
 where
-    <P as Pairing>::ScalarField: poly::field::JoltField,
+    <P as Pairing>::ScalarField: field::JoltField,
 {
     type Field = P::ScalarField;
     type Setup = (HyperKZGProverKey<P>, HyperKZGVerifierKey<P>);

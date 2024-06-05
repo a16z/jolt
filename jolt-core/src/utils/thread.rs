@@ -1,6 +1,6 @@
 use std::thread::{self, JoinHandle};
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 
 pub fn drop_in_background_thread<T>(data: T)
 where
