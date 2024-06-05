@@ -8,6 +8,7 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use itertools::Itertools;
 use thiserror::Error;
+use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct QuarkGrandProductProof<C: CommitmentScheme> {
@@ -76,8 +77,11 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
         let mut products = Vec::<C::Field>::new();
 
         for v in v_polys.iter() {
-            let (f, p) = v_into_f::<C>(v, &mut sumcheck_polys);
+            let (f, f_1_r, f_r_0, f_r_1, p) = v_into_f::<C>(v);
             f_polys.push(f);
+            sumcheck_polys.push(f_1_r);
+            sumcheck_polys.push(f_r_0);
+            sumcheck_polys.push(f_r_1);
             products.push(p);
         }
 
@@ -109,9 +113,9 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
             let mut sum = C::Field::zero();
 
             for i in 0..(vals.len() / 3) {
-                sum += r_combination[i] * eval * (vals[i * 3] - vals[3 * i + 1] * vals[3 * i + 2]);
+                sum += r_combination[i] * (vals[i * 3] - vals[3 * i + 1] * vals[3 * i + 2]);
             }
-            sum
+            sum * eval
         };
 
         // Now run the sumcheck in arbitrary mode
@@ -315,10 +319,11 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
     }
 }
 
+// Computes f and slices of f for the sumcheck
+#[allow(clippy::type_complexity)]
 fn v_into_f<C: CommitmentScheme>(
     v: &DensePolynomial<C::Field>,
-    sumcheck_polys: &mut Vec<DensePolynomial<C::Field>>,
-) -> (DensePolynomial<C::Field>, C::Field) {
+) -> (DensePolynomial<C::Field>, DensePolynomial<C::Field>, DensePolynomial<C::Field>, DensePolynomial<C::Field>, C::Field) {
     let v_length = v.len();
     let mut f_evals = vec![C::Field::zero(); 2 * v_length];
     let (evals, _) = v.split_evals(v.len());
@@ -353,15 +358,7 @@ fn v_into_f<C: CommitmentScheme>(
     let product = f_evals[2 * v_length - 2];
     let f = DensePolynomial::new(f_evals);
 
-    // Here we push the sumcheck polys into the vector which is accumulating them.
-    // Order is important and defined by the closure of our prove arbitrary sumcheck
-    // NOTE - I don't love the pattern of passing in the mut vector but clippy fails
-    //        when we return 4 polys and a field element as its too complex of a type
-    sumcheck_polys.push(f_1_r);
-    sumcheck_polys.push(f_r_0);
-    sumcheck_polys.push(f_r_1);
-
-    (f, product)
+    (f, f_1_r, f_r_0, f_r_1, product)
 }
 
 // Open a set of polynomials at a point and return the openings and proof
@@ -371,7 +368,8 @@ fn open_and_prove<C: CommitmentScheme>(
     setup: &C::Setup,
     transcript: &mut ProofTranscript,
 ) -> (Vec<C::Field>, C::BatchedProof) {
-    let openings: Vec<C::Field> = f_polys.iter().map(|f| f.evaluate(x)).collect();
+    let chis = EqPolynomial::evals(x);
+    let openings: Vec<C::Field> = f_polys.iter().map(|f| f.evaluate_at_chi_low_optimized(&chis)).collect();
     // Batch proof requires  &[&]
     let borrowed: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
 
