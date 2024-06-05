@@ -1660,8 +1660,7 @@ mod grand_product_tests {
                 }
             })
             .take(LAYER_SIZE)
-            .collect::<Vec<_>>()
-            .into();
+            .collect::<Vec<_>>();
             DynamicDensityGrandProductLayer::Dense(layer)
         })
         .take(BATCH_SIZE)

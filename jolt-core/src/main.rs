@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use jolt_core::benches::{
-    bench::{benchmarks, BenchType},
+    bench::{benchmarks, BenchType, PCSType},
     sum_timer::CumulativeTimingLayer,
 };
 
@@ -29,6 +29,9 @@ struct TraceArgs {
     /// Output formats
     #[clap(short, long, value_enum)]
     format: Option<Vec<Format>>,
+
+    #[clap(long, value_enum)]
+    pcs: PCSType,
 
     /// Type of benchmark to run
     #[clap(long, value_enum)]
@@ -113,7 +116,7 @@ fn trace(args: TraceArgs) {
     }
 
     tracing_subscriber::registry().with(layers).init();
-    for (span, bench) in benchmarks(args.name, args.num_cycles, None, None).into_iter() {
+    for (span, bench) in benchmarks(args.pcs, args.name, args.num_cycles, None, None).into_iter() {
         span.to_owned().in_scope(|| {
             bench();
             tracing::info!("Bench Complete");

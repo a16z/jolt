@@ -8,9 +8,13 @@
 #![feature(iter_next_chunk)]
 #![allow(long_running_const_eval)]
 
+#[cfg(feature = "host")]
 pub mod benches;
-pub mod field;
+
+#[cfg(feature = "host")]
 pub mod host;
+
+pub mod field;
 pub mod jolt;
 pub mod lasso;
 pub mod msm;

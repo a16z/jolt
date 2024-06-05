@@ -2,7 +2,7 @@
 name = "jolt-core"
 version = "0.1.0"
 authors = [
-    # author of original Spartan paper and code base 
+    # author of original Spartan paper and code base
     "Srinath Setty <srinath@microsoft.com>",
     # authors who contributed to the Arkworks Spartan fork
     "Zhenfei Zhang <zhenfei.zhang@hotmail.com>",
@@ -57,11 +57,15 @@ tracing-flame = "0.2.0"
 tracing-subscriber = "0.3.18"
 tracing-texray = "0.2.0"
 target-lexicon = "0.12.14"
-reqwest = { version = "0.12.3", features = ["json", "blocking"] }
+reqwest = { version = "0.12.3", features = [
+    "json",
+    "blocking",
+], optional = true }
 dirs = "5.0.1"
 eyre = "0.6.12"
 indicatif = "0.17.8"
-tokio = "1.37.0"
+memory-stats = "1.0.0"
+tokio = { version = "1.37.0", optional = true }
 
 common = { path = "../common" }
 tracer = { path = "../tracer" }
@@ -89,6 +93,7 @@ default = [
     "ark-ff/parallel",
     "ark-std/parallel",
     "ark-ff/asm",
-    "multicore",
+    "host",
+    "rayon",
 ]
-multicore = ["rayon"]
+host = ["dep:reqwest", "dep:tokio"]

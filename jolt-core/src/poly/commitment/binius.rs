@@ -53,6 +53,7 @@ impl CommitmentScheme for Binius128Scheme {
         todo!()
     }
     fn prove(
+        _none: &Self::Setup,
         _poly: &DensePolynomial<Self::Field>,
         _opening_point: &[Self::Field],
         _transcript: &mut ProofTranscript,
@@ -60,6 +61,7 @@ impl CommitmentScheme for Binius128Scheme {
         todo!()
     }
     fn batch_prove(
+        _none: &Self::Setup,
         _polynomials: &[&DensePolynomial<Self::Field>],
         _opening_point: &[Self::Field],
         _openings: &[Self::Field],

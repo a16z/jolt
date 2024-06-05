@@ -61,6 +61,10 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
         Self(self.0.square())
     }
 
+    fn inverse(&self) -> Option<Self> {
+        self.0.invert().map(Self)
+    }
+
     fn from_bytes(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), Self::NUM_BYTES);
 

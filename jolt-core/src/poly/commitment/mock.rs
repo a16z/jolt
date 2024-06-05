@@ -70,6 +70,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         }
     }
     fn prove(
+        _setup: &Self::Setup,
         _poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field],
         _transcript: &mut ProofTranscript,
@@ -79,6 +80,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
         }
     }
     fn batch_prove(
+        _setup: &Self::Setup,
         _polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         _openings: &[Self::Field],

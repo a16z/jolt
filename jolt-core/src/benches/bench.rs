@@ -1,9 +1,20 @@
+use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
-use ark_bn254::G1Projective;
+use crate::poly::commitment::zeromorph::Zeromorph;
+use ark_bn254::{Bn254, Fr, G1Projective};
 use serde::Serialize;
+
+#[derive(Debug, Copy, Clone, clap::ValueEnum)]
+pub enum PCSType {
+    Hyrax,
+    Zeromorph,
+    HyperKZG,
+}
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
 pub enum BenchType {
@@ -15,30 +26,60 @@ pub enum BenchType {
 
 #[allow(unreachable_patterns)] // good errors on new BenchTypes
 pub fn benchmarks(
+    pcs_type: PCSType,
     bench_type: BenchType,
     _num_cycles: Option<usize>,
     _memory_size: Option<usize>,
     _bytecode_size: Option<usize>,
 ) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    match bench_type {
-        BenchType::Sha2 => sha2(),
-        BenchType::Sha3 => sha3(),
-        BenchType::Sha2Chain => sha2chain(),
-        BenchType::Fibonacci => fibonacci(),
-        _ => panic!("BenchType does not have a mapping"),
+    match pcs_type {
+        PCSType::Hyrax => match bench_type {
+            BenchType::Sha2 => sha2::<Fr, HyraxScheme<G1Projective>>(),
+            BenchType::Sha3 => sha3::<Fr, HyraxScheme<G1Projective>>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, HyraxScheme<G1Projective>>(),
+            BenchType::Fibonacci => fibonacci::<Fr, HyraxScheme<G1Projective>>(),
+            _ => panic!("BenchType does not have a mapping"),
+        },
+        PCSType::Zeromorph => match bench_type {
+            BenchType::Sha2 => sha2::<Fr, Zeromorph<Bn254>>(),
+            BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254>>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, Zeromorph<Bn254>>(),
+            BenchType::Fibonacci => fibonacci::<Fr, Zeromorph<Bn254>>(),
+            _ => panic!("BenchType does not have a mapping"),
+        },
+        PCSType::HyperKZG => match bench_type {
+            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Fibonacci => fibonacci::<Fr, HyperKZG<Bn254>>(),
+            _ => panic!("BenchType does not have a mapping"),
+        },
+        _ => panic!("PCS Type does not have a mapping"),
     }
 }
 
-fn fibonacci() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("fibonacci-guest", &9u32)
+fn fibonacci<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    prove_example::<u32, PCS, F>("fibonacci-guest", &9u32)
 }
 
-fn sha2() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha2-guest", &vec![5u8; 2048])
+fn sha2<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    prove_example::<Vec<u8>, PCS, F>("sha2-guest", &vec![5u8; 2048])
 }
 
-fn sha3() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
-    prove_example("sha3-guest", &vec![5u8; 2048])
+fn sha3<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    prove_example::<Vec<u8>, PCS, F>("sha3-guest", &vec![5u8; 2048])
 }
 
 #[allow(dead_code)]
@@ -52,10 +93,14 @@ fn serialize_and_print_size(name: &str, item: &impl ark_serialize::CanonicalSeri
     println!("{:<30} : {:.3} MB", name, file_size_mb);
 }
 
-fn prove_example<T: Serialize>(
+fn prove_example<T: Serialize, PCS, F>(
     example_name: &str,
     input: &T,
-) -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+) -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
     let mut tasks = Vec::new();
     let mut program = host::Program::new(example_name);
     program.set_input(input);
@@ -64,18 +109,15 @@ fn prove_example<T: Serialize>(
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace, circuit_flags) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<
-            ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
-            HyraxScheme<ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>>,
-        > = RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
-                io_device,
-                trace,
-                circuit_flags,
-                preprocessing.clone(),
-            );
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
+            io_device,
+            trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
 
         // println!("Proof sizing:");
         // serialize_and_print_size("jolt_commitments", &jolt_commitments);
@@ -101,7 +143,11 @@ fn prove_example<T: Serialize>(
     tasks
 }
 
-fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
+fn sha2chain<F, PCS>() -> Vec<(tracing::Span, Box<dyn FnOnce()>)>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
     let mut tasks = Vec::new();
     let mut program = host::Program::new("sha2-chain-guest");
     program.set_input(&[5u8; 32]);
@@ -111,18 +157,15 @@ fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace, circuit_flags) = program.trace();
 
-        let preprocessing: crate::jolt::vm::JoltPreprocessing<
-            ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
-            HyraxScheme<ark_ec::short_weierstrass::Projective<ark_bn254::g1::Config>>,
-        > = RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
+        let preprocessing: crate::jolt::vm::JoltPreprocessing<F, PCS> =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 22);
 
-        let (jolt_proof, jolt_commitments) =
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
-                io_device,
-                trace,
-                circuit_flags,
-                preprocessing.clone(),
-            );
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, PCS, C, M>>::prove(
+            io_device,
+            trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(
             verification_result.is_ok(),

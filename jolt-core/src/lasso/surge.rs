@@ -90,12 +90,14 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
+        generators: &PCS::Setup,
         polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         E_poly_openings: &Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         PCS::batch_prove(
+            generators,
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             opening_point,
             E_poly_openings,
@@ -153,6 +155,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
+        generators: &PCS::Setup,
         polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         openings: &Self,
@@ -172,6 +175,7 @@ where
         .concat();
 
         PCS::batch_prove(
+            generators,
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -249,12 +253,14 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
+        generators: &PCS::Setup,
         polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         PCS::batch_prove(
+            generators,
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
@@ -598,6 +604,7 @@ where
 
         let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            generators,
             &polynomials,
             &r_z,
             &sumcheck_openings,
@@ -613,7 +620,7 @@ where
         };
 
         let memory_checking =
-            SurgeProof::prove_memory_checking(preprocessing, &polynomials, transcript);
+            SurgeProof::prove_memory_checking(generators, preprocessing, &polynomials, transcript);
 
         SurgeProof {
             commitment,

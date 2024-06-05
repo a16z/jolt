@@ -33,6 +33,10 @@ impl JoltField for ark_bn254::Fr {
         <Self as ark_ff::Field>::square(self)
     }
 
+    fn inverse(&self) -> Option<Self> {
+        <Self as ark_ff::Field>::inverse(self)
+    }
+
     fn from_bytes(bytes: &[u8]) -> Self {
         assert_eq!(bytes.len(), Self::NUM_BYTES);
         ark_bn254::Fr::from_le_bytes_mod_order(bytes)
