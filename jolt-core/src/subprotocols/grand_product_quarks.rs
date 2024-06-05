@@ -7,8 +7,8 @@ use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use itertools::Itertools;
-use thiserror::Error;
 use rayon::prelude::*;
+use thiserror::Error;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct QuarkGrandProductProof<C: CommitmentScheme> {
@@ -323,7 +323,13 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
 #[allow(clippy::type_complexity)]
 fn v_into_f<C: CommitmentScheme>(
     v: &DensePolynomial<C::Field>,
-) -> (DensePolynomial<C::Field>, DensePolynomial<C::Field>, DensePolynomial<C::Field>, DensePolynomial<C::Field>, C::Field) {
+) -> (
+    DensePolynomial<C::Field>,
+    DensePolynomial<C::Field>,
+    DensePolynomial<C::Field>,
+    DensePolynomial<C::Field>,
+    C::Field,
+) {
     let v_length = v.len();
     let mut f_evals = vec![C::Field::zero(); 2 * v_length];
     let (evals, _) = v.split_evals(v.len());
@@ -369,7 +375,10 @@ fn open_and_prove<C: CommitmentScheme>(
     transcript: &mut ProofTranscript,
 ) -> (Vec<C::Field>, C::BatchedProof) {
     let chis = EqPolynomial::evals(x);
-    let openings: Vec<C::Field> = f_polys.iter().map(|f| f.evaluate_at_chi_low_optimized(&chis)).collect();
+    let openings: Vec<C::Field> = f_polys
+        .iter()
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis))
+        .collect();
     // Batch proof requires  &[&]
     let borrowed: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
 
