@@ -6,7 +6,7 @@ use ark_serialize::*;
 
 // ax^2 + bx + c stored as vec![c,b,a]
 // ax^3 + bx^2 + cx + d stored as vec![d,c,b,a]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UniPoly<F> {
     coeffs: Vec<F>,
 }

@@ -62,8 +62,7 @@ fn prove_example<T: Serialize>(
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            program.trace();
+        let (io_device, trace, circuit_flags) = program.trace();
 
         let preprocessing: crate::jolt::vm::JoltPreprocessing<
             ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
@@ -73,9 +72,7 @@ fn prove_example<T: Serialize>(
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
                 io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
+                trace,
                 circuit_flags,
                 preprocessing.clone(),
             );
@@ -112,8 +109,7 @@ fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
 
     let task = move || {
         let (bytecode, memory_init) = program.decode();
-        let (io_device, bytecode_trace, instruction_trace, memory_trace, circuit_flags) =
-            program.trace();
+        let (io_device, trace, circuit_flags) = program.trace();
 
         let preprocessing: crate::jolt::vm::JoltPreprocessing<
             ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>,
@@ -123,9 +119,7 @@ fn sha2chain() -> Vec<(tracing::Span, Box<dyn FnOnce()>)> {
         let (jolt_proof, jolt_commitments) =
             <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::prove(
                 io_device,
-                bytecode_trace,
-                memory_trace,
-                instruction_trace,
+                trace,
                 circuit_flags,
                 preprocessing.clone(),
             );

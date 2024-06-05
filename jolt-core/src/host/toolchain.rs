@@ -1,5 +1,6 @@
 use std::{
     fs::{self, read_to_string, File},
+    future::Future,
     io::Write,
     path::PathBuf,
 };
@@ -11,6 +12,8 @@ use reqwest::Client;
 use tokio::runtime::Runtime;
 
 const TOOLCHAIN_TAG: &str = "nightly-3c5f0ec3f4f98a2d211061a83bade8d62c6a6135";
+const DOWNLOAD_RETRIES: usize = 5;
+const DELAY_BASE_MS: u64 = 500;
 
 /// Installs the toolchain if it is not already
 pub fn install_toolchain() -> Result<()> {
@@ -22,11 +25,37 @@ pub fn install_toolchain() -> Result<()> {
     let toolchain_url = toolchain_url();
 
     let rt = Runtime::new().unwrap();
-    rt.block_on(download_toolchain(&client, &toolchain_url))?;
+    rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
+        download_toolchain(&client, &toolchain_url)
+    }))?;
     unpack_toolchain()?;
     link_toolchain()?;
 
     write_tag_file()
+}
+
+async fn retry_times<F, T, E>(times: usize, base_ms: u64, f: F) -> Result<T>
+where
+    F: Fn() -> E,
+    E: Future<Output = Result<T>>,
+{
+    for i in 0..times {
+        println!("Attempt {}/{}", i + 1, times);
+        match f().await {
+            Ok(t) => return Ok(t),
+            Err(e) => {
+                let timeout = delay_timeout(i, base_ms);
+                println!("Toolchain download error {i}/{times}: {e}. Retrying in {timeout}ms");
+                tokio::time::sleep(std::time::Duration::from_millis(timeout)).await;
+            }
+        }
+    }
+    Err(eyre!("failed after {} retries", times))
+}
+
+fn delay_timeout(i: usize, base_ms: u64) -> u64 {
+    let timeout = 2u64.pow(i as u32) * base_ms;
+    rand::random::<u64>() % timeout
 }
 
 fn write_tag_file() -> Result<()> {

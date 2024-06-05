@@ -1,4 +1,5 @@
-use crate::field::JoltField;
+use crate::poly::field::JoltField;
+use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -10,7 +11,7 @@ use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
-use crate::utils::{mul_0_1_optimized, split_poly_flagged};
+use crate::utils::mul_0_1_optimized;
 use crate::{
     lasso::memory_checking::{MemoryCheckingProof, MemoryCheckingProver, MemoryCheckingVerifier},
     poly::{
@@ -20,16 +21,15 @@ use crate::{
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
         unipoly::{CompressedUniPoly, UniPoly},
     },
-    subprotocols::{
-        grand_product::{BatchedGrandProductCircuit, GrandProductCircuit},
-        sumcheck::SumcheckInstanceProof,
-    },
+    subprotocols::sumcheck::SumcheckInstanceProof,
     utils::{
         errors::ProofVerifyError,
         math::Math,
         transcript::{AppendToTranscript, ProofTranscript},
     },
 };
+
+use super::JoltTraceStep;
 
 /// All polynomials associated with Jolt instruction lookups.
 pub struct InstructionPolynomials<F, C>
@@ -229,7 +229,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, C>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
 
         let dim_openings = polynomials
             .dim
@@ -348,7 +348,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::open")]
     fn open(polynomials: &InstructionPolynomials<F, C>, opening_point: &[F]) -> Self {
         // All of these evaluations share the lagrange basis polynomials.
-        let chis = EqPolynomial::new(opening_point.to_vec()).evals();
+        let chis = EqPolynomial::evals(opening_point);
         let final_openings = polynomials
             .final_cts
             .par_iter()
@@ -420,6 +420,7 @@ where
     InstructionSet: JoltInstructionSet,
     Subtables: JoltSubtableSet<F>,
 {
+    type ReadWriteGrandProduct = ToggledBatchedGrandProduct<F>;
     type Preprocessing = InstructionLookupsPreprocessing<F>;
     type ReadWriteOpenings = InstructionReadWriteOpenings<F>;
     type InitFinalOpenings = InstructionFinalOpenings<F, Subtables>;
@@ -440,7 +441,10 @@ where
         polynomials: &InstructionPolynomials<F, CS>,
         gamma: &F,
         tau: &F,
-    ) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    ) -> (
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
+    ) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
 
@@ -462,19 +466,16 @@ where
                     .iter()
                     .map(|read_fingerprint| *read_fingerprint + gamma_squared)
                     .collect();
-                [
-                    DensePolynomial::new(read_fingerprints),
-                    DensePolynomial::new(write_fingerprints),
-                ]
+                [read_fingerprints, write_fingerprints]
             })
             .collect();
 
-        let init_final_leaves: Vec<DensePolynomial<F>> = preprocessing
+        let init_final_leaves: Vec<Vec<F>> = preprocessing
             .materialized_subtables
             .par_iter()
             .enumerate()
             .flat_map_iter(|(subtable_index, subtable)| {
-                let init_fingerprints: Vec<F> = (0..M)
+                let init_leaves: Vec<F> = (0..M)
                     .map(|i| {
                         let a = &F::from_u64(i as u64).unwrap();
                         let v = &subtable[i];
@@ -484,29 +485,30 @@ where
                     })
                     .collect();
 
-                let final_leaves: Vec<DensePolynomial<F>> = preprocessing
-                    .subtable_to_memory_indices[subtable_index]
+                let final_leaves: Vec<Vec<F>> = preprocessing.subtable_to_memory_indices
+                    [subtable_index]
                     .iter()
                     .map(|memory_index| {
                         let final_cts = &polynomials.final_cts[*memory_index];
-                        let final_fingerprints = (0..M)
+                        (0..M)
                             .map(|i| {
-                                init_fingerprints[i]
-                                    + mul_0_1_optimized(&final_cts[i], &gamma_squared)
+                                init_leaves[i] + mul_0_1_optimized(&final_cts[i], &gamma_squared)
                             })
-                            .collect();
-                        DensePolynomial::new(final_fingerprints)
+                            .collect()
                     })
                     .collect();
 
                 let mut polys = Vec::with_capacity(C + 1);
-                polys.push(DensePolynomial::new(init_fingerprints));
+                polys.push(init_leaves);
                 polys.extend(final_leaves);
                 polys
             })
             .collect();
 
-        (read_write_leaves, init_final_leaves)
+        let memory_flags =
+            Self::memory_flag_indices(preprocessing, &polynomials.instruction_flag_bitvectors);
+
+        ((memory_flags, read_write_leaves), init_final_leaves)
     }
 
     fn interleave_hashes(
@@ -606,66 +608,6 @@ where
                     "Multiset hashes don't match"
                 );
             });
-    }
-
-    /// Overrides default implementation to handle flags
-    #[tracing::instrument(skip_all, name = "InstructionLookups::read_write_grand_product")]
-    fn read_write_grand_product(
-        preprocessing: &InstructionLookupsPreprocessing<F>,
-        polynomials: &InstructionPolynomials<F, CS>,
-        read_write_leaves: Vec<DensePolynomial<F>>,
-    ) -> (BatchedGrandProductCircuit<F>, Vec<F>) {
-        assert_eq!(read_write_leaves.len(), 2 * preprocessing.num_memories);
-
-        let _span = trace_span!("InstructionLookups: construct circuits");
-        let _enter = _span.enter();
-
-        let memory_flag_polys =
-            Self::memory_flag_polys(preprocessing, &polynomials.instruction_flag_bitvectors);
-
-        let read_write_circuits = read_write_leaves
-            .par_iter()
-            .enumerate()
-            .map(|(i, leaves_poly)| {
-                // Split while cloning to save on future cloning in GrandProductCircuit
-                let memory_index = i / 2;
-                let flag: &DensePolynomial<F> = &memory_flag_polys[memory_index];
-                let (toggled_leaves_l, toggled_leaves_r) = split_poly_flagged(leaves_poly, flag);
-                GrandProductCircuit::new_split(
-                    DensePolynomial::new(toggled_leaves_l),
-                    DensePolynomial::new(toggled_leaves_r),
-                )
-            })
-            .collect::<Vec<GrandProductCircuit<F>>>();
-
-        drop(_enter);
-        drop(_span);
-
-        let _span = trace_span!("InstructionLookups: compute hashes");
-        let _enter = _span.enter();
-
-        let read_write_hashes: Vec<F> = read_write_circuits
-            .par_iter()
-            .map(|circuit| circuit.evaluate())
-            .collect();
-
-        drop(_enter);
-        drop(_span);
-
-        let _span = trace_span!("InstructionLookups: the rest");
-        let _enter = _span.enter();
-
-        // Prover has access to memory_flag_polys, which are uncommitted, but verifier can derive from instruction_flag commitments.
-        let batched_circuits = BatchedGrandProductCircuit::new_batch_flags(
-            read_write_circuits,
-            memory_flag_polys,
-            read_write_leaves,
-        );
-
-        drop(_enter);
-        drop(_span);
-
-        (batched_circuits, read_write_hashes)
     }
 
     fn protocol_name() -> &'static [u8] {
@@ -870,7 +812,7 @@ where
         let trace_length = polynomials.dim[0].len();
         let r_eq = transcript.challenge_vector(b"Jolt instruction lookups", trace_length.log_2());
 
-        let eq_evals: Vec<F> = EqPolynomial::new(r_eq.to_vec()).evals();
+        let eq_evals: Vec<F> = EqPolynomial::evals(&r_eq);
         let mut eq_poly = DensePolynomial::new(eq_evals);
         let num_rounds = trace_length.log_2();
 
@@ -974,7 +916,7 @@ where
     #[tracing::instrument(skip_all, name = "InstructionLookups::polynomialize")]
     pub fn polynomialize(
         preprocessing: &InstructionLookupsPreprocessing<F>,
-        ops: &Vec<Option<InstructionSet>>,
+        ops: &Vec<JoltTraceStep<InstructionSet>>,
     ) -> InstructionPolynomials<F, CS> {
         let m: usize = ops.len().next_power_of_two();
 
@@ -993,9 +935,9 @@ where
                 let mut subtable_lookups = vec![F::zero(); m];
 
                 for (j, op) in ops.iter().enumerate() {
-                    if let Some(op) = op {
+                    if let Some(instr) = &op.instruction_lookup {
                         let memories_used = &preprocessing.instruction_to_memory_indices
-                            [InstructionSet::enum_index(op)];
+                            [InstructionSet::enum_index(instr)];
                         if memories_used.contains(&memory_index) {
                             let memory_address = access_sequence[j];
                             debug_assert!(memory_address < M);
@@ -1043,8 +985,8 @@ where
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
         for (j, op) in ops.iter().enumerate() {
-            if let Some(op) = op {
-                instruction_flag_bitvectors[InstructionSet::enum_index(op)][j] = 1;
+            if let Some(instr) = &op.instruction_lookup {
+                instruction_flag_bitvectors[InstructionSet::enum_index(instr)][j] = 1;
             }
         }
 
@@ -1358,33 +1300,34 @@ where
         memory_flags
     }
 
-    /// Converts instruction flag polynomials into memory flag polynomials. A memory flag polynomial
-    /// can be computed by summing over the instructions that use that memory: if a given execution step
-    /// accesses the memory, it must be executing exactly one of those instructions.
-    #[tracing::instrument(skip_all)]
-    fn memory_flag_polys(
+    /// Converts instruction flag bitvectors into a sparse representation of the corresponding memory flags.
+    /// A memory flag polynomial can be computed by summing over the instructions that use that memory: if a
+    /// given execution step accesses the memory, it must be executing exactly one of those instructions.
+    fn memory_flag_indices(
         preprocessing: &InstructionLookupsPreprocessing<F>,
         instruction_flag_bitvectors: &[Vec<u64>],
-    ) -> Vec<DensePolynomial<F>> {
+    ) -> Vec<Vec<usize>> {
         let m = instruction_flag_bitvectors[0].len();
 
         (0..preprocessing.num_memories)
             .into_par_iter()
             .map(|memory_index| {
-                let mut memory_flag_bitvector = vec![0u64; m];
-                for instruction_index in 0..Self::NUM_INSTRUCTIONS {
-                    if preprocessing.instruction_to_memory_indices[instruction_index]
-                        .contains(&memory_index)
-                    {
-                        memory_flag_bitvector
-                            .iter_mut()
-                            .zip(&instruction_flag_bitvectors[instruction_index])
-                            .for_each(|(memory_flag, instruction_flag)| {
-                                *memory_flag += instruction_flag
-                            });
+                let instruction_indices: Vec<_> = (0..Self::NUM_INSTRUCTIONS)
+                    .filter(|instruction_index| {
+                        preprocessing.instruction_to_memory_indices[*instruction_index]
+                            .contains(&memory_index)
+                    })
+                    .collect();
+                let mut memory_flag_indices = vec![];
+                for i in 0..m {
+                    for instruction_index in instruction_indices.iter() {
+                        if instruction_flag_bitvectors[*instruction_index][i] != 0 {
+                            memory_flag_indices.push(i);
+                            break;
+                        }
                     }
                 }
-                DensePolynomial::from_u64(&memory_flag_bitvector)
+                memory_flag_indices
             })
             .collect()
     }
@@ -1408,8 +1351,8 @@ where
         let chunked_indices: Vec<Vec<usize>> = ops
             .iter()
             .map(|op| {
-                if let Some(op) = op {
-                    op.to_indices(C, log_M)
+                if let Some(instr) = &op.instruction_lookup {
+                    instr.to_indices(C, log_M)
                 } else {
                     vec![0; C]
                 }
@@ -1443,12 +1386,12 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "InstructionLookupsProof::compute_lookup_outputs")]
-    fn compute_lookup_outputs(instructions: &Vec<Option<InstructionSet>>) -> Vec<F> {
+    fn compute_lookup_outputs(instructions: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<F> {
         instructions
             .par_iter()
             .map(|op| {
-                if let Some(op) = op {
-                    F::from_u64(op.lookup_entry()).unwrap()
+                if let Some(instr) = &op.instruction_lookup {
+                    F::from_u64(instr.lookup_entry()).unwrap()
                 } else {
                     F::zero()
                 }

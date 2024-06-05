@@ -37,6 +37,39 @@ pub trait JoltField:
     fn from_u64(n: u64) -> Option<Self>;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
+
+    #[inline(always)]
+    fn mul_0_optimized(self, other: Self) -> Self {
+        if self.is_zero() || other.is_zero() {
+            Self::zero()
+        } else {
+            self * other
+        }
+    }
+    
+    #[inline(always)]
+    fn mul_1_optimized(self, other: Self) -> Self {
+        if self.is_one() {
+            other
+        } else if other.is_one() {
+            self
+        } else {
+            self * other
+        }
+    }
+
+    #[inline(always)]
+    fn mul_01_optimized(self, other: Self) -> Self {
+        if self.is_zero() || other.is_zero() {
+            Self::zero()
+        } else if self.is_one() {
+            other
+        } else if other.is_one() {
+            self
+        } else {
+            self * other
+        }
+    }
 }
 
 pub mod ark;

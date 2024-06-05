@@ -12,15 +12,15 @@ pub struct RVTraceRow {
     pub memory_state: Option<MemoryState>,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum MemoryOp {
-    Read(u64, u64),  // (address, value)
+    Read(u64),       // (address)
     Write(u64, u64), // (address, new_value)
 }
 
 impl MemoryOp {
     pub fn noop_read() -> Self {
-        Self::Read(0, 0)
+        Self::Read(0)
     }
 
     pub fn noop_write() -> Self {
@@ -45,18 +45,8 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
     fn from(val: &RVTraceRow) -> Self {
         let instruction_type = val.instruction.opcode.instruction_type();
 
-        let rs1_read = || {
-            MemoryOp::Read(
-                val.instruction.rs1.unwrap(),
-                val.register_state.rs1_val.unwrap(),
-            )
-        };
-        let rs2_read = || {
-            MemoryOp::Read(
-                val.instruction.rs2.unwrap(),
-                val.register_state.rs2_val.unwrap(),
-            )
-        };
+        let rs1_read = || MemoryOp::Read(val.instruction.rs1.unwrap());
+        let rs2_read = || MemoryOp::Read(val.instruction.rs2.unwrap());
         let rd_write = || {
             MemoryOp::Write(
                 val.instruction.rd.unwrap(),
@@ -64,15 +54,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             )
         };
 
-        let ram_byte_read = |index: usize| match val.memory_state {
-            Some(MemoryState::Read { address: _, value }) => (value >> (index * 8)) as u8,
-            Some(MemoryState::Write {
-                address: _,
-                pre_value: _,
-                post_value: _,
-            }) => panic!("Unexpected MemoryState::Write"),
-            None => panic!("Memory state not found"),
-        };
         let ram_byte_written = |index: usize| match val.memory_state {
             Some(MemoryState::Read {
                 address: _,
@@ -80,7 +61,6 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
             }) => panic!("Unexpected MemoryState::Read"),
             Some(MemoryState::Write {
                 address: _,
-                pre_value: _,
                 post_value,
             }) => (post_value >> (index * 8)) as u8,
             None => panic!("Memory state not found"),
@@ -131,7 +111,9 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 | RV32IM::ORI
                 | RV32IM::XORI
                 | RV32IM::SLTI
-                | RV32IM::SLTIU => [
+                | RV32IM::SLTIU
+                | RV32IM::JALR
+                | RV32IM::VIRTUAL_MOVSIGN => [
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
@@ -144,7 +126,7 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
-                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
+                    MemoryOp::Read(rs1_offset()),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
@@ -153,8 +135,8 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
-                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
-                    MemoryOp::Read(rs1_offset() + 1, ram_byte_read(1) as u64),
+                    MemoryOp::Read(rs1_offset()),
+                    MemoryOp::Read(rs1_offset() + 1),
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                 ],
@@ -162,19 +144,10 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     rs1_read(),
                     MemoryOp::noop_read(),
                     rd_write(),
-                    MemoryOp::Read(rs1_offset(), ram_byte_read(0) as u64),
-                    MemoryOp::Read(rs1_offset() + 1, ram_byte_read(1) as u64),
-                    MemoryOp::Read(rs1_offset() + 2, ram_byte_read(2) as u64),
-                    MemoryOp::Read(rs1_offset() + 3, ram_byte_read(3) as u64),
-                ],
-                RV32IM::JALR => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
+                    MemoryOp::Read(rs1_offset()),
+                    MemoryOp::Read(rs1_offset() + 1),
+                    MemoryOp::Read(rs1_offset() + 2),
+                    MemoryOp::Read(rs1_offset() + 3),
                 ],
                 RV32IM::FENCE => [
                     MemoryOp::noop_read(),
@@ -243,14 +216,16 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
 pub struct ELFInstruction {
     pub address: u64,
     pub opcode: RV32IM,
-    pub raw: u32,
     pub rs1: Option<u64>,
     pub rs2: Option<u64>,
     pub rd: Option<u64>,
     pub imm: Option<u32>,
+    /// If this instruction is part of a "virtual sequence" (see Section 6.2 of the
+    /// Jolt paper), then this contains the instruction's index within the sequence.
+    pub virtual_sequence_index: Option<usize>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 9;
+pub const NUM_CIRCUIT_FLAGS: usize = 11;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -259,12 +234,14 @@ impl ELFInstruction {
         // 0: first_operand == rs1 (1 if PC)
         // 1: second_operand == rs2 (1 if imm)
         // 2: Load instruction
-        // 3: Store instruciton
+        // 3: Store instruction
         // 4: Jump instruction
-        // 5: Branch instruciton
+        // 5: Branch instruction
         // 6: Instruction writes lookup output to rd
         // 7: Sign-bit of imm
-        // 8: Is concat (Note: used to be is_lui)
+        // 8: Is concat
+        // 9: Increment virtual PC
+        // 10: Assert instruction
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -355,6 +332,28 @@ impl ELFInstruction {
             | RV32IM::BGEU,
         );
 
+        // TODO(moodlezoup): Use these flags in R1CS constraints
+        flags[9] = match self.virtual_sequence_index {
+            // For virtual sequences, we set
+            //     virtual PC := ProgARW     (the bytecode `a` value)
+            // if it's the first instruction in the sequence.
+            // Otherwise, we increment the virtual PC:
+            //     virtual PC += 1
+            // This prevents a malicious prover from reordering or omitting
+            // instructions from the virtual sequence.
+            Some(i) => i > 0,
+            // For "real" instructions, we always set
+            //     virtual PC := ProgARW     (the bytecode `a` value)
+            None => false
+        };
+        flags[10] = matches!(self.opcode,
+            RV32IM::VIRTUAL_ASSERT_EQ     |
+            RV32IM::VIRTUAL_ASSERT_LTE    |
+            RV32IM::VIRTUAL_ASSERT_LTU    |
+            RV32IM::VIRTUAL_ASSERT_LT_ABS |
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
+        );
+
         flags
     }
 }
@@ -363,21 +362,13 @@ impl ELFInstruction {
 pub struct RegisterState {
     pub rs1_val: Option<u64>,
     pub rs2_val: Option<u64>,
-    pub rd_pre_val: Option<u64>,
     pub rd_post_val: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemoryState {
-    Read {
-        address: u64,
-        value: u64,
-    },
-    Write {
-        address: u64,
-        pre_value: u64,
-        post_value: u64,
-    },
+    Read { address: u64, value: u64 },
+    Write { address: u64, post_value: u64 },
 }
 
 impl RVTraceRow {
@@ -398,6 +389,7 @@ impl RVTraceRow {
 // Reference: https://www.cs.sfu.ca/~ashriram/Courses/CS295/assets/notebooks/RISCV/RISCV_CARD.pdf
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromRepr, Serialize, Deserialize, Hash)]
 #[repr(u8)]
+#[allow(non_camel_case_types)]
 pub enum RV32IM {
     ADD,
     SUB,
@@ -440,7 +432,8 @@ pub enum RV32IM {
     EBREAK,
     MUL,
     MULH,
-    MULSU,
+    MULHU,
+    MULHSU,
     MULU,
     DIV,
     DIVU,
@@ -448,6 +441,14 @@ pub enum RV32IM {
     REMU,
     FENCE,
     UNIMPL,
+    // Virtual instructions
+    VIRTUAL_MOVSIGN,
+    VIRTUAL_ADVICE,
+    VIRTUAL_ASSERT_LTU,
+    VIRTUAL_ASSERT_LTE,
+    VIRTUAL_ASSERT_LT_ABS,
+    VIRTUAL_ASSERT_EQ_SIGNS,
+    VIRTUAL_ASSERT_EQ,
 }
 
 impl FromStr for RV32IM {
@@ -496,7 +497,8 @@ impl FromStr for RV32IM {
             "EBREAK" => Ok(Self::EBREAK),
             "MUL" => Ok(Self::MUL),
             "MULH" => Ok(Self::MULH),
-            "MULSU" => Ok(Self::MULSU),
+            "MULHU" => Ok(Self::MULHU),
+            "MULHSU" => Ok(Self::MULHSU),
             "MULU" => Ok(Self::MULU),
             "DIV" => Ok(Self::DIV),
             "DIVU" => Ok(Self::DIVU),
@@ -523,23 +525,24 @@ impl RV32IM {
     #[rustfmt::skip] // keep matches pretty
     pub fn instruction_type(&self) -> RV32InstructionFormat {
         match self {
-            RV32IM::ADD   |
-            RV32IM::SUB   |
-            RV32IM::XOR   |
-            RV32IM::OR    |
-            RV32IM::AND   |
-            RV32IM::SLL   |
-            RV32IM::SRL   |
-            RV32IM::SRA   |
-            RV32IM::SLT   |
-            RV32IM::SLTU  |
-            RV32IM::MUL   |
-            RV32IM::MULH  |
-            RV32IM::MULSU |
-            RV32IM::MULU  |
-            RV32IM::DIV   |
-            RV32IM::DIVU  |
-            RV32IM::REM   |
+            RV32IM::ADD    |
+            RV32IM::SUB    |
+            RV32IM::XOR    |
+            RV32IM::OR     |
+            RV32IM::AND    |
+            RV32IM::SLL    |
+            RV32IM::SRL    |
+            RV32IM::SRA    |
+            RV32IM::SLT    |
+            RV32IM::SLTU   |
+            RV32IM::MUL    |
+            RV32IM::MULH   |
+            RV32IM::MULHU  |
+            RV32IM::MULHSU |
+            RV32IM::MULU   |
+            RV32IM::DIV    |
+            RV32IM::DIVU   |
+            RV32IM::REM    |
             RV32IM::REMU => RV32InstructionFormat::R,
 
             RV32IM::ADDI  |
@@ -551,7 +554,8 @@ impl RV32IM {
             RV32IM::SRAI  |
             RV32IM::SLTI  |
             RV32IM::FENCE |
-            RV32IM::SLTIU => RV32InstructionFormat::I,
+            RV32IM::SLTIU |
+            RV32IM::VIRTUAL_MOVSIGN=> RV32InstructionFormat::I,
 
             RV32IM::LB  |
             RV32IM::LH  |
@@ -569,14 +573,20 @@ impl RV32IM {
             RV32IM::BLT  |
             RV32IM::BGE  |
             RV32IM::BLTU |
-            RV32IM::BGEU => RV32InstructionFormat::SB,
+            RV32IM::BGEU |
+            RV32IM::VIRTUAL_ASSERT_EQ     |
+            RV32IM::VIRTUAL_ASSERT_LTE    |
+            RV32IM::VIRTUAL_ASSERT_LTU    |
+            RV32IM::VIRTUAL_ASSERT_LT_ABS |
+            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => RV32InstructionFormat::SB,
 
-            RV32IM::LUI |
-            RV32IM::AUIPC => RV32InstructionFormat::U,
+            RV32IM::LUI   |
+            RV32IM::AUIPC |
+            RV32IM::VIRTUAL_ADVICE=> RV32InstructionFormat::U,
 
             RV32IM::JAL => RV32InstructionFormat::UJ,
 
-            RV32IM::ECALL |
+            RV32IM::ECALL  |
             RV32IM::EBREAK |
             RV32IM::UNIMPL => unimplemented!(),
         }

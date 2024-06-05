@@ -422,12 +422,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         let mut combined_commitments: Vec<&C::Commitment> = Vec::new();
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().io.iter());
 
-        combined_commitments.push(&bytecode_trace_commitments[0]); // a
-        combined_commitments.push(&bytecode_trace_commitments[2]); // op_flags_packed
-        combined_commitments.push(&bytecode_trace_commitments[3]); // rd
-        combined_commitments.push(&bytecode_trace_commitments[4]); // rs1
-        combined_commitments.push(&bytecode_trace_commitments[5]); // rs2
-        combined_commitments.push(&bytecode_trace_commitments[6]); // imm
+        combined_commitments.push(&bytecode_trace_commitments[0]); // "virtual" address
+        combined_commitments.push(&bytecode_trace_commitments[2]); // "real" address
+        combined_commitments.push(&bytecode_trace_commitments[3]); // op_flags_packed
+        combined_commitments.push(&bytecode_trace_commitments[4]); // rd
+        combined_commitments.push(&bytecode_trace_commitments[5]); // rs1
+        combined_commitments.push(&bytecode_trace_commitments[6]); // rs2
+        combined_commitments.push(&bytecode_trace_commitments[7]); // imm
 
         combined_commitments.extend(memory_trace_commitments.iter());
 

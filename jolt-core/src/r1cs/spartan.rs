@@ -134,7 +134,7 @@ impl<F: JoltField> SegmentedPaddedWitness<F> {
     }
 
     pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
-        let chi = EqPolynomial::new(point).evals();
+        let chi = EqPolynomial::evals(&point);
         let evals = self
             .segments
             .par_iter()
@@ -242,7 +242,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let combined_witness_size =
             (key.num_steps * key.shape_single_step.num_cons).next_power_of_two();
 
-        let mut poly_tau = DensePolynomial::new(EqPolynomial::new(tau).evals());
+        let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
         let span = tracing::span!(tracing::Level::TRACE, "allocate_witness_vecs");
         let _enter = span.enter();
@@ -338,8 +338,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             let (rx_con, rx_ts) =
                 outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
             let (eq_rx_con, eq_rx_ts) = rayon::join(
-                || EqPolynomial::new(rx_con.to_vec()).evals(),
-                || EqPolynomial::new(rx_ts.to_vec()).evals(),
+                || EqPolynomial::evals(rx_con),
+                || EqPolynomial::evals(rx_ts),
             );
             let n_steps = key.num_steps;
 
@@ -569,8 +569,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let r_y = inner_sumcheck_r.clone();
         let (ry_var, ry_ts) = r_y.split_at(r_y.len() - num_steps_bits as usize);
 
-        let eq_rx_con = EqPolynomial::new(rx_con.to_vec()).evals();
-        let eq_ry_var = EqPolynomial::new(ry_var.to_vec()).evals();
+        let eq_rx_con = EqPolynomial::evals(rx_con);
+        let eq_ry_var = EqPolynomial::evals(ry_var);
 
         let eq_rx_ry_ts = EqPolynomial::new(rx_ts.to_vec()).evaluate(ry_ts);
         let eq_ry_0 =

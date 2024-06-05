@@ -22,3 +22,7 @@ Cargo.lock
 trace-**.json
 
 temp_file
+
+# ide
+.idea
+.vscode
