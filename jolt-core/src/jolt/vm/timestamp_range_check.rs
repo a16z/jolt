@@ -716,7 +716,7 @@ where
             .collect();
 
         let t_read_commitments = &memory_commitment.trace_commitments
-            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
+            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..1 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
         let commitments: Vec<_> = range_check_commitment
             .commitments
             .iter()

@@ -406,6 +406,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         commitments: &[&HyraxCommitment<G>],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        assert_eq!(openings.len(), commitments.len());
         let (L_size, _R_size) = matrix_dimensions(opening_point.len(), self.ratio);
         commitments.iter().enumerate().for_each(|(i, commitment)| {
             assert_eq!(

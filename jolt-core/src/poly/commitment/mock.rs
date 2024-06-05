@@ -34,21 +34,15 @@ pub struct MockProof<F: JoltField> {
     opening_point: Vec<F>,
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct MockBatchedProof {}
-
-#[derive(Clone)]
-pub struct None {}
-
 impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
     type Field = F;
-    type Setup = None;
+    type Setup = ();
     type Commitment = MockCommitment<F>;
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
 
     fn setup(_shapes: &[CommitShape]) -> Self::Setup {
-        None {}
+        ()
     }
     fn commit(poly: &DensePolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {

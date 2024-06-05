@@ -60,7 +60,7 @@ mod test {
         256
     );
     subtable_materialize_mle_parity_test!(
-        eq_binius_msb_materialize_mle_parity,
+        eq_msb_binius_materialize_mle_parity,
         EqMSBSubtable<BiniusField<BinaryField128b>>,
         BiniusField<BinaryField128b>,
         1 << 16

@@ -73,7 +73,7 @@ impl<F: BiniusSpecific> Neg for BiniusField<F> {
     type Output = Self;
 
     fn neg(self) -> Self {
-        BiniusField(self.0.neg())
+        BiniusField(-self.0)
     }
 }
 
@@ -81,7 +81,7 @@ impl<F: BiniusSpecific> Add for BiniusField<F> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
-        BiniusField(self.0.add(other.0))
+        BiniusField(self.0 + other.0)
     }
 }
 
@@ -89,7 +89,7 @@ impl<F: BiniusSpecific> Sub for BiniusField<F> {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self {
-        BiniusField(self.0.sub(other.0))
+        BiniusField(self.0 - other.0)
     }
 }
 
@@ -97,7 +97,7 @@ impl<F: BiniusSpecific> Mul for BiniusField<F> {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
-        BiniusField(self.0.mul(other.0))
+        BiniusField(self.0 * other.0)
     }
 }
 
@@ -105,49 +105,49 @@ impl<F: BiniusSpecific> Div for BiniusField<F> {
     type Output = Self;
 
     fn div(self, other: Self) -> Self {
-        Self(self.0.mul(other.0.invert().unwrap()))
+        Self(self.0 * other.0.invert().unwrap())
     }
 }
 
 impl<F: BiniusSpecific> AddAssign for BiniusField<F> {
     fn add_assign(&mut self, other: Self) {
-        self.0.add_assign(other.0);
+        self.0 += other.0;
     }
 }
 
 impl<F: BiniusSpecific> SubAssign for BiniusField<F> {
     fn sub_assign(&mut self, other: Self) {
-        self.0.sub_assign(other.0);
+        self.0 -= other.0;
     }
 }
 
 impl<F: BiniusSpecific> MulAssign for BiniusField<F> {
     fn mul_assign(&mut self, other: Self) {
-        self.0.mul_assign(other.0);
+        self.0 *= other.0;
     }
 }
 
 impl<F: BiniusSpecific> core::iter::Sum for BiniusField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::zero(), |acc, x| BiniusField(acc.0.add(x.0)))
+        iter.fold(Self::zero(), |acc, x| BiniusField(acc.0 +x.0))
     }
 }
 
 impl<'a, F: BiniusSpecific> core::iter::Sum<&'a Self> for BiniusField<F> {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold(Self::zero(), |acc, x| BiniusField(acc.0.add(x.0)))
+        iter.fold(Self::zero(), |acc, x| BiniusField(acc.0 + x.0))
     }
 }
 
 impl<F: BiniusSpecific> core::iter::Product for BiniusField<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::one(), |acc, x| BiniusField(acc.0.mul(x.0)))
+        iter.fold(Self::one(), |acc, x| BiniusField(acc.0 * x.0))
     }
 }
 
 impl<'a, F: BiniusSpecific> core::iter::Product<&'a Self> for BiniusField<F> {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        iter.fold(Self::one(), |acc, x| BiniusField(acc.0.mul(x.0)))
+        iter.fold(Self::one(), |acc, x| BiniusField(acc.0 * x.0))
     }
 }
 
