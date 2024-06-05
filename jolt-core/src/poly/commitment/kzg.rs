@@ -118,6 +118,7 @@ impl<P: Pairing> UnivariateKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "KZG::commit_offset")]
     pub fn commit_offset(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
@@ -140,6 +141,7 @@ where
         Ok(c.into_affine())
     }
 
+    #[tracing::instrument(skip_all, name = "KZG::commit")]
     pub fn commit(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
@@ -158,6 +160,7 @@ where
         Ok(c.into_affine())
     }
 
+    #[tracing::instrument(skip_all, name = "KZG::open")]
     pub fn open(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,

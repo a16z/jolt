@@ -1,7 +1,6 @@
 use crate::poly::field::JoltField;
 
 use ark_std::test_rng;
-#[cfg(feature = "multicore")]
 use rayon::prelude::*;
 
 pub mod errors;
