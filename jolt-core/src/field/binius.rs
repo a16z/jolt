@@ -38,7 +38,7 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
     }
 
     fn is_zero(&self) -> bool {
-        self.0.is_zero().into()
+        self.0.is_zero()
     }
 
     fn is_one(&self) -> bool {
@@ -101,6 +101,7 @@ impl<F: BiniusSpecific> Mul for BiniusField<F> {
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl<F: BiniusSpecific> Div for BiniusField<F> {
     type Output = Self;
 
@@ -129,7 +130,7 @@ impl<F: BiniusSpecific> MulAssign for BiniusField<F> {
 
 impl<F: BiniusSpecific> core::iter::Sum for BiniusField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self::zero(), |acc, x| BiniusField(acc.0 +x.0))
+        iter.fold(Self::zero(), |acc, x| BiniusField(acc.0 + x.0))
     }
 }
 

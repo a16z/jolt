@@ -46,7 +46,7 @@ pub trait JoltField:
             self * other
         }
     }
-    
+
     #[inline(always)]
     fn mul_1_optimized(self, other: Self) -> Self {
         if self.is_one() {

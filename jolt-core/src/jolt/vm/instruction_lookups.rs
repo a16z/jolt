@@ -1,4 +1,3 @@
-use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
@@ -7,6 +6,7 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
 
+use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
@@ -1345,7 +1345,7 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &[Option<InstructionSet>]) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<usize>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<usize>> = ops

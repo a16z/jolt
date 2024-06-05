@@ -1,10 +1,7 @@
-use super::sumcheck::{BatchedCubicSumcheck, CubicSumcheckParams, SumcheckInstanceProof};
+use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
-use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::field::JoltField;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
-use crate::subprotocols::sumcheck::CubicSumcheckType;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
@@ -504,7 +501,7 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                                 .unwrap_or((index + 1, F::one()));
                             if right.0 == index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                output_layer[index / 2] = right.1 * value;
+                                output_layer[index / 2] = right.1 * *value;
                             } else {
                                 // Corresponding right node not found, so it must be 1
                                 output_layer[index / 2] = *value;
@@ -541,7 +538,7 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                                 .unwrap_or((index + 1, F::one()));
                             if right.0 == index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                output_layer.push((index / 2, right.1 * value));
+                                output_layer.push((index / 2, right.1 * *value));
                             } else {
                                 // Corresponding right node not found, so it must be 1
                                 output_layer.push((index / 2, *value));
@@ -1141,7 +1138,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = flags[2 * i] - r * flags[2 * i]
                                         //                = 1 - r
-                                        flag_values.push(F::one() - r);
+                                        flag_values.push(F::one() - *r);
                                     } else {
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = flags[2 * i] - r * flags[2 * i]
@@ -1440,7 +1437,7 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
         left_claims
             .iter()
             .zip(right_claims.iter())
-            .map(|(left_claim, right_claim)| *left_claim * right_claim)
+            .map(|(left_claim, right_claim)| *left_claim * *right_claim)
             .collect()
     }
 

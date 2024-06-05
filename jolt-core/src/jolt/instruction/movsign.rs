@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::JoltInstruction;
 use crate::{
+    field::JoltField,
     jolt::{
         instruction::SubtableIndices,
         subtable::{sign_extend::SignExtendSubtable, LassoSubtable},
     },
-    poly::field::JoltField,
     utils::instruction_utils::chunk_operand_usize,
 };
 

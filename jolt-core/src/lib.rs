@@ -7,7 +7,6 @@
 #![feature(generic_const_exprs)]
 #![feature(iter_next_chunk)]
 #![allow(long_running_const_eval)]
-#![feature(return_position_impl_trait_in_trait)]
 
 pub mod benches;
 pub mod field;

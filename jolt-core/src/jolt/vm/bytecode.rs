@@ -1,10 +1,10 @@
-use crate::poly::field::JoltField;
 use ark_ff::Zero;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
+use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
