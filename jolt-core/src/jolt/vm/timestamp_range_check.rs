@@ -229,6 +229,7 @@ where
     }
 
     fn prove_openings(
+        _generators: &C::Setup,
         _polynomials: &RangeCheckPolynomials<F, C>,
         _opening_point: &[F],
         _openings: &RangeCheckOpenings<F, C>,
@@ -266,6 +267,7 @@ where
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
 
     fn prove_memory_checking(
+        _generators: &C::Setup,
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, C>,
         _transcript: &mut ProofTranscript,
@@ -611,6 +613,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove(
+        generators: &C::Setup,
         range_check_polys: &RangeCheckPolynomials<F, C>,
         t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
         transcript: &mut ProofTranscript,
@@ -635,6 +638,7 @@ where
             .collect::<Vec<F>>();
 
         let opening_proof = C::batch_prove(
+            generators,
             &polys,
             &r_grand_product,
             &openings,
