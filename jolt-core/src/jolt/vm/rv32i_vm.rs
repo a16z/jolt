@@ -2,7 +2,7 @@ use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
 use crate::jolt::instruction::virtual_assert_eq_signs::ASSERTEQSIGNSInstruction;
 use crate::jolt::instruction::virtual_assert_lt_abs::ASSERTLTABSInstruction;
 use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -164,14 +164,19 @@ pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>
 
 #[cfg(test)]
 mod tests {
-    use ark_bn254::{Fr, G1Projective};
+    use ark_bn254::{Bn254, Fr, G1Projective};
 
     use std::collections::HashSet;
 
+    use crate::field::JoltField;
     use crate::host;
     use crate::jolt::instruction::JoltInstruction;
     use crate::jolt::vm::rv32i_vm::{Jolt, RV32IJoltVM, C, M};
+    use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+    use crate::poly::commitment::hyperkzg::HyperKZG;
     use crate::poly::commitment::hyrax::HyraxScheme;
+    use crate::poly::commitment::mock::MockCommitScheme;
+    use crate::poly::commitment::zeromorph::Zeromorph;
     use std::sync::Mutex;
     use strum::{EnumCount, IntoEnumIterator};
 
@@ -181,29 +186,49 @@ mod tests {
         static ref SHA3_FILE_LOCK: Mutex<()> = Mutex::new(());
     }
 
-    #[test]
-    fn instruction_set_subtables() {
+    fn test_instruction_set_subtables<PCS: CommitmentScheme>() {
         let mut subtable_set: HashSet<_> = HashSet::new();
-        for instruction in
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::InstructionSet::iter()
-        {
+        for instruction in <RV32IJoltVM as Jolt<_, PCS, C, M>>::InstructionSet::iter() {
             for (subtable, _) in instruction.subtables::<Fr>(C, M) {
                 // panics if subtable cannot be cast to enum variant
-                let _ = <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::Subtables::from(
-                    subtable.subtable_id(),
-                );
+                let _ =
+                    <RV32IJoltVM as Jolt<_, PCS, C, M>>::Subtables::from(subtable.subtable_id());
                 subtable_set.insert(subtable.subtable_id());
             }
         }
         assert_eq!(
             subtable_set.len(),
-            <RV32IJoltVM as Jolt<_, HyraxScheme<G1Projective>, C, M>>::Subtables::COUNT,
+            <RV32IJoltVM as Jolt<_, PCS, C, M>>::Subtables::COUNT,
             "Unused enum variants in Subtables"
         );
     }
 
     #[test]
-    fn fib_e2e() {
+    fn instruction_set_subtables() {
+        test_instruction_set_subtables::<HyraxScheme<G1Projective>>();
+        test_instruction_set_subtables::<Zeromorph<Bn254>>();
+        test_instruction_set_subtables::<HyperKZG<Bn254>>();
+    }
+
+    #[test]
+    fn fib_e2e_mock() {
+        type Field = ark_bn254::Fr;
+        fib_e2e::<Field, MockCommitScheme<Field>>();
+    }
+
+    #[test]
+    fn fib_e2e_hyrax() {
+        fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
+    }
+
+    // TODO(sragss): Finish Binius.
+    // #[test]
+    // fn fib_e2e_binius() {
+    //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
+    //     fib_e2e::<Field, MockCommitScheme<Field>>();
+    // }
+
+    fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("fibonacci-guest");
@@ -229,7 +254,57 @@ mod tests {
     }
 
     #[test]
-    fn sha3_e2e() {
+    fn fib_e2e_zeromorph() {
+        let _guard = FIB_FILE_LOCK.lock().unwrap();
+
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&9u32);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, Zeromorph<Bn254>, C, M>>::prove(
+            io_device,
+            trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
+        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn fib_e2e_hyperkzg() {
+        let _guard = FIB_FILE_LOCK.lock().unwrap();
+
+        let mut program = host::Program::new("fibonacci-guest");
+        program.set_input(&9u32);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, HyperKZG<Bn254>, C, M>>::prove(
+            io_device,
+            trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
+        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn sha3_e2e_hyrax() {
         let _guard = SHA3_FILE_LOCK.lock().unwrap();
 
         let mut program = host::Program::new("sha3-guest");
@@ -246,6 +321,59 @@ mod tests {
                 circuit_flags,
                 preprocessing.clone(),
             );
+
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn sha3_e2e_zeromorph() {
+        let _guard = SHA3_FILE_LOCK.lock().unwrap();
+
+        let mut program = host::Program::new("sha3-guest");
+        program.set_input(&[5u8; 32]);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (jolt_proof, jolt_commitments) =
+            <RV32IJoltVM as Jolt<_, Zeromorph<Bn254>, C, M>>::prove(
+                io_device,
+                trace,
+                circuit_flags,
+                preprocessing.clone(),
+            );
+
+        let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
+        assert!(
+            verification_result.is_ok(),
+            "Verification failed with error: {:?}",
+            verification_result.err()
+        );
+    }
+
+    #[test]
+    fn sha3_e2e_hyperkzg() {
+        let _guard = SHA3_FILE_LOCK.lock().unwrap();
+
+        let mut program = host::Program::new("sha3-guest");
+        program.set_input(&[5u8; 32]);
+        let (bytecode, memory_init) = program.decode();
+        let (io_device, trace, circuit_flags) = program.trace();
+
+        let preprocessing =
+            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
+        let (jolt_proof, jolt_commitments) = <RV32IJoltVM as Jolt<_, HyperKZG<Bn254>, C, M>>::prove(
+            io_device,
+            trace,
+            circuit_flags,
+            preprocessing.clone(),
+        );
 
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(

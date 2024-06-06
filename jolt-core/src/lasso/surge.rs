@@ -1,4 +1,5 @@
-use crate::poly::{commitment::commitment_scheme::BatchType, field::JoltField};
+use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::BatchType;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
@@ -89,12 +90,14 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
+        generators: &PCS::Setup,
         polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         E_poly_openings: &Vec<F>,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         PCS::batch_prove(
+            generators,
             &polynomials.E_polys.iter().collect::<Vec<_>>(),
             opening_point,
             E_poly_openings,
@@ -152,6 +155,7 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeReadWriteOpenings::prove_openings")]
     fn prove_openings(
+        generators: &PCS::Setup,
         polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         openings: &Self,
@@ -171,6 +175,7 @@ where
         .concat();
 
         PCS::batch_prove(
+            generators,
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -248,12 +253,14 @@ where
 
     #[tracing::instrument(skip_all, name = "SurgeFinalOpenings::prove_openings")]
     fn prove_openings(
+        generators: &PCS::Setup,
         polynomials: &SurgePolys<F, PCS>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         PCS::batch_prove(
+            generators,
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
@@ -306,7 +313,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
@@ -597,6 +604,7 @@ where
 
         let sumcheck_openings = PrimarySumcheckOpenings::open(&polynomials, &r_z); // TODO: use return value from prove_arbitrary?
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            generators,
             &polynomials,
             &r_z,
             &sumcheck_openings,
@@ -612,7 +620,7 @@ where
         };
 
         let memory_checking =
-            SurgeProof::prove_memory_checking(preprocessing, &polynomials, transcript);
+            SurgeProof::prove_memory_checking(generators, preprocessing, &polynomials, transcript);
 
         SurgeProof {
             commitment,
@@ -672,7 +680,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
     fn construct_polys(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        ops: &Vec<Instruction>,
+        ops: &[Instruction],
     ) -> SurgePolys<F, PCS> {
         let num_lookups = ops.len().next_power_of_two();
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];

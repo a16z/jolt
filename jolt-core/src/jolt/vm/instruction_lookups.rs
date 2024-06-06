@@ -1,4 +1,3 @@
-use crate::poly::field::JoltField;
 use crate::subprotocols::grand_product::{BatchedGrandProduct, ToggledBatchedGrandProduct};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use itertools::{interleave, Itertools};
@@ -7,6 +6,7 @@ use rayon::prelude::*;
 use std::marker::PhantomData;
 use tracing::trace_span;
 
+use crate::field::JoltField;
 use crate::jolt::instruction::{JoltInstructionSet, SubtableIndices};
 use crate::jolt::subtable::JoltSubtableSet;
 use crate::lasso::memory_checking::MultisetHashes;
@@ -146,6 +146,7 @@ where
 
     #[tracing::instrument(skip_all, name = "PrimarySumcheckOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
@@ -165,6 +166,7 @@ where
         primary_sumcheck_openings.push(openings.lookup_outputs_opening);
 
         C::batch_prove(
+            generators,
             &primary_sumcheck_polys,
             opening_point,
             &primary_sumcheck_openings,
@@ -262,6 +264,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionReadWriteOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
@@ -284,6 +287,7 @@ where
         .concat();
 
         C::batch_prove(
+            generators,
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -364,12 +368,14 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionFinalOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &InstructionPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         C::batch_prove(
+            generators,
             &polynomials.final_cts.iter().collect::<Vec<_>>(),
             opening_point,
             &openings.final_openings,
@@ -430,8 +436,8 @@ where
     fn fingerprint(inputs: &(F, F, F, Option<F>), gamma: &F, tau: &F) -> F {
         let (a, v, t, flag) = *inputs;
         match flag {
-            Some(val) => val * (t * gamma.square() + v * *gamma + a - tau) + F::one() - val,
-            None => t * gamma.square() + v * *gamma + a - tau,
+            Some(val) => val * (t * gamma.square() + v * *gamma + a - *tau) + F::one() - val,
+            None => t * gamma.square() + v * *gamma + a - *tau,
         }
     }
 
@@ -458,7 +464,8 @@ where
                         let a = &polynomials.dim[dim_index][i];
                         let v = &polynomials.E_polys[memory_index][i];
                         let t = &polynomials.read_cts[memory_index][i];
-                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(t, &gamma_squared) + mul_0_1_optimized(v, gamma) + *a
+                            - *tau
                     })
                     .collect();
                 let write_fingerprints = read_fingerprints
@@ -480,7 +487,7 @@ where
                         let v = &subtable[i];
                         // let t = F::zero();
                         // Compute h(a,v,t) where t == 0
-                        mul_0_1_optimized(v, gamma) + a - tau
+                        mul_0_1_optimized(v, gamma) + *a - *tau
                     })
                     .collect();
 
@@ -802,6 +809,7 @@ where
 
     #[tracing::instrument(skip_all, name = "InstructionLookups::prove")]
     pub fn prove(
+        generators: &CS::Setup,
         polynomials: &InstructionPolynomials<F, CS>,
         preprocessing: &InstructionLookupsPreprocessing<F>,
         transcript: &mut ProofTranscript,
@@ -835,6 +843,7 @@ where
             lookup_outputs_opening: outputs_eval,
         };
         let sumcheck_opening_proof = PrimarySumcheckOpenings::prove_openings(
+            generators,
             polynomials,
             &r_primary_sumcheck,
             &sumcheck_openings,
@@ -848,7 +857,8 @@ where
             opening_proof: sumcheck_opening_proof,
         };
 
-        let memory_checking = Self::prove_memory_checking(preprocessing, polynomials, transcript);
+        let memory_checking =
+            Self::prove_memory_checking(generators, preprocessing, polynomials, transcript);
 
         InstructionLookupsProof {
             _instructions: PhantomData,
@@ -1242,7 +1252,7 @@ where
                     running
                         .iter()
                         .zip(new.iter())
-                        .map(|(r, n)| *r + n)
+                        .map(|(r, n)| *r + *n)
                         .collect()
                 },
             );
@@ -1344,7 +1354,7 @@ where
 
     /// Converts each instruction in `ops` into its corresponding subtable lookup indices.
     /// The output is `C` vectors, each of length `m`.
-    fn subtable_lookup_indices(ops: &Vec<JoltTraceStep<InstructionSet>>) -> Vec<Vec<usize>> {
+    fn subtable_lookup_indices(ops: &[JoltTraceStep<InstructionSet>]) -> Vec<Vec<usize>> {
         let m = ops.len().next_power_of_two();
         let log_M = M.log_2();
         let chunked_indices: Vec<Vec<usize>> = ops

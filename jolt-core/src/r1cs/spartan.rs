@@ -1,8 +1,8 @@
 #![allow(clippy::len_without_is_empty)]
 
+use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
-use crate::poly::field::JoltField;
 use crate::utils::compute_dotproduct_low_optimized;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::thread::unsafe_allocate_zero_vec;
@@ -222,6 +222,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
     /// produces a succinct proof of satisfiability of a `RelaxedR1CS` instance
     #[tracing::instrument(skip_all, name = "UniformSpartanProof::prove_precommitted")]
     pub fn prove_precommitted(
+        generators: &C::Setup,
         key: &UniformSpartanKey<F>,
         witness_segments: Vec<Vec<F>>,
         transcript: &mut ProofTranscript,
@@ -272,7 +273,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .zip(poly_Cz.evals_ref())
                 .enumerate()
             {
-                if *az * bz != *cz {
+                if *az * *bz != *cz {
                     let padded_segment_len = segmented_padded_witness.segment_len;
                     let error_segment_index = i / padded_segment_len;
                     let error_step_index = i % padded_segment_len;
@@ -350,7 +351,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             let compute_eval_table_sparse_single = |small_M: &Vec<(usize, usize, F)>| -> Vec<F> {
                 let mut small_M_evals = vec![F::zero(); key.shape_single_step.num_vars + 1];
                 for (row, col, val) in small_M.iter() {
-                    small_M_evals[*col] += eq_rx_con[*row] * val;
+                    small_M_evals[*col] += eq_rx_con[*row] * *val;
                 }
                 small_M_evals
             };
@@ -395,7 +396,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 .take(key.num_vars_total / n_steps) // Note that this ignores the last variable which is the constant
                 .enumerate()
                 .for_each(|(var_index, var_chunk)| {
-                    if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1) 
+                    if var_index != 1 && !small_RLC_evals[var_index].is_zero() { // ignore pc_out (var_index = 1)
                         for (ts, item) in var_chunk.iter_mut().enumerate() {
                             *item = eq_rx_ts[ts] * small_RLC_evals[var_index];
                         }
@@ -447,6 +448,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let witness_segment_polys_ref: Vec<&DensePolynomial<F>> =
             witness_segment_polys.iter().collect();
         let opening_proof = C::batch_prove(
+            generators,
             &witness_segment_polys_ref,
             r_y_point,
             &witness_evals,

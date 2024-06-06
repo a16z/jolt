@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::subprotocols::grand_product::{
     BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductLayer,
     BatchedGrandProductProof,
@@ -94,7 +94,7 @@ where
                             &final_cts_read_timestamp,
                         ),
                         (
-                            &global_minus_read_timestamps,
+                            global_minus_read_timestamps,
                             &read_cts_global_minus_read,
                             &final_cts_global_minus_read,
                         ),
@@ -229,6 +229,7 @@ where
     }
 
     fn prove_openings(
+        _generators: &C::Setup,
         _polynomials: &RangeCheckPolynomials<F, C>,
         _opening_point: &[F],
         _openings: &RangeCheckOpenings<F, C>,
@@ -266,6 +267,7 @@ where
     type InitFinalOpenings = RangeCheckOpenings<F, C>;
 
     fn prove_memory_checking(
+        _generators: &C::Setup,
         _: &NoPreprocessing,
         _polynomials: &RangeCheckPolynomials<F, C>,
         _transcript: &mut ProofTranscript,
@@ -281,7 +283,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::compute_leaves")]
@@ -310,9 +312,9 @@ where
                         let read_timestamp =
                             F::from_u64(polynomials.read_timestamps[i][j]).unwrap();
                         polynomials.read_cts_read_timestamp[i][j] * gamma_squared
-                            + read_timestamp * gamma
+                            + read_timestamp * *gamma
                             + read_timestamp
-                            - tau
+                            - *tau
                     })
                     .collect();
                 let write_fingeprints_0 = read_fingerprints_0
@@ -326,9 +328,9 @@ where
                         let global_minus_read =
                             F::from_u64(j as u64 - polynomials.read_timestamps[i][j]).unwrap();
                         polynomials.read_cts_global_minus_read[i][j] * gamma_squared
-                            + global_minus_read * gamma
+                            + global_minus_read * *gamma
                             + global_minus_read
-                            - tau
+                            - *tau
                     })
                     .collect();
                 let write_fingeprints_1 = read_fingerprints_1
@@ -352,7 +354,7 @@ where
             .map(|i| {
                 let index = F::from_u64(i as u64).unwrap();
                 // 0 * gamma^2 +
-                index * gamma + index - tau
+                index * *gamma + index - *tau
             })
             .collect();
 
@@ -611,6 +613,7 @@ where
 {
     #[tracing::instrument(skip_all, name = "TimestampValidityProof::prove")]
     pub fn prove(
+        generators: &C::Setup,
         range_check_polys: &RangeCheckPolynomials<F, C>,
         t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
         transcript: &mut ProofTranscript,
@@ -635,6 +638,7 @@ where
             .collect::<Vec<F>>();
 
         let opening_proof = C::batch_prove(
+            generators,
             &polys,
             &r_grand_product,
             &openings,
@@ -747,7 +751,7 @@ where
 
         // TODO(moodlezoup): Make indexing less disgusting
         let t_read_commitments = &memory_commitment.trace_commitments
-            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..4 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
+            [1 + MEMORY_OPS_PER_INSTRUCTION + 5..1 + 2 * MEMORY_OPS_PER_INSTRUCTION + 5];
         let commitments: Vec<_> = range_check_commitment
             .commitments
             .iter()

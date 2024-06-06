@@ -1,5 +1,5 @@
+use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
-use crate::poly::field::JoltField;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -1040,6 +1040,7 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryReadWriteOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &JoltPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
@@ -1067,6 +1068,7 @@ where
             .chain(openings.t_write_ram_opening.into_iter())
             .collect::<Vec<_>>();
         C::batch_prove(
+            generators,
             &read_write_polys,
             opening_point,
             &read_write_openings,
@@ -1160,12 +1162,14 @@ where
 
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::prove_openings")]
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &JoltPolynomials<F, C>,
         opening_point: &[F],
         openings: &Self,
         transcript: &mut ProofTranscript,
     ) -> Self::Proof {
         let v_t_opening_proof = C::batch_prove(
+            generators,
             &[
                 &polynomials.read_write_memory.v_final,
                 &polynomials.read_write_memory.t_final,
@@ -1252,7 +1256,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::compute_leaves")]
@@ -1500,6 +1504,7 @@ where
     C: CommitmentScheme<Field = F>,
 {
     fn prove_outputs(
+        generators: &C::Setup,
         polynomials: &ReadWriteMemory<F, C>,
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
@@ -1565,7 +1570,8 @@ where
                 transcript,
             );
 
-        let sumcheck_opening_proof = C::prove(&polynomials.v_final, &r_sumcheck, transcript);
+        let sumcheck_opening_proof =
+            C::prove(generators, &polynomials.v_final, &r_sumcheck, transcript);
 
         Self {
             num_rounds,
@@ -1684,21 +1690,28 @@ where
 {
     #[tracing::instrument(skip_all, name = "ReadWriteMemoryProof::prove")]
     pub fn prove(
+        generators: &C::Setup,
         preprocessing: &ReadWriteMemoryPreprocessing,
         polynomials: &JoltPolynomials<F, C>,
         program_io: &JoltDevice,
         transcript: &mut ProofTranscript,
     ) -> Self {
-        let memory_checking_proof =
-            ReadWriteMemoryProof::prove_memory_checking(preprocessing, polynomials, transcript);
+        let memory_checking_proof = ReadWriteMemoryProof::prove_memory_checking(
+            generators,
+            preprocessing,
+            polynomials,
+            transcript,
+        );
 
         let output_proof = OutputSumcheckProof::prove_outputs(
+            generators,
             &polynomials.read_write_memory,
             program_io,
             transcript,
         );
 
         let timestamp_validity_proof = TimestampValidityProof::prove(
+            generators,
             &polynomials.timestamp_range_check,
             &polynomials.read_write_memory.t_read,
             transcript,

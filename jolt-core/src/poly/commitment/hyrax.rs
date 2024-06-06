@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use super::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use super::pedersen::{PedersenCommitment, PedersenGenerators};
+use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::field::JoltField;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
@@ -82,6 +82,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         HyraxCommitment::commit_slice(eval_slice, generators)
     }
     fn prove(
+        _setup: &Self::Setup,
         poly: &DensePolynomial<Self::Field>,
         opening_point: &[Self::Field],
         transcript: &mut ProofTranscript,
@@ -90,6 +91,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> CommitmentScheme for HyraxSch
         HyraxOpeningProof::prove(poly, opening_point, 1, transcript)
     }
     fn batch_prove(
+        _setup: &Self::Setup,
         polynomials: &[&DensePolynomial<Self::Field>],
         opening_point: &[Self::Field],
         openings: &[Self::Field],
@@ -370,7 +372,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
             rlc_coefficients
                 .par_iter()
                 .zip(polynomials.par_iter())
-                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * eval).collect())
+                .map(|(coeff, poly)| poly.evals_ref().iter().map(|eval| *coeff * *eval).collect())
                 .reduce(
                     || vec![G::ScalarField::zero(); poly_len],
                     |running, new| {
@@ -378,7 +380,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
                         running
                             .iter()
                             .zip(new.iter())
-                            .map(|(r, n)| *r + n)
+                            .map(|(r, n)| *r + *n)
                             .collect()
                     },
                 )
@@ -406,6 +408,7 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         commitments: &[&HyraxCommitment<G>],
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
+        assert_eq!(openings.len(), commitments.len());
         let (L_size, _R_size) = matrix_dimensions(opening_point.len(), self.ratio);
         commitments.iter().enumerate().for_each(|(i, commitment)| {
             assert_eq!(

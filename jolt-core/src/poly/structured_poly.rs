@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::commitment::commitment_scheme::CommitmentScheme;
@@ -38,6 +38,7 @@ where
     /// Proves that the `polynomials`, evaluated at `opening_point`, output the values given
     /// by `openings`. The polynomials should already be committed by the prover.
     fn prove_openings(
+        generators: &C::Setup,
         polynomials: &Polynomials,
         opening_point: &[F],
         openings: &Self,
