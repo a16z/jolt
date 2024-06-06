@@ -1,6 +1,6 @@
 use crate::{
-    impl_r1cs_input_lc_conversions,
     field::JoltField,
+    impl_r1cs_input_lc_conversions,
     r1cs::builder::{OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
 };
 
