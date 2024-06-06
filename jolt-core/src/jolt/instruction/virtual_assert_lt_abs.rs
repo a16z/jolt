@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTLTABSInstruction<WORD_SIZ
 
         for (ltu_i, eq_i) in ltu.iter().zip(eq) {
             ltu_sum += *ltu_i * eq_prod;
-            eq_prod *= eq_i;
+            eq_prod *= *eq_i;
         }
 
         // LTU(x_{<s}, y_{<s})

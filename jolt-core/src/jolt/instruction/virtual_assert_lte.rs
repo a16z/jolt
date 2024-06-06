@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::{
+    field::JoltField,
     jolt::subtable::{
         eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
         lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
     },
-    poly::field::JoltField,
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -38,7 +38,7 @@ impl JoltInstruction for ASSERTLTEInstruction {
 
         for (ltu_i, eq_i) in ltu.iter().zip(&eq[1..]) {
             ltu_sum += *ltu_i * eq_prod;
-            eq_prod *= eq_i;
+            eq_prod *= *eq_i;
         }
 
         // x_s * (1 - y_s) + EQ(x_s, y_s) * LTU(x_{<s}, y_{<s})

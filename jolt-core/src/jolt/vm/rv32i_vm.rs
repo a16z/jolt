@@ -1,7 +1,3 @@
-use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
-use crate::jolt::instruction::virtual_assert_eq_signs::ASSERTEQSIGNSInstruction;
-use crate::jolt::instruction::virtual_assert_lt_abs::ASSERTLTABSInstruction;
-use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
 use crate::field::JoltField;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
@@ -17,8 +13,10 @@ use crate::jolt::instruction::{
     movsign::MOVSIGNInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
     mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
     sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
-    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction,
-    JoltInstruction, JoltInstructionSet, SubtableIndices,
+    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, virtual_advice::ADVICEInstruction,
+    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
+    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
