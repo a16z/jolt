@@ -582,7 +582,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for
     fn prove_grand_product(
         &mut self,
         _transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>
+        _setup: Option<&C::Setup>,
     ) -> (BatchedGrandProductProof<C>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
@@ -590,7 +590,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for
         _proof: &BatchedGrandProductProof<C>,
         _claims: &Vec<F>,
         _transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>
+        _setup: Option<&C::Setup>,
     ) -> (Vec<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
@@ -687,9 +687,11 @@ where
         let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        let mut batched_circuit = <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::construct(leaves);
+        let mut batched_circuit =
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::construct(leaves);
 
-        let hashes: Vec<F> = <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::claims(&batched_circuit);
+        let hashes: Vec<F> =
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::claims(&batched_circuit);
         let (read_write_hashes, init_final_hashes) =
             hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
         let multiset_hashes = TimestampValidityProof::<F, C>::uninterleave_hashes(
@@ -739,7 +741,7 @@ where
                 &self.batched_grand_product,
                 &concatenated_hashes,
                 transcript,
-                None
+                None,
             );
 
         let openings: Vec<_> = self

@@ -115,8 +115,14 @@ where
         serialize_and_print_size("jolt_proof", &jolt_proof);
         serialize_and_print_size(" jolt_proof.r1cs", &jolt_proof.r1cs);
         serialize_and_print_size(" jolt_proof.bytecode", &jolt_proof.bytecode);
-        serialize_and_print_size(" jolt_proof.read_write_memory", &jolt_proof.read_write_memory);
-        serialize_and_print_size(" jolt_proof.instruction_lookups", &jolt_proof.instruction_lookups);
+        serialize_and_print_size(
+            " jolt_proof.read_write_memory",
+            &jolt_proof.read_write_memory,
+        );
+        serialize_and_print_size(
+            " jolt_proof.instruction_lookups",
+            &jolt_proof.instruction_lookups,
+        );
 
         let verification_result = RV32IJoltVM::verify(preprocessing, jolt_proof, jolt_commitments);
         assert!(

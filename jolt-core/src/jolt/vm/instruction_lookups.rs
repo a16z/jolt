@@ -277,7 +277,7 @@ where
             .chain(polynomials.E_polys.iter())
             .chain(polynomials.instruction_flag_polys.iter())
             .collect::<Vec<_>>();
-        
+
         let read_write_openings: Vec<F> = [
             openings.dim_openings.as_slice(),
             openings.read_openings.as_slice(),
@@ -448,8 +448,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F,CS>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F,CS>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, CS>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, CS>>::Leaves,
     ) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();

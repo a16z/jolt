@@ -77,10 +77,8 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
-        QuarkGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
-        QuarkGrandProduct<F>;
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static = QuarkGrandProduct<F>;
+    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static = QuarkGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<
@@ -150,7 +148,7 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
-        generators: &C::Setup
+        generators: &C::Setup,
     ) -> (
         BatchedGrandProductProof<C>,
         BatchedGrandProductProof<C>,
@@ -347,13 +345,13 @@ where
             &proof.read_write_grand_product,
             &read_write_hashes,
             transcript,
-            Some(generators)
+            Some(generators),
         );
         let (claims_init_final, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
             &proof.init_final_grand_product,
             &init_final_hashes,
             transcript,
-            Some(generators)
+            Some(generators),
         );
 
         proof.read_write_openings.verify_openings(
