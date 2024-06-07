@@ -7,7 +7,6 @@ use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use itertools::Itertools;
-use rayon::prelude::*;
 use thiserror::Error;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
