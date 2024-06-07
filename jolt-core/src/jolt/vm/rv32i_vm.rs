@@ -13,8 +13,10 @@ use crate::jolt::instruction::{
     movsign::MOVSIGNInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
     mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
     sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
-    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, xor::XORInstruction,
-    JoltInstruction, JoltInstructionSet, SubtableIndices,
+    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, virtual_advice::ADVICEInstruction,
+    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
+    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -105,7 +107,11 @@ instruction_set!(
   MOVSIGN: MOVSIGNInstruction<WORD_SIZE>,
   MUL: MULInstruction<WORD_SIZE>,
   MULU: MULUInstruction<WORD_SIZE>,
-  MULHU: MULHUInstruction<WORD_SIZE>
+  MULHU: MULHUInstruction<WORD_SIZE>,
+  VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
+  VIRTUAL_ASSERT_LT_ABS: ASSERTLTABSInstruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_EQ_SIGNS: ASSERTEQSIGNSInstruction
 );
 subtable_enum!(
   RV32ISubtables,
