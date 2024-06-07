@@ -807,7 +807,7 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(16),
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(128),
             b"LassoV1",
         );
         let proof = SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::prove(
@@ -837,7 +837,7 @@ mod tests {
         let mut transcript = ProofTranscript::new(b"test_transcript");
         let preprocessing = SurgePreprocessing::preprocess();
         let generators = PedersenGenerators::new(
-            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(16),
+            SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::num_generators(128),
             b"LassoV1",
         );
         let proof = SurgeProof::<Fr, HyraxScheme<G1Projective>, XORInstruction, C, M>::prove(

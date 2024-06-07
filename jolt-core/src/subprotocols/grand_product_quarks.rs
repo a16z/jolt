@@ -5,9 +5,9 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::field::JoltField;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use super::grand_product::{BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof};
 use ark_serialize::*;
 use itertools::Itertools;
-use rayon::prelude::*;
 use thiserror::Error;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -21,7 +21,85 @@ pub struct QuarkGrandProductProof<C: CommitmentScheme> {
     claimed_eval_f_r_1: (Vec<C::Field>, C::BatchedProof),
     sum_openings: C::BatchedProof,
     v_opening_proof: C::BatchedProof,
+    num_vars: usize
 }
+pub struct QuarkGrandProduct<F: JoltField> {
+    polynomials: Vec<Vec<F>>
+}
+
+impl <F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for QuarkGrandProduct<F> {
+        /// The bottom/input layer of the grand products
+        type Leaves = Vec<Vec<F>>;
+
+        /// Constructs the grand product circuit(s) from `leaves`
+        fn construct(leaves: Self::Leaves) -> Self {
+            Self{polynomials: leaves}
+        }
+        /// The number of layers in the grand product.
+        fn num_layers(&self) -> usize {
+            self.polynomials[0].len().log_2()
+        }
+        /// The claimed outputs of the grand products.
+        fn claims(&self) -> Vec<F> {
+            self.polynomials.iter().map(|f| f.iter().product()).collect()
+        }
+        /// Returns an iterator over the layers of this batched grand product circuit.
+        /// Each layer is mutable so that its polynomials can be bound over the course
+        /// of proving.
+        #[allow(unreachable_code)]
+        fn layers(&'_ mut self) -> impl Iterator<Item = &'_ mut dyn BatchedGrandProductLayer<F>> {
+            panic!("We don't use the default prover and so we don't need the generic iterator");
+            std::iter::empty()
+        }
+    
+        /// Computes a batched grand product proof, layer by layer.
+        #[tracing::instrument(skip_all, name = "BatchedGrandProduct::prove_grand_product")]
+        fn prove_grand_product(
+            &mut self,
+            transcript: &mut ProofTranscript,
+            setup: Option<&C::Setup>
+        ) -> (BatchedGrandProductProof<C>, Vec<F>) {
+
+            let (quark, random) = QuarkGrandProductProof::<C>::prove(
+                &self.polynomials,
+                transcript,
+                &setup.unwrap()
+            );
+    
+            (
+                BatchedGrandProductProof {
+                    layers: vec![],
+                    quark_proof: Some(quark)
+                },
+                random,
+            )
+        }   
+    
+        /// Verifies the given grand product proof.
+        fn verify_grand_product(
+            proof: &BatchedGrandProductProof<C>,
+            claims: &Vec<F>,
+            transcript: &mut ProofTranscript,
+            setup: Option<&C::Setup>
+        ) -> (Vec<F>, Vec<F>) {
+            
+            let quark = proof.quark_proof.as_ref().unwrap();
+            let v_len = quark.num_vars;
+
+            let res = quark.verify(
+                claims,
+                transcript,
+                v_len,
+                &setup.unwrap()
+            );
+
+            // TODO (Aleph) - Need to bubble up error
+            let (q_openings, rand) = res.unwrap();
+            // TODO - Investigate why the verifier needs the claims after we have already checked them
+            (q_openings, rand)
+        }
+}
+
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum QuarkError {
@@ -43,19 +121,19 @@ pub trait QuarkBatchedGrandProduct<C: CommitmentScheme>: Sized {
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
     /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
     fn prove(
-        v: Vec<DensePolynomial<C::Field>>,
+        v: &[Vec<C::Field>],
         transcript: &mut ProofTranscript,
         setup: &C::Setup,
     ) -> (Self, Vec<C::Field>);
 
     /// Verifies the given grand product proof.
     fn verify(
-        self,
+        &self,
         claim: &[C::Field],
         transcript: &mut ProofTranscript,
         n_rounds: usize,
         setup: &C::Setup,
-    ) -> Result<(), QuarkError>;
+    ) -> Result<(Vec<C::Field>, Vec<C::Field>), QuarkError>;
 }
 
 impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof<C> {
@@ -64,25 +142,28 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
     /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
     fn prove(
-        v_polys: Vec<DensePolynomial<C::Field>>,
+        leaves: &[Vec<C::Field>],
         transcript: &mut ProofTranscript,
         setup: &C::Setup,
     ) -> (Self, Vec<C::Field>) {
         // TODO (alpeh_v): all v the same size?
-        let v_length = v_polys[0].len();
+        let v_length = leaves[0].len();
         let v_variables = v_length.log_2();
 
         let mut f_polys = Vec::<DensePolynomial<C::Field>>::new();
         let mut sumcheck_polys = Vec::<DensePolynomial<C::Field>>::new();
         let mut products = Vec::<C::Field>::new();
+        let mut v_polys = Vec::<DensePolynomial<C::Field>>::new();
 
-        for v in v_polys.iter() {
-            let (f, f_1_r, f_r_0, f_r_1, p) = v_into_f::<C>(v);
+        for v in leaves {
+            let v_polynomial = DensePolynomial::<C::Field>::new(v.to_vec());
+            let (f, f_1_r, f_r_0, f_r_1, p) = v_into_f::<C>(&v_polynomial);
             f_polys.push(f);
             sumcheck_polys.push(f_1_r);
             sumcheck_polys.push(f_r_0);
             sumcheck_polys.push(f_r_1);
             products.push(p);
+            v_polys.push(v_polynomial);
         }
 
         // We bind to these polynomials
@@ -173,6 +254,7 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
             BatchType::Big,
             transcript,
         );
+        let num_vars = v_variables;
 
         (
             Self {
@@ -185,19 +267,20 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
                 claimed_eval_f_r_1,
                 sum_openings,
                 v_opening_proof,
+                num_vars
             },
-            products,
+            x.clone(),
         )
     }
 
     /// Verifies the given grand product proof.
     fn verify(
-        self,
+        &self,
         claims: &[C::Field],
         transcript: &mut ProofTranscript,
         n_rounds: usize,
         setup: &C::Setup,
-    ) -> Result<(), QuarkError> {
+    ) -> Result<(Vec<C::Field>, Vec<C::Field>), QuarkError> {
         // First we append the claimed values for the commitment and the product
         transcript.append_scalars(b"grand product claim", claims);
         for v in self.v_commitment.iter() {
@@ -237,12 +320,12 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
 
         let mut challenge_1_r = vec![C::Field::one()];
         challenge_1_r.append(&mut r.clone());
-        let one_r = self.claimed_eval_f_1_r.0;
+        let one_r = &self.claimed_eval_f_1_r.0;
         C::batch_verify(
             &self.claimed_eval_f_1_r.1,
             setup,
             &challenge_1_r,
-            &one_r,
+            one_r,
             &borrowed_f,
             transcript,
         )
@@ -250,12 +333,12 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
 
         let mut challenge_r_0 = r.clone();
         challenge_r_0.push(C::Field::zero());
-        let r_0 = self.claimed_eval_f_r_0.0;
+        let r_0 = &self.claimed_eval_f_r_0.0;
         C::batch_verify(
             &self.claimed_eval_f_r_0.1,
             setup,
             &challenge_r_0,
-            &r_0,
+            r_0,
             &borrowed_f,
             transcript,
         )
@@ -263,12 +346,12 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
 
         let mut challenge_r_1 = r.clone();
         challenge_r_1.push(C::Field::one());
-        let r_1 = self.claimed_eval_f_r_1.0;
+        let r_1 = &self.claimed_eval_f_r_1.0;
         C::batch_verify(
             &self.claimed_eval_f_r_1.1,
             setup,
             &challenge_r_1,
-            &r_1,
+            r_1,
             &borrowed_f,
             transcript,
         )
@@ -315,7 +398,7 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
             return Err(QuarkError::InvalidBinding);
         }
 
-        Ok(())
+        Ok((self.claimed_eval_f_0_r.0.clone(), r))
     }
 }
 
@@ -407,25 +490,19 @@ mod quark_grand_product_tests {
             .take(LAYER_SIZE)
             .collect();
         let known_products = vec![leaves_1.iter().product(), leaves_2.iter().product()];
-        let v_1 = DensePolynomial::new(leaves_1);
-        let v_2 = DensePolynomial::new(leaves_2);
-        let v = vec![v_1, v_2];
+        let v = vec![leaves_1, leaves_2];
         let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
 
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
         let (proof, product) =
-            QuarkGrandProductProof::<Zeromorph<Bn254>>::prove(v, &mut transcript, &setup);
-
-        for (x, y) in product.iter().zip(known_products.iter()) {
-            assert_eq!(x, y, "Proof doesn't produce correct products");
-        }
+            QuarkGrandProductProof::<Zeromorph<Bn254>>::prove(&v, &mut transcript, &setup);
 
         // Note resetting the transcript is important
         transcript = ProofTranscript::new(b"test_transcript");
-        let result = proof.verify(&product, &mut transcript, 8, &setup);
+        let result = proof.verify(&known_products, &mut transcript, 8, &setup);
 
-        assert_eq!(result, Ok(()), "Proof doesn't verify");
+        assert!(result.is_ok(), "Proof did not verify");
     }
 }

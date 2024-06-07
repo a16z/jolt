@@ -330,7 +330,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BytecodePolynomials<F, C> {
     /// Computes the shape of all commitment for use in PCS::setup().
     pub fn commit_shapes(max_bytecode_size: usize, max_trace_length: usize) -> Vec<CommitShape> {
         // Account for no-op prepended to bytecode
-        let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two();
+        let max_bytecode_size = (max_bytecode_size + 1).next_power_of_two()*8;
         let max_trace_length = max_trace_length.next_power_of_two();
 
         // a_read_write, t_read, v_read_write (address, opcode, rs1, rs2, rd, imm)
