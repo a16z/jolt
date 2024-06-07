@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_std::log2;
 use std::marker::PhantomData;
 
@@ -49,7 +49,7 @@ impl<F: JoltField> LassoSubtable<F> for LtAbsSubtable<F> {
         // Skip i=0
         for i in 1..b {
             result += (F::one() - x[i]) * y[i] * eq_term;
-            eq_term *= F::one() - x[i] - y[i] + F::from_u64(2u64).unwrap() * x[i] * y[i];
+            eq_term *= F::one() - x[i] - y[i] + x[i] * y[i] + x[i] * y[i];
         }
         result
     }
@@ -58,8 +58,10 @@ impl<F: JoltField> LassoSubtable<F> for LtAbsSubtable<F> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use binius_field::BinaryField128b;
 
     use crate::{
+        field::binius::BiniusField,
         jolt::subtable::{lt_abs::LtAbsSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
@@ -69,5 +71,12 @@ mod test {
         LtAbsSubtable<Fr>,
         Fr,
         256
+    );
+
+    subtable_materialize_mle_parity_test!(
+        lt_abs_binius_materialize_mle_parity,
+        LtAbsSubtable<BiniusField<BinaryField128b>>,
+        BiniusField<BinaryField128b>,
+        1 << 16
     );
 }

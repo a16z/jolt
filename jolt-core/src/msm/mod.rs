@@ -84,7 +84,8 @@ fn msm_bigint_wnaf<V: VariableBaseMSM>(
         .flat_map_iter(|s| make_digits_bigint(s, c, num_bits))
         .collect::<Vec<_>>();
     let zero = V::zero();
-    let window_sums: Vec<_> = ark_std::cfg_into_iter!(0..digits_count)
+    let window_sums: Vec<_> = (0..digits_count)
+        .into_par_iter()
         .map(|i| {
             let mut buckets = vec![zero; 1 << c];
             for (digits, base) in scalar_digits.chunks(digits_count).zip(bases) {

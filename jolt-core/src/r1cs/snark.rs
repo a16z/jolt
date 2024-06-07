@@ -20,7 +20,7 @@ use super::{
     spartan::{SpartanError, UniformShapeBuilder, UniformSpartanKey, UniformSpartanProof},
 };
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::{constants::MEMORY_OPS_PER_INSTRUCTION, rv_trace::NUM_CIRCUIT_FLAGS};
 use rayon::prelude::*;
@@ -159,7 +159,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         }
     }
 
-    fn push_to_step<T: Borrow<F>>(&self, data: &Vec<T>, step: &mut Vec<F>, step_index: usize) {
+    fn push_to_step<T: Borrow<F>>(&self, data: &[T], step: &mut Vec<F>, step_index: usize) {
         let num_vals = data.len() / self.padded_trace_len;
         for var_index in 0..num_vals {
             step.push(*data[var_index * self.padded_trace_len + step_index].borrow());

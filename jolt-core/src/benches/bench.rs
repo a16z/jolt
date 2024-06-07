@@ -1,10 +1,11 @@
+use crate::field::JoltField;
 use crate::host;
 use crate::jolt::vm::rv32i_vm::{RV32IJoltVM, C, M};
 use crate::jolt::vm::Jolt;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::hyperkzg::HyperKZG;
 use crate::poly::commitment::hyrax::HyraxScheme;
 use crate::poly::commitment::zeromorph::Zeromorph;
-use crate::poly::field::JoltField;
 use ark_bn254::{Bn254, Fr, G1Projective};
 use serde::Serialize;
 
@@ -12,6 +13,7 @@ use serde::Serialize;
 pub enum PCSType {
     Hyrax,
     Zeromorph,
+    HyperKZG,
 }
 
 #[derive(Debug, Copy, Clone, clap::ValueEnum)]
@@ -43,6 +45,13 @@ pub fn benchmarks(
             BenchType::Sha3 => sha3::<Fr, Zeromorph<Bn254>>(),
             BenchType::Sha2Chain => sha2chain::<Fr, Zeromorph<Bn254>>(),
             BenchType::Fibonacci => fibonacci::<Fr, Zeromorph<Bn254>>(),
+            _ => panic!("BenchType does not have a mapping"),
+        },
+        PCSType::HyperKZG => match bench_type {
+            BenchType::Sha2 => sha2::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Sha3 => sha3::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Sha2Chain => sha2chain::<Fr, HyperKZG<Bn254>>(),
+            BenchType::Fibonacci => fibonacci::<Fr, HyperKZG<Bn254>>(),
             _ => panic!("BenchType does not have a mapping"),
         },
         _ => panic!("PCS Type does not have a mapping"),
