@@ -1,7 +1,7 @@
 use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
-use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
