@@ -37,6 +37,7 @@ use self::analyze::ProgramSummary;
 use self::toolchain::install_toolchain;
 
 pub mod analyze;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod toolchain;
 
 #[derive(Clone)]
