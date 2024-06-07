@@ -1,8 +1,8 @@
 use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::field::JoltField;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
@@ -511,7 +511,7 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                                 .unwrap_or((index + 1, F::one()));
                             if right.0 == index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                output_layer[index / 2] = right.1 * value;
+                                output_layer[index / 2] = right.1 * *value;
                             } else {
                                 // Corresponding right node not found, so it must be 1
                                 output_layer[index / 2] = *value;
@@ -548,7 +548,7 @@ impl<F: JoltField> DynamicDensityGrandProductLayer<F> {
                                 .unwrap_or((index + 1, F::one()));
                             if right.0 == index + 1 {
                                 // Corresponding right node was found; multiply them together
-                                output_layer.push((index / 2, right.1 * value));
+                                output_layer.push((index / 2, right.1 * *value));
                             } else {
                                 // Corresponding right node not found, so it must be 1
                                 output_layer.push((index / 2, *value));
@@ -1148,7 +1148,7 @@ impl<F: JoltField> BatchedCubicSumcheck<F> for BatchedGrandProductToggleLayer<F>
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = flags[2 * i] - r * flags[2 * i]
                                         //                = 1 - r
-                                        flag_values.push(F::one() - r);
+                                        flag_values.push(F::one() - *r);
                                     } else {
                                         // bound_flags[i] = flags[2 * i] + r * (flags[2 * i + 1] - flags[2 * i])
                                         //                = flags[2 * i] - r * flags[2 * i]
@@ -1449,7 +1449,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
         left_claims
             .iter()
             .zip(right_claims.iter())
-            .map(|(left_claim, right_claim)| *left_claim * right_claim)
+            .map(|(left_claim, right_claim)| *left_claim * *right_claim)
             .collect()
     }
 
@@ -1685,8 +1685,7 @@ mod grand_product_tests {
                 }
             })
             .take(LAYER_SIZE)
-            .collect::<Vec<_>>()
-            .into();
+            .collect::<Vec<_>>();
             DynamicDensityGrandProductLayer::Dense(layer)
         })
         .take(BATCH_SIZE)

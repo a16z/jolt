@@ -1,10 +1,10 @@
-use crate::poly::field::JoltField;
 use ark_ff::Zero;
 use rand::rngs::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, marker::PhantomData};
 
+use crate::field::JoltField;
 use crate::jolt::instruction::JoltInstructionSet;
 use crate::poly::commitment::commitment_scheme::{BatchType, CommitShape, CommitmentScheme};
 use crate::poly::eq_poly::EqPolynomial;
@@ -130,7 +130,7 @@ impl BytecodeRow {
 }
 
 pub fn random_bytecode_trace(
-    bytecode: &Vec<BytecodeRow>,
+    bytecode: &[BytecodeRow],
     num_ops: usize,
     rng: &mut StdRng,
 ) -> Vec<BytecodeRow> {
@@ -409,9 +409,9 @@ where
         let mut gamma_term = F::one();
         for input in inputs {
             result += *input * gamma_term;
-            gamma_term *= gamma;
+            gamma_term *= *gamma;
         }
-        result - tau
+        result - *tau
     }
 
     #[tracing::instrument(skip_all, name = "BytecodePolynomials::compute_leaves")]

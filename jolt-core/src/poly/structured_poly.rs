@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::commitment::commitment_scheme::CommitmentScheme;

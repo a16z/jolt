@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{sltu::SLTUInstruction, JoltInstruction, SubtableIndices};
 use crate::{
+    field::JoltField,
     jolt::subtable::{eq::EqSubtable, ltu::LtuSubtable, LassoSubtable},
-    poly::field::JoltField,
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 

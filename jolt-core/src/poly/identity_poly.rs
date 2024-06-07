@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 
 use crate::utils::math::Math;
 

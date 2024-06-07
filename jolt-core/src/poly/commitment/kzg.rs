@@ -1,5 +1,6 @@
+use crate::field::JoltField;
 use crate::msm::VariableBaseMSM;
-use crate::poly::{field::JoltField, unipoly::UniPoly};
+use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
@@ -118,6 +119,7 @@ impl<P: Pairing> UnivariateKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
 {
+    #[tracing::instrument(skip_all, name = "KZG::commit_offset")]
     pub fn commit_offset(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
@@ -140,6 +142,7 @@ where
         Ok(c.into_affine())
     }
 
+    #[tracing::instrument(skip_all, name = "KZG::commit")]
     pub fn commit(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,
@@ -158,6 +161,7 @@ where
         Ok(c.into_affine())
     }
 
+    #[tracing::instrument(skip_all, name = "KZG::open")]
     pub fn open(
         pk: &KZGProverKey<P>,
         poly: &UniPoly<P::ScalarField>,

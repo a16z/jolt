@@ -1,4 +1,5 @@
-use crate::poly::{commitment::commitment_scheme::BatchType, field::JoltField};
+use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::BatchType;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::marker::{PhantomData, Sync};
@@ -312,7 +313,7 @@ where
 
     fn fingerprint(inputs: &(F, F, F), gamma: &F, tau: &F) -> F {
         let (a, v, t) = *inputs;
-        t * gamma.square() + v * *gamma + a - tau
+        t * gamma.square() + v * *gamma + a - *tau
     }
 
     #[tracing::instrument(skip_all, name = "Surge::compute_leaves")]
@@ -679,7 +680,7 @@ where
     #[tracing::instrument(skip_all, name = "Surge::construct_polys")]
     fn construct_polys(
         preprocessing: &SurgePreprocessing<F, Instruction, C, M>,
-        ops: &Vec<Instruction>,
+        ops: &[Instruction],
     ) -> SurgePolys<F, PCS> {
         let num_lookups = ops.len().next_power_of_two();
         let mut dim_usize: Vec<Vec<usize>> = vec![vec![0; num_lookups]; C];

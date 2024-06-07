@@ -3,15 +3,16 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use crate::utils::math::Math;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::ops::{AddAssign, Mul};
 
-#[derive(Debug, PartialEq)]
-pub struct DensePolynomial<F> {
+#[derive(Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct DensePolynomial<F: JoltField> {
     num_vars: usize, // the number of variables in the multilinear polynomial
     len: usize,
     pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
@@ -184,7 +185,7 @@ impl<F: JoltField> DensePolynomial<F> {
                 if high.is_one() {
                     new_evals[i] = F::one();
                 } else if high.is_zero() {
-                    new_evals[i] = F::one() - r;
+                    new_evals[i] = F::one() - *r;
                 } else {
                     panic!("Shouldn't happen for a flag poly");
                 }
@@ -289,7 +290,7 @@ impl<F: JoltField> Clone for DensePolynomial<F> {
     }
 }
 
-impl<F> Index<usize> for DensePolynomial<F> {
+impl<F: JoltField> Index<usize> for DensePolynomial<F> {
     type Output = F;
 
     #[inline(always)]
@@ -298,7 +299,7 @@ impl<F> Index<usize> for DensePolynomial<F> {
     }
 }
 
-impl<F> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
+impl<F: JoltField> AsRef<DensePolynomial<F>> for DensePolynomial<F> {
     fn as_ref(&self) -> &DensePolynomial<F> {
         self
     }

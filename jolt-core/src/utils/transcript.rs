@@ -1,4 +1,4 @@
-use crate::poly::field::JoltField;
+use crate::field::JoltField;
 use ark_ec::CurveGroup;
 use merlin::Transcript;
 
@@ -67,6 +67,20 @@ impl ProofTranscript {
         (0..len)
             .map(|_i| self.challenge_scalar(label))
             .collect::<Vec<F>>()
+    }
+
+    // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
+    pub fn challenge_scalar_powers<F: JoltField>(
+        &mut self,
+        label: &'static [u8],
+        len: usize,
+    ) -> Vec<F> {
+        let q: F = self.challenge_scalar(label);
+        let mut q_powers = vec![F::one(); len];
+        for i in 1..len {
+            q_powers[i] = q_powers[i - 1] * q;
+        }
+        q_powers
     }
 }
 
