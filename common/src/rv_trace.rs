@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
+use crate::constants::{BYTES_PER_INSTRUCTION, MEMORY_OPS_PER_INSTRUCTION, RAM_START_ADDRESS, REGISTER_COUNT};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use strum_macros::FromRepr;
@@ -122,24 +122,86 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                     MemoryOp::noop_read(),
                     MemoryOp::noop_read(),
                 ],
-                RV32IM::LB | RV32IM::LBU => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::Read(rs1_offset()),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::LH | RV32IM::LHU => [
-                    rs1_read(),
-                    MemoryOp::noop_read(),
-                    rd_write(),
-                    MemoryOp::Read(rs1_offset()),
-                    MemoryOp::Read(rs1_offset() + 1),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
+                RV32IM::LB | RV32IM::LBU => {
+                    match rs1_offset() % (BYTES_PER_INSTRUCTION as u64) {
+                        0 => {
+                            [
+                                rs1_read(),
+                                MemoryOp::noop_read(),
+                                rd_write(),
+                                MemoryOp::Read(rs1_offset()),
+                                MemoryOp::Read(rs1_offset() + 1),
+                                MemoryOp::Read(rs1_offset() + 2),
+                                MemoryOp::Read(rs1_offset() + 3),
+                            ]
+                        },
+                        1 => {
+                            [
+                                rs1_read(),
+                                MemoryOp::noop_read(),
+                                rd_write(),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Read(rs1_offset()),
+                                MemoryOp::Read(rs1_offset() + 1),
+                                MemoryOp::Read(rs1_offset() + 2),
+                            ]
+                        },
+                        2 => {
+                            [
+                                rs1_read(),
+                                MemoryOp::noop_read(),
+                                rd_write(),
+                                MemoryOp::Read(rs1_offset() - 2),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Read(rs1_offset()),
+                                MemoryOp::Read(rs1_offset() + 1),
+                            ]
+                        },
+                        3 => {
+                            [
+                                rs1_read(),
+                                MemoryOp::noop_read(),
+                                rd_write(),
+                                MemoryOp::Read(rs1_offset() - 3),
+                                MemoryOp::Read(rs1_offset() - 2),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Read(rs1_offset()),
+                            ]
+                        },
+                        _ => {
+                            panic!("Invalid Remainder!");
+                        }
+                    }
+                },
+                RV32IM::LH | RV32IM::LHU => {
+                    match rs1_offset() % (BYTES_PER_INSTRUCTION as u64) {
+                        0 => {
+                            [
+                                rs1_read(),
+                                MemoryOp::noop_read(),
+                                rd_write(),
+                                MemoryOp::Read(rs1_offset()),
+                                MemoryOp::Read(rs1_offset() + 1),
+                                MemoryOp::Read(rs1_offset() + 2),
+                                MemoryOp::Read(rs1_offset() + 3),
+                            ]
+                        },
+                        2 => {
+                            [
+                                rs1_read(),
+                                MemoryOp::noop_read(),
+                                rd_write(),
+                                MemoryOp::Read(rs1_offset() - 2),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Read(rs1_offset() ),
+                                MemoryOp::Read(rs1_offset() + 1),
+                            ]
+                        },
+                        _ => {
+                            panic!("Invalid Remainder!");
+                        }
+                    }
+                },
                 RV32IM::LW => [
                     rs1_read(),
                     MemoryOp::noop_read(),
@@ -161,24 +223,86 @@ impl From<&RVTraceRow> for [MemoryOp; MEMORY_OPS_PER_INSTRUCTION] {
                 _ => unreachable!("{val:?}"),
             },
             RV32InstructionFormat::S => match val.instruction.opcode {
-                RV32IM::SB => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
-                RV32IM::SH => [
-                    rs1_read(),
-                    rs2_read(),
-                    MemoryOp::noop_write(),
-                    MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
-                    MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
-                    MemoryOp::noop_read(),
-                    MemoryOp::noop_read(),
-                ],
+                RV32IM::SB => {
+                    match rs1_offset() % (BYTES_PER_INSTRUCTION as u64) {
+                        0 => {
+                            [
+                                rs1_read(),
+                                rs2_read(),
+                                MemoryOp::noop_write(),
+                                MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                                MemoryOp::Read(rs1_offset() + 1),
+                                MemoryOp::Read(rs1_offset() + 2),
+                                MemoryOp::Read(rs1_offset() + 3),
+                            ]
+                        },
+                        1 => {
+                            [
+                                rs1_read(),
+                                rs2_read(),
+                                MemoryOp::noop_write(),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                                MemoryOp::Read(rs1_offset() + 1),
+                                MemoryOp::Read(rs1_offset() + 2),
+                            ]
+                        },
+                        2 => {
+                            [
+                                rs1_read(),
+                                rs2_read(),
+                                MemoryOp::noop_write(),
+                                MemoryOp::Read(rs1_offset() - 2),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                                MemoryOp::Read(rs1_offset() + 1),
+                            ]
+                        },
+                        3 => {
+                            [
+                                rs1_read(),
+                                rs2_read(),
+                                MemoryOp::noop_write(),
+                                MemoryOp::Read(rs1_offset() - 3),
+                                MemoryOp::Read(rs1_offset() - 2),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                            ]
+                        },
+                        _ => {
+                            panic!("Invalid Remainder!");
+                        }
+                    }
+                },
+                RV32IM::SH => {
+                    match rs1_offset() % (BYTES_PER_INSTRUCTION as u64) {
+                        0 => {
+                            [
+                                rs1_read(),
+                                rs2_read(),
+                                MemoryOp::noop_write(),
+                                MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                                MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
+                                MemoryOp::Read(rs1_offset() + 2),
+                                MemoryOp::Read(rs1_offset() + 3),
+                            ]
+                        },
+                        2 => {
+                            [
+                                rs1_read(),
+                                rs2_read(),
+                                MemoryOp::noop_write(),
+                                MemoryOp::Read(rs1_offset() - 2),
+                                MemoryOp::Read(rs1_offset() - 1),
+                                MemoryOp::Write(rs1_offset(), ram_byte_written(0) as u64),
+                                MemoryOp::Write(rs1_offset() + 1, ram_byte_written(1) as u64),
+                            ]
+                        },
+                        _ => {
+                            panic!("Invalid Remainder!");
+                        }
+                    }
+                },
                 RV32IM::SW => [
                     rs1_read(),
                     rs2_read(),
@@ -225,7 +349,7 @@ pub struct ELFInstruction {
     pub virtual_sequence_index: Option<usize>,
 }
 
-pub const NUM_CIRCUIT_FLAGS: usize = 11;
+pub const NUM_CIRCUIT_FLAGS: usize = 12;
 
 impl ELFInstruction {
     #[rustfmt::skip]
@@ -233,15 +357,16 @@ impl ELFInstruction {
         // Jolt Appendix A.1
         // 0: first_operand == rs1 (1 if PC)
         // 1: second_operand == rs2 (1 if imm)
-        // 2: Load instruction
-        // 3: Store instruction
-        // 4: Jump instruction
-        // 5: Branch instruction
-        // 6: Instruction writes lookup output to rd
-        // 7: Sign-bit of imm
-        // 8: Is concat
-        // 9: Increment virtual PC
-        // 10: Assert instruction
+        // 2: LBU
+        // 3: LHU
+        // 4: LW
+        // 5: Jump instruction
+        // 6: Branch instruction
+        // 7: Instruction writes lookup output to rd
+        // 8: Sign-bit of imm
+        // 9: Is concat
+        // 10: Increment virtual PC
+        // 11: Assert instruction
 
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
 
@@ -268,26 +393,31 @@ impl ELFInstruction {
 
         flags[2] = matches!(
             self.opcode,
-            RV32IM::LB | RV32IM::LH | RV32IM::LW | RV32IM::LBU | RV32IM::LHU,
+            RV32IM::LBU,
         );
 
         flags[3] = matches!(
             self.opcode,
-            RV32IM::SB | RV32IM::SH | RV32IM::SW,
+            RV32IM::LHU,
         );
 
         flags[4] = matches!(
             self.opcode,
-            RV32IM::JAL | RV32IM::JALR,
+            RV32IM::LW,
         );
 
         flags[5] = matches!(
+            self.opcode,
+            RV32IM::JAL | RV32IM::JALR,
+        );
+
+        flags[6] = matches!(
             self.opcode,
             RV32IM::BEQ | RV32IM::BNE | RV32IM::BLT | RV32IM::BGE | RV32IM::BLTU | RV32IM::BGEU,
         );
 
         // loads, stores, branches, jumps do not store the lookup output to rd (they may update rd in other ways)
-        flags[6] = !matches!(
+        flags[7] = !matches!(
             self.opcode,
             RV32IM::SB
             | RV32IM::SH
@@ -304,9 +434,9 @@ impl ELFInstruction {
         );
 
         let mask = 1u32 << 31;
-        flags[7] = matches!(self.imm, Some(imm) if imm & mask == mask);
+        flags[8] = matches!(self.imm, Some(imm) if imm & mask == mask);
 
-        flags[8] = matches!(
+        flags[9] = matches!(
             self.opcode,
             RV32IM::XOR
             | RV32IM::XORI
@@ -333,7 +463,7 @@ impl ELFInstruction {
         );
 
         // TODO(moodlezoup): Use these flags in R1CS constraints
-        flags[9] = match self.virtual_sequence_index {
+        flags[10] = match self.virtual_sequence_index {
             // For virtual sequences, we set
             //     virtual PC := ProgARW     (the bytecode `a` value)
             // if it's the first instruction in the sequence.
@@ -346,7 +476,7 @@ impl ELFInstruction {
             //     virtual PC := ProgARW     (the bytecode `a` value)
             None => false
         };
-        flags[10] = matches!(self.opcode,
+        flags[11] = matches!(self.opcode,
             RV32IM::VIRTUAL_ASSERT_EQ     |
             RV32IM::VIRTUAL_ASSERT_LTE    |
             RV32IM::VIRTUAL_ASSERT_LTU    |
