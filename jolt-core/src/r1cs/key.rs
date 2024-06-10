@@ -265,22 +265,10 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let var_bits = self.uniform_r1cs.num_vars.next_power_of_two().log_2();
         let r_var = &r_rest[..var_bits];
 
+        let r_var_eq = EqPolynomial::evals(r_var);
         let eval_variables = (0..self.uniform_r1cs.num_vars)
-            .map(|var_index| {
-                // write var_index in binary
-                let bin = format!("{var_index:0width$b}", width = var_bits);
-
-                let product = bin.chars().enumerate().fold(F::one(), |acc, (j, bit)| {
-                    acc * if bit == '0' {
-                        F::one() - r_var[j]
-                    } else {
-                        r_var[j]
-                    }
-                });
-
-                product * segment_evals[var_index]
-            })
-            .sum::<F>();
+            .map(|var_index| r_var_eq[var_index] * segment_evals[var_index])
+            .sum();
         let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(0, F::one())]);
         let eval_const = const_poly.evaluate(r_rest);
 
