@@ -312,7 +312,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
             eq_rx_constr[self.uniform_r1cs.num_rows]
         );
 
-        let compute =
+        let compute_matrix_mle =
             |constraints: &SparseConstraints<F>, non_uni: Option<&SparseEqualityItem<F>>| -> F {
                 let mut full_mle_evaluation: F = constraints
                     .vars
@@ -356,9 +356,9 @@ impl<F: JoltField> UniformSpartanKey<F> {
             };
 
         (
-            compute(&self.uniform_r1cs.a, Some(&self.offset_eq_r1cs.eq)),
-            compute(&self.uniform_r1cs.b, Some(&self.offset_eq_r1cs.condition)),
-            compute(&self.uniform_r1cs.c, None),
+            compute_matrix_mle(&self.uniform_r1cs.a, Some(&self.offset_eq_r1cs.eq)),
+            compute_matrix_mle(&self.uniform_r1cs.b, Some(&self.offset_eq_r1cs.condition)),
+            compute_matrix_mle(&self.uniform_r1cs.c, None),
         )
     }
 
@@ -569,7 +569,7 @@ mod test {
         inputs[TestInputs::OpFlags1 as usize][3] = Fr::from(3);
 
         // Confirms validity of constraints
-        let (_az, _bz, _cz) = combined_builder.compute_spartan(&inputs, &[]);
+        let (_az, _bz, _cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &[]);
 
         let key = UniformSpartanKey::from_builder(&combined_builder);
 

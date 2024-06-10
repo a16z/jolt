@@ -148,8 +148,8 @@ pub fn simp_test_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
 
     // Written by hand from non-uniform constraints
     let row_0_index = 32 * 8;
-    let row_2_index = 32 * 10;
     let row_1_index = 32 * 9;
+    let row_2_index = 32 * 10;
     let row_3_index = 32 * 11;
     big_a[row_0_index] = F::one();
     big_a[row_0_index + 9] = from_i64(-1);

@@ -30,7 +30,7 @@ impl<I: ConstraintInput> Constraint<I> {
     #[cfg(test)]
     fn is_sat(&self, inputs: &Vec<i64>) -> bool {
         // Find the number of variables and the number of aux. Inputs should be equal to this combined length
-        let num_input = I::COUNT;
+        let num_inputs = I::COUNT;
 
         let mut aux_set = std::collections::HashSet::new();
         for constraint in [&self.a, &self.b, &self.c] {
@@ -44,9 +44,9 @@ impl<I: ConstraintInput> Constraint<I> {
         if !aux_set.is_empty() {
             assert_eq!(num_aux, *aux_set.iter().max().unwrap() + 1); // Ensure there are no gaps
         }
-        let aux_index = |aux_index: usize| num_input + aux_index;
+        let aux_index = |aux_index: usize| num_inputs + aux_index;
 
-        let num_vars = num_input + num_aux;
+        let num_vars = num_inputs + num_aux;
         assert_eq!(num_vars, inputs.len());
 
         let mut a = 0;
@@ -243,11 +243,12 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
 
     pub fn constrain_binary(&mut self, value: impl Into<LC<I>>) {
         let one: LC<I> = Variable::Constant.into();
-        let value: LC<I> = value.into();
+        let a: LC<I> = value.into();
+        let b = one - a.clone();
         // value * (1 - value)
         let constraint = Constraint {
-            a: value.clone(),
-            b: one - value,
+            a,
+            b,
             c: LC::zero(),
         };
         self.constraints.push(constraint);
@@ -627,7 +628,10 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
         let constraint = &self.offset_equality_constraint;
 
-        constraint.condition.1.terms()
+        constraint
+            .condition
+            .1
+            .terms()
             .iter()
             .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
             .for_each(|term| {
@@ -683,7 +687,11 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
     #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan")]
-    pub fn compute_spartan(&self, inputs: &[Vec<F>], aux: &[Vec<F>]) -> (Vec<F>, Vec<F>, Vec<F>) {
+    pub fn compute_spartan_Az_Bz_Cz(
+        &self,
+        inputs: &[Vec<F>],
+        aux: &[Vec<F>],
+    ) -> (Vec<F>, Vec<F>, Vec<F>) {
         assert_eq!(inputs.len(), I::COUNT);
         let num_aux = self.uniform_builder.num_aux();
         assert_eq!(aux.len(), num_aux);
@@ -709,7 +717,10 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let compute_lc_flat = |lc: &LC<I>, flat_terms: &[F], step_index: usize| {
             if step_index >= self.uniform_repeat {
                 // Assume all terms are 0, other than the constant
-                return lc.constant_term().map(|term| from_i64(term.1)).unwrap_or_else(F::zero);
+                return lc
+                    .constant_term()
+                    .map(|term| from_i64(term.1))
+                    .unwrap_or_else(F::zero);
             }
 
             lc.terms()
@@ -1219,7 +1230,7 @@ mod tests {
         let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(11 * 13)]]);
 
-        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
         assert_eq!(az.len(), 4);
         assert_eq!(bz.len(), 4);
         assert_eq!(cz.len(), 4);
@@ -1283,7 +1294,7 @@ mod tests {
             ]
         );
 
-        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
         assert_eq!(az.len(), 16);
         assert_eq!(bz.len(), 16);
         assert_eq!(cz.len(), 16);
@@ -1331,7 +1342,7 @@ mod tests {
         let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(5 * 13)]]);
 
-        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
         assert_eq!(az.len(), 4);
         assert_eq!(bz.len(), 4);
         assert_eq!(cz.len(), 4);
@@ -1407,7 +1418,7 @@ mod tests {
         flat_witness.push(Fr::one());
         flat_witness.resize(flat_witness.len().next_power_of_two(), Fr::zero());
         let (mut builder_az, mut builder_bz, mut builder_cz) =
-            builder.compute_spartan(&witness_segments, &[]);
+            builder.compute_spartan_Az_Bz_Cz(&witness_segments, &[]);
         builder_az.resize(key.num_rows_total(), Fr::zero());
         builder_bz.resize(key.num_rows_total(), Fr::zero());
         builder_cz.resize(key.num_rows_total(), Fr::zero());

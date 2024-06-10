@@ -605,7 +605,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         #[cfg(test)]
         {
-            let (az, bz, cz) = combined_builder.compute_spartan(&inputs_flat, &aux);
+            let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
             combined_builder.assert_valid(&az, &bz, &cz);
         }
 

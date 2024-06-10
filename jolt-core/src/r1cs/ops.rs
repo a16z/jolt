@@ -54,7 +54,9 @@ impl<I: ConstraintInput> LC<I> {
     }
 
     pub fn constant_term(&self) -> Option<&Term<I>> {
-        self.0.last().filter(|term| matches!(term.0, Variable::Constant))
+        self.0
+            .last()
+            .filter(|term| matches!(term.0, Variable::Constant))
     }
 
     pub fn to_field_elements<F: JoltField>(&self) -> Vec<F> {

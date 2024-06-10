@@ -147,7 +147,7 @@ pub struct UniformSpartanProof<F: JoltField, C: CommitmentScheme<Field = F>> {
     outer_sumcheck_proof: SumcheckInstanceProof<F>,
     outer_sumcheck_claims: (F, F, F),
     inner_sumcheck_proof: SumcheckInstanceProof<F>,
-    claimed_witnesss_evals: Vec<F>,
+    claimed_witness_evals: Vec<F>,
     opening_proof: C::BatchedProof,
 }
 
@@ -192,7 +192,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         let inputs = &segmented_padded_witness.segments[0..I::COUNT];
         let aux = &segmented_padded_witness.segments[I::COUNT..];
-        let (az, bz, cz) = constraint_builder.compute_spartan(inputs, aux);
+        let (az, bz, cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
         // TODO: Do not require these padded, Sumcheck should handle sparsity.
         assert!(az.len().is_power_of_two());
         assert!(bz.len().is_power_of_two());
@@ -319,7 +319,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             outer_sumcheck_proof,
             outer_sumcheck_claims,
             inner_sumcheck_proof,
-            claimed_witnesss_evals: witness_evals,
+            claimed_witness_evals: witness_evals,
             opening_proof,
         })
     }
@@ -379,7 +379,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         // let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
         let n_prefix = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
 
-        let eval_Z = key.evaluate_z_mle(&self.claimed_witnesss_evals, &inner_sumcheck_r);
+        let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &inner_sumcheck_r);
 
         let r_y = inner_sumcheck_r.clone();
         let r = [r_x, r_y].concat();
@@ -399,7 +399,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             &self.opening_proof,
             generators,
             r_y_point,
-            &self.claimed_witnesss_evals,
+            &self.claimed_witness_evals,
             &witness_segment_commitments,
             transcript,
         )

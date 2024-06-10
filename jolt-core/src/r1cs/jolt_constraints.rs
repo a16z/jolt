@@ -37,14 +37,14 @@ pub enum JoltIn {
 
     RAM_A,
     // Ram_V
-    RAM_Read_RS1,
-    RAM_Read_RS2,
-    RAM_Read_RD, // TODO(sragss): Appears to be unused?
+    RS1_Read,
+    RS2_Read,
+    RD_Read,
     RAM_Read_Byte0,
     RAM_Read_Byte1,
     RAM_Read_Byte2,
     RAM_Read_Byte3,
-    RAM_Write_RD,
+    RD_Write,
     RAM_Write_Byte0,
     RAM_Write_Byte1,
     RAM_Write_Byte2,
@@ -138,11 +138,11 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
 
         let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RAM_Read_RS1);
+        let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RS1_Read);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
             JoltIn::Bytecode_Imm,
-            JoltIn::RAM_Read_RS2,
+            JoltIn::RS2_Read,
         );
 
         // Converts from unsigned to twos-complement representation
@@ -150,11 +150,11 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let imm_signed =
             cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
-        let flag_0_or_1_condition = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
+        let is_load_or_store = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
         let memory_start: i64 = self.memory_start.try_into().unwrap();
         cs.constrain_eq_conditional(
-            flag_0_or_1_condition,
-            LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
+            is_load_or_store,
+            LC::sum2(JoltIn::RS1_Read, imm_signed),
             LC::sum2(JoltIn::RAM_A, memory_start),
         );
 
@@ -196,7 +196,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
         cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RAM_Read_RS2);
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RS2_Read);
 
         // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
         let chunked_x = cs.allocate_pack_be(
@@ -231,12 +231,12 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
         cs.constrain_eq_conditional(
             rd_nonzero_and_lookup_to_rd,
-            JoltIn::RAM_Write_RD,
+            JoltIn::RD_Write,
             JoltIn::LookupOutput,
         );
         let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
         let lhs = LC::sum2(JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let rhs = JoltIn::RAM_Write_RD;
+        let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
         let branch_and_lookup_output =
@@ -288,10 +288,10 @@ mod tests {
         inputs[JoltIn::Bytecode_RS2 as usize][0] = Fr::from(3);
         inputs[JoltIn::Bytecode_RD as usize][0] = Fr::from(4);
 
-        inputs[JoltIn::RAM_Read_RD as usize][0] = Fr::from(0);
-        inputs[JoltIn::RAM_Read_RS1 as usize][0] = Fr::from(100);
-        inputs[JoltIn::RAM_Read_RS2 as usize][0] = Fr::from(200);
-        inputs[JoltIn::RAM_Write_RD as usize][0] = Fr::from(300);
+        inputs[JoltIn::RD_Read as usize][0] = Fr::from(0);
+        inputs[JoltIn::RS1_Read as usize][0] = Fr::from(100);
+        inputs[JoltIn::RS2_Read as usize][0] = Fr::from(200);
+        inputs[JoltIn::RD_Write as usize][0] = Fr::from(300);
         // remainder RAM == 0
 
         // rv_trace::to_circuit_flags
@@ -300,7 +300,7 @@ mod tests {
         inputs[JoltIn::OpFlags_IsImm as usize][0] = Fr::zero(); // second_operand = rs2 => immediate
 
         let aux = combined_builder.compute_aux(&inputs);
-        let (az, bz, cz) = combined_builder.compute_spartan(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
 
         combined_builder.assert_valid(&az, &bz, &cz);
     }
