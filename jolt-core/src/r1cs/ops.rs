@@ -245,7 +245,9 @@ impl<I: ConstraintInput> std::ops::Sub for Variable<I> {
     type Output = LC<I>;
 
     fn sub(self, other: Self) -> Self::Output {
-        LC::new(vec![Term(self, 1), Term(other, -1)])
+        let lhs: LC<I> = self.into();
+        let rhs: LC<I> = other.into();
+        lhs - rhs
     }
 }
 
@@ -355,7 +357,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
             fn sub(self, rhs: T) -> Self::Output {
                 let lhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = self.into();
                 let rhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = rhs.into();
-                lhs_lc + -rhs_lc
+                lhs_lc - rhs_lc
             }
         }
 
