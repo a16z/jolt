@@ -378,6 +378,7 @@ fn modify_cargo_toml(name: &str) -> Result<()> {
 }
 
 fn build_wasm() {
+    println!("Building the project with wasm-pack...");
     let func_names = extract_provable_functions();
     for func_name in func_names.clone() {
         preprocess_and_save(&func_name).expect("Failed to preprocess functions");
