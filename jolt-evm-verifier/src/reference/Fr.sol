@@ -81,7 +81,6 @@ library FrLib {
 
     // TODO: Montgomery's batch inversion trick
     function div(Fr numerator, Fr denominator) internal view returns (Fr) {
-        Fr inversion = invert(denominator);
         return numerator * invert(denominator);
     }
 }
@@ -96,7 +95,9 @@ function mul(Fr a, Fr b) pure returns (Fr) {
 }
 
 function sub(Fr a, Fr b) pure returns (Fr) {
-    return Fr.wrap(addmod(Fr.unwrap(a), MODULUS - Fr.unwrap(b), MODULUS));
+    unchecked{
+        return Fr.wrap(addmod(Fr.unwrap(a), MODULUS - Fr.unwrap(b), MODULUS));
+    }
 }
 
 // TODO: double check this !

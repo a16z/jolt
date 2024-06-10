@@ -9,8 +9,8 @@ library Jolt {
 
     struct BatchedGrandProductLayerProof {
         Fr[][] sumcheck_univariate_coeffs;
-        Fr[] left_claims;
-        Fr[] right_claims;
+        Fr[] leftClaims;
+        Fr[] rightClaims;
     }
 
     struct BatchedGrandProductProof {
