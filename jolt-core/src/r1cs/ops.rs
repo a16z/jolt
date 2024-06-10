@@ -176,8 +176,9 @@ where
     type Output = LC<I>;
 
     fn add(self, other: T) -> Self::Output {
+        let lc: LC<I> = self.into();
         let other_lc: LC<I> = other.into();
-        LC::new(vec![self]) + other_lc
+        lc + other_lc
     }
 }
 
@@ -189,8 +190,9 @@ where
     type Output = LC<I>;
 
     fn add(self, other: T) -> Self::Output {
+        let lc: LC<I> = self.into();
         let other_lc: LC<I> = other.into();
-        LC::new(vec![Term(self, 1)]) + other_lc
+        lc + other_lc
     }
 }
 
