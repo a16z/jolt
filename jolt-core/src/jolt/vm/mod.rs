@@ -359,8 +359,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             instruction_lookups: instruction_polynomials,
         };
 
-        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
-
         let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
             padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
@@ -369,6 +367,9 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             circuit_flags,
             &preprocessing.generators,
         );
+
+        let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
+
         let spartan_key = spartan::UniformSpartanProof::<F, PCS>::setup_precommitted(
             &r1cs_builder,
             padded_trace_length,
