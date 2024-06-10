@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use super::{
     key::{NonUniformR1CS, SparseEqualityItem},
-    ops::{from_i64, ConstraintInput, Term, Variable, LC},
+    ops::{ConstraintInput, Term, Variable, LC},
 };
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
@@ -471,11 +471,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
                     sparse.vars.push((
                         row_index,
                         self.variable_to_column(term.0),
-                        from_i64::<F>(term.1),
+                        F::from_i64(term.1),
                     ))
                 });
             if let Some(term) = lc.constant_term() {
-                sparse.consts.push((row_index, from_i64::<F>(term.1)));
+                sparse.consts.push((row_index, F::from_i64(term.1)));
             }
         };
 
@@ -642,11 +642,11 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 condition.offset_vars.push((
                     self.uniform_builder.variable_to_column(term.0),
                     constraint.condition.0,
-                    from_i64::<F>(term.1),
+                    F::from_i64(term.1),
                 ))
             });
         if let Some(term) = constraint.condition.1.constant_term() {
-            condition.constant = from_i64::<F>(term.1);
+            condition.constant = F::from_i64(term.1);
         }
 
         // Can't simply combine like terms because of the offset
@@ -660,7 +660,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 eq.offset_vars.push((
                     self.uniform_builder.variable_to_column(term.0),
                     constraint.a.0,
-                    from_i64::<F>(term.1),
+                    F::from_i64(term.1),
                 ))
             });
         rhs.terms()
@@ -670,7 +670,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 eq.offset_vars.push((
                     self.uniform_builder.variable_to_column(term.0),
                     constraint.b.0,
-                    from_i64::<F>(term.1),
+                    F::from_i64(term.1),
                 ))
             });
 
@@ -682,7 +682,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             )
         });
         if let Some(term) = rhs.constant_term() {
-            eq.constant = from_i64::<F>(term.1);
+            eq.constant = F::from_i64(term.1);
         }
 
         NonUniformR1CS::new(eq, condition)
@@ -723,7 +723,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 // Assume all terms are 0, other than the constant
                 return lc
                     .constant_term()
-                    .map(|term| from_i64(term.1))
+                    .map(|term| F::from_i64(term.1))
                     .unwrap_or_else(F::zero);
             }
 
@@ -1394,7 +1394,7 @@ mod tests {
         let mut expected_eq = SparseEqualityItem::<Fr>::empty();
         expected_eq.offset_vars = vec![
             (TestInputs::OpFlags0 as usize, false, Fr::one()),
-            (TestInputs::OpFlags0 as usize, true, from_i64::<Fr>(-1)),
+            (TestInputs::OpFlags0 as usize, true, Fr::from_i64(-1)),
         ];
 
         assert_eq!(offset_eq.condition, expected_condition);

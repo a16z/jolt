@@ -29,6 +29,14 @@ impl JoltField for ark_bn254::Fr {
         <Self as ark_ff::PrimeField>::from_u64(n)
     }
 
+    fn from_i64(val: i64) -> Self {
+        if val > 0 {
+            <Self as JoltField>::from_u64(val as u64).unwrap()
+        } else {
+            Self::zero() - <Self as JoltField>::from_u64(-(val) as u64).unwrap()
+        }
+    }
+
     fn square(&self) -> Self {
         <Self as ark_ff::Field>::square(self)
     }

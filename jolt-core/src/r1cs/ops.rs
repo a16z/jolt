@@ -62,7 +62,7 @@ impl<I: ConstraintInput> LC<I> {
     pub fn to_field_elements<F: JoltField>(&self) -> Vec<F> {
         self.terms()
             .iter()
-            .map(|term| from_i64::<F>(term.1))
+            .map(|term| F::from_i64(term.1))
             .collect()
     }
 
@@ -86,14 +86,14 @@ impl<I: ConstraintInput> LC<I> {
         for term in self.terms().iter() {
             match term.0 {
                 Variable::Input(_) => {
-                    result += values[var_index] * from_i64::<F>(term.1);
+                    result += values[var_index] * F::from_i64(term.1);
                     var_index += 1;
                 }
                 Variable::Auxiliary(_) => {
-                    result += values[var_index] * from_i64::<F>(term.1);
+                    result += values[var_index] * F::from_i64(term.1);
                     var_index += 1;
                 }
-                Variable::Constant => result += from_i64::<F>(term.1),
+                Variable::Constant => result += F::from_i64(term.1),
             }
         }
         result
@@ -128,16 +128,6 @@ impl<I: ConstraintInput> std::fmt::Debug for LC<I> {
 impl<I: ConstraintInput> std::fmt::Debug for Term<I> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}*{:?}", self.1, self.0)
-    }
-}
-
-// TODO(sragss): Move this onto JoltField
-pub fn from_i64<F: JoltField>(val: i64) -> F {
-    if val > 0 {
-        F::from_u64(val as u64).unwrap()
-    } else {
-        // TODO(sragss): THIS DOESN'T WORK FOR BINIUS
-        F::zero() - F::from_u64(-(val) as u64).unwrap()
     }
 }
 
