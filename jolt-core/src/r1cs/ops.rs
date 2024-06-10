@@ -1,7 +1,7 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
-use crate::field::JoltField;
+use crate::{field::JoltField, utils::thread::unsafe_allocate_zero_vec};
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
 use rayon::prelude::*;
@@ -111,7 +111,7 @@ impl<I: ConstraintInput> LC<I> {
     pub fn evaluate_batch<F: JoltField>(&self, inputs: &[&[F]], batch_size: usize) -> Vec<F> {
         assert!(inputs.iter().all(|inner| inner.len() == batch_size));
 
-        let mut output = vec![F::zero(); batch_size];
+        let mut output = unsafe_allocate_zero_vec(batch_size);
         self.evaluate_batch_mut(inputs, &mut output);
         output
     }
