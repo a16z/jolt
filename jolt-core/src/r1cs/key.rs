@@ -33,9 +33,13 @@ pub struct UniformSpartanKey<F: JoltField> {
 
 pub type Coeff<F> = (usize, usize, F);
 
+/// Sparse representation of a single R1CS matrix.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct SparseConstraints<F: JoltField> {
+    /// Non-zero, non-constant coefficients
     pub vars: Vec<Coeff<F>>,
+
+    /// Non-zero constant coefficients stored as (uniform_row_index, coeff)
     pub consts: Vec<(usize, F)>,
 }
 
@@ -48,6 +52,8 @@ impl<F: JoltField> SparseConstraints<F> {
     }
 }
 
+/// Sparse representation of all 3 uniform R1CS matrices. Uniform matrices can be repeated over a number of steps
+/// and efficiently evaluated by taking advantage of the structure.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniformR1CS<F: JoltField> {
     pub a: SparseConstraints<F>,
@@ -83,10 +89,13 @@ impl<F: JoltField> NonUniformR1CS<F> {
     }
 }
 
+/// Represents a single constraint row where the variables are either from the current step (offset = false)
+/// or from the proceeding step (offset = true).
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug, PartialEq)]
 pub struct SparseEqualityItem<F: JoltField> {
-    /// uniform_col, offset, val
+    /// (uniform_col, offset, val)
     pub offset_vars: Vec<(usize, bool, F)>,
+
     pub constant: F,
 }
 
