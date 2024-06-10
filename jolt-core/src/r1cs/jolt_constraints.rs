@@ -5,7 +5,7 @@ use crate::{
 
 use super::{
     builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
-    ops::{ConstraintInput, Variable, LC},
+    ops::{ConstraintInput, Variable},
 };
 
 pub fn construct_jolt_constraints<F: JoltField>(
@@ -163,9 +163,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         );
 
         // Converts from unsigned to twos-complement representation
-        let twos_complement_offset: LC<JoltIn> = (0xffffffffi64 + 1i64).into();
-        // let signed_output = JoltIn::Bytecode_Imm + -twos_complement_offset;
-        let signed_output = JoltIn::Bytecode_Imm - twos_complement_offset;
+        let signed_output = JoltIn::Bytecode_Imm - (0xffffffffi64 + 1i64);
         let imm_signed =
             cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
