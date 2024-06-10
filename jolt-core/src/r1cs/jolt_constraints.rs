@@ -22,11 +22,7 @@ pub fn construct_jolt_constraints<F: JoltField>(
         (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
     );
 
-    CombinedUniformBuilder::construct(
-        uniform_builder,
-        padded_trace_length,
-        non_uniform_constraint,
-    )
+    CombinedUniformBuilder::construct(uniform_builder, padded_trace_length, non_uniform_constraint)
 }
 
 // TODO(#377): Dedupe OpFlags / CircuitFlags
