@@ -237,12 +237,6 @@ impl<I: ConstraintInput> From<Variable<I>> for Term<I> {
     }
 }
 
-impl<I: ConstraintInput> From<(Variable<I>, i64)> for Term<I> {
-    fn from(val: (Variable<I>, i64)) -> Self {
-        Term(val.0, val.1)
-    }
-}
-
 impl<I: ConstraintInput> std::ops::Sub for Variable<I> {
     type Output = LC<I>;
 
@@ -312,20 +306,9 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl Into<($crate::r1cs::ops::Variable<$ConcreteInput>, i64)> for $ConcreteInput {
-            fn into(self) -> ($crate::r1cs::ops::Variable<$ConcreteInput>, i64) {
-                ($crate::r1cs::ops::Variable::Input(self), 1)
-            }
-        }
         impl Into<$crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
             fn into(self) -> $crate::r1cs::ops::Term<$ConcreteInput> {
                 $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1)
-            }
-        }
-
-        impl Into<$crate::r1cs::ops::Term<$ConcreteInput>> for ($ConcreteInput, i64) {
-            fn into(self) -> $crate::r1cs::ops::Term<$ConcreteInput> {
-                $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self.0), self.1)
             }
         }
 
