@@ -499,8 +499,12 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
     }
 }
 
+/// An Offset Linear Combination. If OffsetLC.0 is true, then the OffsetLC.1 refers to the next step in a uniform
+/// constraint system.
 pub type OffsetLC<I> = (bool, LC<I>);
 
+/// A conditional constraint that Linear Combinations a, b are equal where a and b need not be in the same step an a
+/// uniform constraint system.
 pub struct OffsetEqConstraint<I: ConstraintInput> {
     condition: OffsetLC<I>,
     a: OffsetLC<I>,

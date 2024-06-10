@@ -509,7 +509,7 @@ macro_rules! input_range {
     }};
 }
 
-/// Used to fix an aux variable to a specific index to ensure the aux index can be used elsewhere statically.
+/// Used to fix an aux variable to a constant index at runtime for use elsewhere (largely OffsetEqConstraints).
 #[macro_export]
 macro_rules! assert_static_aux_index {
     ($var:expr, $index:expr) => {{
