@@ -77,19 +77,6 @@ impl<I: ConstraintInput> LC<I> {
             .count()
     }
 
-    /// LC(a) + LC(b) -> LC(a + b)
-    pub fn sum2(a: impl Into<Term<I>>, b: impl Into<Term<I>>) -> Self {
-        LC(vec![a.into(), b.into()])
-    }
-
-    /// LC(a) - LC(b) -> LC(a - b)
-    pub fn sub2(a: impl Into<LC<I>>, b: impl Into<LC<I>>) -> Self {
-        let a: LC<I> = a.into();
-        let b: LC<I> = b.into();
-
-        a - b
-    }
-
     pub fn evaluate<F: JoltField>(&self, values: &[F]) -> F {
         let num_vars = self.num_vars();
         assert_eq!(num_vars, values.len());
@@ -156,23 +143,54 @@ pub fn from_i64<F: JoltField>(val: i64) -> F {
 
 // Arithmetic for LC
 
-impl<I: ConstraintInput> std::ops::Add for LC<I> {
+impl<I, T> std::ops::Add<T> for LC<I>
+where
+    I: ConstraintInput,
+    T: Into<LC<I>>,
+{
     type Output = Self;
 
-    fn add(self, other: Self) -> Self::Output {
+    fn add(self, other: T) -> Self::Output {
+        let other_lc: LC<I> = other.into();
         let mut combined_terms = self.0;
         // TODO(sragss): Can be made more efficient by assuming sorted
-        for other_term in other.0 {
+        for other_term in other_lc.terms() {
             if let Some(term) = combined_terms
                 .iter_mut()
                 .find(|term| term.0 == other_term.0)
             {
                 term.1 += other_term.1;
             } else {
-                combined_terms.push(other_term);
+                combined_terms.push(*other_term);
             }
         }
         LC::new(combined_terms)
+    }
+}
+
+impl<I, T> std::ops::Add<T> for Term<I>
+where
+    I: ConstraintInput,
+    T: Into<LC<I>>,
+{
+    type Output = LC<I>;
+
+    fn add(self, other: T) -> Self::Output {
+        let other_lc: LC<I> = other.into();
+        LC::new(vec![self]) + other_lc
+    }
+}
+
+impl<I, T> std::ops::Add<T> for Variable<I>
+where
+    I: ConstraintInput,
+    T: Into<LC<I>>,
+{
+    type Output = LC<I>;
+
+    fn add(self, other: T) -> Self::Output {
+        let other_lc: LC<I> = other.into();
+        LC::new(vec![Term(self, 1)]) + other_lc
     }
 }
 
@@ -180,41 +198,22 @@ impl<I: ConstraintInput> std::ops::Neg for LC<I> {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        let neg_terms = self.0.into_iter().map(|term| -term).collect();
-        LC::new(neg_terms)
+        let negated_terms: Vec<Term<I>> = self.0.into_iter().map(|term| -term).collect();
+        LC::new(negated_terms)
     }
 }
 
-impl<I: ConstraintInput> std::ops::Sub for LC<I> {
+impl<I: ConstraintInput, T: Into<LC<I>>> std::ops::Sub<T> for LC<I> {
     type Output = Self;
 
-    fn sub(self, other: Self) -> Self::Output {
+    fn sub(self, other: T) -> Self::Output {
+        let other: LC<I> = other.into();
         let negated_other = -other;
         self + negated_other
     }
 }
 
 // Arithmetic for Term<I>
-
-impl<I: ConstraintInput> std::ops::Add for Term<I> {
-    type Output = LC<I>;
-
-    fn add(self, other: Self) -> Self::Output {
-        if self.0 == other.0 {
-            LC::new(vec![Term(self.0, self.1 + other.1)])
-        } else {
-            LC::new(vec![self, other])
-        }
-    }
-}
-
-impl<I: ConstraintInput> std::ops::Sub for Term<I> {
-    type Output = LC<I>;
-
-    fn sub(self, other: Self) -> Self::Output {
-        LC::new(vec![self, -other])
-    }
-}
 
 impl<I: ConstraintInput> std::ops::Neg for Term<I> {
     type Output = Self;
@@ -242,46 +241,11 @@ impl<I: ConstraintInput> From<(Variable<I>, i64)> for Term<I> {
     }
 }
 
-impl<I: ConstraintInput> std::ops::Add for Variable<I> {
-    type Output = LC<I>;
-
-    fn add(self, other: Self) -> Self::Output {
-        LC::new(vec![Term(self, 1), Term(other, 1)])
-    }
-}
 impl<I: ConstraintInput> std::ops::Sub for Variable<I> {
     type Output = LC<I>;
 
     fn sub(self, other: Self) -> Self::Output {
         LC::new(vec![Term(self, 1), Term(other, -1)])
-    }
-}
-
-impl<I: ConstraintInput> std::ops::Add<i64> for LC<I> {
-    type Output = Self;
-
-    fn add(self, other: i64) -> Self::Output {
-        let lc: LC<I> = other.into();
-        self + lc
-    }
-}
-
-impl<I: ConstraintInput> std::ops::Add<i64> for Term<I> {
-    type Output = LC<I>;
-
-    fn add(self, other: i64) -> Self::Output {
-        let mut terms = vec![self];
-        terms.push(Term(Variable::Constant, other));
-        LC::new(terms)
-    }
-}
-
-impl<I: ConstraintInput> std::ops::Add<Variable<I>> for Term<I> {
-    type Output = LC<I>;
-
-    fn add(self, other: Variable<I>) -> Self::Output {
-        let terms = vec![self, Term(other, 1)];
-        LC::new(terms)
     }
 }
 
@@ -326,26 +290,6 @@ impl<I: ConstraintInput> std::ops::Mul<Variable<I>> for i64 {
 
     fn mul(self, other: Variable<I>) -> Self::Output {
         Term(other, self)
-    }
-}
-
-impl<I: ConstraintInput> std::ops::Add<LC<I>> for Variable<I> {
-    type Output = LC<I>;
-
-    fn add(self, other: LC<I>) -> Self::Output {
-        let mut terms = other.terms().to_vec();
-        terms.push(Term(self, 1));
-        LC::new(terms)
-    }
-}
-
-impl<I: ConstraintInput> std::ops::Add<Variable<I>> for LC<I> {
-    type Output = LC<I>;
-
-    fn add(self, other: Variable<I>) -> Self::Output {
-        let mut terms = self.terms().to_vec();
-        terms.push(Term(other, 1));
-        LC::new(terms)
     }
 }
 
@@ -395,40 +339,23 @@ macro_rules! impl_r1cs_input_lc_conversions {
             }
         }
 
-        impl std::ops::Add for $ConcreteInput {
+        impl<T: Into<$crate::r1cs::ops::LC<$ConcreteInput>>> std::ops::Add<T> for $ConcreteInput {
             type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
-            fn add(self, other: Self) -> Self::Output {
-                $crate::r1cs::ops::LC::sum2(self, other)
+            fn add(self, rhs: T) -> Self::Output {
+                let lhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = self.into();
+                let rhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = rhs.into();
+                lhs_lc + rhs_lc
             }
         }
 
-        impl std::ops::Add<$ConcreteInput> for $crate::r1cs::ops::Term<$ConcreteInput> {
+        impl<T: Into<$crate::r1cs::ops::LC<$ConcreteInput>>> std::ops::Sub<T> for $ConcreteInput {
             type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 
-            fn add(self, other: $ConcreteInput) -> Self::Output {
-                let other_term: $crate::r1cs::ops::Term<$ConcreteInput> = other.into();
-                $crate::r1cs::ops::LC::sum2(self, other_term)
-            }
-        }
-
-        impl std::ops::Add<$crate::r1cs::ops::Term<$ConcreteInput>> for $ConcreteInput {
-            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
-
-            fn add(self, other: $crate::r1cs::ops::Term<$ConcreteInput>) -> Self::Output {
-                other + self
-            }
-        }
-
-        impl std::ops::Add<$ConcreteInput> for $crate::r1cs::ops::LC<$ConcreteInput> {
-            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
-
-            fn add(self, other: $ConcreteInput) -> Self::Output {
-                let other_term: $crate::r1cs::ops::Term<$ConcreteInput> = other.into();
-                let mut combined_terms: Vec<$crate::r1cs::ops::Term<$ConcreteInput>> =
-                    self.terms().to_vec();
-                combined_terms.push(other_term);
-                $crate::r1cs::ops::LC::new(combined_terms)
+            fn sub(self, rhs: T) -> Self::Output {
+                let lhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = self.into();
+                let rhs_lc: $crate::r1cs::ops::LC<$ConcreteInput> = rhs.into();
+                lhs_lc + -rhs_lc
             }
         }
 
@@ -447,17 +374,6 @@ macro_rules! impl_r1cs_input_lc_conversions {
                 $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(rhs), self)
             }
         }
-
-        impl std::ops::Add<i64> for $ConcreteInput {
-            type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
-
-            fn add(self, rhs: i64) -> Self::Output {
-                let term1 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Input(self), 1);
-                let term2 = $crate::r1cs::ops::Term($crate::r1cs::ops::Variable::Constant, rhs);
-                $crate::r1cs::ops::LC::new(vec![term1, term2])
-            }
-        }
-
         impl std::ops::Add<$ConcreteInput> for i64 {
             type Output = $crate::r1cs::ops::LC<$ConcreteInput>;
 

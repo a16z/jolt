@@ -837,7 +837,9 @@ mod tests {
 
     #[test]
     fn aux_compute_simple() {
-        let lc = vec![LC::sum2(12i64, 20i64)];
+        let a: LC<TestInputs> = 12i64.into();
+        let b: LC<TestInputs> = 20i64.into();
+        let lc = vec![a + b];
         let lambda = |input: &[Fr]| {
             assert_eq!(input.len(), 1);
             input[0]
@@ -851,9 +853,11 @@ mod tests {
     #[test]
     fn aux_compute_advanced() {
         // (12 + 20) * (BytecodeA + PcIn) - 3 * PcOut
-        let symbolic_inputs = vec![
-            LC::sum2(12i64, 20i64),
-            LC::sum2(TestInputs::BytecodeA, TestInputs::PcIn),
+        let a: LC<TestInputs> = 12i64.into();
+        let b: LC<TestInputs> = 20i64.into();
+        let symbolic_inputs: Vec<LC<TestInputs>> = vec![
+            a + b,
+            TestInputs::BytecodeA + TestInputs::PcIn,
             (3 * TestInputs::PcOut).into(),
         ];
         let lambda = |input: &[Fr]| {
@@ -872,7 +876,9 @@ mod tests {
     #[test]
     #[should_panic]
     fn aux_compute_depends_on_aux() {
-        let lc = vec![LC::sum2(12i64, Variable::Auxiliary(1))];
+        let a: LC<TestInputs> = 12i64.into();
+        let b: LC<TestInputs> = Variable::Auxiliary(1).into();
+        let lc = vec![a + b];
         let lambda = |_input: &[Fr]| unimplemented!();
         let _aux =
             AuxComputation::<Fr, TestInputs>::new(Variable::Auxiliary(0), lc, Box::new(lambda));
@@ -887,11 +893,8 @@ mod tests {
         impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
             type Inputs = TestInputs;
             fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
-                let left = LC::sum2(Self::Inputs::PcIn, Self::Inputs::PcOut);
-                let right = LC::sum2(
-                    Self::Inputs::BytecodeA,
-                    (Self::Inputs::BytecodeVOpcode, 2i64),
-                );
+                let left = Self::Inputs::PcIn + Self::Inputs::PcOut;
+                let right = Self::Inputs::BytecodeA + 2i64 * Self::Inputs::BytecodeVOpcode;
                 builder.constrain_eq(left, right);
             }
         }
@@ -964,7 +967,7 @@ mod tests {
         impl<F: JoltField> R1CSConstraintBuilder<F> for TestConstraints {
             type Inputs = TestInputs;
             fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
-                let condition = LC::sum2(Self::Inputs::PcIn, Self::Inputs::PcOut);
+                let condition = Self::Inputs::PcIn + Self::Inputs::PcOut;
                 let true_outcome = Self::Inputs::BytecodeVRS1;
                 let false_outcome = Self::Inputs::BytecodeVRS2;
                 let branch_result =
@@ -1255,7 +1258,7 @@ mod tests {
             type Inputs = TestInputs;
             fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>) {
                 let aux_0 = builder.allocate_prod(TestInputs::OpFlags0, TestInputs::OpFlags1);
-                builder.constrain_eq(LC::sum2(TestInputs::OpFlags2, TestInputs::OpFlags3), aux_0);
+                builder.constrain_eq(TestInputs::OpFlags2 + TestInputs::OpFlags3, aux_0);
                 let aux_1 =
                     builder.allocate_prod(4 * TestInputs::RAMByte0 + 2i64, TestInputs::OpFlags0);
                 builder.constrain_eq(aux_1, TestInputs::RAMByte1);

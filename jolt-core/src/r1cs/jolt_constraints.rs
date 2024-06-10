@@ -154,7 +154,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
-        let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let real_pc = 4i64 * JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RS1_Read);
         let y = cs.allocate_if_else(
             JoltIn::OpFlags_IsImm,
@@ -163,16 +163,18 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         );
 
         // Converts from unsigned to twos-complement representation
-        let signed_output = LC::sub2(JoltIn::Bytecode_Imm, 0xffffffffi64 + 1i64);
+        let twos_complement_offset: LC<JoltIn> = (0xffffffffi64 + 1i64).into();
+        // let signed_output = JoltIn::Bytecode_Imm + -twos_complement_offset;
+        let signed_output = JoltIn::Bytecode_Imm - twos_complement_offset;
         let imm_signed =
             cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
-        let is_load_or_store = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
+        let is_load_or_store = JoltIn::OpFlags_IsLoad + JoltIn::OpFlags_IsStore;
         let memory_start: i64 = self.memory_start.try_into().unwrap();
         cs.constrain_eq_conditional(
             is_load_or_store,
-            LC::sum2(JoltIn::RS1_Read, imm_signed),
-            LC::sum2(JoltIn::RAM_A, memory_start),
+            JoltIn::RS1_Read + imm_signed,
+            JoltIn::RAM_A + memory_start,
         );
 
         cs.constrain_eq_conditional(
@@ -252,7 +254,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
             JoltIn::LookupOutput,
         );
         let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
-        let lhs = LC::sum2(JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
+        let lhs = JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
