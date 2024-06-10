@@ -95,88 +95,74 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(pc_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let bytecode_a_chunks = self
             .bytecode_a
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(bytecode_a_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let bytecode_v_chunks = self
             .bytecode_v
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(bytecode_v_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let memreg_a_rw_chunks = self
             .memreg_a_rw
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(memreg_a_rw_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let memreg_v_reads_chunks = self
             .memreg_v_reads
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
         chunks.par_extend(memreg_v_reads_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let memreg_v_writes_chunks = self
             .memreg_v_writes
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.par_iter().map(|&elem| *elem).collect::<Vec<F>>());
         chunks.par_extend(memreg_v_writes_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let chunks_x_chunks = self
             .chunks_x
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(chunks_x_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let chunks_y_chunks = self
             .chunks_y
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(chunks_y_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let chunks_query_chunks = self
             .chunks_query
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(chunks_query_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let lookup_outputs_chunks = self
             .lookup_outputs
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(lookup_outputs_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let circuit_flags_bits_chunks = self
             .circuit_flags_bits
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(circuit_flags_bits_chunks);
-        println!("chunks.len(): {}", chunks.len());
 
         let instruction_flags_bits_chunks = self
             .instruction_flags_bits
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(instruction_flags_bits_chunks);
-        println!("instruction_flags_bits.len(): {}", self.instruction_flags_bits.len());
-        println!("chunks.len(): {}", chunks.len());
 
         assert_eq!(chunks.len(), JoltIn::COUNT);
-        println!("chunks.len(): {}", chunks.len());
 
         chunks
     }

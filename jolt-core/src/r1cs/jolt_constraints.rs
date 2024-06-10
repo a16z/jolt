@@ -122,6 +122,10 @@ pub enum JoltIn {
     IF_Mul,
     IF_MulU,
     IF_MulHu,
+    IF_Virt_Adv,
+    IF_Virt_Assert_LTE,
+    IF_Virt_Assert_LT_ABS,
+    IF_Virt_Assert_EQ_SIGNS,
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
 impl ConstraintInput for JoltIn {}
@@ -145,7 +149,7 @@ impl UniformJoltConstraints {
 impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
-        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_MulHu);
+        let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_Virt_Assert_EQ_SIGNS);
         for flag in flags {
             cs.constrain_binary(flag);
         }

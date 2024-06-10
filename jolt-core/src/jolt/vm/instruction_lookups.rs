@@ -993,8 +993,6 @@ where
 
         let mut instruction_flag_bitvectors: Vec<Vec<u64>> =
             vec![vec![0u64; m]; Self::NUM_INSTRUCTIONS];
-        println!("m: {m}");
-        println!("Self::NUM_INSTRUCTIONS: {}", Self::NUM_INSTRUCTIONS);
         for (j, op) in ops.iter().enumerate() {
             if let Some(instr) = &op.instruction_lookup {
                 instruction_flag_bitvectors[InstructionSet::enum_index(instr)][j] = 1;
@@ -1005,8 +1003,6 @@ where
             .par_iter()
             .map(|flag_bitvector| DensePolynomial::from_u64(flag_bitvector))
             .collect();
-        println!("instruction_flag_polys.len: {}", instruction_flag_polys.len());
-        println!("instruction_flag_polys[0].len: {}", instruction_flag_polys[0].len());
 
         let mut lookup_outputs = Self::compute_lookup_outputs(ops);
         lookup_outputs.resize(m, F::zero());

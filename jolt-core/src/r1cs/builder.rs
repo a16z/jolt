@@ -809,14 +809,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         assert_eq!(cz.len(), expected_rows);
         for constraint_index in 0..rows {
             if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
-                let (uniform_constraint_index, step_index) = if constraint_index != 0 {
-                    (
-                        self.uniform_repeat / constraint_index,
-                        self.uniform_repeat % constraint_index,
-                    )
-                } else {
-                    (0, 0)
-                };
+                let uniform_constraint_index = constraint_index / self.uniform_repeat;
+                let step_index = constraint_index % self.uniform_repeat;
                 panic!(
                     "Mismatch at global constraint {constraint_index} => {:?}\n\
                     uniform constraint: {uniform_constraint_index}\n\
