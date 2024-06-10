@@ -172,6 +172,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(instruction_flags_bits_chunks);
+        println!("instruction_flags_bits.len(): {}", self.instruction_flags_bits.len());
         println!("chunks.len(): {}", chunks.len());
 
         assert_eq!(chunks.len(), JoltIn::COUNT);
