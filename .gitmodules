@@ -1,0 +1,3 @@
+[submodule "jolt-verifier/lib/forge-std"]
+	path = jolt-verifier/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
