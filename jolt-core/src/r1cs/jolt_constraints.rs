@@ -281,10 +281,21 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
 mod tests {
     use super::*;
 
-    use crate::r1cs::builder::{CombinedUniformBuilder, OffsetEqConstraint};
+    use crate::{
+        jolt::vm::rv32i_vm::RV32I,
+        r1cs::builder::{CombinedUniformBuilder, OffsetEqConstraint},
+    };
 
     use ark_bn254::Fr;
     use strum::EnumCount;
+
+    #[test]
+    fn instruction_flags_length() {
+        assert_eq!(
+            input_range!(JoltIn::IF_Add, JoltIn::IF_Virt_Assert_EQ_SIGNS).len(),
+            RV32I::COUNT
+        );
+    }
 
     #[test]
     fn single_instruction_jolt() {
