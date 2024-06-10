@@ -5,6 +5,7 @@
 )]
 
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::r1cs::jolt_constraints::JoltIn;
 use crate::utils::transcript::AppendToTranscript;
 use crate::{
     jolt::vm::{rv32i_vm::RV32I, JoltCommitments},
@@ -160,6 +161,9 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(instruction_flags_bits_chunks);
+
+        assert_eq!(chunks.len(), JoltIn::COUNT);
+
         chunks
     }
 }
