@@ -40,7 +40,9 @@ impl<I: ConstraintInput> LC<I> {
         #[cfg(test)]
         Self::assert_no_duplicate_terms(&terms);
 
-        LC(terms)
+        let mut sorted_terms = terms;
+        sorted_terms.sort_by(|a, b| a.0.cmp(&b.0));
+        LC(sorted_terms)
     }
 
     pub fn zero() -> Self {
@@ -51,17 +53,15 @@ impl<I: ConstraintInput> LC<I> {
         &self.0
     }
 
-    pub fn terms_in_field<F: JoltField>(&self) -> Vec<F> {
+    pub fn constant_term(&self) -> Option<&Term<I>> {
+        self.0.last().filter(|term| matches!(term.0, Variable::Constant))
+    }
+
+    pub fn to_field_elements<F: JoltField>(&self) -> Vec<F> {
         self.terms()
             .iter()
             .map(|term| from_i64::<F>(term.1))
             .collect()
-    }
-
-    pub fn sorted_terms(&self) -> Vec<Term<I>> {
-        let mut sorted_terms = self.0.clone();
-        sorted_terms.sort_by(|a, b| a.0.cmp(&b.0));
-        sorted_terms
     }
 
     pub fn num_terms(&self) -> usize {
@@ -625,6 +625,6 @@ mod test {
             .map(|variable| variable.into())
             .collect();
         let lc = LC::new(terms);
-        assert_eq!(lc.sorted_terms(), expected_sorted_terms);
+        assert_eq!(lc.terms(), expected_sorted_terms);
     }
 }

@@ -463,8 +463,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let mut c_sparse = SparseConstraints::empty_with_capacity(c_len, self.constraints.len());
 
         let update_sparse = |row_index: usize, lc: &LC<I>, sparse: &mut SparseConstraints<F>| {
-            let sorted = lc.sorted_terms();
-            sorted
+            lc.terms()
                 .iter()
                 .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
                 .for_each(|term| {
@@ -474,10 +473,8 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
                         from_i64::<F>(term.1),
                     ))
                 });
-            if let Some(term) = sorted.last() {
-                if matches!(term.0, Variable::Constant) {
-                    sparse.consts.push((row_index, from_i64::<F>(term.1)));
-                }
+            if let Some(term) = lc.constant_term() {
+                sparse.consts.push((row_index, from_i64::<F>(term.1)));
             }
         };
 
@@ -630,8 +627,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
         let constraint = &self.offset_equality_constraint;
 
-        let sorted_condition = constraint.condition.1.sorted_terms();
-        sorted_condition
+        constraint.condition.1.terms()
             .iter()
             .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
             .for_each(|term| {
@@ -641,17 +637,15 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                     from_i64::<F>(term.1),
                 ))
             });
-        if let Some(term) = sorted_condition.last() {
-            if matches!(term.0, Variable::Constant) {
-                condition.constant = from_i64::<F>(term.1);
-            }
+        if let Some(term) = constraint.condition.1.constant_term() {
+            condition.constant = from_i64::<F>(term.1);
         }
 
         // Can't simply combine like terms because of the offset
         let lhs = constraint.a.1.clone();
         let rhs = -constraint.b.1.clone();
 
-        lhs.sorted_terms()
+        lhs.terms()
             .iter()
             .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
             .for_each(|term| {
@@ -661,7 +655,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                     from_i64::<F>(term.1),
                 ))
             });
-        rhs.sorted_terms()
+        rhs.terms()
             .iter()
             .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
             .for_each(|term| {
@@ -679,10 +673,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 "Constants only supported in RHS"
             )
         });
-        if let Some(term) = rhs.sorted_terms().last() {
-            if matches!(term.0, Variable::Constant) {
-                eq.constant = from_i64::<F>(term.1);
-            }
+        if let Some(term) = rhs.constant_term() {
+            eq.constant = from_i64::<F>(term.1);
         }
 
         NonUniformR1CS::new(eq, condition)
@@ -717,12 +709,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let compute_lc_flat = |lc: &LC<I>, flat_terms: &[F], step_index: usize| {
             if step_index >= self.uniform_repeat {
                 // Assume all terms are 0, other than the constant
-                return lc
-                    .sorted_terms()
-                    .last()
-                    .filter(|term| matches!(term.0, Variable::Constant))
-                    .map(|term| from_i64(term.1))
-                    .unwrap_or_else(F::zero);
+                return lc.constant_term().map(|term| from_i64(term.1)).unwrap_or_else(F::zero);
             }
 
             lc.terms()
@@ -747,9 +734,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         for (constraint_index, constraint) in self.uniform_builder.constraints.iter().enumerate() {
             let _span = tracing::span!(tracing::Level::TRACE, "compute_constraint");
             let _enter = _span.enter();
-            let a_lc_flat_terms: Vec<F> = constraint.a.terms_in_field();
-            let b_lc_flat_terms: Vec<F> = constraint.b.terms_in_field();
-            let c_lc_flat_terms: Vec<F> = constraint.c.terms_in_field();
+            let a_lc_flat_terms: Vec<F> = constraint.a.to_field_elements();
+            let b_lc_flat_terms: Vec<F> = constraint.b.to_field_elements();
+            let c_lc_flat_terms: Vec<F> = constraint.c.to_field_elements();
 
             let z_start = constraint_index * self.uniform_repeat;
             let z_end = (constraint_index + 1) * self.uniform_repeat;
@@ -772,9 +759,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let _span = tracing::span!(tracing::Level::TRACE, "offset eq");
         let _enter = _span.enter();
         let constraint = &self.offset_equality_constraint;
-        let condition_lc_flat_terms: Vec<F> = constraint.condition.1.terms_in_field();
-        let a_lc_flat_terms: Vec<F> = constraint.a.1.terms_in_field();
-        let b_lc_flat_terms: Vec<F> = constraint.b.1.terms_in_field();
+        let condition_lc_flat_terms: Vec<F> = constraint.condition.1.to_field_elements();
+        let a_lc_flat_terms: Vec<F> = constraint.a.1.to_field_elements();
+        let b_lc_flat_terms: Vec<F> = constraint.b.1.to_field_elements();
         for step_index in 0..self.uniform_repeat {
             let index = uniform_constraint_rows + step_index;
 
