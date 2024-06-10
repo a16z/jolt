@@ -212,7 +212,6 @@ impl<F: JoltField> UniformSpartanKey<F> {
         rlc[self.num_vars_total()] = sm_rlc[self.uniform_r1cs.num_vars]; // constant
 
         // Handle non-uniform constraints
-        let non_uni_constraint_row = self.uniform_r1cs.num_rows;
         let update_non_uni = |rlc: &mut Vec<F>, offset: &SparseEqualityItem<F>, r: F| {
             for (col, is_offset, coeff) in offset.offset_vars.iter() {
                 let offset = if *is_offset { 1 } else { 0 };
@@ -227,7 +226,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
                     .for_each(|(rlc_col, step_index)| {
                         *rlc_col += mul_0_1_optimized(&r, coeff)
                             * eq_rx_step[step_index]
-                            * eq_rx_constr[non_uni_constraint_row];
+                            * eq_rx_constr[non_uniform_row];
                     });
             }
         };

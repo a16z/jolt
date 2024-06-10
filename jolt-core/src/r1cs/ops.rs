@@ -471,32 +471,6 @@ macro_rules! impl_r1cs_input_lc_conversions {
 }
 
 /// ```rust
-/// use jolt_core::enum_range;
-/// #[derive(Debug, PartialEq, Clone, Copy)]
-/// #[repr(usize)]
-/// pub enum Ex {
-///     A,
-///     B,
-///     C,
-///     D
-/// }
-///
-///
-/// let range = enum_range!(Ex::B, Ex::D);
-/// assert_eq!(range, [Ex::B, Ex::C, Ex::D]);
-/// ```
-#[macro_export]
-macro_rules! enum_range {
-    ($start:path, $end:path) => {{
-        let mut arr = [$start; ($end as usize) - ($start as usize) + 1];
-        for i in ($start as usize)..=($end as usize) {
-            arr[i - ($start as usize)] = i.into();
-        }
-        arr
-    }};
-}
-
-/// ```rust
 /// use jolt_core::input_range;
 /// use jolt_core::r1cs::ops::{ConstraintInput, Variable};
 /// # use strum_macros::{EnumCount, EnumIter};
@@ -528,17 +502,6 @@ macro_rules! input_range {
         let mut arr = [Variable::Input($start); ($end as usize) - ($start as usize) + 1];
         #[allow(clippy::missing_transmute_annotations)]
         for i in ($start as usize)..=($end as usize) {
-            arr[i - ($start as usize)] =
-                Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
-        }
-        arr
-    }};
-    ($start:path, $end:path) => {{
-        let mut arr =
-            [$crate::r1cs::ops::Variable::Input($start); ($end as usize) - ($start as usize) + 1];
-        #[allow(clippy::missing_transmute_annotations)]
-        for i in ($start as usize)..=($end as usize) {
-            #[allow(clippy::missing_transmute_annotations)]
             arr[i - ($start as usize)] =
                 Variable::Input(unsafe { std::mem::transmute::<usize, _>(i) });
         }

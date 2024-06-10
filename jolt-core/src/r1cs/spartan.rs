@@ -376,7 +376,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .map_err(|_| SpartanError::InvalidInnerSumcheckProof)?;
 
         // n_prefix = n_segments + 1
-        // let n_prefix = (key.num_vars_total().ilog2() as usize - key.num_steps.ilog2() as usize) + 1;
         let n_prefix = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
 
         let eval_Z = key.evaluate_z_mle(&self.claimed_witness_evals, &inner_sumcheck_r);

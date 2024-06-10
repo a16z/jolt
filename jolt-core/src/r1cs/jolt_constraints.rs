@@ -29,7 +29,7 @@ pub enum JoltIn {
     Bytecode_A, // Virtual address
     // Bytecode_V
     Bytecode_ELFAddress,
-    Bytecode_Opcode,
+    Bytecode_Bitflags,
     Bytecode_RS1,
     Bytecode_RS2,
     Bytecode_RD,
@@ -135,7 +135,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 
         cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_A);
 
-        cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
+        cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
         let real_pc = LC::sum2(4i64 * JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
         let x = cs.allocate_if_else(JoltIn::OpFlags_IsRs1Rs2, real_pc, JoltIn::RS1_Read);
@@ -283,7 +283,7 @@ mod tests {
         // ADD instruction
         inputs[JoltIn::PcIn as usize][0] = Fr::from(10);
         inputs[JoltIn::Bytecode_A as usize][0] = Fr::from(10);
-        inputs[JoltIn::Bytecode_Opcode as usize][0] = Fr::from(0);
+        inputs[JoltIn::Bytecode_Bitflags as usize][0] = Fr::from(0);
         inputs[JoltIn::Bytecode_RS1 as usize][0] = Fr::from(2);
         inputs[JoltIn::Bytecode_RS2 as usize][0] = Fr::from(3);
         inputs[JoltIn::Bytecode_RD as usize][0] = Fr::from(4);
