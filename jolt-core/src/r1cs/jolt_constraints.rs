@@ -4,9 +4,31 @@ use crate::{
 };
 
 use super::{
-    builder::{R1CSBuilder, R1CSConstraintBuilder},
+    builder::{CombinedUniformBuilder, OffsetEqConstraint, R1CSBuilder, R1CSConstraintBuilder},
     ops::{ConstraintInput, Variable, LC},
 };
+
+pub fn construct_jolt_constraints<F: JoltField>(
+    padded_trace_length: usize,
+    memory_start: u64,
+) -> CombinedUniformBuilder<F, JoltIn> {
+    let mut uniform_builder = R1CSBuilder::<F, JoltIn>::new();
+    let constraints = UniformJoltConstraints::new(memory_start);
+    constraints.build_constraints(&mut uniform_builder);
+
+    let non_uniform_constraint = OffsetEqConstraint::new(
+        (JoltIn::PcIn, true),
+        (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), false),
+        (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
+    );
+    let combined_builder = CombinedUniformBuilder::construct(
+        uniform_builder,
+        padded_trace_length,
+        non_uniform_constraint,
+    );
+
+    combined_builder
+}
 
 // TODO(#377): Dedupe OpFlags / CircuitFlags
 // TODO(#378): Explicit unit test for comparing OpFlags and InstructionFlags
@@ -115,17 +137,17 @@ const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
 pub const PC_BRANCH_AUX_INDEX: usize = 15;
 
-pub struct JoltConstraints {
+pub struct UniformJoltConstraints {
     memory_start: u64,
 }
 
-impl JoltConstraints {
+impl UniformJoltConstraints {
     pub fn new(memory_start: u64) -> Self {
         Self { memory_start }
     }
 }
 
-impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
+impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
     type Inputs = JoltIn;
     fn build_constraints(&self, cs: &mut R1CSBuilder<F, Self::Inputs>) {
         let flags = input_range!(JoltIn::OpFlags_IsRs1Rs2, JoltIn::IF_MulHu);
@@ -269,7 +291,7 @@ mod tests {
     fn single_instruction_jolt() {
         let mut uniform_builder = R1CSBuilder::<Fr, JoltIn>::new();
 
-        let jolt_constraints = JoltConstraints::new(0);
+        let jolt_constraints = UniformJoltConstraints::new(0);
         jolt_constraints.build_constraints(&mut uniform_builder);
 
         let num_steps = 1;

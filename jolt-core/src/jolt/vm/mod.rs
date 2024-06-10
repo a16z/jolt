@@ -1,12 +1,8 @@
 #![allow(clippy::type_complexity)]
 
 use crate::field::JoltField;
-use crate::r1cs::builder::{CombinedUniformBuilder, R1CSBuilder};
-use crate::r1cs::builder::{OffsetEqConstraint, R1CSConstraintBuilder};
-use crate::r1cs::jolt_constraints::{
-    JoltConstraints, JoltIn, PC_BRANCH_AUX_INDEX, PC_START_ADDRESS,
-};
-use crate::r1cs::ops::Variable;
+use crate::r1cs::builder::CombinedUniformBuilder;
+use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
@@ -546,10 +542,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         R1CSCommitment<PCS>,
         CombinedUniformBuilder<F, JoltIn>,
     ) {
-        let mut uniform_builder = R1CSBuilder::<F, JoltIn>::new();
-        let constraints = JoltConstraints::new(memory_start);
-        constraints.build_constraints(&mut uniform_builder);
-
         let inputs = Self::r1cs_construct_inputs(
             padded_trace_length,
             instructions,
@@ -558,17 +550,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
         let mut inputs_flat: Vec<Vec<F>> = inputs.clone_to_trace_len_chunks();
 
-        let non_uniform_constraint = OffsetEqConstraint::new(
-            (JoltIn::PcIn, true),
-            (Variable::Auxiliary(PC_BRANCH_AUX_INDEX), false),
-            (4 * JoltIn::PcIn + PC_START_ADDRESS, true),
-        );
-        let combined_builder = CombinedUniformBuilder::construct(
-            uniform_builder,
-            padded_trace_length,
-            non_uniform_constraint,
-        );
-        let aux = combined_builder.compute_aux(&inputs_flat);
+        let builder = construct_jolt_constraints(padded_trace_length, memory_start);
+        let aux = builder.compute_aux(&inputs_flat);
 
         assert_eq!(inputs.chunks_x.len(), inputs.chunks_y.len());
         let span = tracing::span!(tracing::Level::INFO, "commit_chunks_flags");
@@ -605,13 +588,13 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         #[cfg(test)]
         {
-            let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
-            combined_builder.assert_valid(&az, &bz, &cz);
+            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
+            builder.assert_valid(&az, &bz, &cz);
         }
 
         inputs_flat.extend(aux);
 
-        (inputs_flat, r1cs_commitments, combined_builder)
+        (inputs_flat, r1cs_commitments, builder)
     }
 
     // Assemble the R1CS inputs from across other Jolt structs.
