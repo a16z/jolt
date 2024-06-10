@@ -4,6 +4,7 @@
 use crate::field::JoltField;
 use std::fmt::Debug;
 use strum::{EnumCount, IntoEnumIterator};
+use rayon::prelude::*;
 
 pub trait ConstraintInput:
     Clone
@@ -59,6 +60,14 @@ impl<I: ConstraintInput> LC<I> {
             .filter(|term| matches!(term.0, Variable::Constant))
     }
 
+    pub fn constant_term_field<F: JoltField>(&self) -> F {
+        if let Some(term) = self.constant_term() {
+            F::from_i64(term.1)
+        } else {
+            F::zero()
+        }
+    }
+
     pub fn to_field_elements<F: JoltField>(&self) -> Vec<F> {
         self.terms()
             .iter()
@@ -97,6 +106,31 @@ impl<I: ConstraintInput> LC<I> {
             }
         }
         result
+    }
+
+    pub fn evaluate_batch<F: JoltField>(&self, inputs: &[&[F]], batch_size: usize) -> Vec<F> {
+        assert!(inputs.iter().all(|inner| inner.len() == batch_size));
+
+        let mut output = vec![F::zero(); batch_size];
+        self.evaluate_batch_mut(inputs, &mut output);
+        output
+    }
+
+    pub fn evaluate_batch_mut<F: JoltField>(&self, inputs: &[&[F]], output: &mut [F]) {
+        let batch_size = output.len();
+        assert!(inputs.iter().all(|inner| inner.len() == batch_size));
+
+        let terms: Vec<F> = self.to_field_elements();
+
+        output.par_iter_mut().enumerate().for_each(|(batch_index, output_slot)| {
+            *output_slot = self.terms().iter().enumerate()
+                .map(|(term_index, term)| match term.0 {
+                    Variable::Input(_) | Variable::Auxiliary(_) => 
+                        terms[term_index].mul_01_optimized(inputs[term_index][batch_index]),
+                    Variable::Constant => terms[term_index],
+
+                }).sum();
+        });
     }
 
     #[cfg(test)]

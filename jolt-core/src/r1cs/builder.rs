@@ -142,6 +142,18 @@ impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
         }
     }
 
+    // fn compute_batch(&self, batch_size: usize, inputs: Vec<&[F]>) -> Vec<F> {
+    //     assert_eq!(inputs.len(), self.flat_vars.len());
+    //     (0..batch_size).into_par_iter().map(|batch_index| {
+    //         for input in inputs {
+    //             debug_assert_eq!(input.len(), batch_size);
+    //             input[batch_index];
+    //         }
+    //         inputs[batch_index]
+    //         // compute LCs for the step (self.symbolic_inputs)
+    //     }).collect()
+    // }
+
     /// Takes one value per value in flat_vars.
     fn compute(&self, values: &[F]) -> F {
         assert_eq!(values.len(), self.flat_vars.len());
@@ -154,6 +166,7 @@ impl<F: JoltField, I: ConstraintInput> AuxComputation<F, I> {
                 let values = if let Some(range) = self.input_to_flat[input_index].clone() {
                     &values[range]
                 } else {
+                    println!("ELSE CONDITION");
                     &[]
                 };
                 input_lc.evaluate(values)
@@ -506,7 +519,7 @@ pub type OffsetLC<I> = (bool, LC<I>);
 /// A conditional constraint that Linear Combinations a, b are equal where a and b need not be in the same step an a
 /// uniform constraint system.
 pub struct OffsetEqConstraint<I: ConstraintInput> {
-    condition: OffsetLC<I>,
+    cond: OffsetLC<I>,
     a: OffsetLC<I>,
     b: OffsetLC<I>,
 }
@@ -518,7 +531,7 @@ impl<I: ConstraintInput> OffsetEqConstraint<I> {
         b: (impl Into<LC<I>>, bool),
     ) -> Self {
         Self {
-            condition: (condition.1, condition.0.into()),
+            cond: (condition.1, condition.0.into()),
             a: (a.1, a.0.into()),
             b: (b.1, b.0.into()),
         }
@@ -633,7 +646,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let constraint = &self.offset_equality_constraint;
 
         constraint
-            .condition
+            .cond
             .1
             .terms()
             .iter()
@@ -641,11 +654,11 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             .for_each(|term| {
                 condition.offset_vars.push((
                     self.uniform_builder.variable_to_column(term.0),
-                    constraint.condition.0,
+                    constraint.cond.0,
                     F::from_i64(term.1),
                 ))
             });
-        if let Some(term) = constraint.condition.1.constant_term() {
+        if let Some(term) = constraint.cond.1.constant_term() {
             condition.constant = F::from_i64(term.1);
         }
 
@@ -718,54 +731,36 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         drop(_enter);
         drop(_span);
 
-        let compute_lc_flat = |lc: &LC<I>, flat_terms: &[F], step_index: usize| {
-            if step_index >= self.uniform_repeat {
-                // Assume all terms are 0, other than the constant
-                return lc
-                    .constant_term()
-                    .map(|term| F::from_i64(term.1))
-                    .unwrap_or_else(F::zero);
-            }
-
-            lc.terms()
-                .iter()
-                .enumerate()
-                .map(|(term_index, term)| match term.0 {
-                    Variable::Input(input) => mul_0_1_optimized(
-                        &flat_terms[term_index],
-                        &inputs[input.into()][step_index],
-                    ),
-                    Variable::Auxiliary(aux_index) => {
-                        assert!(aux_index < self.uniform_builder.num_aux());
-                        mul_0_1_optimized(&flat_terms[term_index], &aux[aux_index][step_index])
-                    }
-                    Variable::Constant => flat_terms[term_index],
-                })
-                .sum()
+        let batch_inputs = |lc: &LC<I>| {
+            let mut batch: Vec<&[F]> = Vec::new();
+            lc.terms().iter().for_each(|term| match term.0 {
+                Variable::Input(input) => batch.push(&inputs[input.into()]),
+                Variable::Auxiliary(aux_index) => {
+                    assert!(aux_index < self.uniform_builder.num_aux());
+                    batch.push(&aux[aux_index]);
+                },
+                _ => {}
+            });
+            batch
         };
 
         // uniform_constraints: Xz[0..uniform_constraint_rows]
         // TODO(sragss): Attempt moving onto key and computing from materialized rows rather than linear combos
         for (constraint_index, constraint) in self.uniform_builder.constraints.iter().enumerate() {
+            let a_inputs = batch_inputs(&constraint.a);
+            let b_inputs = batch_inputs(&constraint.b);
+            let c_inputs = batch_inputs(&constraint.c);
+
             let _span = tracing::span!(tracing::Level::TRACE, "compute_constraint");
             let _enter = _span.enter();
-            let a_lc_flat_terms: Vec<F> = constraint.a.to_field_elements();
-            let b_lc_flat_terms: Vec<F> = constraint.b.to_field_elements();
-            let c_lc_flat_terms: Vec<F> = constraint.c.to_field_elements();
 
             let z_start = constraint_index * self.uniform_repeat;
             let z_end = (constraint_index + 1) * self.uniform_repeat;
             let z_range = z_start..z_end;
 
-            let steps = (0..self.uniform_repeat).into_par_iter();
-            let A = Az[z_range.clone()].par_iter_mut();
-            let B = Bz[z_range.clone()].par_iter_mut();
-            let C = Cz[z_range.clone()].par_iter_mut();
-            steps.zip(A).zip(B).zip(C).for_each(|(((step, a), b), c)| {
-                *a = compute_lc_flat(&constraint.a, &a_lc_flat_terms, step);
-                *b = compute_lc_flat(&constraint.b, &b_lc_flat_terms, step);
-                *c = compute_lc_flat(&constraint.c, &c_lc_flat_terms, step);
-            });
+            constraint.a.evaluate_batch_mut(&a_inputs, &mut Az[z_range.clone()]);
+            constraint.b.evaluate_batch_mut(&b_inputs, &mut Bz[z_range.clone()]);
+            constraint.c.evaluate_batch_mut(&c_inputs, &mut Cz[z_range.clone()]);
         }
 
         // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
@@ -773,30 +768,26 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
         let _span = tracing::span!(tracing::Level::TRACE, "offset eq");
         let _enter = _span.enter();
-        let constraint = &self.offset_equality_constraint;
-        let condition_lc_flat_terms: Vec<F> = constraint.condition.1.to_field_elements();
-        let a_lc_flat_terms: Vec<F> = constraint.a.1.to_field_elements();
-        let b_lc_flat_terms: Vec<F> = constraint.b.1.to_field_elements();
+
+        let constr = &self.offset_equality_constraint;
+        let condition_evals = constr.cond.1.evaluate_batch(&batch_inputs(&constr.cond.1), self.uniform_repeat);
+        let eq_a_evals = constr.a.1.evaluate_batch(&batch_inputs(&constr.a.1), self.uniform_repeat);
+        let eq_b_evals = constr.b.1.evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
         for step_index in 0..self.uniform_repeat {
             let index = uniform_constraint_rows + step_index;
 
-            let condition_step_index = step_index + if constraint.condition.0 { 1 } else { 0 };
-            let condition = compute_lc_flat(
-                &constraint.condition.1,
-                &condition_lc_flat_terms,
-                condition_step_index,
-            );
-            Bz[index] = condition;
+            // Write corresponding values, if outside the step range, only include the constant.
 
-            // TODO(sragss): For an honest prover eq should be zero for all non-padded rows. This need only be computed for the padded rows, once.
-            let eq_a_step = step_index + if constraint.a.0 { 1 } else { 0 };
-            let eq_b_step = step_index + if constraint.b.0 { 1 } else { 0 };
-            let eq_a = compute_lc_flat(&constraint.a.1, &a_lc_flat_terms, eq_a_step);
-            let eq_b = compute_lc_flat(&constraint.b.1, &b_lc_flat_terms, eq_b_step);
-            let eq = eq_a - eq_b;
-            Az[index] = eq;
+            let a_step = step_index + if constr.a.0 { 1 } else { 0 };
+            let b_step = step_index + if constr.b.0 { 1 } else { 0 };
+            let a = eq_a_evals.get(a_step).cloned().unwrap_or(constr.a.1.constant_term_field());
+            let b = eq_b_evals.get(b_step).cloned().unwrap_or(constr.b.1.constant_term_field());
+            Az[index] = a - b;
+
+            let condition_step = step_index + if constr.cond.0 { 1 } else { 0 };
+            Bz[index] = condition_evals.get(condition_step).cloned().unwrap_or(constr.cond.1.constant_term_field());
         }
-
+        
         (Az, Bz, Cz)
     }
 
