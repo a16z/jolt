@@ -7,7 +7,7 @@ use crate::{
 use super::{
     builder::CombinedUniformBuilder,
     key::{SparseConstraints, UniformSpartanKey},
-    ops::{from_i64, ConstraintInput},
+    ops::ConstraintInput,
 };
 
 #[allow(non_camel_case_types)]
@@ -152,11 +152,11 @@ pub fn simp_test_big_matrices<F: JoltField>() -> (Vec<F>, Vec<F>, Vec<F>) {
     let row_2_index = 32 * 10;
     let row_3_index = 32 * 11;
     big_a[row_0_index] = F::one();
-    big_a[row_0_index + 9] = from_i64(-1);
+    big_a[row_0_index + 9] = F::from_i64(-1);
     big_a[row_1_index + 1] = F::one();
-    big_a[row_1_index + 10] = from_i64(-1);
+    big_a[row_1_index + 10] = F::from_i64(-1);
     big_a[row_2_index + 2] = F::one();
-    big_a[row_2_index + 11] = from_i64(-1);
+    big_a[row_2_index + 11] = F::from_i64(-1);
     big_a[row_3_index + 3] = F::one();
 
     big_b[row_0_index + 9] = F::one();
