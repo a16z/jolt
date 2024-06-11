@@ -137,9 +137,7 @@ impl Program {
                     "--target-dir",
                     &target,
                     "--target",
-                    toolchain,
-                    "--bin",
-                    "guest",
+                    toolchain
                 ])
                 .output()
                 .expect("failed to build guest");
