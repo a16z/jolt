@@ -121,7 +121,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         proof_layers: &[BatchedGrandProductLayerProof<F>],
         claims: &Vec<F>,
         transcript: &mut ProofTranscript,
-        r_start: Vec<F>
+        r_start: Vec<F>,
     ) -> (Vec<F>, Vec<F>) {
         let mut claims_to_verify = claims.to_owned();
         let mut r_grand_product = r_start.clone();
@@ -187,7 +187,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         // Pass the inputs to the layer verification function, by default we have no quarks and so we do not
         // use the quark proof fields.
         let r_start = Vec::<F>::new();
-        Self::verify_layers(&proof.layers, claims, transcript,  r_start)
+        Self::verify_layers(&proof.layers, claims, transcript, r_start)
     }
 }
 
