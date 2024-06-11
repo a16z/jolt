@@ -142,8 +142,6 @@ impl Program {
                     &target,
                     "--target",
                     toolchain,
-                    "--bin",
-                    "guest",
                 ])
                 .output()
                 .expect("failed to build guest");

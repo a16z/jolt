@@ -227,9 +227,8 @@ fn is_provable(attr: &Attribute) -> bool {
     false
 }
 
-fn get_project_name(name: Option<&str>) -> Option<String> {
-    let name = name.unwrap_or(".");
-    let cargo_toml_path = format!("{}/Cargo.toml", name);
+fn get_project_name() -> Option<String> {
+    let cargo_toml_path = format!("Cargo.toml");
     let content = fs::read_to_string(cargo_toml_path).ok()?;
     let doc = content.parse::<DocumentMut>().ok()?;
     doc["package"]["name"].as_str().map(|s| s.replace("-", "_"))
@@ -264,7 +263,7 @@ fn create_index_html(func_names: Vec<String>) -> Result<()> {
             await init();
 "#,
         func_names_with_verify_prefix.join(", "),
-        get_project_name(None).unwrap()
+        get_project_name().unwrap()
     ));
 
     for func_name in &func_names {
@@ -341,7 +340,6 @@ fn modify_cargo_toml(name: &str) -> Result<()> {
             let mut array = Array::new();
             array.push("cdylib");
             lib_section["crate-type"] = Item::Value(toml_edit::Value::Array(array));
-            lib_section["name"] = value(format!("{}", get_project_name(Some(name)).unwrap()));
             lib_section["path"] = value("guest/src/lib.rs");
         }
         let dependencies = doc["dependencies"].as_table_mut().unwrap();
