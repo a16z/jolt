@@ -627,7 +627,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         // Evaluate the LCs with no dependencies
         lc_evals.par_iter_mut().for_each(|(lc, result)| {
             if !aux_dep_map.values().any(|v| v == lc) {
-                let inputs = batch_inputs(lc, &inputs, &aux_evals);
+                let inputs = batch_inputs(lc, inputs, &aux_evals);
                 lc.evaluate_batch_mut(&inputs, result);
             }
         });
@@ -644,7 +644,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
             if let Some(lc) = aux_dep_map.get(&aux_index) {
                 let result = lc_evals.get_mut(lc).unwrap();
-                let inputs = batch_inputs(lc, &inputs, &aux_evals);
+                let inputs = batch_inputs(lc, inputs, &aux_evals);
                 lc.evaluate_batch_mut(&inputs, result);
             }
         }
@@ -769,7 +769,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             unsafe_allocate_zero_vec(constraint_rows),
         );
 
-        let batch_inputs = |lc: &LC<I>| batch_inputs(lc, &inputs, &aux);
+        let batch_inputs = |lc: &LC<I>| batch_inputs(lc, inputs, aux);
 
         // uniform_constraints: Xz[0..uniform_constraint_rows]
         // TODO(sragss): Attempt moving onto key and computing from materialized rows rather than linear combos
