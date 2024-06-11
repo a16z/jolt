@@ -1,5 +1,5 @@
 use super::grand_product::{
-    BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof,
+    BatchedGrandProduct, BatchedGrandProductLayer, BatchedGrandProductProof, BatchedDenseGrandProductLayer
 };
 use super::sumcheck::SumcheckInstanceProof;
 use crate::field::JoltField;
@@ -11,6 +11,7 @@ use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
 use itertools::Itertools;
 use thiserror::Error;
+use rayon::prelude::*;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct QuarkGrandProductProof<C: CommitmentScheme> {
@@ -27,6 +28,7 @@ pub struct QuarkGrandProductProof<C: CommitmentScheme> {
 }
 pub struct QuarkGrandProduct<F: JoltField> {
     polynomials: Vec<Vec<F>>,
+    base_layers: Vec<BatchedDenseGrandProductLayer<F>>
 }
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
@@ -37,11 +39,45 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
 
     /// Constructs the grand product circuit(s) from `leaves`
     fn construct(leaves: Self::Leaves) -> Self {
+        // TODO - Alow custom depths
+        let leave_depth = leaves[0].len().log_2();
+        // If we cannot do a depth 4 reduction then do half of the depth
+        // NOTE - If you are doing a grand product proof of a poly of size 1 or 2 you don't need
+        //        this method.
+        assert!(leave_depth > 1, "Unsuported grand product size, 1 or 0");
+        let depth = if leave_depth < 4 {leave_depth/2} else {4};
+
+        // Taken 1 to 1 from the code in the BatchedDenseGrandProductLayer implementation
+        let mut layers = Vec::<BatchedDenseGrandProductLayer<F>>::new();
+        layers.push(BatchedDenseGrandProductLayer::<F>::new(leaves));
+
+        for i in 0..depth {
+            let previous_layers = &layers[i];
+            let len = previous_layers.layer_len / 2;
+            // TODO(moodlezoup): parallelize over chunks instead of over batch
+            let new_layers = previous_layers
+                .layers
+                .par_iter()
+                .map(|previous_layer| {
+                    (0..len)
+                        .map(|i| previous_layer[2 * i] * previous_layer[2 * i + 1])
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            layers.push(BatchedDenseGrandProductLayer::new(new_layers));
+        }
+
+        // Take the top layer and then turn it into a quark poly
+        // Note - We always push the base layer so the unwrap will work even with depth = 0
+        let quark_polys = layers.pop().unwrap().layers;
+
         Self {
-            polynomials: leaves,
+            polynomials: quark_polys,
+            base_layers: layers
         }
     }
     /// The number of layers in the grand product.
+    /// TODO - (aleph_v) Decide if this function should return the overall depth or the base layer depth
     fn num_layers(&self) -> usize {
         self.polynomials[0].len().log_2()
     }
@@ -68,12 +104,25 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
         transcript: &mut ProofTranscript,
         setup: Option<&C::Setup>,
     ) -> (BatchedGrandProductProof<C>, Vec<F>) {
-        let (quark, random) =
+
+        let mut proof_layers = Vec::with_capacity(self.base_layers.len());
+
+        let (quark, mut random) =
             QuarkGrandProductProof::<C>::prove(&self.polynomials, transcript, setup.unwrap());
+
+        let mut claims_to_verify = quark.claimed_eval_f_0_r.0.clone();
+
+        for layer in self.base_layers.iter_mut().rev() {
+            proof_layers.push(layer.prove_layer(
+                &mut claims_to_verify,
+                &mut random,
+                transcript,
+            ));
+        }
 
         (
             BatchedGrandProductProof {
-                layers: vec![],
+                layers: proof_layers,
                 quark_proof: Some(quark),
             },
             random,
@@ -87,15 +136,16 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
         transcript: &mut ProofTranscript,
         setup: Option<&C::Setup>,
     ) -> (Vec<F>, Vec<F>) {
+        // First do the quark which fixes the first log(n)-4 vars in the random eval point.
         let quark = proof.quark_proof.as_ref().unwrap();
         let v_len = quark.num_vars;
 
-        let res = quark.verify(claims, transcript, v_len, setup.unwrap());
+        // Todo (aleph_v) - bubble up errors
+        let (v_points, rand) = quark.verify(claims, transcript, v_len, setup.unwrap()).unwrap();
 
-        // TODO (Aleph) - Need to bubble up error
-        let (q_openings, rand) = res.unwrap();
-        // TODO - Investigate why the verifier needs the claims after we have already checked them
-        (q_openings, rand)
+        let (sumcheck_claims, sumcheck_r) = <Self as BatchedGrandProduct<F, C>>::verify_layers(&proof.layers, &v_points, transcript, rand);
+
+        (sumcheck_claims, sumcheck_r)
     }
 }
 
@@ -495,7 +545,7 @@ mod quark_grand_product_tests {
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
-        let (proof, product) =
+        let (proof, _) =
             QuarkGrandProductProof::<Zeromorph<Bn254>>::prove(&v, &mut transcript, &setup);
 
         // Note resetting the transcript is important
@@ -503,5 +553,35 @@ mod quark_grand_product_tests {
         let result = proof.verify(&known_products, &mut transcript, 8, &setup);
 
         assert!(result.is_ok(), "Proof did not verify");
+    }
+
+    #[test]
+    fn quark_hybrid_e2e() {
+        const LAYER_SIZE: usize = 1 << 8;
+
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(9 as u64);
+
+        let leaves_1: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(LAYER_SIZE)
+            .collect();
+        let leaves_2: Vec<Fr> = std::iter::repeat_with(|| Fr::random(&mut rng))
+            .take(LAYER_SIZE)
+            .collect();
+        let known_products: Vec<Fr> = vec![leaves_1.iter().product(), leaves_2.iter().product()];
+
+        let v = vec![leaves_1, leaves_2];
+        let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+
+        let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
+        let setup = srs.trim(1 << 9);
+
+        let mut hybrid_grand_product = <QuarkGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::construct(v);
+        let proof: BatchedGrandProductProof<Zeromorph<Bn254>> = hybrid_grand_product.prove_grand_product(&mut transcript, Some(&setup)).0;
+
+        // Note resetting the transcript is important
+        transcript = ProofTranscript::new(b"test_transcript");
+        let _ = QuarkGrandProduct::verify_grand_product(&proof, &known_products, &mut transcript, Some(&setup));
+        // TODO sumcheck opening check
+
     }
 }

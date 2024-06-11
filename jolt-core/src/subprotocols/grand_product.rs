@@ -116,17 +116,18 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         r_grand_product.push(r_layer);
     }
 
-    /// Verifies the given grand product proof.
-    fn verify_grand_product(
-        proof: &BatchedGrandProductProof<C>,
+    /// Function used for layer sumchecks in the generic batch verifier as well as the quark layered sumcheck hybrid
+    fn verify_layers(
+        proof_layers: &[BatchedGrandProductLayerProof<F>],
         claims: &Vec<F>,
         transcript: &mut ProofTranscript,
-        _setup: Option<&C::Setup>,
+        r_start: Vec<F>
     ) -> (Vec<F>, Vec<F>) {
-        let mut r_grand_product: Vec<F> = Vec::new();
         let mut claims_to_verify = claims.to_owned();
+        let mut r_grand_product = r_start.clone();
+        let fixed_at_start = r_start.len();
 
-        for (layer_index, layer_proof) in proof.layers.iter().enumerate() {
+        for (layer_index, layer_proof) in proof_layers.iter().enumerate() {
             // produce a fresh set of coeffs
             let coeffs: Vec<F> =
                 transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
@@ -138,7 +139,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
                 .sum();
 
             let (sumcheck_claim, r_sumcheck) =
-                layer_proof.verify(claim, layer_index, 3, transcript);
+                layer_proof.verify(claim, layer_index + fixed_at_start, 3, transcript);
             assert_eq!(claims.len(), layer_proof.left_claims.len());
             assert_eq!(claims.len(), layer_proof.right_claims.len());
 
@@ -162,7 +163,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
             r_grand_product = r_sumcheck.into_iter().rev().collect();
 
             Self::verify_sumcheck_claim(
-                &proof.layers,
+                proof_layers,
                 layer_index,
                 &coeffs,
                 sumcheck_claim,
@@ -174,6 +175,19 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         }
 
         (claims_to_verify, r_grand_product)
+    }
+
+    /// Verifies the given grand product proof.
+    fn verify_grand_product(
+        proof: &BatchedGrandProductProof<C>,
+        claims: &Vec<F>,
+        transcript: &mut ProofTranscript,
+        _setup: Option<&C::Setup>,
+    ) -> (Vec<F>, Vec<F>) {
+        // Pass the inputs to the layer verification function, by default we have no quarks and so we do not
+        // use the quark proof fields.
+        let r_start = Vec::<F>::new();
+        Self::verify_layers(&proof.layers, claims, transcript,  r_start)
     }
 }
 
@@ -243,12 +257,12 @@ pub type DenseGrandProductLayer<F> = Vec<F>;
 /// Represents a batch of `DenseGrandProductLayer`, all of the same length `layer_len`.
 #[derive(Debug, Clone)]
 pub struct BatchedDenseGrandProductLayer<F: JoltField> {
-    layers: Vec<DenseGrandProductLayer<F>>,
-    layer_len: usize,
+    pub layers: Vec<DenseGrandProductLayer<F>>,
+    pub layer_len: usize,
 }
 
 impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
-    fn new(values: Vec<Vec<F>>) -> Self {
+    pub fn new(values: Vec<Vec<F>>) -> Self {
         let layer_len = values[0].len();
         Self {
             layers: values,
