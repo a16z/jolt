@@ -33,6 +33,7 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut token_stream = builder.build();
 
+    // Add wasm utilities and functions if the function is marked as wasm
     if builder.has_wasm_attr() {
         // wasm utilities should only be added once
         let mut module_added = WASM_IMPORTS_ADDED.lock().unwrap();

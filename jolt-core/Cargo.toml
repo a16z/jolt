@@ -98,5 +98,8 @@ default = [
 ]
 host = ["dep:reqwest", "dep:tokio"]
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+memory-stats = "1.0.0" 
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
