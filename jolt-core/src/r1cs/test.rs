@@ -21,6 +21,7 @@ use super::{
     Eq,
     PartialOrd,
     Ord,
+    Hash,
 )]
 #[repr(usize)]
 pub enum SimpTestIn {
@@ -42,6 +43,7 @@ impl_r1cs_input_lc_conversions!(SimpTestIn);
     Eq,
     PartialOrd,
     Ord,
+    Hash,
 )]
 #[repr(usize)]
 pub enum TestInputs {

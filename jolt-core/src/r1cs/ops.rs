@@ -1,8 +1,10 @@
 //! Defines the Linear Combination (LC) object and associated operations.
 //! A LinearCombination is a vector of Terms, where each Term is a pair of a Variable and a coefficient.
 
-use crate::field::JoltField;
+use crate::{field::JoltField, utils::thread::unsafe_allocate_zero_vec};
+use rayon::prelude::*;
 use std::fmt::Debug;
+use std::hash::Hash;
 use strum::{EnumCount, IntoEnumIterator};
 
 pub trait ConstraintInput:
@@ -16,23 +18,25 @@ pub trait ConstraintInput:
     + IntoEnumIterator
     + EnumCount
     + Into<usize>
+    + Hash
     + Sync
+    + Send
     + 'static
 {
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Variable<I: ConstraintInput> {
     Input(I),
     Auxiliary(usize),
     Constant,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Term<I: ConstraintInput>(pub Variable<I>, pub i64);
 
 /// Linear Combination of terms.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct LC<I: ConstraintInput>(Vec<Term<I>>);
 
 impl<I: ConstraintInput> LC<I> {
@@ -57,6 +61,14 @@ impl<I: ConstraintInput> LC<I> {
         self.0
             .last()
             .filter(|term| matches!(term.0, Variable::Constant))
+    }
+
+    pub fn constant_term_field<F: JoltField>(&self) -> F {
+        if let Some(term) = self.constant_term() {
+            F::from_i64(term.1)
+        } else {
+            F::zero()
+        }
     }
 
     pub fn to_field_elements<F: JoltField>(&self) -> Vec<F> {
@@ -97,6 +109,39 @@ impl<I: ConstraintInput> LC<I> {
             }
         }
         result
+    }
+
+    pub fn evaluate_batch<F: JoltField>(&self, inputs: &[&[F]], batch_size: usize) -> Vec<F> {
+        let mut output = unsafe_allocate_zero_vec(batch_size);
+        self.evaluate_batch_mut(inputs, &mut output);
+        output
+    }
+
+    #[tracing::instrument(skip_all, name = "LC::evaluate_batch_mut")]
+    pub fn evaluate_batch_mut<F: JoltField>(&self, inputs: &[&[F]], output: &mut [F]) {
+        let batch_size = output.len();
+        inputs
+            .iter()
+            .for_each(|inner| assert_eq!(inner.len(), batch_size));
+
+        let terms: Vec<F> = self.to_field_elements();
+
+        output
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(batch_index, output_slot)| {
+                *output_slot = self
+                    .terms()
+                    .iter()
+                    .enumerate()
+                    .map(|(term_index, term)| match term.0 {
+                        Variable::Input(_) | Variable::Auxiliary(_) => {
+                            terms[term_index].mul_01_optimized(inputs[term_index][batch_index])
+                        }
+                        Variable::Constant => terms[term_index],
+                    })
+                    .sum();
+            });
     }
 
     #[cfg(test)]
@@ -420,7 +465,7 @@ mod test {
 
     use super::*;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter, Hash)]
     #[repr(usize)]
     enum Inputs {
         A,

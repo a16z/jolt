@@ -37,6 +37,7 @@ pub fn construct_jolt_constraints<F: JoltField>(
     PartialEq,
     Eq,
     PartialOrd,
+    Hash,
     Ord,
 )]
 #[repr(usize)]
