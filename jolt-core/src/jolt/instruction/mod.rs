@@ -138,6 +138,7 @@ pub mod lh;
 pub mod movsign;
 pub mod mul;
 pub mod mulh;
+pub mod mulhsu;
 pub mod mulhu;
 pub mod mulu;
 pub mod or;
@@ -150,6 +151,10 @@ pub mod sra;
 pub mod srl;
 pub mod sub;
 pub mod sw;
+pub mod virtual_advice;
+pub mod virtual_assert_eq_signs;
+pub mod virtual_assert_lt_abs;
+pub mod virtual_assert_lte;
 pub mod xor;
 
 #[cfg(test)]
