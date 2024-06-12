@@ -124,7 +124,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         r_start: Vec<F>,
     ) -> (Vec<F>, Vec<F>) {
         let mut claims_to_verify = claims.to_owned();
-        // We allow a non empty start in this function call because the quark hybrid form provides presepcifed random for
+        // We allow a non empty start in this function call because the quark hybrid form provides prespecified random for
         // most of the positions and then we proceed with GKR on the remaining layers using the preset random values.
         // For default thaler '13 layered grand products this should be empty.
         let mut r_grand_product = r_start.clone();
