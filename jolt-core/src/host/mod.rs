@@ -3,7 +3,7 @@
 use core::str::FromStr;
 use std::{
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Write, Read},
     path::PathBuf,
     process::Command,
 };
@@ -157,7 +157,10 @@ impl Program {
     pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         self.build();
         let elf = self.elf.as_ref().unwrap();
-        tracer::decode(elf)
+        let mut elf_file = File::open(elf).unwrap();
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        tracer::decode(&elf_contents)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet
