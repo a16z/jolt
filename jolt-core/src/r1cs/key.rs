@@ -266,7 +266,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let r_var = &r_rest[..var_bits];
 
         let r_var_eq = EqPolynomial::evals(r_var);
-        let eval_variables = (0..self.uniform_r1cs.num_vars)
+        let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| r_var_eq[var_index] * segment_evals[var_index])
             .sum();
         let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(0, F::one())]);
@@ -397,6 +397,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
 mod test {
     use super::*;
     use ark_bn254::Fr;
+    use ark_std::{One, Zero};
 
     use crate::{
         poly::dense_mlpoly::DensePolynomial,

@@ -1,6 +1,6 @@
 use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
-use crate::field::JoltField;
+use crate::field::{JoltField, OptimizedMul};
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
@@ -1546,7 +1546,7 @@ mod grand_product_tests {
     use super::*;
     use crate::poly::commitment::zeromorph::Zeromorph;
     use ark_bn254::{Bn254, Fr};
-    use ark_std::test_rng;
+    use ark_std::{test_rng, One};
     use rand_core::RngCore;
 
     #[test]

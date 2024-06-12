@@ -2,15 +2,24 @@ use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{One, Zero};
+
+pub trait FieldOps<Rhs = Self, Output = Self>:
+    Add<Rhs, Output = Output>
+    + Sub<Rhs, Output = Output>
+    + Mul<Rhs, Output = Output>
+    + Div<Rhs, Output = Output>
+{
+}
 
 pub trait JoltField:
     'static
     + Sized
+    + Zero
+    + One
     + Neg<Output = Self>
-    + Add<Output = Self>
-    + Sub<Output = Self>
-    + Mul<Output = Self>
-    + Div<Output = Self>
+    + FieldOps<Self, Self>
+    + for<'a> FieldOps<&'a Self, Self>
     + AddAssign<Self>
     + SubAssign<Self>
     + MulAssign<Self>
@@ -30,18 +39,25 @@ pub trait JoltField:
     const NUM_BYTES: usize;
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self;
 
-    fn is_zero(&self) -> bool;
-    fn is_one(&self) -> bool;
-    fn zero() -> Self;
-    fn one() -> Self;
     fn from_u64(n: u64) -> Option<Self>;
     fn from_i64(val: i64) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
+}
 
+pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {
+    fn mul_0_optimized(self, other: Rhs) -> Self::Output;
+    fn mul_1_optimized(self, other: Rhs) -> Self::Output;
+    fn mul_01_optimized(self, other: Rhs) -> Self::Output;
+}
+
+impl<T> OptimizedMul<T, T> for T
+where
+    T: JoltField,
+{
     #[inline(always)]
-    fn mul_0_optimized(self, other: Self) -> Self {
+    fn mul_0_optimized(self, other: T) -> T {
         if self.is_zero() || other.is_zero() {
             Self::zero()
         } else {
@@ -50,7 +66,7 @@ pub trait JoltField:
     }
 
     #[inline(always)]
-    fn mul_1_optimized(self, other: Self) -> Self {
+    fn mul_1_optimized(self, other: T) -> T {
         if self.is_one() {
             other
         } else if other.is_one() {
@@ -61,15 +77,11 @@ pub trait JoltField:
     }
 
     #[inline(always)]
-    fn mul_01_optimized(self, other: Self) -> Self {
+    fn mul_01_optimized(self, other: T) -> T {
         if self.is_zero() || other.is_zero() {
             Self::zero()
-        } else if self.is_one() {
-            other
-        } else if other.is_one() {
-            self
         } else {
-            self * other
+            self.mul_1_optimized(other)
         }
     }
 }

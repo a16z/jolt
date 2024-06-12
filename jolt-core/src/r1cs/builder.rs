@@ -1,11 +1,13 @@
 use crate::{
-    field::JoltField,
+    field::{JoltField, OptimizedMul},
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{
         mul_0_1_optimized,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
 };
+#[allow(unused_imports)] // clippy thinks these aren't needed lol
+use ark_std::{One, Zero};
 use rayon::prelude::*;
 use std::{collections::HashMap, fmt::Debug};
 
