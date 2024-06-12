@@ -148,7 +148,7 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
-        generators: &C::Setup,
+        pcs_setup: &C::Setup,
     ) -> (
         BatchedGrandProductProof<C>,
         BatchedGrandProductProof<C>,
