@@ -85,7 +85,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
     /// The claimed outputs of the grand products.
     fn claims(&self) -> Vec<F> {
         self.polynomials
-            .iter()
+            .par_iter()
             .map(|f| f.iter().product())
             .collect()
     }
