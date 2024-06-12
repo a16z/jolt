@@ -446,8 +446,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
 
     fn claims(&self) -> Vec<F> {
         let num_layers =
-            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::num_layers(self) - 1;
-        let last_layers = &self.layers[num_layers];
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::num_layers(self);
+        let last_layers = &self.layers[num_layers - 1];
         assert_eq!(last_layers.layer_len, 2);
         last_layers
             .layers
