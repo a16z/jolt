@@ -32,6 +32,9 @@ pub struct QuarkGrandProduct<F: JoltField> {
     base_layers: Vec<BatchedDenseGrandProductLayer<F>>,
 }
 
+/// The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs.
+const QUARK_HYBRID_LAYER_DEPTH: usize = 4;
+
 impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
     for QuarkGrandProduct<F>
 {
@@ -40,19 +43,19 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
 
     /// Constructs the grand product circuit(s) from `leaves`
     fn construct(leaves: Self::Leaves) -> Self {
-        // TODO - Alow custom depths
+        // TODO - (aleph_v) Alow custom depths on construction
         let leave_depth = leaves[0].len().log_2();
-        // If we cannot do a depth 4 reduction then do half of the depth
-        // NOTE - If you are doing a grand product proof of a poly of size 1 or 2 you don't need
-        //        this method.
-        assert!(leave_depth > 1, "Unsuported grand product size, 1 or 0");
-        let depth = if leave_depth < 4 { leave_depth / 2 } else { 4 };
+        let num_layers = if leave_depth <= QUARK_HYBRID_LAYER_DEPTH {
+            leave_depth - 1
+        } else {
+            QUARK_HYBRID_LAYER_DEPTH
+        };
 
         // Taken 1 to 1 from the code in the BatchedDenseGrandProductLayer implementation
         let mut layers = Vec::<BatchedDenseGrandProductLayer<F>>::new();
         layers.push(BatchedDenseGrandProductLayer::<F>::new(leaves));
 
-        for i in 0..depth {
+        for i in 0..num_layers {
             let previous_layers = &layers[i];
             let len = previous_layers.layer_len / 2;
             // TODO(moodlezoup): parallelize over chunks instead of over batch
@@ -68,6 +71,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
             layers.push(BatchedDenseGrandProductLayer::new(new_layers));
         }
 
+        // If the leaf depth is too small we return no polynomials and all base layers
+        if leave_depth <= num_layers {
+            return Self {
+                polynomials: Vec::<Vec<F>>::new(),
+                base_layers: layers,
+            };
+        }
+
         // Take the top layer and then turn it into a quark poly
         // Note - We always push the base layer so the unwrap will work even with depth = 0
         let quark_polys = layers.pop().unwrap().layers;
@@ -77,8 +88,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
             base_layers: layers,
         }
     }
-    /// The number of layers in the grand product.
-    /// TODO - (aleph_v) Decide if this function should return the overall depth or the base layer depth
+    /// The number of layers in the grand product, in this case it is the log of the quark layer size plus the gkr layer depth.
     fn num_layers(&self) -> usize {
         self.polynomials[0].len().log_2()
     }
@@ -107,10 +117,22 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
     ) -> (BatchedGrandProductProof<C>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.base_layers.len());
 
-        let (quark, mut random) =
-            QuarkGrandProductProof::<C>::prove(&self.polynomials, transcript, setup.unwrap());
-
-        let mut claims_to_verify = quark.claimed_eval_f_0_r.0.clone();
+        // For proofs of polynomials of size less than 16 we support these with no quark proof
+        let (quark_option, mut random, mut claims_to_verify) = if !self.polynomials.is_empty() {
+            // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is 4 layers deep in the tree
+            // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
+            // by the quark proof is in fact the folded result of the base layer.
+            let (quark, random) =
+                QuarkGrandProductProof::<C>::prove(&self.polynomials, transcript, setup.unwrap());
+            let claims = quark.claimed_eval_f_0_r.0.clone();
+            (Some(quark), random, claims)
+        } else {
+            (
+                None,
+                Vec::<F>::new(),
+                <QuarkGrandProduct<F> as BatchedGrandProduct<F, C>>::claims(self),
+            )
+        };
 
         for layer in self.base_layers.iter_mut().rev() {
             proof_layers.push(layer.prove_layer(&mut claims_to_verify, &mut random, transcript));
@@ -119,7 +141,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
         (
             BatchedGrandProductProof {
                 layers: proof_layers,
-                quark_proof: Some(quark),
+                quark_proof: quark_option,
             },
             random,
         )
@@ -132,14 +154,21 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
         transcript: &mut ProofTranscript,
         setup: Option<&C::Setup>,
     ) -> (Vec<F>, Vec<F>) {
-        // First do the quark which fixes the first log(n)-4 vars in the random eval point.
-        let quark = proof.quark_proof.as_ref().unwrap();
-        let v_len = quark.num_vars;
-
-        // Todo (aleph_v) - bubble up errors
-        let (v_points, rand) = quark
-            .verify(claims, transcript, v_len, setup.unwrap())
-            .unwrap();
+        // Here we must also support the case where the number of layers is very small
+        let (v_points, rand) = match proof.quark_proof.as_ref() {
+            Some(quark) => {
+                // In this case we verify the quark which fixes the first log(n)-4 vars in the random eval point.
+                let v_len = quark.num_vars;
+                // Todo (aleph_v) - bubble up errors
+                quark
+                    .verify(claims, transcript, v_len, setup.unwrap())
+                    .unwrap()
+            }
+            None => {
+                // Otherwise we must check the actual claims and the preset random will be empty.
+                (claims.clone(), Vec::<F>::new())
+            }
+        };
 
         let (sumcheck_claims, sumcheck_r) = <Self as BatchedGrandProduct<F, C>>::verify_layers(
             &proof.layers,
@@ -165,30 +194,7 @@ pub enum QuarkError {
     InvalidBinding,
 }
 
-pub trait QuarkBatchedGrandProduct<C: CommitmentScheme>: Sized {
-    type Leaves = Vec<C::Field>;
-    /// Computes a grand product proof using the Section 5 technique from Quarks Paper
-    /// First - Extends the evals of v to create an f poly, then commits to it and evals
-    /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
-    /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
-    fn prove(
-        v: &[Vec<C::Field>],
-        transcript: &mut ProofTranscript,
-        setup: &C::Setup,
-    ) -> (Self, Vec<C::Field>);
-
-    /// Verifies the given grand product proof.
-    #[allow(clippy::type_complexity)]
-    fn verify(
-        &self,
-        claim: &[C::Field],
-        transcript: &mut ProofTranscript,
-        n_rounds: usize,
-        setup: &C::Setup,
-    ) -> Result<(Vec<C::Field>, Vec<C::Field>), QuarkError>;
-}
-
-impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof<C> {
+impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
     /// Computes a grand product proof using the Section 5 technique from Quarks Paper
     /// First - Extends the evals of v to create an f poly, then commits to it and evals
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
@@ -198,7 +204,6 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
         transcript: &mut ProofTranscript,
         setup: &C::Setup,
     ) -> (Self, Vec<C::Field>) {
-        // TODO (alpeh_v): all v the same size?
         let v_length = leaves[0].len();
         let v_variables = v_length.log_2();
 
@@ -252,7 +257,6 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
         };
 
         // Now run the sumcheck in arbitrary mode
-        // TODO (aleph_v): Use a trait implementation as is done for batched cubic
         // Note - We use the final randomness from binding all variables (x) as the source random for the openings so the verifier can
         //        check that the base layer is the same as is committed too.
         let (sumcheck_proof, x, _) = SumcheckInstanceProof::<C::Field>::prove_arbitrary::<_>(
@@ -326,6 +330,7 @@ impl<C: CommitmentScheme> QuarkBatchedGrandProduct<C> for QuarkGrandProductProof
     }
 
     /// Verifies the given grand product proof.
+    #[allow(clippy::type_complexity)]
     fn verify(
         &self,
         claims: &[C::Field],
@@ -470,7 +475,6 @@ fn v_into_f<C: CommitmentScheme>(
     let (evals, _) = v.split_evals(v.len());
     f_evals[..v_length].clone_from_slice(evals);
 
-    // Todo (aleph_v) - problems when f length is equal to the usize
     for i in v_length..2 * v_length {
         let i_shift_mod = (i << 1) % (2 * v_length);
         // The transform follows the logic of the paper and to accumulate
@@ -592,6 +596,5 @@ mod quark_grand_product_tests {
             &mut transcript,
             Some(&setup),
         );
-        // TODO sumcheck opening check
     }
 }

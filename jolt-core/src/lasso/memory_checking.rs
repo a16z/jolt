@@ -175,9 +175,9 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let (read_write_grand_product, r_read_write) =
-            read_write_circuit.prove_grand_product(transcript, Some(generators));
+            read_write_circuit.prove_grand_product(transcript, Some(pcs_setup));
         let (init_final_grand_product, r_init_final) =
-            init_final_circuit.prove_grand_product(transcript, Some(generators));
+            init_final_circuit.prove_grand_product(transcript, Some(pcs_setup));
 
         drop_in_background_thread(read_write_circuit);
         drop_in_background_thread(init_final_circuit);
