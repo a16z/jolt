@@ -93,7 +93,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #build_fn_name() -> (
                 impl Fn(#(#input_types),*) -> #prove_output_ty,
-                impl Fn(jolt::Proof) -> bool
+                impl Fn(jolt::RV32IHyraxProof) -> bool
             ) {
                 #imports
                 let (program, preprocessing) = #preprocess_fn_name();
@@ -110,7 +110,7 @@ impl MacroBuilder {
                 };
 
 
-                let verify_closure = move |proof: jolt::Proof| {
+                let verify_closure = move |proof: jolt::RV32IHyraxProof| {
                     let program = (*program_cp).clone();
                     let preprocessing = (*preprocessing_cp).clone();
                     RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments).is_ok()
@@ -179,7 +179,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
-                jolt::JoltPreprocessing<jolt::F, jolt::CommitmentScheme>
+                jolt::JoltPreprocessing<jolt::F, jolt::PCS>
             ) {
                 #imports
 
@@ -190,7 +190,7 @@ impl MacroBuilder {
                 let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<jolt::F, jolt::CommitmentScheme> =
+                let preprocessing: JoltPreprocessing<jolt::F, jolt::PCS> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         memory_init,
@@ -231,7 +231,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::CommitmentScheme>,
+                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::PCS>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
@@ -252,7 +252,7 @@ impl MacroBuilder {
 
                 #handle_return
 
-                let proof = jolt::Proof {
+                let proof = jolt::RV32IHyraxProof {
                     proof: jolt_proof,
                     commitments: jolt_commitments,
                 };
@@ -487,10 +487,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::Proof)
+                ((), jolt::RV32IHyraxProof)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::Proof)
+                (#ty, jolt::RV32IHyraxProof)
             },
         }
     }
