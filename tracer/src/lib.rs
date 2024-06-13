@@ -71,7 +71,7 @@ pub fn trace(
 
 #[tracing::instrument(skip_all)]
 pub fn decode(elf: &[u8]) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
-    let obj = object::File::parse(&*elf).unwrap();
+    let obj = object::File::parse(elf).unwrap();
 
     let sections = obj
         .sections()
