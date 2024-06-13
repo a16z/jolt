@@ -9,7 +9,9 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    subprotocols::grand_product::{BatchedGrandProduct, BatchedGrandProductProof, BatchedDenseGrandProduct},
+    subprotocols::grand_product::{
+        BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
+    },
 };
 
 use crate::field::JoltField;
@@ -76,8 +78,10 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static = BatchedDenseGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static = BatchedDenseGrandProduct<F>;
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+        BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+        BatchedDenseGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<
