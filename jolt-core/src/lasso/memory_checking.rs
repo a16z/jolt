@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::subprotocols::grand_product::BatchedDenseGrandProduct;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
@@ -10,7 +9,9 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    subprotocols::grand_product::{BatchedGrandProduct, BatchedGrandProductProof},
+    subprotocols::grand_product::{
+        BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
+    },
 };
 
 use crate::field::JoltField;
@@ -55,10 +56,10 @@ where
     pub multiset_hashes: MultisetHashes<F>,
     /// The read and write grand products for every memory has the same size,
     /// so they can be batched.
-    pub read_write_grand_product: BatchedGrandProductProof<F>,
+    pub read_write_grand_product: BatchedGrandProductProof<C>,
     /// The init and final grand products for every memory has the same size,
     /// so they can be batched.
-    pub init_final_grand_product: BatchedGrandProductProof<F>,
+    pub init_final_grand_product: BatchedGrandProductProof<C>,
     /// The opening proofs associated with the read/write grand product.
     pub read_write_openings: ReadWriteOpenings,
     pub read_write_opening_proof: ReadWriteOpenings::Proof,
@@ -77,9 +78,9 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F> + Send + 'static =
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
         BatchedDenseGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F> + Send + 'static =
+    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
         BatchedDenseGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
@@ -113,7 +114,7 @@ where
             multiset_hashes,
             r_read_write,
             r_init_final,
-        ) = Self::prove_grand_products(preprocessing, polynomials, transcript);
+        ) = Self::prove_grand_products(preprocessing, polynomials, transcript, generators);
 
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
@@ -150,9 +151,10 @@ where
         preprocessing: &Self::Preprocessing,
         polynomials: &Polynomials,
         transcript: &mut ProofTranscript,
+        pcs_setup: &C::Setup,
     ) -> (
-        BatchedGrandProductProof<F>,
-        BatchedGrandProductProof<F>,
+        BatchedGrandProductProof<C>,
+        BatchedGrandProductProof<C>,
         MultisetHashes<F>,
         Vec<F>,
         Vec<F>,
@@ -176,9 +178,9 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let (read_write_grand_product, r_read_write) =
-            read_write_circuit.prove_grand_product(transcript);
+            read_write_circuit.prove_grand_product(transcript, Some(pcs_setup));
         let (init_final_grand_product, r_init_final) =
-            init_final_circuit.prove_grand_product(transcript);
+            init_final_circuit.prove_grand_product(transcript, Some(pcs_setup));
 
         drop_in_background_thread(read_write_circuit);
         drop_in_background_thread(init_final_circuit);
@@ -198,7 +200,7 @@ where
     fn read_write_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
-        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
+        read_write_leaves: <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
     ) -> (Self::ReadWriteGrandProduct, Vec<F>) {
         let batched_circuit = Self::ReadWriteGrandProduct::construct(read_write_leaves);
         let claims = batched_circuit.claims();
@@ -211,7 +213,7 @@ where
     fn init_final_grand_product(
         _preprocessing: &Self::Preprocessing,
         _polynomials: &Polynomials,
-        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
+        init_final_leaves: <Self::InitFinalGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
     ) -> (Self::InitFinalGrandProduct, Vec<F>) {
         let batched_circuit = Self::InitFinalGrandProduct::construct(init_final_leaves);
         let claims = batched_circuit.claims();
@@ -297,8 +299,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, C>>::Leaves,
     );
 
     /// Computes the Reed-Solomon fingerprint (parametrized by `gamma` and `tau`) of the given memory `tuple`.
@@ -346,11 +348,13 @@ where
             &proof.read_write_grand_product,
             &read_write_hashes,
             transcript,
+            Some(generators),
         );
         let (claims_init_final, r_init_final) = Self::InitFinalGrandProduct::verify_grand_product(
             &proof.init_final_grand_product,
             &init_final_hashes,
             transcript,
+            Some(generators),
         );
 
         proof.read_write_openings.verify_openings(

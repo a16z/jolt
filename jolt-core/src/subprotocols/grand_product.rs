@@ -1,5 +1,7 @@
+use super::grand_product_quarks::QuarkGrandProductProof;
 use super::sumcheck::{BatchedCubicSumcheck, SumcheckInstanceProof};
 use crate::field::JoltField;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::{dense_mlpoly::DensePolynomial, unipoly::UniPoly};
 use crate::utils::math::Math;
@@ -32,11 +34,12 @@ impl<F: JoltField> BatchedGrandProductLayerProof<F> {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct BatchedGrandProductProof<F: JoltField> {
-    pub layers: Vec<BatchedGrandProductLayerProof<F>>,
+pub struct BatchedGrandProductProof<C: CommitmentScheme> {
+    pub layers: Vec<BatchedGrandProductLayerProof<C::Field>>,
+    pub quark_proof: Option<QuarkGrandProductProof<C>>,
 }
 
-pub trait BatchedGrandProduct<F: JoltField>: Sized {
+pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Sized {
     /// The bottom/input layer of the grand products
     type Leaves;
 
@@ -56,7 +59,8 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
     fn prove_grand_product(
         &mut self,
         transcript: &mut ProofTranscript,
-    ) -> (BatchedGrandProductProof<F>, Vec<F>) {
+        _setup: Option<&C::Setup>,
+    ) -> (BatchedGrandProductProof<C>, Vec<F>) {
         let mut proof_layers = Vec::with_capacity(self.num_layers());
         let mut claims_to_verify = self.claims();
         let mut r_grand_product = Vec::new();
@@ -72,6 +76,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         (
             BatchedGrandProductProof {
                 layers: proof_layers,
+                quark_proof: None,
             },
             r_grand_product,
         )
@@ -111,16 +116,21 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         r_grand_product.push(r_layer);
     }
 
-    /// Verifies the given grand product proof.
-    fn verify_grand_product(
-        proof: &BatchedGrandProductProof<F>,
+    /// Function used for layer sumchecks in the generic batch verifier as well as the quark layered sumcheck hybrid
+    fn verify_layers(
+        proof_layers: &[BatchedGrandProductLayerProof<F>],
         claims: &Vec<F>,
         transcript: &mut ProofTranscript,
+        r_start: Vec<F>,
     ) -> (Vec<F>, Vec<F>) {
-        let mut r_grand_product: Vec<F> = Vec::new();
         let mut claims_to_verify = claims.to_owned();
+        // We allow a non empty start in this function call because the quark hybrid form provides prespecified random for
+        // most of the positions and then we proceed with GKR on the remaining layers using the preset random values.
+        // For default thaler '13 layered grand products this should be empty.
+        let mut r_grand_product = r_start.clone();
+        let fixed_at_start = r_start.len();
 
-        for (layer_index, layer_proof) in proof.layers.iter().enumerate() {
+        for (layer_index, layer_proof) in proof_layers.iter().enumerate() {
             // produce a fresh set of coeffs
             let coeffs: Vec<F> =
                 transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
@@ -132,7 +142,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
                 .sum();
 
             let (sumcheck_claim, r_sumcheck) =
-                layer_proof.verify(claim, layer_index, 3, transcript);
+                layer_proof.verify(claim, layer_index + fixed_at_start, 3, transcript);
             assert_eq!(claims.len(), layer_proof.left_claims.len());
             assert_eq!(claims.len(), layer_proof.right_claims.len());
 
@@ -156,7 +166,7 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
             r_grand_product = r_sumcheck.into_iter().rev().collect();
 
             Self::verify_sumcheck_claim(
-                &proof.layers,
+                proof_layers,
                 layer_index,
                 &coeffs,
                 sumcheck_claim,
@@ -168,6 +178,19 @@ pub trait BatchedGrandProduct<F: JoltField>: Sized {
         }
 
         (claims_to_verify, r_grand_product)
+    }
+
+    /// Verifies the given grand product proof.
+    fn verify_grand_product(
+        proof: &BatchedGrandProductProof<C>,
+        claims: &Vec<F>,
+        transcript: &mut ProofTranscript,
+        _setup: Option<&C::Setup>,
+    ) -> (Vec<F>, Vec<F>) {
+        // Pass the inputs to the layer verification function, by default we have no quarks and so we do not
+        // use the quark proof fields.
+        let r_start = Vec::<F>::new();
+        Self::verify_layers(&proof.layers, claims, transcript, r_start)
     }
 }
 
@@ -237,12 +260,12 @@ pub type DenseGrandProductLayer<F> = Vec<F>;
 /// Represents a batch of `DenseGrandProductLayer`, all of the same length `layer_len`.
 #[derive(Debug, Clone)]
 pub struct BatchedDenseGrandProductLayer<F: JoltField> {
-    layers: Vec<DenseGrandProductLayer<F>>,
-    layer_len: usize,
+    pub layers: Vec<DenseGrandProductLayer<F>>,
+    pub layer_len: usize,
 }
 
 impl<F: JoltField> BatchedDenseGrandProductLayer<F> {
-    fn new(values: Vec<Vec<F>>) -> Self {
+    pub fn new(values: Vec<Vec<F>>) -> Self {
         let layer_len = values[0].len();
         Self {
             layers: values,
@@ -390,7 +413,9 @@ pub struct BatchedDenseGrandProduct<F: JoltField> {
     layers: Vec<BatchedDenseGrandProductLayer<F>>,
 }
 
-impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
+    for BatchedDenseGrandProduct<F>
+{
     type Leaves = Vec<Vec<F>>;
 
     #[tracing::instrument(skip_all, name = "BatchedDenseGrandProduct::construct")]
@@ -423,7 +448,9 @@ impl<F: JoltField> BatchedGrandProduct<F> for BatchedDenseGrandProduct<F> {
     }
 
     fn claims(&self) -> Vec<F> {
-        let last_layers = &self.layers[self.num_layers() - 1];
+        let num_layers =
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::num_layers(self);
+        let last_layers = &self.layers[num_layers - 1];
         assert_eq!(last_layers.layer_len, 2);
         last_layers
             .layers
@@ -1395,7 +1422,9 @@ pub struct ToggledBatchedGrandProduct<F: JoltField> {
     sparse_layers: Vec<BatchedSparseGrandProductLayer<F>>,
 }
 
-impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
+    for ToggledBatchedGrandProduct<C::Field>
+{
     type Leaves = (Vec<Vec<usize>>, Vec<Vec<F>>); // (flags, fingerprints)
 
     #[tracing::instrument(skip_all, name = "ToggledBatchedGrandProduct::construct")]
@@ -1515,7 +1544,8 @@ impl<F: JoltField> BatchedGrandProduct<F> for ToggledBatchedGrandProduct<F> {
 #[cfg(test)]
 mod grand_product_tests {
     use super::*;
-    use ark_bn254::Fr;
+    use crate::poly::commitment::zeromorph::Zeromorph;
+    use ark_bn254::{Bn254, Fr};
     use ark_std::test_rng;
     use rand_core::RngCore;
 
@@ -1532,15 +1562,27 @@ mod grand_product_tests {
         .take(BATCH_SIZE)
         .collect();
 
-        let mut batched_circuit = BatchedDenseGrandProduct::construct(leaves);
+        let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254>,
+        >>::construct(leaves);
         let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
 
-        let claims = batched_circuit.claims();
-        let (proof, r_prover) = batched_circuit.prove_grand_product(&mut transcript);
+        // I love the rust type system
+        let claims =
+            <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::claims(
+                &batched_circuit,
+            );
+        let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+            Fr,
+            Zeromorph<Bn254>,
+        >>::prove_grand_product(
+            &mut batched_circuit, &mut transcript, None
+        );
 
         let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
         let (_, r_verifier) =
-            BatchedDenseGrandProduct::verify_grand_product(&proof, &claims, &mut transcript);
+            BatchedDenseGrandProduct::verify_grand_product(&proof, &claims, &mut transcript, None);
         assert_eq!(r_prover, r_verifier);
     }
 

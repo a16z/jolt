@@ -448,8 +448,8 @@ where
         gamma: &F,
         tau: &F,
     ) -> (
-        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F>>::Leaves,
-        <Self::InitFinalGrandProduct as BatchedGrandProduct<F>>::Leaves,
+        <Self::ReadWriteGrandProduct as BatchedGrandProduct<F, CS>>::Leaves,
+        <Self::InitFinalGrandProduct as BatchedGrandProduct<F, CS>>::Leaves,
     ) {
         let gamma_squared = gamma.square();
         let num_lookups = polynomials.dim[0].len();
