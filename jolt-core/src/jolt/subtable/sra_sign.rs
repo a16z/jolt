@@ -104,6 +104,6 @@ mod test {
         sra_sign_binius_materialize_mle_parity,
         SraSignSubtable<BiniusField<BinaryField128b>, 32>,
         BiniusField<BinaryField128b>,
-        1 << 16
+        256
     );
 }

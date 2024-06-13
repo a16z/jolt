@@ -413,7 +413,7 @@ macro_rules! impl_r1cs_input_lc_conversions {
 /// use jolt_core::r1cs::ops::{ConstraintInput, Variable};
 /// # use strum_macros::{EnumCount, EnumIter};
 ///
-/// # #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter)]
+/// # #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, EnumCount, EnumIter, Hash)]
 /// #[repr(usize)]
 /// pub enum Inputs {
 ///     A,
