@@ -161,9 +161,9 @@ where
 
 pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
 
+use eyre::Result;
 use std::fs::File;
 use std::path::PathBuf;
-use eyre::Result;
 
 pub type PCS = HyraxScheme<G1Projective>;
 
@@ -173,7 +173,7 @@ pub struct RV32IHyraxProof {
     pub commitments: JoltCommitments<PCS>,
 }
 
-impl RV32IHyraxProof{
+impl RV32IHyraxProof {
     /// Gets the byte size of the full proof
     pub fn size(&self) -> Result<usize> {
         let mut buffer = Vec::new();
@@ -194,7 +194,6 @@ impl RV32IHyraxProof{
         Ok(RV32IHyraxProof::deserialize_compressed(file)?)
     }
 }
-
 
 // ==================== TEST ====================
 

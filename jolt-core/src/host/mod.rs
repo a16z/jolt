@@ -3,7 +3,7 @@
 use core::str::FromStr;
 use std::{
     fs::{self, File},
-    io::{self, Write, Read},
+    io::{self, Read, Write},
     path::PathBuf,
     process::Command,
 };
@@ -264,9 +264,9 @@ impl Program {
             fs::create_dir_all("elf/").expect("could not create elf directory");
         }
         let elf = self.elf.as_ref().unwrap();
-        fs::copy(elf, format!("elf/{}.elf", self.guest)).expect("could not save elf to local directory");
+        fs::copy(elf, format!("elf/{}.elf", self.guest))
+            .expect("could not save elf to local directory");
     }
-
 }
 
 const LINKER_SCRIPT_TEMPLATE: &str = r#"
