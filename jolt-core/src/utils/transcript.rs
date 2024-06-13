@@ -2,6 +2,7 @@ use crate::field::JoltField;
 use ark_ec::CurveGroup;
 use merlin::Transcript;
 
+#[derive(Clone)]
 pub struct ProofTranscript {
     inner: Transcript,
 }

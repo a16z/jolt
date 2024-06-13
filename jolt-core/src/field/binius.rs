@@ -57,6 +57,14 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
         Some(Self(F::new(n)))
     }
 
+    fn from_i64(val: i64) -> Self {
+        if val > 0 {
+            <Self as JoltField>::from_u64(val as u64).unwrap()
+        } else {
+            <Self as JoltField>::from_u64(-val as u64).unwrap()
+        }
+    }
+
     fn square(&self) -> Self {
         Self(self.0.square())
     }
