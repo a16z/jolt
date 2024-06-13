@@ -11,6 +11,8 @@ use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
+use common::rv_trace::NUM_CIRCUIT_FLAGS;
+use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use strum::EnumCount;
@@ -166,10 +168,12 @@ where
 
         let memory_trace_polys: Vec<&DensePolynomial<F>> = [&self.read_write_memory.a_ram]
             .into_iter()
-            .chain(self.read_write_memory.v_read.iter())
+            .chain(self.read_write_memory.v_read_reg.iter())
+            .chain(self.read_write_memory.v_read_ram.iter())
             .chain([&self.read_write_memory.v_write_rd].into_iter())
             .chain(self.read_write_memory.v_write_ram.iter())
-            .chain(self.read_write_memory.t_read.iter())
+            .chain(self.read_write_memory.t_read_reg.iter())
+            .chain(self.read_write_memory.t_read_ram.iter())
             .chain(self.read_write_memory.t_write_ram.iter())
             .collect();
         let num_memory_trace_polys = memory_trace_polys.len();
@@ -220,8 +224,8 @@ where
 
         let bytecode_t_final_commitment = PCS::commit(&self.bytecode.t_final, generators);
         let (memory_v_final_commitment, memory_t_final_commitment) = rayon::join(
-            || PCS::commit(&self.read_write_memory.v_final, generators),
-            || PCS::commit(&self.read_write_memory.t_final, generators),
+            || PCS::commit(&self.read_write_memory.v_final_reg, generators),
+            || PCS::commit(&self.read_write_memory.t_final_reg, generators),
         );
         let instruction_final_commitment = PCS::batch_commit_polys(
             &self.instruction_lookups.final_cts,
@@ -343,8 +347,30 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.instruction_lookups, &trace
         );
 
-        let load_store_flags = &instruction_polynomials.instruction_flag_polys[5..10];
-        let (memory_polynomials, read_timestamps) = ReadWriteMemory::new(
+        let mut load_store_flags_vec =
+            instruction_polynomials.instruction_flag_polys[5..10].to_vec();
+
+        // append the circuit flag corresponding to loads
+        let mut lbu_circuit_flag = Vec::new(); // store corresponding to index 2 -> lbu
+        let mut lhu_circuit_flag = Vec::new(); // store corresponding to index 3 -> lhu
+        let mut lw_circuit_flag = Vec::new(); // store corresponding to index 4 -> lw
+
+        // can be parallelized
+        circuit_flags.chunks(NUM_CIRCUIT_FLAGS).for_each(|chunk| {
+            lbu_circuit_flag.push(chunk[2]);
+            lhu_circuit_flag.push(chunk[3]);
+            lw_circuit_flag.push(chunk[4]);
+        });
+
+        // create dense polynomials using circuit flags
+
+        load_store_flags_vec.push(DensePolynomial::new(lbu_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(lhu_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(lw_circuit_flag));
+
+        let load_store_flags = &load_store_flags_vec[..];
+
+        let (memory_polynomials, read_timestamps_reg, read_timestamps_ram) = ReadWriteMemory::new(
             &program_io,
             load_store_flags,
             &preprocessing.read_write_memory,
@@ -353,7 +379,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace),
-            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps),
+            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps_reg),
         );
 
         let jolt_polynomials = JoltPolynomials {
@@ -364,7 +390,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         };
 
         let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
-
         let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
             padded_trace_length,
             RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,

@@ -258,18 +258,22 @@ where
     /// and vice versa, so the read addresses and write addresses are the same.
     pub a_ram: DensePolynomial<F>,
     /// MLE of the read values.
-    pub v_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+    pub v_read_reg: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
+    pub v_read_ram: [DensePolynomial<F>; 4],
     /// MLE of the write values.
     pub v_write_rd: DensePolynomial<F>,
     pub v_write_ram: [DensePolynomial<F>; 4],
     /// MLE of the final memory state.
-    pub v_final: DensePolynomial<F>,
+    pub v_final_reg: DensePolynomial<F>,
+    pub v_final_ram: DensePolynomial<F>,
     /// MLE of the read timestamps.
-    pub t_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+    pub t_read_reg: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
+    pub t_read_ram: [DensePolynomial<F>; 4],
     /// MLE of the write timestamps.
-    pub t_write_ram: [DensePolynomial<F>; 4],
+    pub t_write_ram: [DensePolynomial<F>; 1],
     /// MLE of the final timestamps.
-    pub t_final: DensePolynomial<F>,
+    pub t_final_reg: DensePolynomial<F>,
+    pub t_final_ram: DensePolynomial<F>,
 }
 
 fn merge_vec_array(
@@ -299,6 +303,29 @@ fn map_to_polys<F: JoltField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePol
         .unwrap()
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    pub bytes: [u64; 4],
+}
+
+impl Word {
+    fn new(bytes: [u64; 4]) -> Self {
+        Word { bytes }
+    }
+
+    fn get_zero_word() -> Self {
+        Word { bytes: [0_u64; 4] }
+    }
+
+    fn get_byte_vector(word_vector: &Vec<Word>, byte_index: usize) -> Vec<u64> {
+        let mut byte_vector = Vec::new();
+        for word in word_vector.iter() {
+            byte_vector.push(word.bytes[byte_index]);
+        }
+        byte_vector
+    }
+}
+
 impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::new")]
     pub fn new<InstructionSet: JoltInstructionSet>(
@@ -306,7 +333,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         load_store_flags: &[DensePolynomial<F>],
         preprocessing: &ReadWriteMemoryPreprocessing,
         trace: &Vec<JoltTraceStep<InstructionSet>>,
-    ) -> (Self, [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) {
+    ) -> (Self, [Vec<u64>; REG_OPS_PER_INSTRUCTION], Vec<Word>) {
         assert!(program_io.inputs.len() <= program_io.memory_layout.max_input_size as usize);
         assert!(program_io.outputs.len() <= program_io.memory_layout.max_output_size as usize);
 
@@ -373,24 +400,24 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         let mut v_final_reg = v_init[..reg_count].to_vec();
         let mut v_final_ram = v_init[reg_count..].to_vec();
         let mut t_final_reg = vec![0; reg_count];
-        let mut t_final_ram = vec![0; memory_size - reg_count];
+        let mut t_final_ram = vec![0; (memory_size - reg_count).next_power_of_two() / 4];
 
         let mut v_read_reg: [Vec<u64>; REG_OPS_PER_INSTRUCTION] =
             std::array::from_fn(|_| Vec::with_capacity(m));
-        let mut v_read_ram: [Vec<u64>; RAM_OPS_PER_INSTRUCTION] =
-            std::array::from_fn(|_| Vec::with_capacity(m));
+        //Arithmic: change for word-addressable
+        let mut v_read_ram: Vec<Word> = Vec::with_capacity(m);
 
         let mut t_read_reg: [Vec<u64>; REG_OPS_PER_INSTRUCTION] =
             std::array::from_fn(|_| Vec::with_capacity(m));
-        let mut t_read_ram: [Vec<u64>; RAM_OPS_PER_INSTRUCTION] =
-            std::array::from_fn(|_| Vec::with_capacity(m));
+        let mut t_read_ram: Vec<Word> = Vec::with_capacity(m);
 
         // REG only
         let mut v_write_rd: Vec<u64> = Vec::with_capacity(m);
         // RAM only
         let mut a_ram: Vec<u64> = Vec::with_capacity(m);
-        let mut v_write_ram: [Vec<u64>; 4] = std::array::from_fn(|_| Vec::with_capacity(m));
-        let mut t_write_ram: [Vec<u64>; 4] = std::array::from_fn(|_| Vec::with_capacity(m));
+        let mut v_write_ram: Vec<Word> = Vec::with_capacity(m);
+
+        let mut t_write_ram: Vec<u64> = Vec::with_capacity(m);
 
         #[cfg(test)]
         let r_tuples_ram = read_tuples.clone();
@@ -414,6 +441,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                 let sb_flag = &load_store_flags[2];
                 let sh_flag = &load_store_flags[3];
                 let sw_flag = &load_store_flags[4];
+                let lbu_flag = &load_store_flags[5];
+                let lhu_flag = &load_store_flags[6];
+                let lw_flag = &load_store_flags[7];
 
                 for (i, step) in memory_trace_ram.iter().enumerate() {
                     let timestamp = i as u64;
@@ -422,312 +452,362 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     let mut ram_word_address = 0;
                     let mut is_v_write_ram = false;
 
-                    // Only the LB/SB/LH/SH/LW/SW instructions access ≥1 byte of RAM
+                    // If it is a load flag
                     if lb_flag[i].is_one()
                         || lh_flag[i].is_one()
-                        || sb_flag[i].is_one()
-                        || sh_flag[i].is_one()
-                        || sw_flag[i].is_one()
+                        || lbu_flag[i].is_one()
+                        || lhu_flag[i].is_one()
+                        || lw_flag[i].is_one()
                     {
-                        match step[RAM_1_INDEX] {
-                            MemoryOp::Read(a) => {
-                                assert!(a >= program_io.memory_layout.input_start);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v = v_final_ram[remapped_a_index];
+                        match step[..] {
+                            [MemoryOp::Read(a0), MemoryOp::Read(_a1), MemoryOp::Read(_a2), MemoryOp::Read(_a3)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                println!("remapped_a: {:?}", remapped_a);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
 
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram
-                                        .lock()
-                                        .unwrap()
-                                        .insert((remapped_a, v, timestamp));
+                                // construct word using v_final_ram and remapped index
+                                let v_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+
+                                // push the word into both v_read_ram and v_write_ram as it is a load instruction
+                                v_read_ram.push(v_word.clone());
+                                v_write_ram.push(v_word);
+
+                                // Do the above using t_final_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // reset t_final_ram to timestamp
+                                for index in 0..4 {
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
                                 }
-
-                                a_ram.push(remapped_a);
-                                v_read_ram[RAM_1_INDEX].push(v);
-                                t_read_ram[RAM_1_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[0].push(v);
-                                t_write_ram[0].push(timestamp);
-                                t_final_ram[remapped_a_index] = timestamp;
-                                ram_word_address = a;
                             }
-                            MemoryOp::Write(a, v_new) => {
-                                assert!(a >= program_io.memory_layout.input_start);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v_old = v_final_ram[remapped_a_index];
+                            _ => {
+                                panic!() // Change later
+                            }
+                        }
+                    } else if sw_flag[i].is_one() {
+                        match step[..] {
+                            [MemoryOp::Write(a0, v0_new), MemoryOp::Write(_a1, v1_new), MemoryOp::Write(_a2, v2_new), MemoryOp::Write(_a3, v3_new)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
 
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_old,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
+                                // construct old_word using v_final_ram and push it into v_read_ram
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word);
+
+                                // construct new_word using v_new
+                                let v_new_word = Word::new([v0_new, v1_new, v2_new, v3_new]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                // construct t_word using t_final_ram and push it into t_read_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // change v_final_ram and t_final_ram
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
                                 }
-
-                                a_ram.push(remapped_a);
-                                v_read_ram[RAM_1_INDEX].push(v_old);
-                                t_read_ram[RAM_1_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[0].push(v_new);
-                                t_write_ram[0].push(timestamp + 1);
-                                v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
-                                ram_word_address = a;
-                                is_v_write_ram = true;
                             }
-                        };
+                            _ => {
+                                panic!() // Change later
+                            }
+                        }
+                    } else if sh_flag[i].is_one() {
+                        match step[..] {
+                            [MemoryOp::Write(a0, v0_new), MemoryOp::Write(_a1, v1_new), MemoryOp::Read(_a2), MemoryOp::Read(_a3)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+
+                                // construct old_word using v_final_ram and push it into v_read_ram
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word.clone());
+
+                                // construct new_word using v_new
+                                let v_new_word = Word::new([
+                                    v0_new,
+                                    v1_new,
+                                    v_old_word.bytes[2],
+                                    v_old_word.bytes[3],
+                                ]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                // construct t_word using t_final_ram and push it into t_read_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // change v_final_ram and t_final_ram
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
+                                }
+                            }
+                            [MemoryOp::Read(a0), MemoryOp::Read(_a1), MemoryOp::Write(_a2, v2_new), MemoryOp::Write(_a3, v3_new)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word.clone());
+
+                                let v_new_word = Word::new([
+                                    v_old_word.bytes[0],
+                                    v_old_word.bytes[1],
+                                    v2_new,
+                                    v3_new,
+                                ]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
+                                }
+                            }
+                            _ => {
+                                panic!() // Change later
+                            }
+                        }
+                    } else if sb_flag[i].is_one() {
+                        match step[..] {
+                            [MemoryOp::Write(a0, v0_new), MemoryOp::Read(_a1), MemoryOp::Read(_a2), MemoryOp::Read(_a3)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word.clone());
+
+                                // construct new_word using v_new
+                                let v_new_word = Word::new([
+                                    v0_new,
+                                    v_old_word.bytes[1],
+                                    v_old_word.bytes[2],
+                                    v_old_word.bytes[3],
+                                ]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                // construct t_word using t_final_ram and push it into t_read_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // change v_final_ram and t_final_ram
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
+                                }
+                            }
+                            [MemoryOp::Read(a0), MemoryOp::Write(_a1, v1_new), MemoryOp::Read(_a2), MemoryOp::Read(_a3)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+
+                                // construct old_word using v_final_ram and push it into v_read_ram
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word.clone());
+
+                                // construct new_word using v_new
+                                let v_new_word = Word::new([
+                                    v_old_word.bytes[0],
+                                    v1_new,
+                                    v_old_word.bytes[2],
+                                    v_old_word.bytes[3],
+                                ]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                // construct t_word using t_final_ram and push it into t_read_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // change v_final_ram and t_final_ram
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
+                                }
+                            }
+                            [MemoryOp::Read(a0), MemoryOp::Read(_a1), MemoryOp::Write(_a2, v2_new), MemoryOp::Read(_a3)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+
+                                // construct old_word using v_final_ram and push it into v_read_ram
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word.clone());
+
+                                // construct new_word using v_new
+                                let v_new_word = Word::new([
+                                    v_old_word.bytes[0],
+                                    v_old_word.bytes[1],
+                                    v2_new,
+                                    v_old_word.bytes[3],
+                                ]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                // construct t_word using t_final_ram and push it into t_read_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // change v_final_ram and t_final_ram
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
+                                }
+                            }
+                            [MemoryOp::Read(a0), MemoryOp::Read(_a1), MemoryOp::Read(_a2), MemoryOp::Write(_a3, v3_new)] =>
+                            {
+                                let remapped_a = remap_address(a0, &program_io.memory_layout);
+                                let remapped_a_index = if remapped_a == 0 {
+                                    0
+                                } else {
+                                    remap_address_index(remapped_a)
+                                };
+                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+
+                                // construct old_word using v_final_ram and push it into v_read_ram
+                                let v_old_word = Word::new(
+                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                v_read_ram.push(v_old_word.clone());
+
+                                // construct new_word using v_new
+                                let v_new_word = Word::new([
+                                    v_old_word.bytes[0],
+                                    v_old_word.bytes[1],
+                                    v_old_word.bytes[2],
+                                    v3_new,
+                                ]);
+                                v_write_ram.push(v_new_word.clone());
+
+                                // construct t_word using t_final_ram and push it into t_read_ram
+                                let t_word = Word::new(
+                                    t_final_ram[remapped_a_index..remapped_a_index + 4]
+                                        .try_into()
+                                        .unwrap(),
+                                );
+                                t_read_ram.push(t_word);
+                                t_write_ram.push(timestamp + 1);
+
+                                // change v_final_ram and t_final_ram
+                                for index in 0..4 {
+                                    v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
+                                    t_final_ram[remapped_a_index + index] = timestamp + 1;
+                                }
+                            }
+                            _ => {
+                                panic!() // Change later
+                            }
+                        }
                     } else {
                         a_ram.push(0);
-                        for ram_byte_index in [RAM_1_INDEX, RAM_2_INDEX, RAM_3_INDEX, RAM_4_INDEX] {
-                            match step[ram_byte_index] {
-                                MemoryOp::Read(a) => {
-                                    assert_eq!(a, 0);
-                                }
-                                MemoryOp::Write(a, v) => {
-                                    assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
-                                }
-                            }
-                            v_read_ram[ram_byte_index].push(0);
-                            t_read_ram[ram_byte_index].push(0);
-                        }
-                        for v in v_write_ram.iter_mut() {
-                            v.push(0);
-                        }
-                        for t in t_write_ram.iter_mut() {
-                            t.push(0);
-                        }
-                        continue;
-                    }
-
-                    // Only the LH/SH/LW/SW instructions access ≥2 byte of RAM
-                    if lh_flag[i].is_one() || sh_flag[i].is_one() || sw_flag[i].is_one() {
-                        match step[RAM_2_INDEX] {
-                            MemoryOp::Read(a) => {
-                                assert!(!is_v_write_ram);
-                                assert_eq!(a, ram_word_address + 1);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v = v_final_ram[remapped_a_index];
-
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram
-                                        .lock()
-                                        .unwrap()
-                                        .insert((remapped_a, v, timestamp));
-                                }
-
-                                v_read_ram[RAM_2_INDEX].push(v);
-                                t_read_ram[RAM_2_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[1].push(v);
-                                t_write_ram[1].push(timestamp);
-                                t_final_ram[remapped_a_index] = timestamp;
-                            }
-                            MemoryOp::Write(a, v_new) => {
-                                assert!(is_v_write_ram);
-                                assert_eq!(a, ram_word_address + 1);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v_old = v_final_ram[remapped_a_index];
-
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_old,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
-                                }
-
-                                v_read_ram[RAM_2_INDEX].push(v_old);
-                                t_read_ram[RAM_2_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[1].push(v_new);
-                                t_write_ram[1].push(timestamp + 1);
-                                v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
-                            }
-                        };
-                    } else {
-                        for ram_byte_index in [RAM_2_INDEX, RAM_3_INDEX, RAM_4_INDEX] {
-                            match step[ram_byte_index] {
-                                MemoryOp::Read(a) => {
-                                    assert_eq!(a, 0);
-                                }
-                                MemoryOp::Write(a, v) => {
-                                    assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
-                                }
-                            }
-                            v_read_ram[ram_byte_index].push(0);
-                            t_read_ram[ram_byte_index].push(0);
-                        }
-                        for v in v_write_ram[1..].iter_mut() {
-                            v.push(0);
-                        }
-                        for t in t_write_ram[1..].iter_mut() {
-                            t.push(0);
-                        }
-                        continue;
-                    }
-
-                    // Only the LW/SW instructions access ≥3 byte of RAM
-                    // Both LW and SW are represented by `sw_flag` for the purpose of lookups
-                    if sw_flag[i].is_one() {
-                        match step[RAM_3_INDEX] {
-                            MemoryOp::Read(a) => {
-                                assert!(!is_v_write_ram);
-                                assert_eq!(a, ram_word_address + 2);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v = v_final_ram[remapped_a_index];
-
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram
-                                        .lock()
-                                        .unwrap()
-                                        .insert((remapped_a, v, timestamp));
-                                }
-
-                                v_read_ram[RAM_3_INDEX].push(v);
-                                t_read_ram[RAM_3_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[2].push(v);
-                                t_write_ram[2].push(timestamp);
-                                t_final_ram[remapped_a_index] = timestamp;
-                            }
-                            MemoryOp::Write(a, v_new) => {
-                                assert!(is_v_write_ram);
-                                assert_eq!(a, ram_word_address + 2);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v_old = v_final_ram[remapped_a_index];
-
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_old,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
-                                }
-
-                                v_read_ram[RAM_3_INDEX].push(v_old);
-                                t_read_ram[RAM_3_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[2].push(v_new);
-                                t_write_ram[2].push(timestamp + 1);
-                                v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
-                            }
-                        };
-                        match step[RAM_4_INDEX] {
-                            MemoryOp::Read(a) => {
-                                assert!(!is_v_write_ram);
-                                assert_eq!(a, ram_word_address + 3);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v = v_final_ram[remapped_a_index];
-
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram
-                                        .lock()
-                                        .unwrap()
-                                        .insert((remapped_a, v, timestamp));
-                                }
-
-                                v_read_ram[RAM_4_INDEX].push(v);
-                                t_read_ram[RAM_4_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[3].push(v);
-                                t_write_ram[3].push(timestamp);
-                                t_final_ram[remapped_a_index] = timestamp;
-                            }
-                            MemoryOp::Write(a, v_new) => {
-                                assert!(is_v_write_ram);
-                                assert_eq!(a, ram_word_address + 3);
-                                let remapped_a = remap_address(a, &program_io.memory_layout);
-                                let remapped_a_index = remap_address_index(remapped_a);
-                                let v_old = v_final_ram[remapped_a_index];
-
-                                #[cfg(test)]
-                                {
-                                    r_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_old,
-                                        t_final_ram[remapped_a_index],
-                                    ));
-                                    w_tuples_ram.lock().unwrap().insert((
-                                        remapped_a,
-                                        v_new,
-                                        timestamp + 1,
-                                    ));
-                                }
-
-                                v_read_ram[RAM_4_INDEX].push(v_old);
-                                t_read_ram[RAM_4_INDEX].push(t_final_ram[remapped_a_index]);
-                                v_write_ram[3].push(v_new);
-                                t_write_ram[3].push(timestamp + 1);
-                                v_final_ram[remapped_a_index] = v_new;
-                                t_final_ram[remapped_a_index] = timestamp + 1;
-                            }
-                        };
-                    } else {
-                        for ram_byte_index in [RAM_3_INDEX, RAM_4_INDEX] {
-                            match step[ram_byte_index] {
-                                MemoryOp::Read(a) => {
-                                    assert_eq!(a, 0);
-                                }
-                                MemoryOp::Write(a, v) => {
-                                    assert_eq!(a, 0);
-                                    assert_eq!(v, 0);
-                                }
-                            }
-                            v_read_ram[ram_byte_index].push(0);
-                            t_read_ram[ram_byte_index].push(0);
-                        }
-                        for v in v_write_ram[2..].iter_mut() {
-                            v.push(0);
-                        }
-                        for t in t_write_ram[2..].iter_mut() {
-                            t.push(0);
-                        }
+                        v_read_ram.push(Word::get_zero_word());
+                        t_read_ram.push(Word::get_zero_word());
+                        v_write_ram.push(Word::get_zero_word());
+                        t_write_ram.push(0);
                     }
                 }
 
@@ -838,57 +918,94 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         drop(_enter);
         drop(span);
 
-        let (mut v_final_reg, mut t_final_reg, v_read_reg, t_read_reg, v_write_rd) = result.1;
+        let (v_final_reg, t_final_reg, v_read_reg, t_read_reg, v_write_rd) = result.1;
         let (v_final_ram, t_final_ram, v_read_ram, t_read_ram, v_write_ram, t_write_ram, a_ram) =
             result.0;
 
-        let v_final = {
-            v_final_reg.extend(v_final_ram);
-            v_final_reg
-        };
-        let t_final = {
-            t_final_reg.extend(t_final_ram);
-            t_final_reg
-        };
-        let v_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
-            merge_vec_array(v_read_reg, v_read_ram, m);
-        let t_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
-            merge_vec_array(t_read_reg, t_read_ram, m);
+        // let v_final = {
+        //     v_final_reg.extend(v_final_ram);
+        //     v_final_reg
+        // };
+        // let t_final = {
+        //     t_final_reg.extend(t_final_ram);
+        //     t_final_reg
+        // };
+        // let v_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
+        //     merge_vec_array(v_read_reg, v_read_ram, m);
+        // let t_read: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION] =
+        //     merge_vec_array(t_read_reg, t_read_ram, m);
 
-        #[cfg(test)]
-        {
-            let read_tuples = Arc::try_unwrap(read_tuples).unwrap().into_inner().unwrap();
-            let write_tuples = Arc::try_unwrap(write_tuples).unwrap().into_inner().unwrap();
+        // #[cfg(test)]
+        // {
+        //     let read_tuples = Arc::try_unwrap(read_tuples).unwrap().into_inner().unwrap();
+        //     let write_tuples = Arc::try_unwrap(write_tuples).unwrap().into_inner().unwrap();
 
-            let mut final_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
-            for (a, (v, t)) in v_final.iter().zip(t_final.iter()).enumerate() {
-                final_tuples.insert((a as u64, *v, *t));
-            }
+        //     let mut final_tuples: HashSet<(u64, u64, u64)> = HashSet::new();
+        //     for (a, (v, t)) in v_final.iter().zip(t_final.iter()).enumerate() {
+        //         final_tuples.insert((a as u64, *v, *t));
+        //     }
 
-            let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
-            let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
-            let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
-            assert_eq!(set_difference.len(), 0);
-        }
-
+        //     let init_write: HashSet<_> = init_tuples.union(&write_tuples).collect();
+        //     let read_final: HashSet<_> = read_tuples.union(&final_tuples).collect();
+        //     let set_difference: Vec<_> = init_write.symmetric_difference(&read_final).collect();
+        //     assert_eq!(set_difference.len(), 0);
+        // }
+        println!("Creating Dense Polynomials");
         let (
-            [a_ram, v_write_rd, v_init, v_final, t_final],
-            v_read,
+            [a_ram, v_write_rd, v_init, v_final_reg, v_final_ram, t_final_reg, t_final_ram],
+            v_read_reg,
+            v_read_ram,
             v_write_ram,
-            t_read_polys,
+            t_read_reg_polys,
+            t_read_ram_polys,
             t_write_ram,
         ): (
-            [DensePolynomial<F>; 5],
-            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; 7],
+            [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
             [DensePolynomial<F>; 4],
-            [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
             [DensePolynomial<F>; 4],
-        ) = common::par_join_5!(
-            || map_to_polys(&[a_ram, v_write_rd, v_init, v_final, t_final]),
-            || map_to_polys(&v_read),
-            || map_to_polys(&v_write_ram),
-            || map_to_polys(&t_read),
-            || map_to_polys(&t_write_ram)
+            [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
+            [DensePolynomial<F>; 4],
+            [DensePolynomial<F>; 1],
+        ) = common::par_join_7!(
+            || map_to_polys(&[
+                a_ram,
+                v_write_rd,
+                v_init,
+                v_final_reg,
+                v_final_ram,
+                t_final_reg,
+                t_final_ram
+            ]),
+            || map_to_polys(&[
+                v_read_reg[0].clone(),
+                v_read_reg[1].clone(),
+                v_read_reg[2].clone(),
+            ]),
+            || map_to_polys(&[
+                Word::get_byte_vector(&v_read_ram, 0),
+                Word::get_byte_vector(&v_read_ram, 1),
+                Word::get_byte_vector(&v_read_ram, 2),
+                Word::get_byte_vector(&v_read_ram, 3)
+            ]),
+            || map_to_polys(&[
+                Word::get_byte_vector(&v_write_ram, 0),
+                Word::get_byte_vector(&v_write_ram, 1),
+                Word::get_byte_vector(&v_write_ram, 2),
+                Word::get_byte_vector(&v_write_ram, 3)
+            ]),
+            || map_to_polys(&[
+                t_read_reg[0].clone(),
+                t_read_reg[1].clone(),
+                t_read_reg[2].clone(),
+            ]),
+            || map_to_polys(&[
+                Word::get_byte_vector(&t_read_ram, 0),
+                Word::get_byte_vector(&t_read_ram, 1),
+                Word::get_byte_vector(&t_read_ram, 2),
+                Word::get_byte_vector(&t_read_ram, 3)
+            ]),
+            || map_to_polys(&[t_write_ram])
         );
         (
             Self {
@@ -896,15 +1013,20 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                 memory_size,
                 v_init,
                 a_ram,
-                v_read,
+                v_read_reg,
+                v_read_ram,
                 v_write_rd,
                 v_write_ram,
-                v_final,
-                t_read: t_read_polys,
+                v_final_reg,
+                v_final_ram,
+                t_read_reg: t_read_reg_polys,
+                t_read_ram: t_read_ram_polys,
                 t_write_ram,
-                t_final,
+                t_final_reg,
+                t_final_ram,
             },
-            t_read,
+            t_read_reg,
+            t_read_ram,
         )
     }
 
@@ -915,7 +1037,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             || {
                 rayon::join(
                     || {
-                        self.v_read
+                        self.v_read_reg
                             .par_iter()
                             .flat_map(|poly| poly.evals_ref().par_iter())
                             .collect::<Vec<_>>()
@@ -1013,10 +1135,12 @@ where
             &polynomials.read_write_memory.a_ram,
         ]
         .into_par_iter()
-        .chain(polynomials.read_write_memory.v_read.par_iter())
+        .chain(polynomials.read_write_memory.v_read_reg.par_iter())
+        .chain(polynomials.read_write_memory.v_read_ram.par_iter())
         .chain([&polynomials.read_write_memory.v_write_rd].into_par_iter())
         .chain(polynomials.read_write_memory.v_write_ram.par_iter())
-        .chain(polynomials.read_write_memory.t_read.par_iter())
+        .chain(polynomials.read_write_memory.t_read_reg.par_iter())
+        .chain(polynomials.read_write_memory.t_read_ram.par_iter())
         .chain(polynomials.read_write_memory.t_write_ram.par_iter())
         .map(|poly| poly.evaluate_at_chi(&chis))
         .collect::<Vec<F>>()
@@ -1053,10 +1177,12 @@ where
             &polynomials.read_write_memory.a_ram,
         ]
         .into_iter()
-        .chain(polynomials.read_write_memory.v_read.iter())
+        .chain(polynomials.read_write_memory.v_read_reg.iter())
+        .chain(polynomials.read_write_memory.v_read_ram.iter())
         .chain([&polynomials.read_write_memory.v_write_rd].into_iter())
         .chain(polynomials.read_write_memory.v_write_ram.iter())
-        .chain(polynomials.read_write_memory.t_read.iter())
+        .chain(polynomials.read_write_memory.t_read_reg.iter())
+        .chain(polynomials.read_write_memory.t_read_ram.iter())
         .chain(polynomials.read_write_memory.t_write_ram.iter())
         .collect::<Vec<_>>();
         let read_write_openings = openings
@@ -1122,9 +1248,11 @@ where
     /// Evaluation of the v_init polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     v_init: Option<F>,
     /// Evaluation of the v_final polynomial at the opening point.
-    v_final: F,
+    v_final_reg: F,
+    v_final_ram: F,
     /// Evaluation of the t_final polynomial at the opening point.
-    t_final: F,
+    t_final_reg: F,
+    t_final_ram: F,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
@@ -1147,16 +1275,48 @@ where
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::evals(opening_point);
-        let (v_final, t_final) = rayon::join(
-            || polynomials.read_write_memory.v_final.evaluate_at_chi(&chis),
-            || polynomials.read_write_memory.t_final.evaluate_at_chi(&chis),
+        let ((v_final_reg, v_final_ram), (t_final_reg, t_final_ram)) = rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        polynomials
+                            .read_write_memory
+                            .v_final_reg
+                            .evaluate_at_chi(&chis)
+                    },
+                    || {
+                        polynomials
+                            .read_write_memory
+                            .v_final_ram
+                            .evaluate_at_chi(&chis)
+                    },
+                )
+            },
+            || {
+                rayon::join(
+                    || {
+                        polynomials
+                            .read_write_memory
+                            .t_final_reg
+                            .evaluate_at_chi(&chis)
+                    },
+                    || {
+                        polynomials
+                            .read_write_memory
+                            .t_final_ram
+                            .evaluate_at_chi(&chis)
+                    },
+                )
+            },
         );
 
         Self {
             a_init_final: None,
             v_init: None,
-            v_final,
-            t_final,
+            v_final_reg,
+            v_final_ram,
+            t_final_reg,
+            t_final_ram,
         }
     }
 
@@ -1171,11 +1331,18 @@ where
         let v_t_opening_proof = C::batch_prove(
             generators,
             &[
-                &polynomials.read_write_memory.v_final,
-                &polynomials.read_write_memory.t_final,
+                &polynomials.read_write_memory.v_final_reg,
+                &polynomials.read_write_memory.v_final_ram,
+                &polynomials.read_write_memory.t_final_reg,
+                &polynomials.read_write_memory.t_final_ram,
             ],
             opening_point,
-            &[openings.v_final, openings.t_final],
+            &[
+                openings.v_final_reg,
+                openings.v_final_ram,
+                openings.t_final_reg,
+                openings.t_final_ram,
+            ],
             BatchType::Small,
             transcript,
         );
@@ -1230,7 +1397,12 @@ where
             &opening_proof.v_t_opening_proof,
             generators,
             opening_point,
-            &[self.v_final, self.t_final],
+            &[
+                self.v_final_reg,
+                self.v_final_ram,
+                self.t_final_reg,
+                self.t_final_ram,
+            ],
             &[
                 &commitment.read_write_memory.v_final_commitment,
                 &commitment.read_write_memory.t_final_commitment,
@@ -1284,16 +1456,19 @@ where
                                     + F::from_u64((i - RAM_1) as u64).unwrap()
                             }
                         };
-                        polynomials.read_write_memory.t_read[i][j] * gamma_squared
-                            + mul_0_optimized(&polynomials.read_write_memory.v_read[i][j], gamma)
+                        polynomials.read_write_memory.t_read_reg[i][j] * gamma_squared
+                            + mul_0_optimized(
+                                &polynomials.read_write_memory.v_read_reg[i][j],
+                                gamma,
+                            )
                             + a
                             - *tau
                     })
                     .collect();
                 let v_write = match i {
-                    RS1 => &polynomials.read_write_memory.v_read[0], // rs1
-                    RS2 => &polynomials.read_write_memory.v_read[1], // rs2
-                    RD => &polynomials.read_write_memory.v_write_rd, // rd
+                    RS1 => &polynomials.read_write_memory.v_read_reg[0], // rs1
+                    RS2 => &polynomials.read_write_memory.v_read_reg[1], // rs2
+                    RD => &polynomials.read_write_memory.v_write_rd,     // rd
                     _ => &polynomials.read_write_memory.v_write_ram[i - 3], // RAM
                 };
                 let write_fingerprints = (0..num_ops)
@@ -1337,8 +1512,10 @@ where
         let final_fingerprints = (0..polynomials.read_write_memory.memory_size)
             .into_par_iter()
             .map(|i| {
-                mul_0_optimized(&polynomials.read_write_memory.t_final[i], &gamma_squared)
-                    + mul_0_optimized(&polynomials.read_write_memory.v_final[i], gamma)
+                mul_0_optimized(
+                    &polynomials.read_write_memory.t_final_reg[i],
+                    &gamma_squared,
+                ) + mul_0_optimized(&polynomials.read_write_memory.v_final_reg[i], gamma)
                     + F::from_u64(i as u64).unwrap()
                     - *tau
             })
@@ -1477,8 +1654,8 @@ where
     ) -> Vec<Self::MemoryTuple> {
         vec![(
             openings.a_init_final.unwrap(),
-            openings.v_final,
-            openings.t_final,
+            openings.v_final_reg,
+            openings.t_final_reg,
         )]
     }
 }
@@ -1553,7 +1730,7 @@ where
         let mut sumcheck_polys = vec![
             eq,
             DensePolynomial::new(io_witness_range),
-            polynomials.v_final.clone(),
+            polynomials.v_final_reg.clone(),
             DensePolynomial::from_u64(&v_io),
         ];
 
@@ -1570,8 +1747,12 @@ where
                 transcript,
             );
 
-        let sumcheck_opening_proof =
-            C::prove(generators, &polynomials.v_final, &r_sumcheck, transcript);
+        let sumcheck_opening_proof = C::prove(
+            generators,
+            &polynomials.v_final_reg,
+            &r_sumcheck,
+            transcript,
+        );
 
         Self {
             num_rounds,
@@ -1713,7 +1894,7 @@ where
         let timestamp_validity_proof = TimestampValidityProof::prove(
             generators,
             &polynomials.timestamp_range_check,
-            &polynomials.read_write_memory.t_read,
+            &polynomials.read_write_memory.t_read_reg,
             transcript,
         );
 

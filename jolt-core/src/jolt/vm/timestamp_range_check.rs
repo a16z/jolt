@@ -5,7 +5,7 @@ use crate::subprotocols::grand_product::{
 };
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::MEMORY_OPS_PER_INSTRUCTION;
+use common::constants::{MEMORY_OPS_PER_INSTRUCTION, REG_OPS_PER_INSTRUCTION};
 use itertools::interleave;
 use rayon::iter::{
     IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
@@ -38,7 +38,7 @@ where
     C: CommitmentScheme<Field = F>,
 {
     _group: PhantomData<C>,
-    pub read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION],
+    pub read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION],
     pub read_cts_read_timestamp: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
     pub read_cts_global_minus_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
     pub final_cts_read_timestamp: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
@@ -51,7 +51,7 @@ where
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::new")]
-    pub fn new(read_timestamps: [Vec<u64>; MEMORY_OPS_PER_INSTRUCTION]) -> Self {
+    pub fn new(read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION]) -> Self {
         let M = read_timestamps[0].len();
 
         #[cfg(test)]
@@ -615,7 +615,7 @@ where
     pub fn prove(
         generators: &C::Setup,
         range_check_polys: &RangeCheckPolynomials<F, C>,
-        t_read_polynomials: &[DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+        t_read_polynomials: &[DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =

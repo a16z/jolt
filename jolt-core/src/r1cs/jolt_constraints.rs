@@ -70,8 +70,9 @@ pub enum JoltIn {
     // Should match rv_trace.to_circuit_flags()
     OpFlags_IsRs1Rs2,
     OpFlags_IsImm,
-    OpFlags_IsLoad,
-    OpFlags_IsStore,
+    OpFlags_IsLbu,
+    OpFlags_IsLhu,
+    OpFlags_IsLw,
     OpFlags_IsJmp,
     OpFlags_IsBranch,
     OpFlags_LookupOutToRd,
@@ -150,109 +151,109 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let imm_signed =
             cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
-        let flag_0_or_1_condition = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
-        let memory_start: i64 = self.memory_start.try_into().unwrap();
-        cs.constrain_eq_conditional(
-            flag_0_or_1_condition,
-            LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
-            LC::sum2(JoltIn::RAM_A, memory_start),
-        );
+        // let flag_0_or_1_condition = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
+        // let memory_start: i64 = self.memory_start.try_into().unwrap();
+        // cs.constrain_eq_conditional(
+        //     flag_0_or_1_condition,
+        //     LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
+        //     LC::sum2(JoltIn::RAM_A, memory_start),
+        // );
 
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
-            JoltIn::RAM_Read_Byte0,
-            JoltIn::RAM_Write_Byte0,
-        );
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
-            JoltIn::RAM_Read_Byte1,
-            JoltIn::RAM_Write_Byte1,
-        );
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
-            JoltIn::RAM_Read_Byte2,
-            JoltIn::RAM_Write_Byte2,
-        );
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsLoad,
-            JoltIn::RAM_Read_Byte3,
-            JoltIn::RAM_Write_Byte3,
-        );
+        // cs.constrain_eq_conditional(
+        //     JoltIn::OpFlags_IsLoad,
+        //     JoltIn::RAM_Read_Byte0,
+        //     JoltIn::RAM_Write_Byte0,
+        // );
+        // cs.constrain_eq_conditional(
+        //     JoltIn::OpFlags_IsLoad,
+        //     JoltIn::RAM_Read_Byte1,
+        //     JoltIn::RAM_Write_Byte1,
+        // );
+        // cs.constrain_eq_conditional(
+        //     JoltIn::OpFlags_IsLoad,
+        //     JoltIn::RAM_Read_Byte2,
+        //     JoltIn::RAM_Write_Byte2,
+        // );
+        // cs.constrain_eq_conditional(
+        //     JoltIn::OpFlags_IsLoad,
+        //     JoltIn::RAM_Read_Byte3,
+        //     JoltIn::RAM_Write_Byte3,
+        // );
 
-        let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
-        let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
-        cs.constrain_eq_conditional(
-            JoltIn::OpFlags_IsStore,
-            packed_load_store,
-            JoltIn::LookupOutput,
-        );
+        // let ram_writes = input_range!(JoltIn::RAM_Write_Byte0, JoltIn::RAM_Write_Byte3);
+        // let packed_load_store = cs.allocate_pack_le(ram_writes.to_vec(), 8);
+        // cs.constrain_eq_conditional(
+        //     JoltIn::OpFlags_IsStore,
+        //     packed_load_store,
+        //     JoltIn::LookupOutput,
+        // );
 
-        let packed_query = cs.allocate_pack_be(
-            input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
-            LOG_M,
-        );
+        // let packed_query = cs.allocate_pack_be(
+        //     input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3).to_vec(),
+        //     LOG_M,
+        // );
 
-        cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query, x + y);
-        // Converts from unsigned to twos-complement representation
-        cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RAM_Read_RS2);
+        // cs.constrain_eq_conditional(JoltIn::IF_Add, packed_query, x + y);
+        // // Converts from unsigned to twos-complement representation
+        // cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
+        // cs.constrain_eq_conditional(JoltIn::OpFlags_IsLoad, packed_query, packed_load_store);
+        // cs.constrain_eq_conditional(JoltIn::OpFlags_IsStore, packed_query, JoltIn::RAM_Read_RS2);
 
-        // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
-        let chunked_x = cs.allocate_pack_be(
-            input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
-            OPERAND_SIZE,
-        );
-        let chunked_y = cs.allocate_pack_be(
-            input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
-            OPERAND_SIZE,
-        );
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_x, x);
-        cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_y, y);
+        // // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
+        // let chunked_x = cs.allocate_pack_be(
+        //     input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
+        //     OPERAND_SIZE,
+        // );
+        // let chunked_y = cs.allocate_pack_be(
+        //     input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3).to_vec(),
+        //     OPERAND_SIZE,
+        // );
+        // cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_x, x);
+        // cs.constrain_eq_conditional(JoltIn::OpFlags_IsConcat, chunked_y, y);
 
-        // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
-        let is_shift = JoltIn::IF_Sll + JoltIn::IF_Srl + JoltIn::IF_Sra;
-        let chunks_x = input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3);
-        let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
-        let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);
-        for i in 0..C {
-            let relevant_chunk_y =
-                cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
-            cs.constrain_eq_conditional(
-                JoltIn::OpFlags_IsConcat,
-                chunks_query[i],
-                (1i64 << 8) * chunks_x[i] + relevant_chunk_y,
-            );
-        }
+        // // if is_shift ? chunks_query[i] == zip(chunks_x[i], chunks_y[C-1]) : chunks_query[i] == zip(chunks_x[i], chunks_y[i])
+        // let is_shift = JoltIn::IF_Sll + JoltIn::IF_Srl + JoltIn::IF_Sra;
+        // let chunks_x = input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3);
+        // let chunks_y = input_range!(JoltIn::ChunksY_0, JoltIn::ChunksY_3);
+        // let chunks_query = input_range!(JoltIn::ChunksQ_0, JoltIn::ChunksQ_3);
+        // for i in 0..C {
+        //     let relevant_chunk_y =
+        //         cs.allocate_if_else(is_shift.clone(), chunks_y[C - 1], chunks_y[i]);
+        //     cs.constrain_eq_conditional(
+        //         JoltIn::OpFlags_IsConcat,
+        //         chunks_query[i],
+        //         (1i64 << 8) * chunks_x[i] + relevant_chunk_y,
+        //     );
+        // }
 
-        // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
-        // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
-        let rd_nonzero_and_lookup_to_rd =
-            cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
-        cs.constrain_eq_conditional(
-            rd_nonzero_and_lookup_to_rd,
-            JoltIn::RAM_Write_RD,
-            JoltIn::LookupOutput,
-        );
-        let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
-        let lhs = LC::sum2(JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
-        let rhs = JoltIn::RAM_Write_RD;
-        cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
+        // // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
+        // // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
+        // let rd_nonzero_and_lookup_to_rd =
+        //     cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
+        // cs.constrain_eq_conditional(
+        //     rd_nonzero_and_lookup_to_rd,
+        //     JoltIn::RAM_Write_RD,
+        //     JoltIn::LookupOutput,
+        // );
+        // let rd_nonzero_and_jmp = cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_IsJmp);
+        // let lhs = LC::sum2(JoltIn::PcIn, PC_START_ADDRESS - PC_NOOP_SHIFT);
+        // let rhs = JoltIn::RAM_Write_RD;
+        // cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
-        let branch_and_lookup_output =
-            cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
-        let next_pc_jump = cs.allocate_if_else(
-            JoltIn::OpFlags_IsJmp,
-            JoltIn::LookupOutput + 4,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + 4,
-        );
+        // let branch_and_lookup_output =
+        //     cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
+        // let next_pc_jump = cs.allocate_if_else(
+        //     JoltIn::OpFlags_IsJmp,
+        //     JoltIn::LookupOutput + 4,
+        //     4 * JoltIn::PcIn + PC_START_ADDRESS + 4,
+        // );
 
-        let next_pc_jump_branch = cs.allocate_if_else(
-            branch_and_lookup_output,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed,
-            next_pc_jump,
-        );
-        assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
+        // let next_pc_jump_branch = cs.allocate_if_else(
+        //     branch_and_lookup_output,
+        //     4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed,
+        //     next_pc_jump,
+        // );
+        // assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
     }
 }
 
