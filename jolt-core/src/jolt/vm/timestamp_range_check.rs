@@ -562,7 +562,7 @@ where
 }
 
 pub struct NoopGrandProduct;
-impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
+impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C> for NoopGrandProduct {
     type Leaves = ();
 
     fn construct(_leaves: Self::Leaves) -> Self {
@@ -582,13 +582,15 @@ impl<F: JoltField> BatchedGrandProduct<F> for NoopGrandProduct {
     fn prove_grand_product(
         &mut self,
         _transcript: &mut ProofTranscript,
-    ) -> (BatchedGrandProductProof<F>, Vec<F>) {
+        _setup: Option<&C::Setup>,
+    ) -> (BatchedGrandProductProof<C>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
     fn verify_grand_product(
-        _proof: &BatchedGrandProductProof<F>,
+        _proof: &BatchedGrandProductProof<C>,
         _claims: &Vec<F>,
         _transcript: &mut ProofTranscript,
+        _setup: Option<&C::Setup>,
     ) -> (Vec<F>, Vec<F>) {
         unimplemented!("init/final grand products are batched with read/write grand products")
     }
@@ -603,7 +605,7 @@ where
     multiset_hashes: MultisetHashes<F>,
     openings: RangeCheckOpenings<F, C>,
     opening_proof: C::BatchedProof,
-    batched_grand_product: BatchedGrandProductProof<F>,
+    batched_grand_product: BatchedGrandProductProof<C>,
 }
 
 impl<F, C> TimestampValidityProof<F, C>
@@ -675,7 +677,7 @@ where
     fn prove_grand_products(
         polynomials: &RangeCheckPolynomials<F, C>,
         transcript: &mut ProofTranscript,
-    ) -> (BatchedGrandProductProof<F>, MultisetHashes<F>, Vec<F>) {
+    ) -> (BatchedGrandProductProof<C>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
         let tau: F = transcript.challenge_scalar(b"Memory checking tau");
@@ -685,9 +687,11 @@ where
         let (leaves, _) =
             TimestampValidityProof::compute_leaves(&NoPreprocessing, polynomials, &gamma, &tau);
 
-        let mut batched_circuit = BatchedDenseGrandProduct::construct(leaves);
+        let mut batched_circuit =
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::construct(leaves);
 
-        let hashes: Vec<F> = batched_circuit.claims();
+        let hashes: Vec<F> =
+            <BatchedDenseGrandProduct<F> as BatchedGrandProduct<F, C>>::claims(&batched_circuit);
         let (read_write_hashes, init_final_hashes) =
             hashes.split_at(4 * MEMORY_OPS_PER_INSTRUCTION);
         let multiset_hashes = TimestampValidityProof::<F, C>::uninterleave_hashes(
@@ -699,7 +703,7 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let (batched_grand_product, r_grand_product) =
-            batched_circuit.prove_grand_product(transcript);
+            batched_circuit.prove_grand_product(transcript, None);
 
         drop_in_background_thread(batched_circuit);
 
@@ -737,6 +741,7 @@ where
                 &self.batched_grand_product,
                 &concatenated_hashes,
                 transcript,
+                None,
             );
 
         let openings: Vec<_> = self
