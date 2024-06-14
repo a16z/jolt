@@ -114,6 +114,6 @@ mod test {
         srl_binius_materialize_mle_parity3,
         SrlSubtable<BiniusField<BinaryField128b>, 3, 32>,
         BiniusField<BinaryField128b>,
-        1 << 16
+        1 << 10
     );
 }

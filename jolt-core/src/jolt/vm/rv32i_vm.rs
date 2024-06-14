@@ -208,31 +208,13 @@ mod tests {
         test_instruction_set_subtables::<HyperKZG<Bn254>>();
     }
 
-    #[test]
-    fn fib_e2e_mock() {
-        type Field = ark_bn254::Fr;
-        fib_e2e::<Field, MockCommitScheme<Field>>();
-    }
-
-    #[test]
-    fn fib_e2e_hyrax() {
-        fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
-    }
-
-    // TODO(sragss): Finish Binius.
-    // #[test]
-    // fn fib_e2e_binius() {
-    //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
-    //     fib_e2e::<Field, MockCommitScheme<Field>>();
-    // }
-
     fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
-        let _guard = FIB_FILE_LOCK.lock().unwrap();
-
+        let artifact_guard = FIB_FILE_LOCK.lock().unwrap();
         let mut program = host::Program::new("fibonacci-guest");
         program.set_input(&9u32);
         let (bytecode, memory_init) = program.decode();
         let (io_device, trace, circuit_flags) = program.trace();
+        drop(artifact_guard);
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
@@ -252,54 +234,31 @@ mod tests {
     }
 
     #[test]
+    fn fib_e2e_mock() {
+        fib_e2e::<Fr, MockCommitScheme<Fr>>();
+    }
+
+    #[test]
+    fn fib_e2e_hyrax() {
+        fib_e2e::<ark_bn254::Fr, HyraxScheme<ark_bn254::G1Projective>>();
+    }
+
+    #[test]
     fn fib_e2e_zeromorph() {
-        let _guard = FIB_FILE_LOCK.lock().unwrap();
-
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace, circuit_flags) = program.trace();
-
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, Zeromorph<Bn254>, C, M>>::prove(
-            io_device,
-            trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
-        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
+        fib_e2e::<Fr, Zeromorph<Bn254>>();
     }
 
     #[test]
     fn fib_e2e_hyperkzg() {
-        let _guard = FIB_FILE_LOCK.lock().unwrap();
-
-        let mut program = host::Program::new("fibonacci-guest");
-        program.set_input(&9u32);
-        let (bytecode, memory_init) = program.decode();
-        let (io_device, trace, circuit_flags) = program.trace();
-
-        let preprocessing =
-            RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, HyperKZG<Bn254>, C, M>>::prove(
-            io_device,
-            trace,
-            circuit_flags,
-            preprocessing.clone(),
-        );
-        let verification_result = RV32IJoltVM::verify(preprocessing, proof, commitments);
-        assert!(
-            verification_result.is_ok(),
-            "Verification failed with error: {:?}",
-            verification_result.err()
-        );
+        fib_e2e::<Fr, HyperKZG<Bn254>>();
     }
+
+    // TODO(sragss): Finish Binius.
+    // #[test]
+    // fn fib_e2e_binius() {
+    //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
+    //     fib_e2e::<Field, MockCommitScheme<Field>>();
+    // }
 
     #[test]
     fn sha3_e2e_hyrax() {

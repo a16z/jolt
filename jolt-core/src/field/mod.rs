@@ -35,9 +35,11 @@ pub trait JoltField:
     fn zero() -> Self;
     fn one() -> Self;
     fn from_u64(n: u64) -> Option<Self>;
+    fn from_i64(val: i64) -> Self;
     fn square(&self) -> Self;
     fn from_bytes(bytes: &[u8]) -> Self;
     fn inverse(&self) -> Option<Self>;
+
     #[inline(always)]
     fn mul_0_optimized(self, other: Self) -> Self {
         if self.is_zero() || other.is_zero() {

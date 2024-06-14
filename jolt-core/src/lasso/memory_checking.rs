@@ -1,7 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use crate::subprotocols::grand_product_quarks::QuarkGrandProduct;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
@@ -10,7 +9,9 @@ use crate::{
         commitment::commitment_scheme::CommitmentScheme,
         structured_poly::{StructuredCommitment, StructuredOpeningProof},
     },
-    subprotocols::grand_product::{BatchedGrandProduct, BatchedGrandProductProof},
+    subprotocols::grand_product::{
+        BatchedDenseGrandProduct, BatchedGrandProduct, BatchedGrandProductProof,
+    },
 };
 
 use crate::field::JoltField;
@@ -77,8 +78,10 @@ where
     Polynomials: StructuredCommitment<C>,
     Self: std::marker::Sync,
 {
-    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static = QuarkGrandProduct<F>;
-    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static = QuarkGrandProduct<F>;
+    type ReadWriteGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+        BatchedDenseGrandProduct<F>;
+    type InitFinalGrandProduct: BatchedGrandProduct<F, C> + Send + 'static =
+        BatchedDenseGrandProduct<F>;
 
     type Preprocessing = NoPreprocessing;
     type ReadWriteOpenings: StructuredOpeningProof<

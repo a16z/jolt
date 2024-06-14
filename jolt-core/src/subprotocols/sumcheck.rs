@@ -398,7 +398,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
         /*          Round 0 END          */
 
-        for _ in 1..num_rounds {
+        for i in 1..num_rounds {
             let poly = {
                 let (eval_point_0, eval_point_2) =
                     Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
@@ -424,6 +424,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 || poly_A.bound_poly_var_top_zero_optimized(&r_i),
                 || poly_B.bound_poly_var_top_zero_optimized(&r_i),
             );
+
+            if i == num_rounds - 1 {
+                assert_eq!(poly.evaluate(&r_i), poly_A[0] * poly_B[0]);
+            }
         }
 
         let evals = vec![poly_A[0], poly_B[0]];
