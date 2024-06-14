@@ -349,8 +349,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.instruction_lookups, &trace
         );
 
-        let mut load_store_flags_vec =
-            instruction_polynomials.instruction_flag_polys[5..10].to_vec();
+        let mut load_store_flags_vec = Vec::new();
 
         // append the circuit flag corresponding to loads
         let mut lbu_circuit_flag = Vec::new(); // store corresponding to index 2 -> lbu
@@ -400,9 +399,12 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         );
 
         println!("Read write memory new working");
+        let mut read_timestamps = read_timestamps_reg.to_vec();
+        read_timestamps.push(read_timestamps_ram);
+
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace),
-            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps_reg),
+            || RangeCheckPolynomials::<F, PCS>::new(read_timestamps.try_into().unwrap()),
         );
 
         let jolt_polynomials = JoltPolynomials {
@@ -742,6 +744,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             polynomials.instruction_lookups.lookup_outputs.evals(),
             circuit_flags,
             instruction_flags,
+            polynomials.read_write_memory.remainder[0].Z.clone()
         );
 
         inputs

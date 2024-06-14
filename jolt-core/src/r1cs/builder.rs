@@ -208,6 +208,19 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         }
     }
 
+    pub fn constrain_eq_zero(&mut self, lc: LC<I>) {
+        // lc  == 0
+
+        let a = lc;
+        let b = Variable::Constant.into();
+        let constraint = Constraint {
+            a,
+            b,
+            c: LC::zero(),
+        };
+        self.constraints.push(constraint);
+    }
+
     pub fn constrain_eq(&mut self, left: impl Into<LC<I>>, right: impl Into<LC<I>>) {
         // left - right == 0
         let left: LC<I> = left.into();

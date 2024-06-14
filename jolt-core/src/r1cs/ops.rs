@@ -80,6 +80,11 @@ impl<I: ConstraintInput> LC<I> {
         LC(vec![a.into(), b.into()])
     }
 
+    /// LC(a) + LC(b) + LC(c) -> LC(a + b + c)
+    pub fn sum3(a: impl Into<Term<I>>, b: impl Into<Term<I>>,  c: impl Into<Term<I>>) -> Self {
+        LC(vec![a.into(), b.into(), c.into()])
+    }
+
     /// LC(a) - LC(b) -> LC(a - b)
     pub fn sub2(a: impl Into<LC<I>>, b: impl Into<LC<I>>) -> Self {
         let a: LC<I> = a.into();

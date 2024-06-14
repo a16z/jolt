@@ -38,11 +38,11 @@ where
     C: CommitmentScheme<Field = F>,
 {
     _group: PhantomData<C>,
-    pub read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION],
-    pub read_cts_read_timestamp: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-    pub read_cts_global_minus_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-    pub final_cts_read_timestamp: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
-    pub final_cts_global_minus_read: [DensePolynomial<F>; MEMORY_OPS_PER_INSTRUCTION],
+    pub read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION + 1],
+    pub read_cts_read_timestamp: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1 ],
+    pub read_cts_global_minus_read: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
+    pub final_cts_read_timestamp: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
+    pub final_cts_global_minus_read: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
 }
 
 impl<F, C> RangeCheckPolynomials<F, C>
@@ -51,7 +51,7 @@ where
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::new")]
-    pub fn new(read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION]) -> Self {
+    pub fn new(read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION + 1]) -> Self {
         let M = read_timestamps[0].len();
 
         #[cfg(test)]
@@ -63,7 +63,7 @@ where
             }
         }
 
-        let read_and_final_cts: Vec<[Vec<u64>; 4]> = (0..MEMORY_OPS_PER_INSTRUCTION)
+        let read_and_final_cts: Vec<[Vec<u64>; 4]> = (0..REG_OPS_PER_INSTRUCTION + 1)
             .into_par_iter()
             .map(|i| {
                 let mut read_cts_read_timestamp: Vec<u64> = vec![0; M];

@@ -1,6 +1,6 @@
 use crate::{
     assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
-    jolt::vm::rv32i_vm::C,
+    jolt::vm::{read_write_memory, rv32i_vm::C}, r1cs::ops::Term,
 };
 
 use super::{
@@ -73,6 +73,11 @@ pub enum JoltIn {
     OpFlags_IsLbu,
     OpFlags_IsLhu,
     OpFlags_IsLw,
+    OpFlags_IsLb,
+    OpFlags_IsLh,
+    OpFlags_IsSb,
+    OpFlags_IsSh,
+    OpFlags_IsSw,
     OpFlags_IsJmp,
     OpFlags_IsBranch,
     OpFlags_LookupOutToRd,
@@ -106,6 +111,9 @@ pub enum JoltIn {
     IF_Mul,
     IF_MulU,
     IF_MulHu,
+    
+    // Remainder
+    Remainder
 }
 impl_r1cs_input_lc_conversions!(JoltIn);
 impl ConstraintInput for JoltIn {}
@@ -134,6 +142,51 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             cs.constrain_binary(flag);
         }
 
+        // CONSTRAINT - (LB_flag + LBU_flag + SB_flag) [remainder*(remainder -1)*(remainder -2)*(remainder-3)] + (LH_flag + LHU_flag + SH_flag) [remainder*(remainder -2)] + (LW_flag + SW_flag)*remainder  = 0
+        
+        // remainder * (remainder - 2) -> remainder02
+        let remainder_minus_2_term = Term(Variable::Input(JoltIn::Remainder), -2);
+        let remainder02 = cs.allocate_prod(Variable::Input(JoltIn::Remainder), remainder_minus_2_term);
+
+        // (remainder - 1) * (remainder - 3) -> remainder13
+        let remainder_minus_1_term = Term(Variable::Input(JoltIn::Remainder), -1);
+        let remainder_minus_3_term = Term(Variable::Input(JoltIn::Remainder), -3);
+        let remainder13 = cs.allocate_prod(remainder_minus_1_term, remainder_minus_3_term);
+
+        // remainder * (remainder - 2) * (remainder - 1) * (remainder - 3) -> remainder0123
+        let remainder0123 = cs.allocate_prod(remainder02, remainder13);
+
+        let remainder012 = cs.allocate_prod(remainder02, remainder_minus_1_term);
+        let remainder023 = cs.allocate_prod(remainder02, remainder_minus_3_term);
+        let remainder013 = cs.allocate_prod(Variable::Input(JoltIn::Remainder), remainder13);
+        let remainder123 = cs.allocate_prod(remainder_minus_2_term, remainder13);
+
+        // (LB_flag + LBU_flag + SB_flag) [remainder*(remainder -1)*(remainder -2)*(remainder-3)] -> product4
+        let lb_lbu_sb_sum = LC::sum3(JoltIn::OpFlags_IsLb, JoltIn::OpFlags_IsLbu, JoltIn::OpFlags_IsSb);
+        let product4 = cs.allocate_prod(remainder0123, lb_lbu_sb_sum);
+
+        // (LH_flag + LHU_flag + SH_flag) [remainder*(remainder -2)] -> product5
+        let lh_lhu_sh_sum = LC::sum3(JoltIn::OpFlags_IsLh, JoltIn::OpFlags_IsLhu, JoltIn::OpFlags_IsSh);
+        let product5 = cs.allocate_prod(remainder02, lh_lhu_sh_sum);
+
+        // (LW_flag + SW_flag)*remainder -> product6
+        let lw_sw_sum = LC::sum2(JoltIn::OpFlags_IsLw, JoltIn::OpFlags_IsSw);
+        let product6 = cs.allocate_prod(Variable::Input(JoltIn::Remainder), lw_sw_sum);
+
+        // product4 + product5 + product6 = 0
+        let sum = LC::new(vec![product4.into(), product5.into(), product6.into()]);
+        cs.constrain_eq_zero(sum);
+
+        // LOAD CONSTRAINT
+        // (LB_flag - 1) [ (memory_read[0] - combined_z_chunks) *  
+        //                  (remainder - 1) * (remainder - 2) * (remainder - 3) +  
+        //                  (memory_read[1] - combined_z_chunks) * remainder * (remainder - 2) * (remainder - 3) + 
+        //                  (memory_read[2] - combined_z_chunks) * remainder * (remainder - 1) * (remainder - 3) + 
+        //                  (memory_read[3] - combined_z_chunks) * remainder * (remainder - 1) * (remainder - 2)
+        //                  ] = 0
+
+
+
         cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_A);
 
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Opcode, 1);
@@ -151,13 +204,13 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let imm_signed =
             cs.allocate_if_else(JoltIn::OpFlags_SignImm, signed_output, JoltIn::Bytecode_Imm);
 
-        // let flag_0_or_1_condition = LC::sum2(JoltIn::OpFlags_IsLoad, JoltIn::OpFlags_IsStore);
-        // let memory_start: i64 = self.memory_start.try_into().unwrap();
-        // cs.constrain_eq_conditional(
-        //     flag_0_or_1_condition,
-        //     LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
-        //     LC::sum2(JoltIn::RAM_A, memory_start),
-        // );
+        let flag_0_or_1_condition = LC::sum3(JoltIn::OpFlags_IsLw, JoltIn::OpFlags_IsSw, JoltIn::OpFlags_IsSb);
+        let memory_start: i64 = self.memory_start.try_into().unwrap();
+        cs.constrain_eq_conditional(
+            flag_0_or_1_condition,
+            LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
+            LC::sum2(JoltIn::RAM_A, memory_start),
+        );
 
         // cs.constrain_eq_conditional(
         //     JoltIn::OpFlags_IsLoad,

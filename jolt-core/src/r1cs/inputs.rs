@@ -36,6 +36,7 @@ pub struct R1CSInputs<'a, F: JoltField> {
     lookup_outputs: Vec<F>,
     pub circuit_flags_bits: Vec<F>,
     instruction_flags_bits: Vec<F>,
+    remainder: Vec<F>
 }
 
 impl<'a, F: JoltField> R1CSInputs<'a, F> {
@@ -54,6 +55,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         lookup_outputs: Vec<F>,
         circuit_flags_bits: Vec<F>,
         instruction_flags_bits: Vec<F>,
+        remainder: Vec<F>
     ) -> Self {
         assert!(pc.len() % padded_trace_len == 0);
         assert!(bytecode_a.len() % padded_trace_len == 0);
@@ -67,6 +69,8 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         assert!(lookup_outputs.len() % padded_trace_len == 0);
         assert!(circuit_flags_bits.len() % padded_trace_len == 0);
         assert!(instruction_flags_bits.len() % padded_trace_len == 0);
+        assert!(remainder.len() % padded_trace_len == 0);
+
 
         Self {
             padded_trace_len,
@@ -82,6 +86,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
             lookup_outputs,
             circuit_flags_bits,
             instruction_flags_bits,
+            remainder
         }
     }
 
@@ -160,6 +165,12 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
             .par_chunks(self.padded_trace_len)
             .map(|chunk| chunk.to_vec());
         chunks.par_extend(instruction_flags_bits_chunks);
+
+        let remainder_chunks = self
+            .remainder
+            .par_chunks(self.padded_trace_len)
+            .map(|chunk| chunk.to_vec());
+        chunks.par_extend(remainder_chunks);
         chunks
     }
 }

@@ -480,14 +480,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                 let span = tracing::span!(tracing::Level::DEBUG, "ram_trace_processing");
                 let _enter = span.enter();
 
-                let lbu_flag = &load_store_flags[5];
-                let lhu_flag = &load_store_flags[6];
-                let lw_flag = &load_store_flags[7];
-                let lb_flag = &load_store_flags[8];
-                let lh_flag = &load_store_flags[9];
-                let sb_flag = &load_store_flags[10];
-                let sh_flag = &load_store_flags[11];
-                let sw_flag = &load_store_flags[12];
+                let lbu_flag = &load_store_flags[0];
+                let lhu_flag = &load_store_flags[1];
+                let lw_flag = &load_store_flags[2];
+                let lb_flag = &load_store_flags[3];
+                let lh_flag = &load_store_flags[4];
+                let sb_flag = &load_store_flags[5];
+                let sh_flag = &load_store_flags[6];
+                let sw_flag = &load_store_flags[7];
 
                 for (i, step) in memory_trace_ram.iter().enumerate() {
                     let timestamp = i as u64;
@@ -1119,6 +1119,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     || {
                         self.v_read_reg
                             .par_iter()
+                            .chain(self.v_read_ram.par_iter())
                             .flat_map(|poly| poly.evals_ref().par_iter())
                             .collect::<Vec<_>>()
                     },
