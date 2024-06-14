@@ -43,7 +43,6 @@ impl<const WORD_SIZE: usize> JoltInstruction for ADVICEInstruction<WORD_SIZE> {
         ]
     }
 
-
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {
         chunk_operand_usize(self.0, C, log_M)
     }

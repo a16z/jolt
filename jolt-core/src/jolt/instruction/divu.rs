@@ -3,10 +3,10 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_lt_abs::ASSERTLTABSInstruction,
-    mulu::MULUInstruction, JoltInstruction, virtual_assert_lte::ASSERTLTEInstruction, 
-    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction, virtual_move::MOVEInstruction
+    add::ADDInstruction, mulu::MULUInstruction, virtual_advice::ADVICEInstruction,
+    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
+    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    JoltInstruction,
 };
 /// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
 pub struct DIVUInstruction<const WORD_SIZE: usize>;
@@ -33,18 +33,19 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ADVICE,
-                rs1: None,
+                rs1: r_x,
                 rs2: None,
                 rd: v_q,
                 imm: None,
                 virtual_sequence_index: Some(0),
             },
             register_state: RegisterState {
-                rs1_val: None,
+                rs1_val: Some(x),
                 rs2_val: None,
                 rd_post_val: Some(q),
             },
             memory_state: None,
+            advice_value: Some(q),
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(y).lookup_entry();
@@ -52,18 +53,19 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ADVICE,
-                rs1: None,
+                rs1: r_y,
                 rs2: None,
                 rd: v_r,
                 imm: None,
                 virtual_sequence_index: Some(1),
             },
             register_state: RegisterState {
-                rs1_val: None,
+                rs1_val: Some(y),
                 rs2_val: None,
                 rd_post_val: Some(r),
             },
             memory_state: None,
+            advice_value: Some(r),
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -83,6 +85,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rd_post_val: Some(q_y),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let ltu = ASSERTLTABSInstruction::<WORD_SIZE>(r, y).lookup_entry();
@@ -102,6 +105,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rd_post_val: Some(ltu),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
@@ -117,10 +121,11 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
-                rs2_val: Some(x),
+                rs2_val: Some(r),
                 rd_post_val: Some(lte),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let _0 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
@@ -140,44 +145,27 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rd_post_val: Some(_0),
             },
             memory_state: None,
+            advice_value: None,
         });
 
-        let assert_eq = ASSERTEQSIGNSInstruction(_0, x).lookup_entry();
+        let result = ASSERTEQSIGNSInstruction(_0, x).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
                 rs1: v_0,
                 rs2: r_x,
-                rd: None,
+                rd: trace_row.instruction.rd,
                 imm: None,
                 virtual_sequence_index: Some(6),
             },
             register_state: RegisterState {
                 rs1_val: Some(_0),
                 rs2_val: Some(x),
-                rd_post_val: Some(assert_eq),
-            },
-            memory_state: None,
-        });
-
-        let result = MOVEInstruction::<WORD_SIZE>(q, r).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::MOVE,
-                rs1: v_q,
-                rs2: None,
-                rd: trace_row.instruction.rd,
-                imm: None,
-                virtual_sequence_index: Some(7),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(q),
-                rs2_val: None,
                 rd_post_val: Some(result),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         virtual_sequence
@@ -204,8 +192,8 @@ mod test {
         let rd = rng.next_u64() % 32;
 
         let x = rng.next_u32() as u64;
-        let y = if r_x == r_y { x } else { rng.next_u32() as u64 };
-        let result = ((i128::from(x as i32) / i128::from(y)) >> 32) as u32;
+        let y = if r_y >= r_x { x } else { rng.next_u32() as u64 };
+        let result = (i128::from(x as i32) / i128::from(y)) as u32;
 
         let divu_trace_row = RVTraceRow {
             instruction: ELFInstruction {
@@ -223,6 +211,7 @@ mod test {
                 rd_post_val: Some(result as u64),
             },
             memory_state: None,
+            advice_value: None,
         };
 
         let virtual_sequence = DIVUInstruction::<32>::virtual_sequence(divu_trace_row);
@@ -248,7 +237,8 @@ mod test {
                 );
             } else {
                 // Virtual assert instruction
-                assert!(output == 1);
+                println!("output: {} x: {} y: {}", output, x, y);
+                assert!(output == result as u64);
             }
         }
 

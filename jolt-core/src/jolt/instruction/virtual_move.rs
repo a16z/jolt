@@ -4,10 +4,10 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
+use crate::field::JoltField;
 use crate::jolt::subtable::{
     identity::IdentitySubtable, truncate_overflow::TruncateOverflowSubtable, LassoSubtable,
 };
-use crate::poly::field::JoltField;
 use crate::utils::instruction_utils::{chunk_operand_usize, concatenate_lookups};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]

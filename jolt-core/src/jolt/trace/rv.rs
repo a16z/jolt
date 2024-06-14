@@ -19,10 +19,10 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
-use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::virtual_assert_eq_signs::ASSERTEQSIGNSInstruction;
 use crate::jolt::instruction::virtual_assert_lt_abs::ASSERTLTABSInstruction;
 use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
+use crate::jolt::instruction::virtual_move::MOVEInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -147,7 +147,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::MULHU => Ok(MULHUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
             // TODO: Input of Advice is not from register
-            RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction(row.register_state.rs1_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ADVICE => Ok(ADVICEInstruction(row.advice_value.unwrap()).into()),
             // TODO: Actually move value from one operand to another
             RV32IM::VIRTUAL_MOVE => Ok(MOVEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_MOVSIGN => Ok(MOVSIGNInstruction(row.register_state.rs1_val.unwrap()).into()),

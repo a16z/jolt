@@ -3,10 +3,10 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_lt_abs::ASSERTLTABSInstruction,
-    mulu::MULUInstruction, JoltInstruction, virtual_assert_lte::ASSERTLTEInstruction, 
-    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction, virtual_move::MOVEInstruction
+    add::ADDInstruction, mulu::MULUInstruction, virtual_advice::ADVICEInstruction,
+    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
+    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_move::MOVEInstruction, JoltInstruction,
 };
 
 /// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
@@ -46,6 +46,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(q),
             },
             memory_state: None,
+            advice_value: Some(q),
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(y).lookup_entry();
@@ -65,6 +66,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(r),
             },
             memory_state: None,
+            advice_value: Some(r),
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -84,6 +86,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(q_y),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let ltu = ASSERTLTABSInstruction::<WORD_SIZE>(r, y).lookup_entry();
@@ -103,6 +106,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(ltu),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
@@ -122,6 +126,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(lte),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let _0 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
@@ -141,6 +146,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(_0),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let assert_eq = ASSERTEQSIGNSInstruction(_0, x).lookup_entry();
@@ -160,6 +166,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(assert_eq),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let result = MOVEInstruction::<WORD_SIZE>(q, r).lookup_entry();
@@ -179,6 +186,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(result),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         virtual_sequence
@@ -224,6 +232,7 @@ mod test {
                 rd_post_val: Some(result as u64),
             },
             memory_state: None,
+            advice_value: None,
         };
 
         let virtual_sequence = REMUInstruction::<32>::virtual_sequence(remu_trace_row);

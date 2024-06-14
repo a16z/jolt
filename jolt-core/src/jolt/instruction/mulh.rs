@@ -45,6 +45,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(s_x),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let s_y = MOVSIGNInstruction::<WORD_SIZE>(y).lookup_entry();
@@ -64,6 +65,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(s_y),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let xy_high_bits = MULHUInstruction::<WORD_SIZE>(x, y).lookup_entry();
@@ -83,6 +85,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(xy_high_bits),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let sx_y_low_bits = MULUInstruction::<WORD_SIZE>(s_x, y).lookup_entry();
@@ -102,6 +105,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(sx_y_low_bits),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let sy_x_low_bits = MULUInstruction::<WORD_SIZE>(s_y, x).lookup_entry();
@@ -121,6 +125,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(sy_x_low_bits),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let partial_sum = ADDInstruction::<WORD_SIZE>(xy_high_bits, sx_y_low_bits).lookup_entry();
@@ -140,6 +145,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(partial_sum),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let result = ADDInstruction::<WORD_SIZE>(partial_sum, sy_x_low_bits).lookup_entry();
@@ -159,6 +165,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHInstruction<WORD
                 rd_post_val: Some(result),
             },
             memory_state: None,
+            advice_value: None,
         });
         virtual_sequence
     }
@@ -203,6 +210,7 @@ mod test {
                 rd_post_val: Some(result as u64),
             },
             memory_state: None,
+            advice_value: None,
         };
 
         let virtual_sequence = MULHInstruction::<32>::virtual_sequence(mulh_trace_row);
