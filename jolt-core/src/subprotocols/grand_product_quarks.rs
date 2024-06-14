@@ -510,11 +510,7 @@ fn open_and_prove<C: CommitmentScheme>(
     let rand: C::Field = transcript.challenge_scalar(b"loading r_star");
 
     // Now calculate l(rand) = r.rand if is before or rand.r if not is before
-    let mut r_star = if is_before {
-        r.to_vec()
-    } else {
-        vec![rand]
-    };
+    let mut r_star = if is_before { r.to_vec() } else { vec![rand] };
     if is_before {
         r_star.push(rand);
     } else {
@@ -565,11 +561,7 @@ fn line_reduce_opening_verify<C: CommitmentScheme>(
     let rand: C::Field = transcript.challenge_scalar(b"loading r_star");
 
     // Compute l(rand) = (r, rand) or (rand,r)
-    let mut r_star = if is_before {
-        r.to_vec()
-    } else {
-        vec![rand]
-    };
+    let mut r_star = if is_before { r.to_vec() } else { vec![rand] };
     if is_before {
         r_star.push(rand);
     } else {
