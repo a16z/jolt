@@ -19,10 +19,8 @@ pub struct QuarkGrandProductProof<C: CommitmentScheme> {
     sumcheck_proof: SumcheckInstanceProof<C::Field>,
     v_commitment: Vec<C::Commitment>,
     f_commitment: Vec<C::Commitment>,
-    claimed_eval_f_0_r: (Vec<C::Field>, C::BatchedProof),
-    claimed_eval_f_1_r: (Vec<C::Field>, C::BatchedProof),
-    claimed_eval_f_r_0: (Vec<C::Field>, C::BatchedProof),
-    claimed_eval_f_r_1: (Vec<C::Field>, C::BatchedProof),
+    claimed_eval_f_x_r: (Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
+    claimed_eval_f_r_x: (Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
     sum_openings: C::BatchedProof,
     v_opening_proof: C::BatchedProof,
     num_vars: usize,
@@ -124,7 +122,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
             // by the quark proof is in fact the folded result of the base layer.
             let (quark, random) =
                 QuarkGrandProductProof::<C>::prove(&self.polynomials, transcript, setup.unwrap());
-            let claims = quark.claimed_eval_f_0_r.0.clone();
+            let claims = quark.claimed_eval_f_x_r.0.clone();
             (Some(quark), random, claims)
         } else {
             (
@@ -271,23 +269,10 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         // Interface for the batch proof is &[&Poly] but we have &[Poly]
         let borrowed_f: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
         let borrowed_v: Vec<&DensePolynomial<C::Field>> = v_polys.iter().collect();
-
-        // TODO (aleph_v) - Batch opens and a line reduction to make this 3 openings
-        let mut challenge_0_x = vec![C::Field::zero()];
-        challenge_0_x.append(&mut x.clone());
-        let claimed_eval_f_0_r = open_and_prove::<C>(&challenge_0_x, &f_polys, setup, transcript);
-
-        let mut challenge_1_x = vec![C::Field::one()];
-        challenge_1_x.append(&mut x.clone());
-        let claimed_eval_f_1_r = open_and_prove::<C>(&challenge_1_x, &f_polys, setup, transcript);
-
-        let mut challenge_x_0 = x.clone();
-        challenge_x_0.push(C::Field::zero());
-        let claimed_eval_f_r_0 = open_and_prove::<C>(&challenge_x_0, &f_polys, setup, transcript);
-
-        let mut challenge_x_1 = x.clone();
-        challenge_x_1.push(C::Field::one());
-        let claimed_eval_f_r_1 = open_and_prove::<C>(&challenge_x_1, &f_polys, setup, transcript);
+        
+        // Do the line reduction open and prove on r
+        let claimed_eval_f_x_r= open_and_prove::<C>(&x, false, &f_polys, setup, transcript);
+        let claimed_eval_f_r_x = open_and_prove::<C>(&x, true, &f_polys, setup, transcript);
 
         let mut challenge_sum = vec![C::Field::one(); x.len()];
         challenge_sum.push(C::Field::zero());
@@ -306,7 +291,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             setup,
             &borrowed_v,
             &x,
-            &claimed_eval_f_0_r.0,
+            &claimed_eval_f_x_r.0,
             BatchType::Big,
             transcript,
         );
@@ -317,10 +302,8 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
                 sumcheck_proof,
                 v_commitment,
                 f_commitment,
-                claimed_eval_f_0_r,
-                claimed_eval_f_1_r,
-                claimed_eval_f_r_0,
-                claimed_eval_f_r_1,
+                claimed_eval_f_x_r,
+                claimed_eval_f_r_x,
                 sum_openings,
                 v_opening_proof,
                 num_vars,
@@ -362,57 +345,13 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         let borrowed_f: Vec<&C::Commitment> = self.f_commitment.iter().collect();
         let borrowed_v: Vec<&C::Commitment> = self.v_commitment.iter().collect();
 
-        // First we will confirm that the various opening of f are correct at the points defined by r
-        let mut challenge_0_r = vec![C::Field::zero()];
-        challenge_0_r.append(&mut r.clone());
-        C::batch_verify(
-            &self.claimed_eval_f_0_r.1,
-            setup,
-            &challenge_0_r,
-            &self.claimed_eval_f_0_r.0,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
+        // We apply the protocol for line reduced openings to prove f(0r) f(1r) and f(r1) f(r0)
+        line_reduce_opening_verify::<C>(&self.claimed_eval_f_x_r, &r, false, &borrowed_f, transcript, setup)?;
+        line_reduce_opening_verify::<C>(&self.claimed_eval_f_r_x, &r, true, &borrowed_f, transcript, setup)?;
 
-        let mut challenge_1_r = vec![C::Field::one()];
-        challenge_1_r.append(&mut r.clone());
-        let one_r = &self.claimed_eval_f_1_r.0;
-        C::batch_verify(
-            &self.claimed_eval_f_1_r.1,
-            setup,
-            &challenge_1_r,
-            one_r,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        let mut challenge_r_0 = r.clone();
-        challenge_r_0.push(C::Field::zero());
-        let r_0 = &self.claimed_eval_f_r_0.0;
-        C::batch_verify(
-            &self.claimed_eval_f_r_0.1,
-            setup,
-            &challenge_r_0,
-            r_0,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        let mut challenge_r_1 = r.clone();
-        challenge_r_1.push(C::Field::one());
-        let r_1 = &self.claimed_eval_f_r_1.0;
-        C::batch_verify(
-            &self.claimed_eval_f_r_1.1,
-            setup,
-            &challenge_r_1,
-            r_1,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
+        let one_r = &self.claimed_eval_f_x_r.1;
+        let r_0 = &self.claimed_eval_f_r_x.0;
+        let r_1 = &self.claimed_eval_f_r_x.1;
 
         // We enforce that f opened at (1,1,...,1, 0) is in fact the product
         let mut challenge_sum = vec![C::Field::one(); r.len()];
@@ -432,7 +371,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             &self.v_opening_proof,
             setup,
             &r,
-            &self.claimed_eval_f_0_r.0,
+            &self.claimed_eval_f_x_r.0,
             &borrowed_v,
             transcript,
         )
@@ -455,7 +394,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             return Err(QuarkError::InvalidBinding);
         }
 
-        Ok((self.claimed_eval_f_0_r.0.clone(), r))
+        Ok((self.claimed_eval_f_x_r.0.clone(), r))
     }
 }
 
@@ -507,23 +446,100 @@ fn v_into_f<C: CommitmentScheme>(
 }
 
 // Open a set of polynomials at a point and return the openings and proof
+// Note - This uses a special case of the line reduction protocol for the case where we are opening
+//        a random which is either 0 or 1 in a position (either the first or last position).
+//        In this case the interpolated lined function is constant in all other points except the last one
+//        the by picking 0 and 1 as the points we interpolate at we can treat the evals of f(0r) and f(1r)
+//        (or vice versa) as implicitly defining the line t*f(0r) + (t-1)f(1r) and so the evals data alone
+//        is sufficient to calculate the claimed line, then we sample a random value r_star and do an opening proof
+//        on (r_star - 1) * f(0r) + r_star * f(1r) in the commitment to f. 
 fn open_and_prove<C: CommitmentScheme>(
-    x: &[C::Field],
+    r: &[C::Field],
+    is_before: bool,
     f_polys: &[DensePolynomial<C::Field>],
     setup: &C::Setup,
     transcript: &mut ProofTranscript,
-) -> (Vec<C::Field>, C::BatchedProof) {
-    let chis = EqPolynomial::evals(x);
-    let openings: Vec<C::Field> = f_polys
+) -> (Vec<C::Field>, Vec<C::Field>, C::BatchedProof) {
+    let mut r_0 = if is_before {r.to_vec()} else {vec![C::Field::zero()]};
+    let mut r_1 = if is_before {r.to_vec()} else {vec![C::Field::one()]};
+
+    if is_before {
+        r_0.push(C::Field::zero());
+        r_1.push(C::Field::one());
+    } else {
+        r_0.append(&mut r.to_vec());
+        r_1.append(&mut r.to_vec());
+    }
+
+    let chis_1 = EqPolynomial::evals(&r_0);
+    let openings_0: Vec<C::Field> = f_polys
         .iter()
-        .map(|f| f.evaluate_at_chi_low_optimized(&chis))
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis_1))
         .collect();
+    let chis_2 = EqPolynomial::evals(&r_1);
+    let openings_1: Vec<C::Field> = f_polys
+        .iter()
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis_2))
+        .collect();
+
+    // We add these to the transcript then sample an r which depends on them all
+    transcript.append_scalars(b"claims for line reduction 0", &openings_0);
+    transcript.append_scalars(b"claims for line reduction 1", &openings_1);
+    let rand: C::Field = transcript.challenge_scalar(b"loading r_star");
+
+    // Now calculate l(rand) = r.rand if is before or rand.r if not is before
+    let mut r_star = if is_before {r.to_vec()} else {vec![rand.clone()]};
+    if is_before {
+        r_star.push(rand.clone());
+    } else {
+        r_star.append(&mut r.to_vec());
+    }
+
+    // Now calculate the evals of f at r_star
+    let chis_3 = EqPolynomial::evals(&r_star);
+    let openings_star: Vec<C::Field> = f_polys
+        .iter()
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis_3))
+        .collect();
+
+    // For debug purposes we will check that (rand - 1) * f(0r) + rand * f(1r) = openings_star
+    for (star, (e_0, e_1)) in openings_star.iter().zip(openings_0.iter().zip(openings_1.iter())) {
+        assert_eq!( *e_0 + rand*(*e_1 - *e_0), *star);
+    };
+
     // Batch proof requires  &[&]
     let borrowed: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
+    let proof = C::batch_prove(setup, &borrowed, &r_star, &openings_star, BatchType::Big, transcript);
 
-    let proof = C::batch_prove(setup, &borrowed, x, &openings, BatchType::Big, transcript);
+    (openings_0, openings_1, proof)
+}
 
-    (openings, proof)
+/// Does the counterpart of the open_and_prove by computing an r_star vector point and then validating this opening
+fn line_reduce_opening_verify<C: CommitmentScheme>(data: &(Vec<C::Field>, Vec<C::Field>, C::BatchedProof), r: &[C::Field], is_before: bool, commitments: &[&C::Commitment], transcript: &mut ProofTranscript, setup: &C::Setup) -> Result<(), QuarkError> {
+    // To get our random we first append the openings data
+    transcript.append_scalars(b"claims for line reduction 0", &data.0);
+    transcript.append_scalars(b"claims for line reduction 1", &data.1);
+    let rand: C::Field = transcript.challenge_scalar(b"loading r_star");
+
+    // Compute l(rand) = (r, rand) or (rand,r)
+    let mut r_star = if is_before {r.to_vec()} else {vec![rand.clone()]};
+    if is_before {
+        r_star.push(rand.clone());
+    } else {
+        r_star.append(&mut r.to_vec());
+    }
+
+    // Compute our claimed openings
+    let claimed: Vec<C::Field> = data.0.iter().zip(data.1.iter()).map(|(e0, e1)| {
+        *e0 + rand*(*e1 - *e0)
+    }).collect();
+
+    // Finally check the opening at r_star
+    let res = C::batch_verify(&data.2, setup, &r_star, &claimed, commitments, transcript);
+    match res {
+        Ok(_) => Ok(()),
+        Err(_) => Err(QuarkError::InvalidOpeningProof)
+    }
 }
 
 #[cfg(test)]
