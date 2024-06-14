@@ -67,6 +67,7 @@ pub struct JoltTraceStep<InstructionSet: JoltInstructionSet> {
     pub instruction_lookup: Option<InstructionSet>,
     pub bytecode_row: BytecodeRow,
     pub memory_ops: [MemoryOp; MEMORY_OPS_PER_INSTRUCTION],
+    pub remainder: u64,
 }
 
 impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
@@ -83,6 +84,7 @@ impl<InstructionSet: JoltInstructionSet> JoltTraceStep<InstructionSet> {
                 MemoryOp::noop_read(),  // RAM byte 3
                 MemoryOp::noop_read(),  // RAM byte 4
             ],
+            remainder: 0
         }
     }
 
@@ -354,21 +356,41 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut lbu_circuit_flag = Vec::new(); // store corresponding to index 2 -> lbu
         let mut lhu_circuit_flag = Vec::new(); // store corresponding to index 3 -> lhu
         let mut lw_circuit_flag = Vec::new(); // store corresponding to index 4 -> lw
+        let mut lb_circuit_flag = Vec::new(); // store corresponding to index 5 -> lb
+        let mut lh_circuit_flag = Vec::new(); // store corresponding to index 6 -> lh
+        let mut sb_circuit_flag = Vec::new(); // store corresponding to index 7 -> sb
+        let mut sh_circuit_flag = Vec::new(); // store corresponding to index 8 -> sh
+        let mut sw_circuit_flag = Vec::new(); // store corresponding to index 9 -> sw
 
-        // can be parallelized
-        circuit_flags.chunks(NUM_CIRCUIT_FLAGS).for_each(|chunk| {
-            lbu_circuit_flag.push(chunk[2]);
-            lhu_circuit_flag.push(chunk[3]);
-            lw_circuit_flag.push(chunk[4]);
-        });
+        circuit_flags
+            .chunks(padded_trace_length)
+            .enumerate()
+            .for_each(|(flag_index, chunk)| {
+                match flag_index {
+                    2 => lbu_circuit_flag = chunk.to_vec(),
+                    3 => lhu_circuit_flag = chunk.to_vec(),
+                    4 => lw_circuit_flag = chunk.to_vec(),
+                    5 => lb_circuit_flag = chunk.to_vec(),
+                    6 => lh_circuit_flag = chunk.to_vec(),
+                    7 => sb_circuit_flag = chunk.to_vec(),
+                    8 => sh_circuit_flag = chunk.to_vec(),
+                    9 => sw_circuit_flag = chunk.to_vec(),
+                    _ => {}
+                }
+            });
 
         // create dense polynomials using circuit flags
-
         load_store_flags_vec.push(DensePolynomial::new(lbu_circuit_flag));
         load_store_flags_vec.push(DensePolynomial::new(lhu_circuit_flag));
         load_store_flags_vec.push(DensePolynomial::new(lw_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(lb_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(lh_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(sb_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(sh_circuit_flag));
+        load_store_flags_vec.push(DensePolynomial::new(sw_circuit_flag));
 
         let load_store_flags = &load_store_flags_vec[..];
+        println!("load_store_flags len: {:?}", load_store_flags.len());
 
         let (memory_polynomials, read_timestamps_reg, read_timestamps_ram) = ReadWriteMemory::new(
             &program_io,
@@ -377,6 +399,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &trace,
         );
 
+        println!("Read write memory new working");
         let (bytecode_polynomials, range_check_polys) = rayon::join(
             || BytecodePolynomials::<F, PCS>::new(&preprocessing.bytecode, &mut trace),
             || RangeCheckPolynomials::<F, PCS>::new(read_timestamps_reg),

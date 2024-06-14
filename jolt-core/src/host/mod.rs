@@ -185,10 +185,12 @@ impl Program {
                     None
                 };
 
+                let (memory_ops, remainder) = (&row).into();
                 JoltTraceStep {
                     instruction_lookup,
                     bytecode_row: BytecodeRow::from_instruction::<RV32I>(&row.instruction),
-                    memory_ops: (&row).into(),
+                    memory_ops,
+                    remainder,
                 }
             })
             .collect();
