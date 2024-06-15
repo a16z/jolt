@@ -126,7 +126,8 @@ pub const PC_START_ADDRESS: i64 = 0x80000000;
 const PC_NOOP_SHIFT: i64 = 4;
 const LOG_M: usize = 16;
 const OPERAND_SIZE: usize = LOG_M / 2;
-pub const PC_BRANCH_AUX_INDEX: usize = 15;
+//Changed PC_BRANCH_AUX_INDEX for new constraints
+pub const PC_BRANCH_AUX_INDEX: usize = 44;
 
 pub struct JoltConstraints {
     memory_start: u64,
@@ -175,17 +176,14 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
 
-        // CONSTRAINT - actual_address - 4 * load_store_address - remainder = 0 (TBA)
-        
-        // CONSTRAINT - (LB_flag + LBU_flag + SB_flag) [remainder*(remainder -1)*(remainder -2)*(remainder-3)] + (LH_flag + LHU_flag + SH_flag) [remainder*(remainder -2)] + (LW_flag + SW_flag)*remainder  = 0
+        // CONSTRAINT: actual_address - 4 * load_store_address - remainder = 0 (TBA)
+
+        // CONSTRAINT: (LB_flag + LBU_flag + SB_flag) [remainder*(remainder -1)*(remainder -2)*(remainder-3)] + (LH_flag + LHU_flag + SH_flag) [remainder*(remainder -2)] + (LW_flag + SW_flag)*remainder  = 0
 
         // remainder * (remainder - 2) -> remainder02
         let remainder = cs.create_remainder_term_with_value(0);
         let remainder_minus_2_term = cs.create_remainder_term_with_value(-2);
-        let remainder02 = cs.allocate_prod(
-            remainder,
-            remainder_minus_2_term
-        );
+        let remainder02 = cs.allocate_prod(remainder, remainder_minus_2_term);
 
         // (remainder - 1) * (remainder - 3) -> remainder13
         let remainder_minus_1_term = cs.create_remainder_term_with_value(-1);
@@ -202,11 +200,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 
         // (LB_flag + LBU_flag + SB_flag) [remainder*(remainder -1)*(remainder -2)*(remainder-3)] -> product4
         let lb_lbu_sb_sum = LC::sum_any(
-            vec![
-                JoltIn::OpFlags_IsLb,
-                JoltIn::OpFlags_IsLbu,
-                JoltIn::OpFlags_IsSb
-            ]
+            vec![JoltIn::OpFlags_IsLb, JoltIn::OpFlags_IsLbu, JoltIn::OpFlags_IsSb]
         );
         let product4 = cs.allocate_prod(remainder0123, lb_lbu_sb_sum);
 
@@ -226,7 +220,6 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let sum = LC::new(vec![product4.into(), product5.into(), product6.into()]);
         cs.constrain_eq_zero(sum);
 
-
         // CONSTRAINT - actual_address is computed correctly using rs1_val, and imm_extension
         let flag_0_or_1_condition = LC::sum_any(
             vec![
@@ -237,7 +230,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
                 JoltIn::OpFlags_IsLw,
                 JoltIn::OpFlags_IsSb,
                 JoltIn::OpFlags_IsSh,
-                JoltIn::OpFlags_IsSw,
+                JoltIn::OpFlags_IsSw
             ]
         );
         // (TODO: Vineet) Check this later
@@ -249,7 +242,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         );
 
         // LOAD CONSTRAINT a
-        // For the load instructions, we have that the four bytes read at 
+        // For the load instructions, we have that the four bytes read at
         // index load_store_address of memory is the same as written
 
         let all_load_flags = LC::sum_any(
@@ -258,74 +251,101 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
                 JoltIn::OpFlags_IsLbu,
                 JoltIn::OpFlags_IsLh,
                 JoltIn::OpFlags_IsLhu,
-                JoltIn::OpFlags_IsLw,
+                JoltIn::OpFlags_IsLw
             ]
         );
-        
+
         cs.constrain_eq_conditional(
             all_load_flags.clone(),
             JoltIn::RAM_Read_Byte0,
-            JoltIn::RAM_Write_Byte0,
+            JoltIn::RAM_Write_Byte0
         );
         cs.constrain_eq_conditional(
             all_load_flags.clone(),
             JoltIn::RAM_Read_Byte1,
-            JoltIn::RAM_Write_Byte1,
+            JoltIn::RAM_Write_Byte1
         );
         cs.constrain_eq_conditional(
             all_load_flags.clone(),
             JoltIn::RAM_Read_Byte2,
-            JoltIn::RAM_Write_Byte2,
+            JoltIn::RAM_Write_Byte2
         );
         cs.constrain_eq_conditional(
             all_load_flags,
             JoltIn::RAM_Read_Byte3,
-            JoltIn::RAM_Write_Byte3,
+            JoltIn::RAM_Write_Byte3
         );
 
         // LOAD CONSTRAINT b-1
-        // (JoltIn::OpFlags_IsLb) [ (memory_read[0] - combined_z_chunks) *
+        // (JoltIn::OpFlags_IsLb) [ (memory_read[0] - packed_query) *
         //                  (remainder - 1) * (remainder - 2) * (remainder - 3) +
-        //                  (memory_read[1] - combined_z_chunks) * remainder * (remainder - 2) * (remainder - 3) +
-        //                  (memory_read[2] - combined_z_chunks) * remainder * (remainder - 1) * (remainder - 3) +
-        //                  (memory_read[3] - combined_z_chunks) * remainder * (remainder - 1) * (remainder - 2)
+        //                  (memory_read[1] - packed_query) * remainder * (remainder - 2) * (remainder - 3) +
+        //                  (memory_read[2] - packed_query) * remainder * (remainder - 1) * (remainder - 3) +
+        //                  (memory_read[3] - packed_query) * remainder * (remainder - 1) * (remainder - 2)
         //                  ] = 0
 
-        let term0 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Read_Byte0, packed_query), remainder123);
-        let term1 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Read_Byte1, packed_query), remainder023);
-        let term2 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Read_Byte2, packed_query), remainder013);
-        let term3 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Read_Byte3, packed_query), remainder012);
+        let read0_minus_packed_query = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte0, packed_query),
+            remainder123
+        );
+        let read1_minus_packed_query = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte1, packed_query),
+            remainder023
+        );
+        let read2_minus_packed_query = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte2, packed_query),
+            remainder013
+        );
+        let read3_minus_packed_query = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte3, packed_query),
+            remainder012
+        );
         let lb_lbu_flag = LC::sum2(JoltIn::OpFlags_IsLb, JoltIn::OpFlags_IsLbu);
-        let term = LC::new(vec![term0.into(), term1.into(), term2.into(), term3.into()]);
-        cs.constrain_prod(lb_lbu_flag, term, LC::zero());
+        let term0 = LC::sum_any(
+            vec![
+                read0_minus_packed_query,
+                read1_minus_packed_query,
+                read2_minus_packed_query,
+                read3_minus_packed_query.into()
+            ]
+        );
+        cs.constrain_prod(lb_lbu_flag, term0, LC::zero());
 
         // LOAD CONSTRAINT b-2
-        // (LH_flag) [ (memory_read[0] + 2^{8}memory_read[1] - combined_z_chunks) * (remainder - 2)  +  
-        //                  (memory_read[2] + 2^{8}*memory_read[3] - combined_z_chunks) * remainder 
+        // (LH_flag) [ (memory_read[0] + 2^{8}memory_read[1] - packed_query) * (remainder - 2)  +
+        //                  (memory_read[2] + 2^{8}*memory_read[3] - packed_query) * remainder
         //                ] = 0
-        let lc1 = LC::new(
+        let read01_memory = LC::new(
             vec![
                 cs.create_memory_term(JoltIn::RAM_Read_Byte0, 1),
                 cs.create_memory_term(JoltIn::RAM_Read_Byte1, 1 << 8)
             ]
         );
-        let lc2 = LC::new(
+        let read23_memory = LC::new(
             vec![
                 cs.create_memory_term(JoltIn::RAM_Read_Byte2, 1),
                 cs.create_memory_term(JoltIn::RAM_Read_Byte3, 1 << 8)
             ]
         );
-        let term00 = cs.allocate_prod(LC::sub2(lc1, packed_query), remainder_minus_2_term);
-        let term01 = cs.allocate_prod(LC::sub2(lc2, packed_query), JoltIn::Remainder);
+        let read01_minus_packed_query = cs.allocate_prod(
+            LC::sub2(read01_memory.clone(), packed_query),
+            remainder_minus_2_term
+        );
+        let read23_minus_packed_query = cs.allocate_prod(
+            LC::sub2(read23_memory.clone(), packed_query),
+            JoltIn::Remainder
+        );
         let lh_lhu_flag = LC::sum2(JoltIn::OpFlags_IsLh, JoltIn::OpFlags_IsLhu);
-        let term02 = LC::new(vec![term00.into(), term01.into()]);
-        cs.constrain_prod(lh_lhu_flag, term02, LC::zero());
+        let term1 = LC::new(
+            vec![read01_minus_packed_query.into(), read23_minus_packed_query.into()]
+        );
+        cs.constrain_prod(lh_lhu_flag, term1, LC::zero());
 
         // LOAD CONSTRAINT b-3
-        // (LW_flag) [ memory_read[0] + 2^{8}memory_read[1] + 2^{16}memory_read[2] + 
+        // (LW_flag) [ memory_read[0] + 2^{8}memory_read[1] + 2^{16}memory_read[2] +
         //                  2^{24}memory_read[3]  - combined_z_chunks) ] = 0
 
-        let lc3 = LC::new(
+        let read_memory = LC::new(
             vec![
                 cs.create_memory_term(JoltIn::RAM_Read_Byte0, 1),
                 cs.create_memory_term(JoltIn::RAM_Read_Byte1, 1 << 8),
@@ -333,89 +353,231 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
                 cs.create_memory_term(JoltIn::RAM_Read_Byte3, 1 << 24)
             ]
         );
-        cs.constrain_prod(JoltIn::OpFlags_IsLw, LC::sub2(lc3.clone(), packed_query), LC::zero());
+        cs.constrain_prod(
+            JoltIn::OpFlags_IsLw,
+            LC::sub2(read_memory.clone(), packed_query),
+            LC::zero()
+        );
 
         // LOAD CONSTRAINT c
-        // Constraint to check rd is updated with lookup output 
+        // Constraint to check rd is updated with lookup output
         // check this constraint later
-        let rd_nonzero_and_lookup_to_rd =
-            cs.allocate_prod(JoltIn::Bytecode_RD, JoltIn::OpFlags_LookupOutToRd);
+        let rd_nonzero_and_lookup_to_rd = cs.allocate_prod(
+            JoltIn::Bytecode_RD,
+            JoltIn::OpFlags_LookupOutToRd
+        );
         cs.constrain_eq_conditional(
             rd_nonzero_and_lookup_to_rd,
             JoltIn::RAM_Write_RD,
-            JoltIn::LookupOutput,
+            JoltIn::LookupOutput
         );
 
         // STORE CONSTRAINT a
-        // (SB_flag + SH_flag + SW_flag) [ rs2_val - combined_z_chunks] +  
+        // (SB_flag + SH_flag + SW_flag) [ rs2_val - packed_query] +
         // (LBU_flag + LHU_flag)[
-        //              memory_read[0] + 2^{8}memory_read[1] + 
-        //              2^{16}memory_read[2] + 2^{24}memory_read[3] - 
-        //              combined_z_chunks
+        //              memory_read[0] + 2^{8}memory_read[1] +
+        //              2^{16}memory_read[2] + 2^{24}memory_read[3] -
+        //              packed_query
         //           ] = 0
 
-        let all_store_flags = LC::sum3(JoltIn::OpFlags_IsSb, JoltIn::OpFlags_IsSh, JoltIn::OpFlags_IsSw);
-        let term00 = cs.allocate_prod(all_store_flags, LC::sub2(JoltIn::RAM_Read_RS2, packed_query));
+        let all_store_flags = LC::sum3(
+            JoltIn::OpFlags_IsSb,
+            JoltIn::OpFlags_IsSh,
+            JoltIn::OpFlags_IsSw
+        );
+        let term0 = cs.allocate_prod(all_store_flags, LC::sub2(JoltIn::RAM_Read_RS2, packed_query));
 
         let lbu_lhu_flag = LC::sum2(JoltIn::OpFlags_IsLbu, JoltIn::OpFlags_IsLhu);
-        let term01 = cs.allocate_prod(lbu_lhu_flag, LC::sub2(lc3, packed_query));
-        let sum = LC::new(vec![term00.into(), term01.into()]);
+        let term1 = cs.allocate_prod(lbu_lhu_flag, LC::sub2(read_memory, packed_query));
+        let sum = LC::sum2(term0, term1);
         cs.constrain_eq_zero(sum);
 
         // STORE CONSTRAINT b-1
-        // (SB_flag) [ 
-        //           (memory_write[0]  - lookup_output) *  (remainder - 1) (remainder - 2) * (remainder - 3) +  
-        //           (memory_write[1] - lookup_output) * remainder * (remainder - 2) * (remainder - 3) + 
-        //           (memory_write[2] - lookup_output) * remainder * (remainder - 1) * (remainder - 3) + 
+        // (SB_flag) [
+        //           (memory_write[0]  - lookup_output) *  (remainder - 1) (remainder - 2) * (remainder - 3) +
+        //           (memory_write[1] - lookup_output) * remainder * (remainder - 2) * (remainder - 3) +
+        //           (memory_write[2] - lookup_output) * remainder * (remainder - 1) * (remainder - 3) +
         //           (memory_write[3] - lookup_output) * remainder * (remainder - 1) * (remainder - 2)
         //       ] = 0
-        let term0 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Write_Byte0, JoltIn::LookupOutput), remainder123);
-        let term1 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Write_Byte1, JoltIn::LookupOutput), remainder023);
-        let term2 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Write_Byte2, JoltIn::LookupOutput), remainder013);
-        let term3 = cs.allocate_prod(LC::sub2(JoltIn::RAM_Write_Byte3, JoltIn::LookupOutput), remainder012);
-        let term = LC::new(vec![term0.into(), term1.into(), term2.into(), term3.into()]);
-        cs.constrain_prod(JoltIn::OpFlags_IsSb, term, LC::zero());
-
+        let write0_minus_lookupoutput = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Write_Byte0, JoltIn::LookupOutput),
+            remainder123
+        );
+        let write1_minus_lookupoutput = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Write_Byte1, JoltIn::LookupOutput),
+            remainder023
+        );
+        let write2_minus_lookupoutput = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Write_Byte2, JoltIn::LookupOutput),
+            remainder013
+        );
+        let write3_minus_lookupoutput = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Write_Byte3, JoltIn::LookupOutput),
+            remainder012
+        );
+        let term0 = LC::sum_any(
+            vec![
+                write0_minus_lookupoutput,
+                write1_minus_lookupoutput,
+                write2_minus_lookupoutput,
+                write3_minus_lookupoutput
+            ]
+        );
+        cs.constrain_prod(JoltIn::OpFlags_IsSb, term0, LC::zero());
 
         // STORE CONSTRAINT b-2
-        // (SH_flag) [ 
-        //           (memory_write[0] + 2^{8}memory_write[1] - lookup_output) * (remainder - 2)  +  
-        //           (memory_write[2] +  2^{8}*memory_write[3] - lookup_output) * remainder 
+        // (SH_flag) [
+        //           (memory_write[0] + 2^{8}memory_write[1] - lookup_output) * (remainder - 2)  +
+        //           (memory_write[2] +  2^{8}*memory_write[3] - lookup_output) * remainder
         //     ] = 0
-        let lc1 = LC::new(
+        let write01_memory = LC::new(
             vec![
                 cs.create_memory_term(JoltIn::RAM_Write_Byte0, 1),
                 cs.create_memory_term(JoltIn::RAM_Write_Byte1, 1 << 8)
             ]
         );
-        let lc2 = LC::new(
+        let write23_memory = LC::new(
             vec![
                 cs.create_memory_term(JoltIn::RAM_Write_Byte2, 1),
                 cs.create_memory_term(JoltIn::RAM_Write_Byte3, 1 << 8)
             ]
         );
-        let term00 = cs.allocate_prod(LC::sub2(lc1, JoltIn::LookupOutput), remainder_minus_2_term);
-        let term01 = cs.allocate_prod(LC::sub2(lc2, JoltIn::LookupOutput), JoltIn::Remainder);
-        let term02 = LC::new(vec![term00.into(), term01.into()]);
-        cs.constrain_prod(JoltIn::OpFlags_IsSh, term02, LC::zero());
-        
-       // STORE CONSTRAINT b-3
-       // (SW_flag) [
-       //           memory_write[0] + 2^{8}memory_write[1] + 
-       //           2^{16}memory_write[2] + 2^{24}memory_write[3]  - 
-       //           combined_z_chunks) 
-       //           ] = 0
+        let write01_minus_lookupoutput = cs.allocate_prod(
+            LC::sub2(write01_memory.clone(), JoltIn::LookupOutput),
+            remainder_minus_2_term
+        );
+        let write23_minus_lookupoutput = cs.allocate_prod(
+            LC::sub2(write23_memory.clone(), JoltIn::LookupOutput),
+            JoltIn::Remainder
+        );
+        let term1 = LC::sum2(write01_minus_lookupoutput, write23_minus_lookupoutput);
+        cs.constrain_prod(JoltIn::OpFlags_IsSh, term1, LC::zero());
 
-       let lc4 = LC::new(
-        vec![
+        // STORE CONSTRAINT b-3
+        // (SW_flag) [
+        //           memory_write[0] + 2^{8}memory_write[1] +
+        //           2^{16}memory_write[2] + 2^{24}memory_write[3]  -
+        //           combined_z_chunks)
+        //           ] = 0
+
+        let write_memory = LC::new(
+            vec![
                 cs.create_memory_term(JoltIn::RAM_Write_Byte0, 1),
                 cs.create_memory_term(JoltIn::RAM_Write_Byte1, 1 << 8),
                 cs.create_memory_term(JoltIn::RAM_Write_Byte2, 1 << 16),
                 cs.create_memory_term(JoltIn::RAM_Write_Byte3, 1 << 24)
             ]
         );
-        cs.constrain_prod(JoltIn::OpFlags_IsSw, LC::sub2(lc4, packed_query), LC::zero());
-       
+        cs.constrain_prod(JoltIn::OpFlags_IsSw, LC::sub2(write_memory, packed_query), LC::zero());
+
+        // STORE CONSTRAINT c-1
+        // remainder [(JoltIn::OpFlags_IsSB) * (memory_read[2] - memory_write[2]) +
+        //                  (JoltIn::OpFlags_IsSH) * (memory_read[2] + memory[3] * 2^{8} - memory_write[2] - memory_write[3]* 2^{8})] +
+
+        let read_write2_flagsb = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte2, JoltIn::RAM_Write_Byte2),
+            JoltIn::OpFlags_IsSb
+        );
+        let term0 = cs.allocate_prod(LC::sub2(read23_memory, write23_memory), JoltIn::OpFlags_IsSh);
+        cs.constrain_prod(JoltIn::Remainder, LC::sum2(read_write2_flagsb, term0), LC::zero());
+
+        // STORE CONSTRAINT c-2
+        // remainder * (JoltIn::OpFlags_IsSB) * (memory_read[1] - memory_write[1])
+        let read_write1_flagsb = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte1, JoltIn::RAM_Write_Byte1),
+            JoltIn::OpFlags_IsSb
+        );
+        cs.constrain_prod(JoltIn::Remainder, read_write1_flagsb, LC::zero());
+
+        // STORE CONSTRAINT c-3
+        // remainder * (JoltIn::OpFlags_IsSB) * (memory_read[3] - memory_write[3])
+        let read_write3_flagsb = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte3, JoltIn::RAM_Write_Byte3),
+            JoltIn::OpFlags_IsSb
+        );
+        cs.constrain_prod(JoltIn::Remainder, read_write3_flagsb, LC::zero());
+
+        // STORE CONSTRAINT c-4
+        // (remainder-2) [(JoltIn::OpFlags_IsSB) * (memory_read[0] - memory_write[0]) +
+        //                  (JoltIn::OpFlags_IsSH) * (memory_read[0] + memory[1] * 2^{8} - memory_write[0] - memory_write[1]* 2^{8})] +
+
+        let read_write0_flagsb = cs.allocate_prod(
+            LC::sub2(JoltIn::RAM_Read_Byte0, JoltIn::RAM_Write_Byte0),
+            JoltIn::OpFlags_IsSb
+        );
+        let term1 = cs.allocate_prod(LC::sub2(read01_memory, write01_memory), JoltIn::OpFlags_IsSh);
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Term(Variable::Constant, 2)),
+            LC::sum2(read_write0_flagsb, term1),
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-5
+        // (remainder-2) * (JoltIn::OpFlags_IsSB) * (memory_read[1] - memory_write[1])
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Term(Variable::Constant, 2)),
+            read_write1_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-6
+        // (remainder-2) * (JoltIn::OpFlags_IsSB) * (memory_read[3] - memory_write[3])
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Term(Variable::Constant, 2)),
+            read_write3_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-7
+        // (remainder-1) [(JoltIn::OpFlags_IsSB) * (memory_read[0] - memory_write[0])
+
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Variable::Constant),
+            read_write0_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-8
+        // (remainder-1) * (JoltIn::OpFlags_IsSB) * (memory_read[2] - memory_write[2])
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Variable::Constant),
+            read_write2_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-9
+        // (remainder-1) * (JoltIn::OpFlags_IsSB) * (memory_read[3] - memory_write[3])
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Variable::Constant),
+            read_write3_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-10
+        // (remainder-3) [(JoltIn::OpFlags_IsSB) * (memory_read[0] - memory_write[0])
+
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Variable::Constant),
+            read_write0_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-11
+        // (remainder-3) * (JoltIn::OpFlags_IsSB) * (memory_read[1] - memory_write[1])
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Variable::Constant),
+            read_write1_flagsb,
+            LC::zero()
+        );
+
+        // STORE CONSTRAINT c-12
+        // (remainder-3) * (JoltIn::OpFlags_IsSB) * (memory_read[2] - memory_write[2])
+        cs.constrain_prod(
+            LC::sub2(JoltIn::Remainder, Variable::Constant),
+            read_write2_flagsb,
+            LC::zero()
+        );
+
         // TODO(sragss): Uses 2 excess constraints for condition gating. Could make constrain_pack_be_conditional... Or make everything conditional...
         let chunked_x = cs.allocate_pack_be(
             input_range!(JoltIn::ChunksX_0, JoltIn::ChunksX_3).to_vec(),
@@ -454,18 +616,20 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let rhs = JoltIn::RAM_Write_RD;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
 
-        let branch_and_lookup_output =
-            cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
+        let branch_and_lookup_output = cs.allocate_prod(
+            JoltIn::OpFlags_IsBranch,
+            JoltIn::LookupOutput
+        );
         let next_pc_jump = cs.allocate_if_else(
             JoltIn::OpFlags_IsJmp,
             JoltIn::LookupOutput + 4,
-            4 * JoltIn::PcIn + PC_START_ADDRESS + 4,
+            4 * JoltIn::PcIn + PC_START_ADDRESS + 4
         );
 
         let next_pc_jump_branch = cs.allocate_if_else(
             branch_and_lookup_output,
             4 * JoltIn::PcIn + PC_START_ADDRESS + imm_signed,
-            next_pc_jump,
+            next_pc_jump
         );
         assert_static_aux_index!(next_pc_jump_branch, PC_BRANCH_AUX_INDEX);
     }

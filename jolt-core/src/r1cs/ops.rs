@@ -562,7 +562,7 @@ macro_rules! input_range {
 macro_rules! assert_static_aux_index {
     ($var:expr, $index:expr) => {{
         if let Variable::Auxiliary(aux_index) = $var {
-            assert_eq!(aux_index, $index, "Unexpected auxiliary index");
+            assert_eq!(aux_index, $index, "Unexpected auxiliary index {:?}", aux_index);
         } else {
             panic!("Variable is not of variant type Variable::Auxiliary");
         }
