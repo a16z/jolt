@@ -17,21 +17,18 @@ const DELAY_BASE_MS: u64 = 500;
 
 /// Installs the toolchain if it is not already
 pub fn install_toolchain() -> Result<()> {
-    if has_toolchain() {
-        return Ok(());
+    if !has_toolchain() {
+        let client = Client::builder().user_agent("Mozilla/5.0").build()?;
+        let toolchain_url = toolchain_url();
+
+        let rt = Runtime::new().unwrap();
+        rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
+            download_toolchain(&client, &toolchain_url)
+        }))?;
+        unpack_toolchain()?;
+        write_tag_file()?;
     }
-
-    let client = Client::builder().user_agent("Mozilla/5.0").build()?;
-    let toolchain_url = toolchain_url();
-
-    let rt = Runtime::new().unwrap();
-    rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
-        download_toolchain(&client, &toolchain_url)
-    }))?;
-    unpack_toolchain()?;
-    link_toolchain()?;
-
-    write_tag_file()
+    link_toolchain()
 }
 
 async fn retry_times<F, T, E>(times: usize, base_ms: u64, f: F) -> Result<T>
