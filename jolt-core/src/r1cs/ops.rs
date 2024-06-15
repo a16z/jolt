@@ -85,6 +85,14 @@ impl<I: ConstraintInput> LC<I> {
         LC(vec![a.into(), b.into(), c.into()])
     }
 
+    pub fn sum_any(terms: Vec<impl Into<Term<I>>>) -> Self {
+        let mut terms_vec: Vec<Term<I>>  = Vec::new();
+        for term in terms {
+            terms_vec.push(term.into());
+        }
+        LC(terms_vec)
+    }
+
     /// LC(a) - LC(b) -> LC(a - b)
     pub fn sub2(a: impl Into<LC<I>>, b: impl Into<LC<I>>) -> Self {
         let a: LC<I> = a.into();

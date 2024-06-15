@@ -8,8 +8,7 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 use super::{
-    key::{NonUniformR1CS, SparseEqualityItem},
-    ops::{from_i64, ConstraintInput, Term, Variable, LC},
+    jolt_constraints::JoltIn, key::{NonUniformR1CS, SparseEqualityItem}, ops::{from_i64, ConstraintInput, Term, Variable, LC}
 };
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
@@ -206,6 +205,14 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             Variable::Auxiliary(aux_index) => I::COUNT + aux_index,
             Variable::Constant => I::COUNT + self.next_aux,
         }
+    }
+
+    pub fn create_remainder_term_with_value(&self, value: i64) -> Term<I> {
+        Term(Variable::Constant, value)
+    }
+
+    pub fn create_memory_term(&self, input: I, value: i64) -> Term<I> {
+        Term(Variable::Input(input), value)
     }
 
     pub fn constrain_eq_zero(&mut self, lc: LC<I>) {
