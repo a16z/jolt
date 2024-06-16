@@ -209,6 +209,7 @@ impl Program {
                     }
                 });
             });
+        //circuit_flag_trace.iter().for_each(|field| {assert_eq!(*field * (F::one() - *field), F::zero(), "flag not set appropriately")});
 
         (io_device, trace, circuit_flag_trace)
     }

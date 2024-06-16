@@ -10,7 +10,7 @@ use crate::r1cs::ops::Variable;
 use crate::r1cs::spartan::{self, UniformSpartanProof};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
-use common::constants::RAM_START_ADDRESS;
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
 use common::rv_trace::NUM_CIRCUIT_FLAGS;
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -417,7 +417,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
         let mut jolt_commitments = jolt_polynomials.commit(&preprocessing.generators);
         let (witness_segments, r1cs_commitments, r1cs_builder) = Self::r1cs_setup(
             padded_trace_length,
-            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset,
+            RAM_START_ADDRESS - program_io.memory_layout.ram_witness_offset + REGISTER_COUNT,
             &trace,
             &jolt_polynomials,
             circuit_flags,
@@ -439,14 +439,15 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &jolt_polynomials.bytecode,
             &mut transcript,
         );
-
+        println!("Constraints are working!");
         let instruction_proof = InstructionLookupsProof::prove(
             &preprocessing.generators,
             &jolt_polynomials.instruction_lookups,
             &preprocessing.instruction_lookups,
             &mut transcript,
         );
-
+        println!("Lookup Proofs generated!");
+        panic!();
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.generators,
             &preprocessing.read_write_memory,
