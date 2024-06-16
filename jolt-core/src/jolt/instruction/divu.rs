@@ -22,50 +22,49 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
         let r_y = trace_row.instruction.rs2;
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
-        let v_q = Some(virtual_register_index(1));
-        let v_r = Some(virtual_register_index(2));
-        let v_qy = Some(virtual_register_index(3));
+        let v_r = Some(virtual_register_index(1));
+        let v_qy = Some(virtual_register_index(2));
 
         let mut virtual_sequence = vec![];
 
-        let q = ADVICEInstruction::<WORD_SIZE>(x).lookup_entry();
+        let q = ADVICEInstruction::<WORD_SIZE>(23434).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ADVICE,
-                rs1: r_x,
+                rs1: None,
                 rs2: None,
-                rd: v_q,
+                rd: trace_row.instruction.rd,
                 imm: None,
                 virtual_sequence_index: Some(0),
             },
             register_state: RegisterState {
-                rs1_val: Some(x),
+                rs1_val: None,
                 rs2_val: None,
                 rd_post_val: Some(q),
             },
             memory_state: None,
-            advice_value: Some(q),
+            advice_value: Some(23434), // What should advice value be here?
         });
 
-        let r = ADVICEInstruction::<WORD_SIZE>(y).lookup_entry();
+        let r = ADVICEInstruction::<WORD_SIZE>(342324).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ADVICE,
-                rs1: r_y,
+                rs1: None,
                 rs2: None,
                 rd: v_r,
                 imm: None,
                 virtual_sequence_index: Some(1),
             },
             register_state: RegisterState {
-                rs1_val: Some(y),
+                rs1_val: None,
                 rs2_val: None,
                 rd_post_val: Some(r),
             },
             memory_state: None,
-            advice_value: Some(r),
+            advice_value: Some(342324),  // What should advice value be here?
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -73,7 +72,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::MULU,
-                rs1: v_q,
+                rs1: trace_row.instruction.rd,
                 rs2: r_y,
                 rd: v_qy,
                 imm: None,
@@ -102,7 +101,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             register_state: RegisterState {
                 rs1_val: Some(r),
                 rs2_val: Some(y),
-                rd_post_val: Some(ltu),
+                rd_post_val: None,
             },
             memory_state: None,
             advice_value: None,
@@ -121,8 +120,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
-                rs2_val: Some(r),
-                rd_post_val: Some(lte),
+                rs2_val: Some(x),
+                rd_post_val: None,
             },
             memory_state: None,
             advice_value: None,
@@ -192,7 +191,7 @@ mod test {
         let rd = rng.next_u64() % 32;
 
         let x = rng.next_u32() as u64;
-        let y = if r_y >= r_x { x } else { rng.next_u32() as u64 };
+        let y = rng.next_u32() as u64;
         let result = (i128::from(x as i32) / i128::from(y)) as u32;
 
         let divu_trace_row = RVTraceRow {
@@ -236,9 +235,13 @@ mod test {
                     row.register_state.rd_post_val.unwrap()
                 );
             } else {
-                // Virtual assert instruction
-                println!("output: {} x: {} y: {}", output, x, y);
-                assert!(output == result as u64);
+                // TODO(mw2000): Remove this debug log
+                println!("output: {} rs1_val {:?} rs2_val {}", 
+                    output, 
+                    registers[row.instruction.rs1.unwrap() as usize],
+                    registers[row.instruction.rs2.unwrap() as usize]
+                );
+                assert!(output == 1)
             }
         }
 

@@ -24,12 +24,11 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
         // Virtual registers used in sequence
         let v_0 = Some(virtual_register_index(0));
         let v_q = Some(virtual_register_index(1));
-        let v_r = Some(virtual_register_index(2));
-        let v_qy = Some(virtual_register_index(3));
+        let v_qy = Some(virtual_register_index(2));
 
         let mut virtual_sequence = vec![];
 
-        let q = ADVICEInstruction::<WORD_SIZE>(x).lookup_entry();
+        let q = ADVICEInstruction::<WORD_SIZE>(23455).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -46,17 +45,17 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(q),
             },
             memory_state: None,
-            advice_value: Some(q),
+            advice_value: Some(23455),
         });
 
-        let r = ADVICEInstruction::<WORD_SIZE>(y).lookup_entry();
+        let r = ADVICEInstruction::<WORD_SIZE>(3455656).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ADVICE,
                 rs1: None,
                 rs2: None,
-                rd: v_r,
+                rd: trace_row.instruction.rd,
                 imm: None,
                 virtual_sequence_index: Some(1),
             },
@@ -66,7 +65,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(r),
             },
             memory_state: None,
-            advice_value: Some(r),
+            advice_value: Some(3455656),
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -94,7 +93,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ASSERT_LTU,
-                rs1: v_r,
+                rs1: trace_row.instruction.rd,
                 rs2: r_y,
                 rd: None,
                 imm: None,
@@ -103,7 +102,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             register_state: RegisterState {
                 rs1_val: Some(r),
                 rs2_val: Some(y),
-                rd_post_val: Some(ltu),
+                rd_post_val: None,
             },
             memory_state: None,
             advice_value: None,
@@ -123,7 +122,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             register_state: RegisterState {
                 rs1_val: Some(q_y),
                 rs2_val: Some(x),
-                rd_post_val: Some(lte),
+                rd_post_val: None,
             },
             memory_state: None,
             advice_value: None,
@@ -135,7 +134,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 address: trace_row.instruction.address,
                 opcode: RV32IM::ADD,
                 rs1: v_qy,
-                rs2: v_r,
+                rs2: trace_row.instruction.rd,
                 rd: v_0,
                 imm: None,
                 virtual_sequence_index: Some(5),
@@ -149,40 +148,20 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             advice_value: None,
         });
 
-        let assert_eq = ASSERTEQSIGNSInstruction(_0, x).lookup_entry();
+        let result = ASSERTEQSIGNSInstruction(_0, x).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
                 rs1: v_0,
                 rs2: r_x,
-                rd: None,
+                rd: trace_row.instruction.rd,
                 imm: None,
                 virtual_sequence_index: Some(6),
             },
             register_state: RegisterState {
                 rs1_val: Some(_0),
                 rs2_val: Some(x),
-                rd_post_val: Some(assert_eq),
-            },
-            memory_state: None,
-            advice_value: None,
-        });
-
-        let result = MOVEInstruction::<WORD_SIZE>(q, r).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::MOVE,
-                rs1: v_q,
-                rs2: None,
-                rd: trace_row.instruction.rd,
-                imm: None,
-                virtual_sequence_index: Some(7),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(q),
-                rs2_val: None,
                 rd_post_val: Some(result),
             },
             memory_state: None,
