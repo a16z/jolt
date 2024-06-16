@@ -6,6 +6,7 @@ import {Fr} from "./Fr.sol";
 
 library Jolt {
 
+
     struct BatchedGrandProductLayerProof {
         Fr[][] sumcheck_univariate_coeffs;
         Fr[] left_claims;

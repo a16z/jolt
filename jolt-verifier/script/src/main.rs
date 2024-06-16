@@ -78,6 +78,19 @@ fn get_claims_data<F: JoltField + PrimeField>(batched_circuit: &BatchedDenseGran
     print!("{}", hex::encode(encoded_claims));
 }
 
+fn verify_proof<F: JoltField + PrimeField>(batched_circuit: &mut BatchedDenseGrandProduct<F>) {
+    let claims = batched_circuit.claims();
+
+    let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+
+    let (proof, _r_prover) = batched_circuit.prove_grand_product(&mut transcript);
+
+    let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+
+    let (_, _r_verifier) =
+        BatchedDenseGrandProduct::verify_grand_product(&proof, &claims, &mut transcript);
+}
+
 fn main() {
     let args: Vec<_> = env::args().collect();
 
@@ -98,6 +111,7 @@ fn main() {
     match args[1].as_str() {
         "proofs" => get_proof_data(&mut batched_circuit),
         "claims" => get_claims_data(&batched_circuit),
+        "verify" => verify_proof(&mut batched_circuit),
         _ => println!("invalid arguement"),
     };
 }

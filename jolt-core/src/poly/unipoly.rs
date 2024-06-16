@@ -20,7 +20,7 @@ pub struct UniPoly<F> {
 // ax^3 + bx^2 + cx + d stored as vec![d,b,a]
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct CompressedUniPoly<F: JoltField> {
-    coeffs_except_linear_term: Vec<F>,
+    pub coeffs_except_linear_term: Vec<F>,
 }
 
 impl<F: JoltField> UniPoly<F> {
