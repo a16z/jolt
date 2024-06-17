@@ -282,7 +282,6 @@ fn create_index_html(func_names: Vec<String>) -> Result<()> {
                 reader.onload = async (event) => {{
                     const proofArrayBuffer = event.target.result;
                     const proofData = new Uint8Array(proofArrayBuffer);
-                    console.log(proofData);
 
                     // Fetch preprocessing data and prepare wasm binary to json conversion
                     const response = await fetch('target/wasm32-unknown-unknown/release/preprocessed_{0}.bin')
@@ -290,7 +289,6 @@ fn create_index_html(func_names: Vec<String>) -> Result<()> {
                     const wasmData = new Uint8Array(wasmBinary);
 
                     const result = verify_{0}(wasmData, proofData);
-                    console.log(result);
                     alert(result ? "Proof is valid!" : "Proof is invalid.");
                 }};
 
