@@ -411,6 +411,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 #[cfg(test)]
 mod test {
     use ark_bn254::Fr;
+    use ark_std::One;
 
     use crate::{
         poly::commitment::{commitment_scheme::CommitShape, hyrax::HyraxScheme},

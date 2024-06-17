@@ -1,8 +1,9 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::{One, Zero};
 use binius_field::{BinaryField128b, BinaryField128bPolyval};
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use super::JoltField;
+use super::{FieldOps, JoltField};
 
 impl BiniusConstructable for BinaryField128b {
     fn new(n: u64) -> Self {
@@ -29,28 +30,84 @@ pub trait BiniusConstructable {
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub struct BiniusField<F: BiniusSpecific>(F);
 
+impl<F: BiniusSpecific> FieldOps for BiniusField<F> {}
+impl<'a, 'b, F: BiniusSpecific> FieldOps<&'b BiniusField<F>, BiniusField<F>>
+    for &'a BiniusField<F>
+{
+}
+impl<'b, F: BiniusSpecific> FieldOps<&'b BiniusField<F>, BiniusField<F>> for BiniusField<F> {}
+
+impl<'a, 'b, F: BiniusSpecific> Add<&'b BiniusField<F>> for &'a BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn add(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        *self + other
+    }
+}
+
+impl<'a, 'b, F: BiniusSpecific> Sub<&'b BiniusField<F>> for &'a BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn sub(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        *self - other
+    }
+}
+
+impl<'a, 'b, F: BiniusSpecific> Mul<&'b BiniusField<F>> for &'a BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn mul(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        *self * other
+    }
+}
+
+impl<'a, 'b, F: BiniusSpecific> Div<&'b BiniusField<F>> for &'a BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn div(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        *self / other
+    }
+}
+
+impl<'b, F: BiniusSpecific> Add<&'b BiniusField<F>> for BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn add(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        BiniusField(self.0 + other.0)
+    }
+}
+
+impl<'b, F: BiniusSpecific> Sub<&'b BiniusField<F>> for BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn sub(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        BiniusField(self.0 - other.0)
+    }
+}
+
+impl<'b, F: BiniusSpecific> Mul<&'b BiniusField<F>> for BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn mul(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        BiniusField(self.0 * other.0)
+    }
+}
+
+impl<'b, F: BiniusSpecific> Div<&'b BiniusField<F>> for BiniusField<F> {
+    type Output = BiniusField<F>;
+
+    fn div(self, other: &'b BiniusField<F>) -> BiniusField<F> {
+        #[allow(clippy::suspicious_arithmetic_impl)] // clippy doesn't know algebra
+        BiniusField(self.0 * other.0.invert().unwrap())
+    }
+}
+
 /// Wrapper for all generic BiniusField functionality.
 impl<F: BiniusSpecific> JoltField for BiniusField<F> {
     const NUM_BYTES: usize = 16;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         Self(F::random(rng))
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-
-    fn is_one(&self) -> bool {
-        self.0 == Self::one().0
-    }
-
-    fn zero() -> Self {
-        Self(F::ZERO)
-    }
-
-    fn one() -> Self {
-        Self(F::ONE)
     }
 
     fn from_u64(n: u64) -> Option<Self> {
@@ -78,6 +135,26 @@ impl<F: BiniusSpecific> JoltField for BiniusField<F> {
 
         let field_element = bytemuck::try_from_bytes::<F>(bytes).unwrap();
         Self(field_element.to_owned())
+    }
+}
+
+impl<F: BiniusSpecific> Zero for BiniusField<F> {
+    fn zero() -> Self {
+        Self(F::ZERO)
+    }
+
+    fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+}
+
+impl<F: BiniusSpecific> One for BiniusField<F> {
+    fn one() -> Self {
+        Self(F::ONE)
+    }
+
+    fn is_one(&self) -> bool {
+        self.0 == Self::one().0
     }
 }
 
