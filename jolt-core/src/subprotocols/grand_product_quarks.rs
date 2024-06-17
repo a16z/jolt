@@ -17,12 +17,10 @@ use thiserror::Error;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct QuarkGrandProductProof<C: CommitmentScheme> {
     sumcheck_proof: SumcheckInstanceProof<C::Field>,
-    v_commitment: Vec<C::Commitment>,
     f_commitment: Vec<C::Commitment>,
     claimed_eval_f_x_r: (Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
     claimed_eval_f_r_x: (Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
     sum_openings: C::BatchedProof,
-    v_opening_proof: C::BatchedProof,
     num_vars: usize,
 }
 pub struct QuarkGrandProduct<F: JoltField> {
@@ -208,7 +206,6 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         let mut f_polys = Vec::<DensePolynomial<C::Field>>::new();
         let mut sumcheck_polys = Vec::<DensePolynomial<C::Field>>::new();
         let mut products = Vec::<C::Field>::new();
-        let mut v_polys = Vec::<DensePolynomial<C::Field>>::new();
 
         for v in leaves {
             let v_polynomial = DensePolynomial::<C::Field>::new(v.to_vec());
@@ -218,16 +215,11 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             sumcheck_polys.push(f_r_0);
             sumcheck_polys.push(f_r_1);
             products.push(p);
-            v_polys.push(v_polynomial);
         }
 
         // We bind to these polynomials
         transcript.append_scalars(b"grand product claim", &products);
-        let v_commitment = C::batch_commit_polys(&v_polys, setup, BatchType::Big);
         let f_commitment = C::batch_commit_polys(&f_polys, setup, BatchType::Big);
-        for v in v_commitment.iter() {
-            v.append_to_transcript(b"v commitment", transcript);
-        }
         for f in f_commitment.iter() {
             f.append_to_transcript(b"f commitment", transcript);
         }
@@ -241,7 +233,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
 
         // Sample a constant to do a random linear combination to combine the sumchecks
         let r_combination: Vec<C::Field> =
-            transcript.challenge_vector(b"for the random linear comb", v_polys.len());
+            transcript.challenge_vector(b"for the random linear comb", f_polys.len());
 
         // We define a closure using vals[0] = eq(tau, x), vals[1] = f(1, x), vals[1] = f(x, 0), vals[2] = f(x, 1)
         let output_check_fn = |vals: &[C::Field]| -> C::Field {
@@ -268,7 +260,6 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
 
         // Interface for the batch proof is &[&Poly] but we have &[Poly]
         let borrowed_f: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
-        let borrowed_v: Vec<&DensePolynomial<C::Field>> = v_polys.iter().collect();
 
         // Do the line reduction open and prove on r
         let claimed_eval_f_x_r = open_and_prove::<C>(&x, false, &f_polys, setup, transcript);
@@ -286,26 +277,15 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             transcript,
         );
 
-        // Here we don't calculate an eval because it should be equal to f(0, x) which is the first point we open
-        let v_opening_proof = C::batch_prove(
-            setup,
-            &borrowed_v,
-            &x,
-            &claimed_eval_f_x_r.0,
-            BatchType::Big,
-            transcript,
-        );
         let num_vars = v_variables;
 
         (
             Self {
                 sumcheck_proof,
-                v_commitment,
                 f_commitment,
                 claimed_eval_f_x_r,
                 claimed_eval_f_r_x,
                 sum_openings,
-                v_opening_proof,
                 num_vars,
             },
             x.clone(),
@@ -323,9 +303,6 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
     ) -> Result<(Vec<C::Field>, Vec<C::Field>), QuarkError> {
         // First we append the claimed values for the commitment and the product
         transcript.append_scalars(b"grand product claim", claims);
-        for v in self.v_commitment.iter() {
-            v.append_to_transcript(b"v commitment", transcript);
-        }
         for f in self.f_commitment.iter() {
             f.append_to_transcript(b"f commitment", transcript);
         }
@@ -333,7 +310,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         //Next sample the tau and construct the evals poly
         let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", n_rounds);
         let r_combination: Vec<C::Field> =
-            transcript.challenge_vector(b"for the random linear comb", self.v_commitment.len());
+            transcript.challenge_vector(b"for the random linear comb", self.f_commitment.len());
 
         // To complete the sumcheck proof we have to validate that our polynomial openings match and are right.
         let (expected, r) = self
@@ -343,7 +320,6 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
 
         // Again the batch verify expects we have a slice of borrows but we have a slice of Commitments
         let borrowed_f: Vec<&C::Commitment> = self.f_commitment.iter().collect();
-        let borrowed_v: Vec<&C::Commitment> = self.v_commitment.iter().collect();
 
         // We apply the protocol for line reduced openings to prove f(0r) f(1r) and f(r1) f(r0)
         line_reduce_opening_verify::<C>(
@@ -376,17 +352,6 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             &challenge_sum,
             claims,
             &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        // Now we enforce that f(0, r) = v(r) via an opening proof on v
-        C::batch_verify(
-            &self.v_opening_proof,
-            setup,
-            &r,
-            &self.claimed_eval_f_x_r.0,
-            &borrowed_v,
             transcript,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
