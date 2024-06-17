@@ -22,9 +22,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
       - name: cargo fmt
         uses: actions-rs/cargo@v1
         with:
@@ -38,9 +35,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
       - name: cargo clippy
         uses: actions-rs/cargo@v1
         with:
@@ -52,10 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache Jolt RISC-V Rust toolchain
+        uses: actions/cache@v4
         with:
-          cache-on-failure: true
+          key: jolt-rust-toolchain-${{hashFiles('.jolt.rust.toolchain-tag')}}
+          path: ~/.jolt
+      - name: Install Jolt RISC-V Rust toolchain
+        run: cargo run install-toolchain
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: run jolt-core tests
+      - name: Run jolt-core tests
         run: cargo nextest run -p jolt-core
