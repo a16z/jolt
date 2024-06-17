@@ -6,7 +6,7 @@ use crate::jolt::instruction::{
     add::ADDInstruction, beq::BEQInstruction, mulu::MULUInstruction, sltu::SLTUInstruction,
     virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
 };
-/// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
+/// Perform unsigned division and return quotient
 pub struct DIVUInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD_SIZE> {
@@ -45,7 +45,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rd_post_val: Some(q),
             },
             memory_state: None,
-            advice_value: Some(quotient), // What should advice value be here?
+            advice_value: Some(quotient),
         });
 
         let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
@@ -65,7 +65,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rd_post_val: Some(r),
             },
             memory_state: None,
-            advice_value: Some(remainder), // What should advice value be here?
+            advice_value: Some(remainder),
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();

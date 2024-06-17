@@ -7,7 +7,7 @@ use crate::jolt::instruction::{
     virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
 };
 
-/// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
+/// Perform unsigned divison and return remainder
 pub struct REMUInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD_SIZE> {

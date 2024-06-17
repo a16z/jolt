@@ -431,7 +431,6 @@ pub enum RV32IM {
     AUIPC,
     ECALL,
     EBREAK,
-    MOVE,
     MUL,
     MULH,
     MULHU,
@@ -446,7 +445,6 @@ pub enum RV32IM {
     // Virtual instructions
     VIRTUAL_MOVSIGN,
     VIRTUAL_ADVICE,
-    VIRTUAL_MOVE,
     VIRTUAL_ASSERT_LTU,
     VIRTUAL_ASSERT_LTE,
     VIRTUAL_ASSERT_LT_ABS,
@@ -538,7 +536,6 @@ impl RV32IM {
             RV32IM::SRA    |
             RV32IM::SLT    |
             RV32IM::SLTU   |
-            RV32IM::MOVE   |
             RV32IM::MUL    |
             RV32IM::MULH   |
             RV32IM::MULHU  |
@@ -587,7 +584,6 @@ impl RV32IM {
             RV32IM::LUI   |
             RV32IM::AUIPC |
             RV32IM::VIRTUAL_ADVICE=> RV32InstructionFormat::U,
-            RV32IM::VIRTUAL_MOVE => RV32InstructionFormat::U,
 
             RV32IM::JAL => RV32InstructionFormat::UJ,
 
