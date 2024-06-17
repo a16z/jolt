@@ -25,6 +25,7 @@ impl Tracer {
             instruction: inst,
             register_state: RegisterState::default(),
             memory_state: None,
+            advice_value: None,
         });
     }
 

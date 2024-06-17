@@ -10,6 +10,7 @@ pub struct RVTraceRow {
     pub instruction: ELFInstruction,
     pub register_state: RegisterState,
     pub memory_state: Option<MemoryState>,
+    pub advice_value: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]

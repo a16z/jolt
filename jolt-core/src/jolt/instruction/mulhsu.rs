@@ -43,6 +43,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
                 rd_post_val: Some(s_x),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let xy_high_bits = MULHUInstruction::<WORD_SIZE>(x, y).lookup_entry();
@@ -62,6 +63,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
                 rd_post_val: Some(xy_high_bits),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let sx_y_low_bits = MULUInstruction::<WORD_SIZE>(s_x, y).lookup_entry();
@@ -81,6 +83,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
                 rd_post_val: Some(sx_y_low_bits),
             },
             memory_state: None,
+            advice_value: None,
         });
 
         let result = ADDInstruction::<WORD_SIZE>(xy_high_bits, sx_y_low_bits).lookup_entry();
@@ -100,6 +103,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for MULHSUInstruction<WO
                 rd_post_val: Some(result),
             },
             memory_state: None,
+            advice_value: None,
         });
         virtual_sequence
     }
@@ -144,6 +148,7 @@ mod test {
                 rd_post_val: Some(result as u64),
             },
             memory_state: None,
+            advice_value: None,
         };
 
         let virtual_sequence = MULHSUInstruction::<32>::virtual_sequence(mulhsu_trace_row);

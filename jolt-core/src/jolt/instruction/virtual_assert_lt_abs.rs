@@ -113,7 +113,7 @@ mod test {
     }
 
     #[test]
-    fn assert_lte_instruction_64_e2e() {
+    fn lt_abs_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
