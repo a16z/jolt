@@ -157,7 +157,6 @@ pub mod virtual_advice;
 pub mod virtual_assert_eq_signs;
 pub mod virtual_assert_lt_abs;
 pub mod virtual_assert_lte;
-pub mod virtual_move;
 pub mod xor;
 
 #[cfg(test)]

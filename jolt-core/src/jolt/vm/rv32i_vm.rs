@@ -16,8 +16,7 @@ use crate::jolt::instruction::{
     srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, virtual_advice::ADVICEInstruction,
     virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
     virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
-    virtual_move::MOVEInstruction, xor::XORInstruction, JoltInstruction, JoltInstructionSet,
-    SubtableIndices,
+    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
@@ -109,7 +108,6 @@ instruction_set!(
   MUL: MULInstruction<WORD_SIZE>,
   MULU: MULUInstruction<WORD_SIZE>,
   MULHU: MULHUInstruction<WORD_SIZE>,
-  VIRTUAL_MOVE: MOVEInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
   VIRTUAL_ASSERT_LT_ABS: ASSERTLTABSInstruction<WORD_SIZE>,
