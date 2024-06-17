@@ -3,10 +3,9 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, mulu::MULUInstruction, virtual_advice::ADVICEInstruction,
-    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
-    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
-    virtual_move::MOVEInstruction, JoltInstruction,
+    add::ADDInstruction, mulu::MULUInstruction, sltu::SLTUInstruction,
+    virtual_advice::ADVICEInstruction, virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
+    virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
 };
 
 /// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
@@ -28,7 +27,10 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
 
         let mut virtual_sequence = vec![];
 
-        let q = ADVICEInstruction::<WORD_SIZE>(23455).lookup_entry();
+        let quotient = x / y;
+        let remainder = x - quotient * y;
+
+        let q = ADVICEInstruction::<WORD_SIZE>(quotient).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -45,10 +47,10 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(q),
             },
             memory_state: None,
-            advice_value: Some(23455),
+            advice_value: Some(quotient),
         });
 
-        let r = ADVICEInstruction::<WORD_SIZE>(3455656).lookup_entry();
+        let r = ADVICEInstruction::<WORD_SIZE>(remainder).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -65,7 +67,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rd_post_val: Some(r),
             },
             memory_state: None,
-            advice_value: Some(3455656),
+            advice_value: Some(remainder),
         });
 
         let q_y = MULUInstruction::<WORD_SIZE>(q, y).lookup_entry();
@@ -88,7 +90,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             advice_value: None,
         });
 
-        let ltu = ASSERTLTABSInstruction::<WORD_SIZE>(r, y).lookup_entry();
+        let _ltu = SLTUInstruction(r, y).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -108,7 +110,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             advice_value: None,
         });
 
-        let lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
+        let _lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -128,7 +130,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             advice_value: None,
         });
 
-        let _0 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
+        let add_0: u64 = ADDInstruction::<WORD_SIZE>(q_y, r).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -142,27 +144,27 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             register_state: RegisterState {
                 rs1_val: Some(q_y),
                 rs2_val: Some(r),
-                rd_post_val: Some(_0),
+                rd_post_val: Some(add_0),
             },
             memory_state: None,
             advice_value: None,
         });
 
-        let result = ASSERTEQSIGNSInstruction(_0, x).lookup_entry();
+        let _assert_eq = ASSERTEQSIGNSInstruction(add_0, x).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
                 opcode: RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
                 rs1: v_0,
                 rs2: r_x,
-                rd: trace_row.instruction.rd,
+                rd: None,
                 imm: None,
                 virtual_sequence_index: Some(6),
             },
             register_state: RegisterState {
-                rs1_val: Some(_0),
+                rs1_val: Some(add_0),
                 rs2_val: Some(x),
-                rd_post_val: Some(result),
+                rd_post_val: None,
             },
             memory_state: None,
             advice_value: None,
@@ -193,7 +195,8 @@ mod test {
 
         let x = rng.next_u32() as u64;
         let y = if r_x == r_y { x } else { rng.next_u32() as u64 };
-        let result = ((i128::from(x as i32) * i128::from(y)) >> 32) as u32;
+        let quotient = x / y;
+        let result = x - quotient * y;
 
         let remu_trace_row = RVTraceRow {
             instruction: ELFInstruction {
