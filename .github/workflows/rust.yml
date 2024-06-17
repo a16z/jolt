@@ -56,4 +56,4 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
-        run: cargo nextest run -p jolt-core
+        run: cargo nextest run --release -p jolt-core
