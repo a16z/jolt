@@ -3,9 +3,8 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, mulu::MULUInstruction, sltu::SLTUInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
-    virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
+    add::ADDInstruction, beq::BEQInstruction, mulu::MULUInstruction, sltu::SLTUInstruction,
+    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
 };
 /// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
 pub struct DIVUInstruction<const WORD_SIZE: usize>;
@@ -149,11 +148,11 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
-        let _assert_eq = ASSERTEQSIGNSInstruction(add_0, x).lookup_entry();
+        let _assert_eq = BEQInstruction(add_0, x).lookup_entry();
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
+                opcode: RV32IM::VIRTUAL_ASSERT_EQ,
                 rs1: v_0,
                 rs2: r_x,
                 rd: None,
