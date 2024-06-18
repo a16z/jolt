@@ -3,7 +3,9 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, beq::BEQInstruction, mul::MULInstruction, virtual_advice::ADVICEInstruction, virtual_assert_eq_signs::ASSERTEQSIGNSInstruction, virtual_assert_lt_abs::ASSERTLTABSInstruction, JoltInstruction
+    add::ADDInstruction, beq::BEQInstruction, mul::MULInstruction,
+    virtual_advice::ADVICEInstruction, virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
+    virtual_assert_lt_abs::ASSERTLTABSInstruction, JoltInstruction,
 };
 
 /// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
