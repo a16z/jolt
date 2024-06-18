@@ -1,28 +1,17 @@
 use ark_ff::{PrimeField, UniformRand};
+use ark_std::Zero;
 
-use super::JoltField;
+use super::{FieldOps, JoltField};
+
+impl FieldOps for ark_bn254::Fr {}
+impl<'a, 'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for &'a ark_bn254::Fr {}
+impl<'b> FieldOps<&'b ark_bn254::Fr, ark_bn254::Fr> for ark_bn254::Fr {}
 
 impl JoltField for ark_bn254::Fr {
     const NUM_BYTES: usize = 32;
 
     fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
         <Self as UniformRand>::rand(rng)
-    }
-
-    fn is_zero(&self) -> bool {
-        <Self as ark_std::Zero>::is_zero(self)
-    }
-
-    fn is_one(&self) -> bool {
-        <Self as ark_std::One>::is_one(self)
-    }
-
-    fn zero() -> Self {
-        <Self as ark_std::Zero>::zero()
-    }
-
-    fn one() -> Self {
-        <Self as ark_std::One>::one()
     }
 
     fn from_u64(n: u64) -> Option<Self> {

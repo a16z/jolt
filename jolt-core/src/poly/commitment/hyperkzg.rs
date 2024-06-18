@@ -216,7 +216,7 @@ where
         b"v",
         &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
     );
-    let q_powers = transcript.challenge_scalar_powers(b"r", k);
+    let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(b"r", k);
 
     transcript.append_points(
         b"W",
@@ -245,7 +245,7 @@ where
     // L0, L1, L2 can be replaced by single MSM of C with the powers of q multiplied by (1 + d_0 + d_1)
     // with additionally concatenated inputs for scalars/bases.
 
-    let q_power_multiplier = P::ScalarField::one() + d_0 + d_1;
+    let q_power_multiplier: P::ScalarField = P::ScalarField::one() + d_0 + d_1;
 
     let q_powers_multiplied: Vec<P::ScalarField> = q_powers
         .par_iter()

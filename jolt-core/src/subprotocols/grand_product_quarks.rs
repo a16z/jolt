@@ -10,6 +10,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::utils::math::Math;
 use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
 use ark_serialize::*;
+use ark_std::{One, Zero};
 use itertools::Itertools;
 use rayon::prelude::*;
 use thiserror::Error;

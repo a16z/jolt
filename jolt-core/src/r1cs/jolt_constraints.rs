@@ -288,6 +288,7 @@ mod tests {
     };
 
     use ark_bn254::Fr;
+    use ark_std::Zero;
     use strum::EnumCount;
 
     #[test]
