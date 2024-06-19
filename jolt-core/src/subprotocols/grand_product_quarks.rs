@@ -30,7 +30,7 @@ pub struct QuarkGrandProduct<F: JoltField> {
 }
 
 /// The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs.
-const QUARK_HYBRID_LAYER_DEPTH: usize = 3;
+const QUARK_HYBRID_LAYER_DEPTH: usize = 6;
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
     for QuarkGrandProduct<F>
@@ -360,7 +360,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         let borrowed_g: Vec<&C::Commitment> = self.g_commitment.iter().collect();
 
         // Get the r_1 and r_prime values
-        let r_1 = r[0].clone();
+        let r_1 = r[0];
         let mut r_prime = vec![C::Field::zero(); r.len() - 1];
         r_prime.clone_from_slice(&r[1..r.len()]);
         // Firstly we verify that the openings of g(r) are correct
@@ -511,6 +511,9 @@ fn open_and_prove<C: CommitmentScheme>(
     (openings_0, openings_1, proof)
 }
 
+#[allow(clippy::type_complexity)]
+/// Calculates the r0 r1 values and writes their evaluation to the transcript before calculating r star and
+/// the opening of this, but does not prove the opening as that is left to the calling function
 fn line_reduce<C: CommitmentScheme>(
     r: &[C::Field],
     is_before: bool,
@@ -595,7 +598,7 @@ fn line_reduce_opening_verify<C: CommitmentScheme>(
         &line_reduce_verify(&(data.0.clone(), data.1.clone()), r, is_before, transcript);
 
     // Finally check the opening at r_star
-    let res = C::batch_verify(&data.2, setup, &r_star, &claimed, commitments, transcript);
+    let res = C::batch_verify(&data.2, setup, r_star, claimed, commitments, transcript);
     match res {
         Ok(_) => Ok(()),
         Err(_) => Err(QuarkError::InvalidOpeningProof),
