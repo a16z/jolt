@@ -1,5 +1,6 @@
 use jolt_core::{
     field::JoltField,
+    poly::commitment::zeromorph::Zeromorph,
     subprotocols::grand_product::{BatchedDenseGrandProduct, BatchedGrandProduct},
     utils::transcript::ProofTranscript,
 };
@@ -9,13 +10,16 @@ use ark_ff::{BigInteger, PrimeField};
 
 use alloy_primitives::{hex, U256};
 use alloy_sol_types::{sol, SolType};
-use ark_bn254::Fr;
+use ark_bn254::{Bn254, Fr};
 use ark_std::test_rng;
 
-fn get_proof_data<F: JoltField + PrimeField>(batched_circuit: &mut BatchedDenseGrandProduct<F>) {
+fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
     let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
 
-    let (proof, _r_prover) = batched_circuit.prove_grand_product(&mut transcript);
+    let (proof, _r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+        Fr,
+        Zeromorph<Bn254>,
+    >>::prove_grand_product(batched_circuit, &mut transcript, None);
 
     //encoding the proof into abi
 
@@ -67,28 +71,18 @@ fn get_proof_data<F: JoltField + PrimeField>(batched_circuit: &mut BatchedDenseG
     );
 }
 
-fn get_claims_data<F: JoltField + PrimeField>(batched_circuit: &BatchedDenseGrandProduct<F>) {
-    let claims = batched_circuit
-        .claims()
+fn get_claims_data(batched_circuit: &BatchedDenseGrandProduct<Fr>) {
+    let claims =
+        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::claims(
+            batched_circuit,
+        );
+    let claims = claims
         .iter()
         .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
         .collect::<Vec<_>>();
     type U256Array = sol! { uint256[] };
     let encoded_claims = U256Array::abi_encode(&claims);
     print!("{}", hex::encode(encoded_claims));
-}
-
-fn verify_proof<F: JoltField + PrimeField>(batched_circuit: &mut BatchedDenseGrandProduct<F>) {
-    let claims = batched_circuit.claims();
-
-    let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-
-    let (proof, _r_prover) = batched_circuit.prove_grand_product(&mut transcript);
-
-    let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-
-    let (_, _r_verifier) =
-        BatchedDenseGrandProduct::verify_grand_product(&proof, &claims, &mut transcript);
 }
 
 fn main() {
@@ -106,12 +100,14 @@ fn main() {
     .take(BATCH_SIZE)
     .collect();
 
-    let mut batched_circuit = BatchedDenseGrandProduct::construct(leaves);
+    let mut batched_circuit = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+        Fr,
+        Zeromorph<Bn254>,
+    >>::construct(leaves);
 
     match args[1].as_str() {
         "proofs" => get_proof_data(&mut batched_circuit),
         "claims" => get_claims_data(&batched_circuit),
-        "verify" => verify_proof(&mut batched_circuit),
         _ => println!("invalid arguement"),
     };
 }
