@@ -621,7 +621,7 @@ where
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
-            TimestampValidityProof::prove_grand_products(range_check_polys, transcript);
+            TimestampValidityProof::prove_grand_products(range_check_polys, transcript, generators);
 
         let polys_iter = range_check_polys
             .read_cts_read_timestamp
@@ -677,6 +677,7 @@ where
     fn prove_grand_products(
         polynomials: &RangeCheckPolynomials<F, C>,
         transcript: &mut ProofTranscript,
+        setup: &C::Setup,
     ) -> (BatchedGrandProductProof<C>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
         let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
@@ -703,7 +704,7 @@ where
         multiset_hashes.append_to_transcript(transcript);
 
         let (batched_grand_product, r_grand_product) =
-            batched_circuit.prove_grand_product(transcript, None);
+            batched_circuit.prove_grand_product(transcript, Some(setup));
 
         drop_in_background_thread(batched_circuit);
 
@@ -741,7 +742,7 @@ where
                 &self.batched_grand_product,
                 &concatenated_hashes,
                 transcript,
-                None,
+                Some(generators),
             );
 
         let openings: Vec<_> = self
