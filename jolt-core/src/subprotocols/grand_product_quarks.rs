@@ -30,7 +30,7 @@ pub struct QuarkGrandProduct<F: JoltField> {
 }
 
 /// The depth in the product tree of the GKR grand product at which the hybrid scheme will switch to using quarks grand product proofs.
-const QUARK_HYBRID_LAYER_DEPTH: usize = 6;
+const QUARK_HYBRID_LAYER_DEPTH: usize = 4;
 
 impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
     for QuarkGrandProduct<F>
@@ -250,14 +250,14 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         let output_check_fn = |vals: &[C::Field]| -> C::Field {
             let eval = vals[vals.len() - 2];
             let eq_sum = vals[vals.len() - 1];
-            let mut sum = C::Field::zero();
+            let mut sum_1 = C::Field::zero();
+            let mut sum_2 = C::Field::zero();
 
             for i in 0..(vals.len() / 3) {
-                sum += r_combination[i]
-                    * (eval * (vals[i * 3] - vals[3 * i + 1] * vals[3 * i + 2])
-                        + eq_sum * vals[i * 3 + 1]);
+                sum_1 += r_combination[i] * (vals[i * 3] - vals[3 * i + 1] * vals[3 * i + 2]);
+                sum_2 += r_combination[i] * vals[i * 3 + 1];
             }
-            sum
+            sum_1 * eval + sum_2 * eq_sum
         };
 
         // The sumcheck should have the claims times the random coefficents as the sum as all terms are zero except
@@ -303,9 +303,9 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         // Therefore we do a line reduced opening on g(r', 0) and g(r', 1)e();
         let mut r_prime = vec![C::Field::zero(); x.len() - 1];
         r_prime.clone_from_slice(&x[1..x.len()]);
-        let claimed_eval_g_r_x = open_and_prove::<C>(&r_prime, true, &g_polys, setup, transcript);
+        let claimed_eval_g_r_x = open_and_prove::<C>(&r_prime, &g_polys, setup, transcript);
         // next we need to make a claim about h(r', 0) and h(r', 1) so we use our line reduction to make one claim
-        let ((r_t, h_r_t), helper_values) = line_reduce::<C>(&r_prime, true, &v_polys, transcript);
+        let ((r_t, h_r_t), helper_values) = line_reduce::<C>(&r_prime, &v_polys, transcript);
 
         let num_vars = v_variables;
 
@@ -377,13 +377,12 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         line_reduce_opening_verify::<C>(
             &self.claimed_eval_g_r_x,
             &r_prime,
-            true,
             &borrowed_g,
             transcript,
             setup,
         )?;
         // Load the h(r,t) values using a line reduction without opening because the opening is done in calling function
-        let (r_t, h_r_t) = line_reduce_verify(&self.helper_values, &r_prime, true, transcript);
+        let (r_t, h_r_t) = line_reduce_verify(&self.helper_values, &r_prime, transcript);
 
         // We enforce that f opened at (1,1,...,1, 0) is in fact the product
         let challenge_sum = vec![C::Field::one(); n_rounds];
@@ -489,14 +488,13 @@ fn v_into_f<C: CommitmentScheme>(
 //        on (r_star - 1) * f(0r) + r_star * f(1r) in the commitment to f.
 fn open_and_prove<C: CommitmentScheme>(
     r: &[C::Field],
-    is_before: bool,
     f_polys: &[DensePolynomial<C::Field>],
     setup: &C::Setup,
     transcript: &mut ProofTranscript,
 ) -> (Vec<C::Field>, Vec<C::Field>, C::BatchedProof) {
     // Do the line reduction protocol
     let ((r_star, openings_star), (openings_0, openings_1)) =
-        line_reduce::<C>(r, is_before, f_polys, transcript);
+        line_reduce::<C>(r, f_polys, transcript);
     // Batch proof requires  &[&]
     let borrowed: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
     let proof = C::batch_prove(
@@ -516,31 +514,17 @@ fn open_and_prove<C: CommitmentScheme>(
 /// the opening of this, but does not prove the opening as that is left to the calling function
 fn line_reduce<C: CommitmentScheme>(
     r: &[C::Field],
-    is_before: bool,
     f_polys: &[DensePolynomial<C::Field>],
     transcript: &mut ProofTranscript,
 ) -> (
     (Vec<C::Field>, Vec<C::Field>),
     (Vec<C::Field>, Vec<C::Field>),
 ) {
-    let mut r_0 = if is_before {
-        r.to_vec()
-    } else {
-        vec![C::Field::zero()]
-    };
-    let mut r_1 = if is_before {
-        r.to_vec()
-    } else {
-        vec![C::Field::one()]
-    };
-
-    if is_before {
-        r_0.push(C::Field::zero());
-        r_1.push(C::Field::one());
-    } else {
-        r_0.append(&mut r.to_vec());
-        r_1.append(&mut r.to_vec());
-    }
+    // Calculates r0 and r1
+    let mut r_0 = r.to_vec();
+    let mut r_1 = r.to_vec();
+    r_0.push(C::Field::zero());
+    r_1.push(C::Field::one());
 
     let chis_1 = EqPolynomial::evals(&r_0);
     let openings_0: Vec<C::Field> = f_polys
@@ -559,12 +543,8 @@ fn line_reduce<C: CommitmentScheme>(
     let rand: C::Field = transcript.challenge_scalar(b"loading r_star");
 
     // Now calculate l(rand) = r.rand if is before or rand.r if not is before
-    let mut r_star = if is_before { r.to_vec() } else { vec![rand] };
-    if is_before {
-        r_star.push(rand);
-    } else {
-        r_star.append(&mut r.to_vec());
-    }
+    let mut r_star = r.to_vec();
+    r_star.push(rand);
 
     // Now calculate the evals of f at r_star
     let chis_3 = EqPolynomial::evals(&r_star);
@@ -588,14 +568,12 @@ fn line_reduce<C: CommitmentScheme>(
 fn line_reduce_opening_verify<C: CommitmentScheme>(
     data: &(Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
     r: &[C::Field],
-    is_before: bool,
     commitments: &[&C::Commitment],
     transcript: &mut ProofTranscript,
     setup: &C::Setup,
 ) -> Result<(), QuarkError> {
     // First compute the line reduction and points
-    let (r_star, claimed) =
-        &line_reduce_verify(&(data.0.clone(), data.1.clone()), r, is_before, transcript);
+    let (r_star, claimed) = &line_reduce_verify(&(data.0.clone(), data.1.clone()), r, transcript);
 
     // Finally check the opening at r_star
     let res = C::batch_verify(&data.2, setup, r_star, claimed, commitments, transcript);
@@ -608,7 +586,6 @@ fn line_reduce_opening_verify<C: CommitmentScheme>(
 fn line_reduce_verify<F: JoltField>(
     data: &(Vec<F>, Vec<F>),
     r: &[F],
-    is_before: bool,
     transcript: &mut ProofTranscript,
 ) -> (Vec<F>, Vec<F>) {
     // To get our random we first append the openings data
@@ -617,12 +594,8 @@ fn line_reduce_verify<F: JoltField>(
     let rand: F = transcript.challenge_scalar(b"loading r_star");
 
     // Compute l(rand) = (r, rand) or (rand,r)
-    let mut r_star = if is_before { r.to_vec() } else { vec![rand] };
-    if is_before {
-        r_star.push(rand);
-    } else {
-        r_star.append(&mut r.to_vec());
-    }
+    let mut r_star = r.to_vec();
+    r_star.push(rand);
 
     // Compute our claimed openings
     let claimed: Vec<F> = data
