@@ -239,7 +239,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         let challenge_sum = vec![C::Field::one(); v_variables];
         let eq_sum: DensePolynomial<<C as CommitmentScheme>::Field> =
             DensePolynomial::new(EqPolynomial::evals(&challenge_sum));
-        //We add evals as the last to last polynomial in the sumcheck
+        //We add evals as the last polynomial in the sumcheck
         sumcheck_polys.push(eq_sum);
 
         // Sample a constant to do a random linear combination to combine the sumchecks
