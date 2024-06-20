@@ -232,7 +232,7 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", v_variables);
         let evals: DensePolynomial<<C as CommitmentScheme>::Field> =
             DensePolynomial::new(EqPolynomial::evals(&tau));
-        //We add evals as the last second to last polynomial in the sumcheck
+        //We add evals as the second to last polynomial in the sumcheck
         sumcheck_polys.push(evals);
 
         // Next we calculate the polynomial equal to 1 at all points but 1,1,1...,0
