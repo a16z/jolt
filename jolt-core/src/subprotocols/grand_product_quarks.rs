@@ -211,8 +211,8 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
 
         for v in leaves.iter() {
             let v_polynomial = DensePolynomial::<C::Field>::new(v.to_vec());
-            v_polys.push(v_polynomial.clone());
             let (f_1_r, f_r_0, f_r_1, p) = v_into_f::<C>(&v_polynomial);
+            v_polys.push(v_polynomial);
             g_polys.push(f_1_r.clone());
             sumcheck_polys.push(f_1_r);
             sumcheck_polys.push(f_r_0);
