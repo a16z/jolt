@@ -2,8 +2,7 @@ use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{
-        mul_0_1_optimized,
-        thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
+        math::Math, mul_0_1_optimized, thread::{drop_in_background_thread, unsafe_allocate_zero_vec}
     },
 };
 #[allow(unused_imports)] // clippy thinks these aren't needed lol
@@ -13,7 +12,7 @@ use std::{collections::HashMap, fmt::Debug};
 
 use super::{
     key::{NonUniformR1CS, SparseEqualityItem},
-    ops::{ConstraintInput, Term, Variable, LC},
+    ops::{ConstraintInput, Term, Variable, LC}, special_polys::SparsePolynomial,
 };
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
@@ -848,13 +847,127 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         (Az, Bz, Cz)
     }
 
+        /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
+    /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
+    #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan")]
+    pub fn compute_spartan_Az_Bz_Cz_sparse(
+        &self,
+        inputs: &[Vec<F>],
+        aux: &[Vec<F>],
+    ) -> (SparsePolynomial<F>, SparsePolynomial<F>, SparsePolynomial<F>) {
+        assert_eq!(inputs.len(), I::COUNT);
+        let num_aux = self.uniform_builder.num_aux();
+        assert_eq!(aux.len(), num_aux);
+        assert!(inputs
+            .iter()
+            .chain(aux.iter())
+            .all(|inner_input| inner_input.len() == self.uniform_repeat));
+
+        let uniform_constraint_rows = self.uniform_repeat_constraint_rows();
+        // TODO(sragss): Allocation can overshoot by up to a factor of 2, Spartan could handle non-pow-2 Az,Bz,Cz
+        let constraint_rows = self.constraint_rows();
+        let (mut Az, mut Bz, mut Cz) = (
+            unsafe_allocate_zero_vec(constraint_rows),
+            unsafe_allocate_zero_vec(constraint_rows),
+            unsafe_allocate_zero_vec(constraint_rows),
+        );
+
+        let batch_inputs = |lc: &LC<I>| batch_inputs(lc, inputs, aux);
+
+        // uniform_constraints: Xz[0..uniform_constraint_rows]
+        // TODO(sragss): Attempt moving onto key and computing from materialized rows rather than linear combos
+        let span = tracing::span!(tracing::Level::DEBUG, "compute_constraints");
+        let enter = span.enter();
+        let az_chunks = Az.par_chunks_mut(self.uniform_repeat);
+        let bz_chunks = Bz.par_chunks_mut(self.uniform_repeat);
+        let cz_chunks = Cz.par_chunks_mut(self.uniform_repeat);
+
+        self.uniform_builder
+            .constraints
+            .par_iter()
+            .zip(az_chunks.zip(bz_chunks.zip(cz_chunks)))
+            .for_each(|(constraint, (az_chunk, (bz_chunk, cz_chunk)))| {
+                let a_inputs = batch_inputs(&constraint.a);
+                let b_inputs = batch_inputs(&constraint.b);
+                let c_inputs = batch_inputs(&constraint.c);
+
+                constraint.a.evaluate_batch_mut(&a_inputs, az_chunk);
+                constraint.b.evaluate_batch_mut(&b_inputs, bz_chunk);
+                constraint.c.evaluate_batch_mut(&c_inputs, cz_chunk);
+            });
+        drop(enter);
+
+        // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
+        // (a - b) * condition == 0
+        // For the final step we will not compute the offset terms, and will assume the condition to be set to 0
+        let span = tracing::span!(tracing::Level::DEBUG, "offset_eq");
+        let _enter = span.enter();
+
+        let constr = &self.offset_equality_constraint;
+        let condition_evals = constr
+            .cond
+            .1
+            .evaluate_batch(&batch_inputs(&constr.cond.1), self.uniform_repeat);
+        let eq_a_evals = constr
+            .a
+            .1
+            .evaluate_batch(&batch_inputs(&constr.a.1), self.uniform_repeat);
+        let eq_b_evals = constr
+            .b
+            .1
+            .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
+
+        let Az_off = Az[uniform_constraint_rows..uniform_constraint_rows + self.uniform_repeat]
+            .par_iter_mut();
+        let Bz_off = Bz[uniform_constraint_rows..uniform_constraint_rows + self.uniform_repeat]
+            .par_iter_mut();
+
+        (0..self.uniform_repeat)
+            .into_par_iter()
+            .zip(Az_off.zip(Bz_off))
+            .for_each(|(step_index, (az, bz))| {
+                // Write corresponding values, if outside the step range, only include the constant.
+                let a_step = step_index + if constr.a.0 { 1 } else { 0 };
+                let b_step = step_index + if constr.b.0 { 1 } else { 0 };
+                let a = eq_a_evals
+                    .get(a_step)
+                    .cloned()
+                    .unwrap_or(constr.a.1.constant_term_field());
+                let b = eq_b_evals
+                    .get(b_step)
+                    .cloned()
+                    .unwrap_or(constr.b.1.constant_term_field());
+                *az = a - b;
+
+                let condition_step = step_index + if constr.cond.0 { 1 } else { 0 };
+                *bz = condition_evals
+                    .get(condition_step)
+                    .cloned()
+                    .unwrap_or(constr.cond.1.constant_term_field());
+            });
+        drop(_enter);
+
+        #[cfg(test)]
+        self.assert_valid(&Az, &Bz, &Cz);
+
+        let num_vars = self.constraint_rows().next_power_of_two().log_2();
+        let (az_poly, (bz_poly, cz_poly)) = rayon::join(
+            || SparsePolynomial::from_dense_evals(num_vars, Az),
+            || rayon::join(
+                || SparsePolynomial::from_dense_evals(num_vars, Bz),
+                || SparsePolynomial::from_dense_evals(num_vars, Cz)
+            )
+        );
+
+        (az_poly, bz_poly, cz_poly)
+    }
+
+
     #[cfg(test)]
     pub fn assert_valid(&self, az: &[F], bz: &[F], cz: &[F]) {
         let rows = az.len();
-        let expected_rows = self.constraint_rows().next_power_of_two();
-        assert_eq!(az.len(), expected_rows);
-        assert_eq!(bz.len(), expected_rows);
-        assert_eq!(cz.len(), expected_rows);
+        assert_eq!(bz.len(), rows);
+        assert_eq!(cz.len(), rows);
         for constraint_index in 0..rows {
             if az[constraint_index] * bz[constraint_index] != cz[constraint_index] {
                 let uniform_constraint_index = constraint_index / self.uniform_repeat;

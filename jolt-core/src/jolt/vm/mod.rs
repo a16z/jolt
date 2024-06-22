@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
+use crate::utils::profiling;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -402,8 +403,10 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        drop_in_background_thread(jolt_polynomials);
+        // drop_in_background_thread(jolt_polynomials);
+        drop(jolt_polynomials);
 
+        profiling::print_current_memory_usage("pre_spartan");
         let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
             &preprocessing.generators,
             r1cs_builder,
@@ -412,6 +415,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         )
         .expect("r1cs proof failed");
+        profiling::print_current_memory_usage("post_spartan");
         let r1cs_proof = R1CSProof {
             key: spartan_key,
             proof: spartan_proof,
