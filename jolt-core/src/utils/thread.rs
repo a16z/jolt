@@ -44,6 +44,32 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
     result
 }
 
+#[tracing::instrument(skip_all, name = "unsafe_allocate_sparse_zero_vec")]
+pub fn unsafe_allocate_sparse_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<(usize, F)> {
+    // Check for safety of 0 allocation
+    unsafe {
+        let value = &F::zero();
+        let ptr = value as *const F as *const u8;
+        let bytes = std::slice::from_raw_parts(ptr, std::mem::size_of::<F>());
+        assert!(bytes.iter().all(|&byte| byte == 0));
+    }
+
+    // Bulk allocate zeros, unsafely
+    let result: Vec<(usize, F)>;
+    unsafe {
+        let layout = std::alloc::Layout::array::<(usize, F)>(size).unwrap();
+        let ptr = std::alloc::alloc_zeroed(layout) as *mut (usize, F);
+
+        if ptr.is_null() {
+            panic!("Zero vec allocation failed");
+        }
+
+        result = Vec::from_raw_parts(ptr, size, size);
+    }
+    result
+}
+
+
 pub fn join_triple<A, B, C, RA, RB, RC>(oper_a: A, oper_b: B, oper_c: C) -> (RA, RB, RC)
 where
     A: FnOnce() -> RA + Send,

@@ -294,20 +294,24 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             claim_per_round = poly.evaluate(&r_i);
 
             // bound all tables to the verifier's challenege
-            rayon::join(
-                || poly_eq.bound_poly_var_bot(&r_i),
-                || {
-                    rayon::join(
-                        || poly_A.bound_poly_var_bot(&r_i),
-                        || {
-                            rayon::join(
-                                || poly_B.bound_poly_var_bot(&r_i),
-                                || poly_C.bound_poly_var_bot(&r_i),
-                            )
-                        },
-                    )
-                },
-            );
+            poly_eq.bound_poly_var_bot(&r_i);
+            poly_A.bound_poly_var_bot_par(&r_i);
+            poly_B.bound_poly_var_bot_par(&r_i);
+            poly_C.bound_poly_var_bot_par(&r_i);
+            // rayon::join(
+            //     || poly_eq.bound_poly_var_bot(&r_i),
+            //     || {
+            //         rayon::join(
+            //             || poly_A.bound_poly_var_bot_par(&r_i),
+            //             || {
+            //                 rayon::join(
+            //                     || poly_B.bound_poly_var_bot_par(&r_i),
+            //                     || poly_C.bound_poly_var_bot_par(&r_i),
+            //                 )
+            //             },
+            //         )
+            //     },
+            // );
         }
 
         (

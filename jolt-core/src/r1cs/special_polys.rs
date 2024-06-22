@@ -1,4 +1,4 @@
-use crate::{field::JoltField, poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial}, utils::{compute_dotproduct_low_optimized, math::Math, thread::{drop_in_background_thread, unsafe_allocate_zero_vec}}};
+use crate::{field::JoltField, poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial}, utils::{compute_dotproduct_low_optimized, math::Math, mul_0_1_optimized, thread::{drop_in_background_thread, unsafe_allocate_sparse_zero_vec, unsafe_allocate_zero_vec}}};
 use num_integer::Integer;
 use rayon::prelude::*;
 
@@ -57,6 +57,7 @@ impl<F: JoltField> SparsePolynomial<F> {
     }
 
     /// Returns n chunks of roughly even size without orphaning siblings (adjacent dense indices). Additionally returns a vector of (low, high] dense index ranges.
+    #[tracing::instrument(skip_all)]
     fn chunk_no_orphans(&self, n: usize) -> (Vec<&[(usize, F)]>, Vec<(usize, usize)>) {
         if self.Z.len() < n * 2 {
             return (vec![(&self.Z)], vec![(0, self.num_vars.pow2())]);
@@ -83,12 +84,12 @@ impl<F: JoltField> SparsePolynomial<F> {
         }
         chunks.push(&self.Z[sparse_start_index..]);
         // TODO(sragss): likely makes more sense to return full range then truncate when needed (triple iterator)
+        // TODO(sragss): To use chunk_no_orphans in the triple iterator, we have to overwrite the top of the dense_ranges.
         let highest_non_zero = self.Z.last().map(|&(index, _)| index).unwrap();
         dense_ranges.push((dense_start_index, highest_non_zero + 1));
         assert_eq!(chunks.len(), n);
         assert_eq!(dense_ranges.len(), n);
 
-        // TODO(sragss): To use chunk_no_orphans in the triple iterator, we have to overwrite the top of the dense_ranges.
 
         (chunks, dense_ranges)
     }
@@ -127,38 +128,75 @@ impl<F: JoltField> SparsePolynomial<F> {
 
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot_par(&mut self, r: &F) {
-        // TODO(sragss): Do this with a scan instead.
-        let n = self.Z.len();
-        // let mut new_Z: Vec<(usize, F)> = Vec::with_capacity(n);
-
+        // TODO(sragss): better parallelism.
+        let count_span = tracing::span!(tracing::Level::DEBUG, "counting");
+        let count_enter = count_span.enter();
         let (chunks, _range) = self.chunk_no_orphans(rayon::current_num_threads() * 8);
+        let chunk_sizes: Vec<usize> = chunks.par_iter().map(|chunk| {
+            let mut chunk_size = 0;
+            let mut i = 0;
+            while i < chunk.len() {
+                chunk_size += 1;
+
+                // If they're siblings, avoid double counting
+                if chunk[i].0.is_even() && i + 1 < chunk.len() && chunk[i].0 + 1 == chunk[i + 1].0 {
+                    i += 1;
+                }
+                i += 1;
+            }
+            chunk_size
+        }).collect();
+        drop(count_enter);
+
+        let alloc_span = tracing::span!(tracing::Level::DEBUG, "alloc_new_Z");
+        let alloc_enter = alloc_span.enter();
+        let total_len: usize = chunk_sizes.iter().sum();
+        let mut new_Z: Vec<(usize, F)> = unsafe_allocate_sparse_zero_vec(total_len);
+        drop(alloc_enter);
+
+        let mut mutable_chunks: Vec<&mut [(usize, F)]> = vec![];
+        let mut remainder = new_Z.as_mut_slice();
+        for chunk_size in chunk_sizes {
+            let (first, second) = remainder.split_at_mut(chunk_size);
+            mutable_chunks.push(first);
+            remainder = second;
+        }
+        assert_eq!(mutable_chunks.len(), chunks.len());
+
         // TODO(sragsss): We can scan up front and collect directly into the thing.
-        let new_Z: Vec<(usize, F)> = chunks.into_par_iter().map(|chunk| {
+        chunks.into_par_iter().zip(mutable_chunks.par_iter_mut()).for_each(|(chunk, mutable)| {
+            let span = tracing::span!(tracing::Level::DEBUG, "chunk");
+            let _enter = span.enter();
             // TODO(sragss): Do this with a scan instead;
-            let mut chunk_Z: Vec<(usize, F)> = Vec::with_capacity(chunk.len());
+            // let mut chunk_Z: Vec<(usize, F)> = Vec::with_capacity(chunk.len());
+            let mut write_index = 0;
             for (sparse_index, (dense_index, value)) in chunk.iter().enumerate() {
                 if dense_index.is_even() {
                     let new_dense_index = dense_index / 2;
                     // TODO(sragss): Can likely combine these conditions for better speculative execution.
-                    if self.Z.len() >= 2 && sparse_index <= self.Z.len() - 2 && self.Z[sparse_index + 1].0 == dense_index + 1 {
-                        let upper = self.Z[sparse_index + 1].1;
-                        let eval = *value + *r  * (upper - value);
-                        chunk_Z.push((new_dense_index, eval));
-                    } else {
-                        chunk_Z.push((new_dense_index, (F::one() - r) * value));
+
+                    // All exist
+                    if chunk.len() >= 2 && sparse_index <= chunk.len() - 2 && chunk[sparse_index + 1].0 == dense_index + 1 {
+                        let upper = chunk[sparse_index + 1].1;
+                        let eval = *value + mul_0_1_optimized(r, &(upper - value));
+                        mutable[write_index] = (new_dense_index, eval);
+                        write_index += 1;
+                    } else { // low exists
+                        mutable[write_index] = (new_dense_index, mul_0_1_optimized(&(F::one() - r), value));
+                        write_index += 1;
                     }
                 } else {
-                    if sparse_index > 0 && self.Z[sparse_index - 1].0 == dense_index - 1 {
+                    // low and high exist
+                    if sparse_index > 0 && chunk[sparse_index - 1].0 == dense_index - 1 {
                         continue;
-                    } else {
+                    } else { // high only exists
                         let new_dense_index = (dense_index - 1) / 2;
-                        chunk_Z.push((new_dense_index, *r * value));
+                        mutable[write_index] = (new_dense_index, mul_0_1_optimized(r, value));
+                        write_index += 1;
                     }
                 }
             }
-
-            chunk_Z
-        }).flatten().collect();
+        });
 
         // for (sparse_index, (dense_index, value)) in self.Z.iter().enumerate() {
         //     if dense_index.is_even() {
@@ -180,7 +218,8 @@ impl<F: JoltField> SparsePolynomial<F> {
         //         }
         //     }
         // }
-        self.Z = new_Z;
+        let old_Z = std::mem::replace(&mut self.Z, new_Z);
+        drop_in_background_thread(old_Z);
         self.num_vars -= 1;
     }
 
@@ -610,5 +649,27 @@ mod tests {
         assert_eq!(a_poly.to_dense().Z, new_a);
         assert_eq!(b_poly.to_dense().Z, new_b);
         assert_eq!(c_poly.to_dense().Z, new_c);
+    }
+
+    #[test]
+    fn binding() {
+        use rand::Rng;
+
+        let mut rng = rand::thread_rng();
+        let prob_exists = 0.32;
+        let num_vars = 6;
+        let total_len = 1 << num_vars;
+        let mut a = vec![];
+        for i in 0usize..total_len {
+            if rng.gen::<f64>() < prob_exists {
+                a.push((i, Fr::from(i as u64)));
+            }
+        }
+
+        let mut a_poly = SparsePolynomial::new(num_vars, a);
+
+        let r = Fr::from(100);
+        assert_eq!(a_poly.clone().bound_poly_var_bot(&r), a_poly.bound_poly_var_bot_par(&r));
+
     }
 }
