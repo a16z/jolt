@@ -10,7 +10,7 @@ The Jolt [paper](https://eprint.iacr.org/2023/1217.pdf) was written by Arasu Aru
 
 ## Resources
 
-- [Docs](https://jolt.a16zcrypto.com/)
+- [Docs](https://jolt.a16zcrypto.com/) (The Jolt Book)
 - Blog posts
   - [Accelerating the world computer: Implementing Jolt, a new state-of-the-art zkVM](https://a16zcrypto.com/posts/article/accelerating-the-world-computer-implementing-jolt)
   - [Building Jolt: A fast, easy-to-use zkVM](https://a16zcrypto.com/posts/article/building-jolt/)
