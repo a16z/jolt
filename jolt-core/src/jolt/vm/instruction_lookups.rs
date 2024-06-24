@@ -617,7 +617,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Instruction lookups memory checking"
+        b"Instruction lookups check"
     }
 }
 

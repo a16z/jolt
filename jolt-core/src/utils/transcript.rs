@@ -13,8 +13,13 @@ pub struct ProofTranscript {
 impl ProofTranscript {
     pub fn new(label: &'static [u8]) -> Self {
         // Hash in the label
-        let mut hasher = Keccak256::new();
-        hasher.update(label);
+        assert!(label.len() < 33);
+        let hasher = if label.len() == 32 {
+            Keccak256::new().chain_update(label)
+        } else {
+            let zeros = vec![0_u8; 32 - label.len()];
+            Keccak256::new().chain_update(zeros).chain_update(label)
+        };
         let out = hasher.finalize();
 
         Self {
@@ -34,8 +39,15 @@ impl ProofTranscript {
     }
 
     pub fn append_message(&mut self, msg: &'static [u8]) {
+        // We require all messages to fit into one evm word and then left pad them
+        assert!(msg.len() < 33);
+        let hasher = if msg.len() == 32 {
+            self.hasher().chain_update(msg)
+        } else {
+            let zeros = vec![0_u8; 32 - msg.len()];
+            self.hasher().chain_update(zeros).chain_update(msg)
+        };
         // Instantiate hasher add our seed, position and msg
-        let hasher = self.hasher().chain_update(msg);
         self.state = hasher.finalize().into();
         self.n_rounds += 1;
     }

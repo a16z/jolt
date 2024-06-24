@@ -453,7 +453,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Timestamp validity proof memory checking"
+        b"Timestamp Validity Proof"
     }
 }
 
@@ -831,6 +831,6 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Timestamp validity proof memory checking"
+        b"Timestamp Validity Proof"
     }
 }

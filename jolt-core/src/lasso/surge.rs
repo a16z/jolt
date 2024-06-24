@@ -383,7 +383,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Surge memory checking"
+        b"SurgeMemCheck"
     }
 }
 
