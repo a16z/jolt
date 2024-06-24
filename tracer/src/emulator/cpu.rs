@@ -2459,7 +2459,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -2477,7 +2477,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3130,7 +3130,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3145,7 +3145,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3165,7 +3165,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3184,7 +3184,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3273,7 +3273,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
@@ -3290,7 +3290,7 @@ pub const INSTRUCTIONS: [Instruction; INSTRUCTION_NUM] = [
             Ok(())
         },
         disassemble: dump_format_r,
-        trace: None,
+        trace: Some(trace_r),
     },
     Instruction {
         mask: 0xfe00707f,
