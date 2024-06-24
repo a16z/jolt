@@ -11,7 +11,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use tokio::runtime::Runtime;
 
-const TOOLCHAIN_TAG: &str = include_str!("../../../.jolt.rust.toolchain-tag");
+const TOOLCHAIN_TAG: &str = include_str!("../../../guest-toolchain-tag");
 const DOWNLOAD_RETRIES: usize = 5;
 const DELAY_BASE_MS: u64 = 500;
 
