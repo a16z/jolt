@@ -43,6 +43,9 @@ rand = "0.7.3"
 rand_chacha = { version = "0.3.0", default-features = false }
 rand_core = { version = "0.6.4", default-features = false }
 rayon = { version = "^1.8.0", optional = true }
+icicle-cuda-runtime = { git = "https://github.com/ingonyama-zk/icicle.git", tag = "v2.0.0"}
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle.git", tag = "v2.0.0", features = ["arkworks"]}
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle.git", tag = "v2.0.0", features = ["arkworks"]}
 rgb = "0.8.37"
 serde = { version = "1.0.*", default-features = false }
 sha3 = "0.8.2"
@@ -97,3 +100,4 @@ default = [
     "rayon",
 ]
 host = ["dep:reqwest", "dep:tokio"]
+icicle = []
