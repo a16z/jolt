@@ -62,8 +62,8 @@ pub struct HyperKZGVerifierKey<P: Pairing> {
 pub struct HyperKZGCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> AppendToTranscript for HyperKZGCommitment<P> {
-    fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_point(b"poly_commitment_share", &self.0.into_group());
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_point(&self.0.into_group());
     }
 }
 
@@ -173,11 +173,8 @@ where
         });
     });
 
-    transcript.append_scalars(
-        b"v",
-        &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
-    );
-    let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(b"r", f.len());
+    transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
+    let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(f.len());
     let B = kzg_compute_batch_polynomial::<P>(f, q_powers);
 
     // Now open B at u0, ..., u_{t-1}
@@ -188,11 +185,8 @@ where
 
     // The prover computes the challenge to keep the transcript in the same
     // state as that of the verifier
-    transcript.append_points(
-        b"W",
-        &w.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
-    );
-    let _d_0: P::ScalarField = transcript.challenge_scalar(b"d");
+    transcript.append_points(&w.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+    let _d_0: P::ScalarField = transcript.challenge_scalar();
 
     (w, v)
 }
@@ -212,17 +206,11 @@ where
     let k = C.len();
     let t = u.len();
 
-    transcript.append_scalars(
-        b"v",
-        &v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>(),
-    );
-    let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(b"r", k);
+    transcript.append_scalars(&v.iter().flatten().cloned().collect::<Vec<P::ScalarField>>());
+    let q_powers: Vec<P::ScalarField> = transcript.challenge_scalar_powers(k);
 
-    transcript.append_points(
-        b"W",
-        &W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
-    );
-    let d_0: P::ScalarField = transcript.challenge_scalar(b"d");
+    transcript.append_points(&W.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+    let d_0: P::ScalarField = transcript.challenge_scalar();
     let d_1 = d_0 * d_0;
 
     assert_eq!(t, 3);
@@ -357,11 +345,8 @@ where
         // Phase 2
         // We do not need to add x to the transcript, because in our context x was obtained from the transcript.
         // We also do not need to absorb `C` and `eval` as they are already absorbed by the transcript by the caller
-        transcript.append_points(
-            b"c",
-            &com.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
-        );
-        let r: <P as Pairing>::ScalarField = transcript.challenge_scalar(b"c");
+        transcript.append_points(&com.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+        let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
         let u = vec![r, -r, r * r];
 
         // Phase 3 -- create response
@@ -388,11 +373,8 @@ where
 
         // we do not need to add x to the transcript, because in our context x was
         // obtained from the transcript
-        transcript.append_points(
-            b"c",
-            &com.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>(),
-        );
-        let r: <P as Pairing>::ScalarField = transcript.challenge_scalar(b"c");
+        transcript.append_points(&com.iter().map(|g| g.into_group()).collect::<Vec<P::G1>>());
+        let r: <P as Pairing>::ScalarField = transcript.challenge_scalar();
 
         if r == P::ScalarField::zero() || C.0 == P::G1Affine::zero() {
             return Err(ProofVerifyError::InternalError);
@@ -447,7 +429,7 @@ where
         let n = 1 << num_vars;
 
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
-        let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
+        let rho: P::ScalarField = transcript.challenge_scalar();
         let mut rho_powers = vec![P::ScalarField::one()];
         for i in 1..polynomials.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
@@ -497,7 +479,7 @@ where
         //TODO(pat): produce powers in parallel using window method
         // Compute batching of unshifted polynomials f_i:
         // Compute powers of batching challenge rho
-        let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
+        let rho: P::ScalarField = transcript.challenge_scalar();
         let mut scalar = P::ScalarField::one();
         let (batched_eval, batched_commitment) = evals.iter().zip(commitments.iter()).fold(
             (P::ScalarField::zero(), P::G1::zero()),
@@ -722,14 +704,14 @@ mod tests {
         // prove an evaluation
         let mut tr = ProofTranscript::new(b"TestEval");
         let proof = HyperKZG::open(&pk, &poly, &point, &eval, &mut tr).unwrap();
-        let post_c_p = tr.challenge_scalar::<Fr>(b"c");
+        let post_c_p = tr.challenge_scalar::<Fr>();
 
         // verify the evaluation
         let mut verifier_transcript = ProofTranscript::new(b"TestEval");
         assert!(
             HyperKZG::verify(&vk, &C, &point, &eval, &proof, &mut verifier_transcript,).is_ok()
         );
-        let post_c_v = verifier_transcript.challenge_scalar::<Fr>(b"c");
+        let post_c_v = verifier_transcript.challenge_scalar::<Fr>();
 
         // check if the prover transcript and verifier transcript are kept in the same state
         assert_eq!(post_c_p, post_c_v);
