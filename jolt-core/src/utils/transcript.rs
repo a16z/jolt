@@ -34,7 +34,7 @@ impl ProofTranscript {
         // Note we add the extra memory here to improve the ease of eth integrations
         Keccak256::new()
             .chain_update(self.state)
-            .chain_update([0_u8; 24])
+            .chain_update([0_u8; 28])
             .chain_update(self.n_rounds.to_le_bytes())
     }
 
