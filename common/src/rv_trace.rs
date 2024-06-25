@@ -351,8 +351,7 @@ impl ELFInstruction {
             RV32IM::VIRTUAL_ASSERT_EQ     |
             RV32IM::VIRTUAL_ASSERT_LTE    |
             RV32IM::VIRTUAL_ASSERT_LTU    |
-            RV32IM::VIRTUAL_ASSERT_LT_ABS |
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
+            RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER,
         );
 
         flags
@@ -447,8 +446,7 @@ pub enum RV32IM {
     VIRTUAL_ADVICE,
     VIRTUAL_ASSERT_LTU,
     VIRTUAL_ASSERT_LTE,
-    VIRTUAL_ASSERT_LT_ABS,
-    VIRTUAL_ASSERT_EQ_SIGNS,
+    VIRTUAL_ASSERT_VALID_REMAINDER,
     VIRTUAL_ASSERT_EQ,
 }
 
@@ -578,8 +576,7 @@ impl RV32IM {
             RV32IM::VIRTUAL_ASSERT_EQ     |
             RV32IM::VIRTUAL_ASSERT_LTE    |
             RV32IM::VIRTUAL_ASSERT_LTU    |
-            RV32IM::VIRTUAL_ASSERT_LT_ABS |
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => RV32InstructionFormat::SB,
+            RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER => RV32InstructionFormat::SB,
 
             RV32IM::LUI   |
             RV32IM::AUIPC |

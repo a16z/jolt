@@ -19,9 +19,8 @@ use crate::jolt::instruction::srl::SRLInstruction;
 use crate::jolt::instruction::sub::SUBInstruction;
 use crate::jolt::instruction::sw::SWInstruction;
 use crate::jolt::instruction::virtual_advice::ADVICEInstruction;
-use crate::jolt::instruction::virtual_assert_eq_signs::ASSERTEQSIGNSInstruction;
-use crate::jolt::instruction::virtual_assert_lt_abs::ASSERTLTABSInstruction;
 use crate::jolt::instruction::virtual_assert_lte::ASSERTLTEInstruction;
+use crate::jolt::instruction::virtual_assert_valid_remainder::ASSERTVALIDREMAINDERInstruction;
 use crate::jolt::instruction::xor::XORInstruction;
 use crate::jolt::instruction::{add::ADDInstruction, movsign::MOVSIGNInstruction};
 use crate::jolt::vm::rv32i_vm::RV32I;
@@ -84,8 +83,7 @@ impl TryFrom<&ELFInstruction> for RV32I {
             RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction::default().into()),
             RV32IM::VIRTUAL_ASSERT_LTU => Ok(SLTUInstruction::default().into()),
-            RV32IM::VIRTUAL_ASSERT_LT_ABS => Ok(ASSERTLTABSInstruction::default().into()),
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => Ok(ASSERTEQSIGNSInstruction::default().into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER => Ok(ASSERTVALIDREMAINDERInstruction::default().into()),
 
             _ => Err("No corresponding RV32I instruction")
         }
@@ -149,8 +147,7 @@ impl TryFrom<&RVTraceRow> for RV32I {
             RV32IM::VIRTUAL_ASSERT_EQ => Ok(BEQInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_LTE => Ok(ASSERTLTEInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
             RV32IM::VIRTUAL_ASSERT_LTU => Ok(SLTUInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::VIRTUAL_ASSERT_LT_ABS => Ok(ASSERTLTABSInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => Ok(ASSERTEQSIGNSInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
+            RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER => Ok(ASSERTVALIDREMAINDERInstruction(row.register_state.rs1_val.unwrap(), row.register_state.rs2_val.unwrap()).into()),
 
             _ => Err("No corresponding RV32I instruction")
         }

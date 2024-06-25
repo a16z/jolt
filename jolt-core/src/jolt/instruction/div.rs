@@ -4,10 +4,10 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
     add::ADDInstruction, beq::BEQInstruction, mul::MULInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
-    virtual_assert_lt_abs::ASSERTLTABSInstruction, JoltInstruction,
+    virtual_advice::ADVICEInstruction,
+    virtual_assert_valid_remainder::ASSERTVALIDREMAINDERInstruction, JoltInstruction,
 };
-/// Perform signed*unsigned multiplication and return the upper WORD_SIZE bits
+/// Perform signed division and return the result
 pub struct DIVInstruction<const WORD_SIZE: usize>;
 
 impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_SIZE> {
@@ -26,8 +26,27 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
 
         let mut virtual_sequence = vec![];
 
-        let quotient = (x as i64 / y as i64) as u64;
-        let remainder = (x as i64 - quotient as i64 * y as i64) as u64;
+        let (quotient, remainder) = match WORD_SIZE {
+            32 => {
+                let mut quotient = x as i32 / y as i32;
+                let mut remainder = x as i32 % y as i32;
+                if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
+                    remainder += y as i32;
+                    quotient -= 1;
+                }
+                (quotient as u32 as u64, remainder as u32 as u64)
+            }
+            64 => {
+                let mut quotient = (x as i64 / y as i64) as i64;
+                let mut remainder = (x as i64 % y as i64) as i64;
+                if (remainder < 0 && (y as i64) > 0) || (remainder > 0 && (y as i64) < 0) {
+                    remainder += y as i64;
+                    quotient -= 1;
+                }
+                (quotient as u64, remainder as u64)
+            }
+            _ => panic!("Unsupported WORD_SIZE: {}", WORD_SIZE),
+        };
 
         let q = ADVICEInstruction::<WORD_SIZE>(quotient).lookup_entry();
         virtual_sequence.push(RVTraceRow {
@@ -38,7 +57,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rs2: None,
                 rd: trace_row.instruction.rd,
                 imm: None,
-                virtual_sequence_index: Some(0),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: None,
@@ -58,7 +77,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rs2: None,
                 rd: v_r,
                 imm: None,
-                virtual_sequence_index: Some(1),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: None,
@@ -69,36 +88,17 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             advice_value: Some(remainder), // What should advice value be here?
         });
 
-        let _lt_abs: u64 = ASSERTLTABSInstruction::<WORD_SIZE>(r, y).lookup_entry();
+        let is_valid: u64 = ASSERTVALIDREMAINDERInstruction::<WORD_SIZE>(r, y).lookup_entry();
+        assert_eq!(is_valid, 1);
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_LT_ABS,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER,
                 rs1: v_r,
                 rs2: r_y,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(2),
-            },
-            register_state: RegisterState {
-                rs1_val: Some(r),
-                rs2_val: Some(y),
-                rd_post_val: None,
-            },
-            memory_state: None,
-            advice_value: None,
-        });
-
-        let _assert_eq_signs = ASSERTEQSIGNSInstruction(r, y).lookup_entry();
-        virtual_sequence.push(RVTraceRow {
-            instruction: ELFInstruction {
-                address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
-                rs1: v_r,
-                rs2: r_y,
-                rd: None,
-                imm: None,
-                virtual_sequence_index: Some(3),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(r),
@@ -118,7 +118,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rs2: r_y,
                 rd: v_qy,
                 imm: None,
-                virtual_sequence_index: Some(4),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q),
@@ -138,7 +138,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rs2: v_r,
                 rd: v_0,
                 imm: None,
-                virtual_sequence_index: Some(5),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
@@ -158,7 +158,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
                 rs2: r_x,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(6),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(add_0),
@@ -194,7 +194,13 @@ mod test {
 
         let x = rng.next_u32() as u64;
         let y = if r_y == r_x { x } else { rng.next_u32() as u64 };
-        let result = (x as i64 / y as i64) as u64;
+
+        let mut quotient = x as i32 / y as i32;
+        let remainder = x as i32 % y as i32;
+        if (remainder < 0 && (y as i32) > 0) || (remainder > 0 && (y as i32) < 0) {
+            quotient -= 1;
+        }
+        let result = quotient as u32 as u64;
 
         let div_trace_row = RVTraceRow {
             instruction: ELFInstruction {
@@ -227,13 +233,6 @@ mod test {
             if let Some(rs2_val) = row.register_state.rs2_val {
                 assert_eq!(registers[row.instruction.rs2.unwrap() as usize], rs2_val);
             }
-
-            println!(
-                "rs1 {} rs2 {} instruction {:?}",
-                row.register_state.rs1_val.unwrap_or(0),
-                row.register_state.rs2_val.unwrap_or(0),
-                row.instruction
-            );
 
             let lookup = RV32I::try_from(&row).unwrap();
             let output = lookup.lookup_entry();

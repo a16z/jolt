@@ -14,9 +14,9 @@ use crate::jolt::instruction::{
     mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
     sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
     srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, virtual_advice::ADVICEInstruction,
-    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
-    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
-    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
+    virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_assert_valid_remainder::ASSERTVALIDREMAINDERInstruction, xor::XORInstruction,
+    JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
@@ -110,8 +110,7 @@ instruction_set!(
   MULHU: MULHUInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
-  VIRTUAL_ASSERT_LT_ABS: ASSERTLTABSInstruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_EQ_SIGNS: ASSERTEQSIGNSInstruction
+  VIRTUAL_ASSERT_VALID_REMAINDER: ASSERTVALIDREMAINDERInstruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
