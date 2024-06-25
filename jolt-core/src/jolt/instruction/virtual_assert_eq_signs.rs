@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JoltInstruction, SubtableIndices};
 use crate::{
-    jolt::subtable::{eq_msb::EqMSBSubtable, LassoSubtable},
+    jolt::subtable::{left_msb::LeftMSBSubtable, right_msb::RightMSBSubtable, LassoSubtable},
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
 
@@ -18,7 +18,9 @@ impl JoltInstruction for ASSERTEQSIGNSInstruction {
     }
 
     fn combine_lookups<F: JoltField>(&self, vals: &[F], _: usize, _: usize) -> F {
-        vals[0]
+        let left_msb = vals[0];
+        let right_msb = vals[1];
+        (left_msb * right_msb) + (F::one() - left_msb) * (F::one() - right_msb)
     }
 
     fn g_poly_degree(&self, _: usize) -> usize {
@@ -30,7 +32,10 @@ impl JoltInstruction for ASSERTEQSIGNSInstruction {
         _: usize,
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
-        vec![(Box::new(EqMSBSubtable::new()), SubtableIndices::from(0))]
+        vec![
+            (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
+        ]
     }
 
     fn to_indices(&self, C: usize, log_M: usize) -> Vec<usize> {

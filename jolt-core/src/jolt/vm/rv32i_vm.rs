@@ -19,11 +19,11 @@ use crate::jolt::instruction::{
     xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
 };
 use crate::jolt::subtable::{
-    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
-    gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-    or::OrSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable, sra_sign::SraSignSubtable,
-    srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
+    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
+    left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable, or::OrSubtable,
+    right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable,
+    sra_sign::SraSignSubtable, srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable,
+    xor::XorSubtable, JoltSubtableSet, LassoSubtable, SubtableId,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
@@ -117,9 +117,9 @@ subtable_enum!(
   RV32ISubtables,
   AND: AndSubtable<F>,
   EQ_ABS: EqAbsSubtable<F>,
-  EQ_MSB: EqMSBSubtable<F>,
   EQ: EqSubtable<F>,
-  GT_MSB: GtMSBSubtable<F>,
+  LEFT_MSB: LeftMSBSubtable<F>,
+  RIGHT_MSB: RightMSBSubtable<F>,
   IDENTITY: IdentitySubtable<F>,
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,

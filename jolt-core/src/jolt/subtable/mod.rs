@@ -32,8 +32,6 @@ pub trait JoltSubtableSet<F: JoltField>:
 pub mod and;
 pub mod eq;
 pub mod eq_abs;
-pub mod eq_msb;
-pub mod gt_msb;
 pub mod identity;
 pub mod is_zero;
 pub mod left_msb;
