@@ -104,7 +104,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
         assert_eq!(expected_sumcheck_claim, sumcheck_claim);
 
         // produce a random challenge to condense two claims into a single claim
-        let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+        let r_layer = transcript.challenge_scalar();
 
         *grand_product_claims = layer_proof
             .left_claims
@@ -132,8 +132,7 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
 
         for (layer_index, layer_proof) in proof_layers.iter().enumerate() {
             // produce a fresh set of coeffs
-            let coeffs: Vec<F> =
-                transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+            let coeffs: Vec<F> = transcript.challenge_vector(claims_to_verify.len());
             // produce a joint claim
             let claim = claims_to_verify
                 .iter()
@@ -151,8 +150,8 @@ pub trait BatchedGrandProduct<F: JoltField, C: CommitmentScheme<Field = F>>: Siz
                 .iter()
                 .zip(layer_proof.right_claims.iter())
             {
-                transcript.append_scalar(b"sumcheck left claim", left);
-                transcript.append_scalar(b"sumcheck right claim", right);
+                transcript.append_scalar(left);
+                transcript.append_scalar(right);
             }
 
             assert_eq!(r_grand_product.len(), r_sumcheck.len());
@@ -203,7 +202,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
         transcript: &mut ProofTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
         // produce a fresh set of coeffs
-        let coeffs: Vec<F> = transcript.challenge_vector(b"rand_coeffs_next_layer", claims.len());
+        let coeffs: Vec<F> = transcript.challenge_vector(claims.len());
         // produce a joint claim
         let claim = claims
             .iter()
@@ -220,8 +219,8 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
 
         let (left_claims, right_claims) = sumcheck_claims;
         for (left, right) in left_claims.iter().zip(right_claims.iter()) {
-            transcript.append_scalar(b"sumcheck left claim", left);
-            transcript.append_scalar(b"sumcheck right claim", right);
+            transcript.append_scalar(left);
+            transcript.append_scalar(right);
         }
 
         r_sumcheck
@@ -230,7 +229,7 @@ pub trait BatchedGrandProductLayer<F: JoltField>: BatchedCubicSumcheck<F> {
             .collect_into_vec(r_grand_product);
 
         // produce a random challenge to condense two claims into a single claim
-        let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+        let r_layer = transcript.challenge_scalar();
 
         *claims = left_claims
             .iter()
@@ -1382,8 +1381,7 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
         transcript: &mut ProofTranscript,
     ) -> BatchedGrandProductLayerProof<F> {
         // produce a fresh set of coeffs
-        let coeffs: Vec<F> =
-            transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+        let coeffs: Vec<F> = transcript.challenge_vector(claims_to_verify.len());
         // produce a joint claim
         let claim = claims_to_verify
             .iter()
@@ -1400,8 +1398,8 @@ impl<F: JoltField> BatchedGrandProductLayer<F> for BatchedGrandProductToggleLaye
 
         let (left_claims, right_claims) = sumcheck_claims;
         for (left, right) in left_claims.iter().zip(right_claims.iter()) {
-            transcript.append_scalar(b"sumcheck left claim", left);
-            transcript.append_scalar(b"sumcheck right claim", right);
+            transcript.append_scalar(left);
+            transcript.append_scalar(right);
         }
 
         r_sumcheck
@@ -1503,7 +1501,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
             assert_eq!(expected_sumcheck_claim, sumcheck_claim);
 
             // produce a random challenge to condense two claims into a single claim
-            let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
+            let r_layer = transcript.challenge_scalar();
 
             *grand_product_claims = layer_proof
                 .left_claims

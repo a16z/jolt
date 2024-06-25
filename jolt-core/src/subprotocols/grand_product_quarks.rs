@@ -18,14 +18,10 @@ use thiserror::Error;
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct QuarkGrandProductProof<C: CommitmentScheme> {
     sumcheck_proof: SumcheckInstanceProof<C::Field>,
-    v_commitment: Vec<C::Commitment>,
-    f_commitment: Vec<C::Commitment>,
-    claimed_eval_f_0_r: (Vec<C::Field>, C::BatchedProof),
-    claimed_eval_f_1_r: (Vec<C::Field>, C::BatchedProof),
-    claimed_eval_f_r_0: (Vec<C::Field>, C::BatchedProof),
-    claimed_eval_f_r_1: (Vec<C::Field>, C::BatchedProof),
-    sum_openings: C::BatchedProof,
-    v_opening_proof: C::BatchedProof,
+    g_commitment: Vec<C::Commitment>,
+    claimed_eval_g_r: (Vec<C::Field>, C::BatchedProof),
+    claimed_eval_g_r_x: (Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
+    helper_values: (Vec<C::Field>, Vec<C::Field>),
     num_vars: usize,
 }
 pub struct QuarkGrandProduct<F: JoltField> {
@@ -123,9 +119,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> BatchedGrandProduct<F, C>
             // When doing the quark hybrid proof, we first prove the grand product of a layer of a polynomial which is 4 layers deep in the tree
             // of a standard layered sumcheck grand product, then we use the sumcheck layers to prove via gkr layers that the random point opened
             // by the quark proof is in fact the folded result of the base layer.
-            let (quark, random) =
+            let (quark, random, claims) =
                 QuarkGrandProductProof::<C>::prove(&self.polynomials, transcript, setup.unwrap());
-            let claims = quark.claimed_eval_f_0_r.0.clone();
             (Some(quark), random, claims)
         } else {
             (
@@ -200,68 +195,83 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
     /// First - Extends the evals of v to create an f poly, then commits to it and evals
     /// Then - Constructs a g poly and preforms sumcheck proof that sum == 0
     /// Finally - computes opening proofs for a random sampled during sumcheck proof and returns
+    /// Returns a random point and evaluation to be verified by the caller (which our hybrid prover does with GKR)
     fn prove(
         leaves: &[Vec<C::Field>],
         transcript: &mut ProofTranscript,
         setup: &C::Setup,
-    ) -> (Self, Vec<C::Field>) {
+    ) -> (Self, Vec<C::Field>, Vec<C::Field>) {
         let v_length = leaves[0].len();
         let v_variables = v_length.log_2();
 
-        let mut f_polys = Vec::<DensePolynomial<C::Field>>::new();
+        let mut g_polys = Vec::<DensePolynomial<C::Field>>::new();
+        let mut v_polys = Vec::<DensePolynomial<C::Field>>::new();
         let mut sumcheck_polys = Vec::<DensePolynomial<C::Field>>::new();
         let mut products = Vec::<C::Field>::new();
-        let mut v_polys = Vec::<DensePolynomial<C::Field>>::new();
 
-        for v in leaves {
+        for v in leaves.iter() {
             let v_polynomial = DensePolynomial::<C::Field>::new(v.to_vec());
-            let (f, f_1_r, f_r_0, f_r_1, p) = v_into_f::<C>(&v_polynomial);
-            f_polys.push(f);
+            let (f_1_r, f_r_0, f_r_1, p) = v_into_f::<C>(&v_polynomial);
+            v_polys.push(v_polynomial);
+            g_polys.push(f_1_r.clone());
             sumcheck_polys.push(f_1_r);
             sumcheck_polys.push(f_r_0);
             sumcheck_polys.push(f_r_1);
             products.push(p);
-            v_polys.push(v_polynomial);
         }
 
         // We bind to these polynomials
-        transcript.append_scalars(b"grand product claim", &products);
-        let v_commitment = C::batch_commit_polys(&v_polys, setup, BatchType::Big);
-        let f_commitment = C::batch_commit_polys(&f_polys, setup, BatchType::Big);
-        for v in v_commitment.iter() {
-            v.append_to_transcript(b"v commitment", transcript);
-        }
-        for f in f_commitment.iter() {
-            f.append_to_transcript(b"f commitment", transcript);
+        transcript.append_scalars(&products);
+        let g_commitment = C::batch_commit_polys(&g_polys, setup, BatchType::Big);
+        for g in g_commitment.iter() {
+            g.append_to_transcript(transcript);
         }
 
         // Now we do the sumcheck using the prove arbitrary
         // First instantiate our polynomials
-        let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", v_variables);
-        let evals = DensePolynomial::new(EqPolynomial::evals(&tau));
-        //We add evals as the last polynomial in the sumcheck
+        let tau: Vec<C::Field> = transcript.challenge_vector(v_variables);
+        let evals: DensePolynomial<<C as CommitmentScheme>::Field> =
+            DensePolynomial::new(EqPolynomial::evals(&tau));
+        //We add evals as the second to last polynomial in the sumcheck
         sumcheck_polys.push(evals);
 
-        // Sample a constant to do a random linear combination to combine the sumchecks
-        let r_combination: Vec<C::Field> =
-            transcript.challenge_vector(b"for the random linear comb", v_polys.len());
+        // Next we calculate the polynomial equal to 1 at all points but 1,1,1...,0
+        let challenge_sum = vec![C::Field::one(); v_variables];
+        let eq_sum: DensePolynomial<<C as CommitmentScheme>::Field> =
+            DensePolynomial::new(EqPolynomial::evals(&challenge_sum));
+        //We add evals as the last polynomial in the sumcheck
+        sumcheck_polys.push(eq_sum);
 
-        // We define a closure using vals[0] = eq(tau, x), vals[1] = f(1, x), vals[1] = f(x, 0), vals[2] = f(x, 1)
+        // Sample a constant to do a random linear combination to combine the sumchecks
+        let r_combination: Vec<C::Field> = transcript.challenge_vector(g_polys.len());
+
+        // We define a closure using vals[i] = f(1, x), vals[i+1] = f(x, 0), vals[i+2] = f(x, 1)
         let output_check_fn = |vals: &[C::Field]| -> C::Field {
-            let eval = vals[vals.len() - 1];
-            let mut sum = C::Field::zero();
+            let eval = vals[vals.len() - 2];
+            let eq_sum = vals[vals.len() - 1];
+            let mut sum_1 = C::Field::zero();
+            let mut sum_2 = C::Field::zero();
 
             for i in 0..(vals.len() / 3) {
-                sum += r_combination[i] * (vals[i * 3] - vals[3 * i + 1] * vals[3 * i + 2]);
+                sum_1 += r_combination[i] * (vals[i * 3] - vals[3 * i + 1] * vals[3 * i + 2]);
+                sum_2 += r_combination[i] * vals[i * 3 + 1];
             }
-            sum * eval
+            sum_1 * eval + sum_2 * eq_sum
         };
+
+        // The sumcheck should have the claims times the random coefficents as the sum as all terms are zero except
+        // 1,1,..,0 which is r*f(1,1,..0)
+        let rlc_claims = products
+            .iter()
+            .zip(r_combination.iter())
+            .map(|(x, r)| *x * r)
+            .sum();
 
         // Now run the sumcheck in arbitrary mode
         // Note - We use the final randomness from binding all variables (x) as the source random for the openings so the verifier can
         //        check that the base layer is the same as is committed too.
         let (sumcheck_proof, x, _) = SumcheckInstanceProof::<C::Field>::prove_arbitrary::<_>(
-            &C::Field::zero(),
+            &rlc_claims,
             v_variables,
             &mut sumcheck_polys,
             output_check_fn,
@@ -269,64 +279,46 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             transcript,
         );
 
-        // Interface for the batch proof is &[&Poly] but we have &[Poly]
-        let borrowed_f: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
-        let borrowed_v: Vec<&DensePolynomial<C::Field>> = v_polys.iter().collect();
-
-        // TODO (aleph_v) - Batch opens and a line reduction to make this 3 openings
-        let mut challenge_0_x = vec![C::Field::zero()];
-        challenge_0_x.append(&mut x.clone());
-        let claimed_eval_f_0_r = open_and_prove::<C>(&challenge_0_x, &f_polys, setup, transcript);
-
-        let mut challenge_1_x = vec![C::Field::one()];
-        challenge_1_x.append(&mut x.clone());
-        let claimed_eval_f_1_r = open_and_prove::<C>(&challenge_1_x, &f_polys, setup, transcript);
-
-        let mut challenge_x_0 = x.clone();
-        challenge_x_0.push(C::Field::zero());
-        let claimed_eval_f_r_0 = open_and_prove::<C>(&challenge_x_0, &f_polys, setup, transcript);
-
-        let mut challenge_x_1 = x.clone();
-        challenge_x_1.push(C::Field::one());
-        let claimed_eval_f_r_1 = open_and_prove::<C>(&challenge_x_1, &f_polys, setup, transcript);
-
-        let mut challenge_sum = vec![C::Field::one(); x.len()];
-        challenge_sum.push(C::Field::zero());
-        // Here we don't calculate an eval because we should know it from the product recorded above
-        let sum_openings = C::batch_prove(
+        let borrowed: Vec<&DensePolynomial<C::Field>> = g_polys.iter().collect();
+        let chis_r = EqPolynomial::evals(&x);
+        let openings_r: Vec<C::Field> = g_polys
+            .iter()
+            .map(|g| g.evaluate_at_chi_low_optimized(&chis_r))
+            .collect();
+        // For the version of quarks which only commits to g(1, x) we first do a direct batch proof on x
+        let proof = C::batch_prove(
             setup,
-            &borrowed_f,
-            &challenge_sum,
-            &products,
-            BatchType::Big,
-            transcript,
-        );
-
-        // Here we don't calculate an eval because it should be equal to f(0, x) which is the first point we open
-        let v_opening_proof = C::batch_prove(
-            setup,
-            &borrowed_v,
+            &borrowed,
             &x,
-            &claimed_eval_f_0_r.0,
+            &openings_r,
             BatchType::Big,
             transcript,
         );
+        let claimed_eval_g_r = (openings_r, proof);
+        // We are using f(a, x) = a*g(x) + (1-a)*h(x) where f is the polynomial with the cached internal products
+        // Let r = (r_1, r')
+        // f(r, 0) = r_1 * g(r', 0) + (1-r_1)*h(r', 0)
+        // f(r, 1) = r_1 * g(r', 1) + (1-r_1)*h(r', 1)
+        // Therefore we do a line reduced opening on g(r', 0) and g(r', 1)e();
+        let mut r_prime = vec![C::Field::zero(); x.len() - 1];
+        r_prime.clone_from_slice(&x[1..x.len()]);
+        let claimed_eval_g_r_x = open_and_prove::<C>(&r_prime, &g_polys, setup, transcript);
+        // next we need to make a claim about h(r', 0) and h(r', 1) so we use our line reduction to make one claim
+        let ((r_t, h_r_t), helper_values) = line_reduce::<C>(&r_prime, &v_polys, transcript);
+
         let num_vars = v_variables;
 
         (
             Self {
                 sumcheck_proof,
-                v_commitment,
-                f_commitment,
-                claimed_eval_f_0_r,
-                claimed_eval_f_1_r,
-                claimed_eval_f_r_0,
-                claimed_eval_f_r_1,
-                sum_openings,
-                v_opening_proof,
+                g_commitment,
+                claimed_eval_g_r,
+                claimed_eval_g_r_x,
+                helper_values,
                 num_vars,
             },
-            x.clone(),
+            r_t,
+            h_r_t,
         )
     }
 
@@ -340,104 +332,58 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
         setup: &C::Setup,
     ) -> Result<(Vec<C::Field>, Vec<C::Field>), QuarkError> {
         // First we append the claimed values for the commitment and the product
-        transcript.append_scalars(b"grand product claim", claims);
-        for v in self.v_commitment.iter() {
-            v.append_to_transcript(b"v commitment", transcript);
-        }
-        for f in self.f_commitment.iter() {
-            f.append_to_transcript(b"f commitment", transcript);
+        transcript.append_scalars(claims);
+        for g in self.g_commitment.iter() {
+            g.append_to_transcript(transcript);
         }
 
         //Next sample the tau and construct the evals poly
-        let tau: Vec<C::Field> = transcript.challenge_vector(b"element for eval poly", n_rounds);
-        let r_combination: Vec<C::Field> =
-            transcript.challenge_vector(b"for the random linear comb", self.v_commitment.len());
+        let tau: Vec<C::Field> = transcript.challenge_vector(n_rounds);
+        let r_combination: Vec<C::Field> = transcript.challenge_vector(self.g_commitment.len());
+
+        // Our sumcheck is expected to equal the RLC of the claims
+        let claim_rlc: C::Field = claims
+            .iter()
+            .zip(r_combination.iter())
+            .map(|(x, r)| *x * r)
+            .sum();
 
         // To complete the sumcheck proof we have to validate that our polynomial openings match and are right.
         let (expected, r) = self
             .sumcheck_proof
-            .verify(C::Field::zero(), n_rounds, 3, transcript)
+            .verify(claim_rlc, n_rounds, 3, transcript)
             .map_err(|_| QuarkError::InvalidQuarkSumcheck)?;
 
         // Again the batch verify expects we have a slice of borrows but we have a slice of Commitments
-        let borrowed_f: Vec<&C::Commitment> = self.f_commitment.iter().collect();
-        let borrowed_v: Vec<&C::Commitment> = self.v_commitment.iter().collect();
+        let borrowed_g: Vec<&C::Commitment> = self.g_commitment.iter().collect();
 
-        // First we will confirm that the various opening of f are correct at the points defined by r
-        let mut challenge_0_r = vec![C::Field::zero()];
-        challenge_0_r.append(&mut r.clone());
+        // Get the r_1 and r_prime values
+        let r_1 = r[0];
+        let mut r_prime = vec![C::Field::zero(); r.len() - 1];
+        r_prime.clone_from_slice(&r[1..r.len()]);
+        // Firstly we verify that the openings of g(r) are correct
         C::batch_verify(
-            &self.claimed_eval_f_0_r.1,
-            setup,
-            &challenge_0_r,
-            &self.claimed_eval_f_0_r.0,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        let mut challenge_1_r = vec![C::Field::one()];
-        challenge_1_r.append(&mut r.clone());
-        let one_r = &self.claimed_eval_f_1_r.0;
-        C::batch_verify(
-            &self.claimed_eval_f_1_r.1,
-            setup,
-            &challenge_1_r,
-            one_r,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        let mut challenge_r_0 = r.clone();
-        challenge_r_0.push(C::Field::zero());
-        let r_0 = &self.claimed_eval_f_r_0.0;
-        C::batch_verify(
-            &self.claimed_eval_f_r_0.1,
-            setup,
-            &challenge_r_0,
-            r_0,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        let mut challenge_r_1 = r.clone();
-        challenge_r_1.push(C::Field::one());
-        let r_1 = &self.claimed_eval_f_r_1.0;
-        C::batch_verify(
-            &self.claimed_eval_f_r_1.1,
-            setup,
-            &challenge_r_1,
-            r_1,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        // We enforce that f opened at (1,1,...,1, 0) is in fact the product
-        let mut challenge_sum = vec![C::Field::one(); r.len()];
-        challenge_sum.push(C::Field::zero());
-        C::batch_verify(
-            &self.sum_openings,
-            setup,
-            &challenge_sum,
-            claims,
-            &borrowed_f,
-            transcript,
-        )
-        .map_err(|_| QuarkError::InvalidOpeningProof)?;
-
-        // Now we enforce that f(0, r) = v(r) via an opening proof on v
-        C::batch_verify(
-            &self.v_opening_proof,
+            &self.claimed_eval_g_r.1,
             setup,
             &r,
-            &self.claimed_eval_f_0_r.0,
-            &borrowed_v,
+            &self.claimed_eval_g_r.0,
+            &borrowed_g,
             transcript,
         )
         .map_err(|_| QuarkError::InvalidOpeningProof)?;
+        // Next do the line reduction verification of g(r', 0) and g(r', 1)
+        line_reduce_opening_verify::<C>(
+            &self.claimed_eval_g_r_x,
+            &r_prime,
+            &borrowed_g,
+            transcript,
+            setup,
+        )?;
+        // Load the h(r,t) values using a line reduction without opening because the opening is done in calling function
+        let (r_t, h_r_t) = line_reduce_verify(&self.helper_values, &r_prime, transcript);
+
+        // We enforce that f opened at (1,1,...,1, 0) is in fact the product
+        let challenge_sum = vec![C::Field::one(); n_rounds];
 
         // Use the log(n) form to calculate eq(tau, r)
         let eq_eval: C::Field = r
@@ -446,26 +392,50 @@ impl<C: CommitmentScheme> QuarkGrandProductProof<C> {
             .map(|(&r_gp, &r_sc)| r_gp * r_sc + (C::Field::one() - r_gp) * (C::Field::one() - r_sc))
             .product();
 
-        // Finally we check that in fact the polynomial bound by the sumcheck is equal to eq(tau, r)*(f(1, r) - f(r, 0)*f(r,1))
+        // Use the log(n) form to calculate eq(1...1, r)
+        let eq_1_eval: C::Field = r
+            .iter()
+            .zip_eq(challenge_sum.iter())
+            .map(|(&r_gp, &r_sc)| r_gp * r_sc + (C::Field::one() - r_gp) * (C::Field::one() - r_sc))
+            .product();
+
+        // We calculate f(1, r) = g(r), f(r, 0) = r_1 * g(r', 0) + (1-r_1)*h(r', 0), and  f(r, 1) = r_1 * g(r', 1) + (1-r_1)*h(r', 1)
+        let one_r = &self.claimed_eval_g_r.0;
+        let r_0: Vec<C::Field> = self
+            .claimed_eval_g_r_x
+            .0
+            .iter()
+            .zip(self.helper_values.0.iter())
+            .map(|(r, h)| *h + r_1 * (*r - *h))
+            .collect();
+        let r_1: Vec<C::Field> = self
+            .claimed_eval_g_r_x
+            .1
+            .iter()
+            .zip(self.helper_values.1.iter())
+            .map(|(r, h)| *h + r_1 * (*r - *h))
+            .collect();
+
+        // Finally we check that in fact the polynomial bound by the sumcheck is equal to eq(tau, r)*(f(1, r) - f(r, 0)*f(r,1)) + eq((1,1,.0),r)*f(r,0)
         let mut result_from_openings = C::Field::zero();
         for i in 0..r_0.len() {
-            result_from_openings += r_combination[i] * eq_eval * (one_r[i] - r_0[i] * r_1[i]);
+            result_from_openings +=
+                r_combination[i] * (eq_eval * (one_r[i] - r_0[i] * r_1[i]) + eq_1_eval * r_0[i]);
         }
 
         if result_from_openings != expected {
             return Err(QuarkError::InvalidBinding);
         }
 
-        Ok((self.claimed_eval_f_0_r.0.clone(), r))
+        Ok((h_r_t, r_t))
     }
 }
 
-// Computes f and slices of f for the sumcheck
+// Computes slices of f for the sumcheck
 #[allow(clippy::type_complexity)]
 fn v_into_f<C: CommitmentScheme>(
     v: &DensePolynomial<C::Field>,
 ) -> (
-    DensePolynomial<C::Field>,
     DensePolynomial<C::Field>,
     DensePolynomial<C::Field>,
     DensePolynomial<C::Field>,
@@ -502,29 +472,137 @@ fn v_into_f<C: CommitmentScheme>(
 
     // f(1, ..., 1, 0) = P
     let product = f_evals[2 * v_length - 2];
-    let f = DensePolynomial::new(f_evals);
 
-    (f, f_1_r, f_r_0, f_r_1, product)
+    (f_1_r, f_r_0, f_r_1, product)
 }
 
 // Open a set of polynomials at a point and return the openings and proof
+// Note - This uses a special case of the line reduction protocol for the case where we are opening
+//        a random which is either 0 or 1 in a position (either the first or last position).
+//        In this case the interpolated lined function is constant in all other points except the last one
+//        the by picking 0 and 1 as the points we interpolate at we can treat the evals of f(0r) and f(1r)
+//        (or vice versa) as implicitly defining the line t*f(0r) + (t-1)f(1r) and so the evals data alone
+//        is sufficient to calculate the claimed line, then we sample a random value r_star and do an opening proof
+//        on (r_star - 1) * f(0r) + r_star * f(1r) in the commitment to f.
 fn open_and_prove<C: CommitmentScheme>(
-    x: &[C::Field],
+    r: &[C::Field],
     f_polys: &[DensePolynomial<C::Field>],
     setup: &C::Setup,
     transcript: &mut ProofTranscript,
-) -> (Vec<C::Field>, C::BatchedProof) {
-    let chis = EqPolynomial::evals(x);
-    let openings: Vec<C::Field> = f_polys
-        .iter()
-        .map(|f| f.evaluate_at_chi_low_optimized(&chis))
-        .collect();
+) -> (Vec<C::Field>, Vec<C::Field>, C::BatchedProof) {
+    // Do the line reduction protocol
+    let ((r_star, openings_star), (openings_0, openings_1)) =
+        line_reduce::<C>(r, f_polys, transcript);
     // Batch proof requires  &[&]
     let borrowed: Vec<&DensePolynomial<C::Field>> = f_polys.iter().collect();
+    let proof = C::batch_prove(
+        setup,
+        &borrowed,
+        &r_star,
+        &openings_star,
+        BatchType::Big,
+        transcript,
+    );
 
-    let proof = C::batch_prove(setup, &borrowed, x, &openings, BatchType::Big, transcript);
+    (openings_0, openings_1, proof)
+}
 
-    (openings, proof)
+#[allow(clippy::type_complexity)]
+/// Calculates the r0 r1 values and writes their evaluation to the transcript before calculating r star and
+/// the opening of this, but does not prove the opening as that is left to the calling function
+fn line_reduce<C: CommitmentScheme>(
+    r: &[C::Field],
+    f_polys: &[DensePolynomial<C::Field>],
+    transcript: &mut ProofTranscript,
+) -> (
+    (Vec<C::Field>, Vec<C::Field>),
+    (Vec<C::Field>, Vec<C::Field>),
+) {
+    // Calculates r0 and r1
+    let mut r_0 = r.to_vec();
+    let mut r_1 = r.to_vec();
+    r_0.push(C::Field::zero());
+    r_1.push(C::Field::one());
+
+    let chis_1 = EqPolynomial::evals(&r_0);
+    let openings_0: Vec<C::Field> = f_polys
+        .iter()
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis_1))
+        .collect();
+    let chis_2 = EqPolynomial::evals(&r_1);
+    let openings_1: Vec<C::Field> = f_polys
+        .iter()
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis_2))
+        .collect();
+
+    // We add these to the transcript then sample an r which depends on them all
+    transcript.append_scalars(&openings_0);
+    transcript.append_scalars(&openings_1);
+    let rand: C::Field = transcript.challenge_scalar();
+
+    // Now calculate l(rand) = r.rand if is before or rand.r if not is before
+    let mut r_star = r.to_vec();
+    r_star.push(rand);
+
+    // Now calculate the evals of f at r_star
+    let chis_3 = EqPolynomial::evals(&r_star);
+    let openings_star: Vec<C::Field> = f_polys
+        .iter()
+        .map(|f| f.evaluate_at_chi_low_optimized(&chis_3))
+        .collect();
+
+    // For debug purposes we will check that (rand - 1) * f(0r) + rand * f(1r) = openings_star
+    for (star, (e_0, e_1)) in openings_star
+        .iter()
+        .zip(openings_0.iter().zip(openings_1.iter()))
+    {
+        assert_eq!(*e_0 + rand * (*e_1 - *e_0), *star);
+    }
+
+    ((r_star, openings_star), (openings_0, openings_1))
+}
+
+/// Does the counterpart of the open_and_prove by computing an r_star vector point and then validating this opening
+fn line_reduce_opening_verify<C: CommitmentScheme>(
+    data: &(Vec<C::Field>, Vec<C::Field>, C::BatchedProof),
+    r: &[C::Field],
+    commitments: &[&C::Commitment],
+    transcript: &mut ProofTranscript,
+    setup: &C::Setup,
+) -> Result<(), QuarkError> {
+    // First compute the line reduction and points
+    let (r_star, claimed) = &line_reduce_verify(&(data.0.clone(), data.1.clone()), r, transcript);
+
+    // Finally check the opening at r_star
+    let res = C::batch_verify(&data.2, setup, r_star, claimed, commitments, transcript);
+    match res {
+        Ok(_) => Ok(()),
+        Err(_) => Err(QuarkError::InvalidOpeningProof),
+    }
+}
+
+fn line_reduce_verify<F: JoltField>(
+    data: &(Vec<F>, Vec<F>),
+    r: &[F],
+    transcript: &mut ProofTranscript,
+) -> (Vec<F>, Vec<F>) {
+    // To get our random we first append the openings data
+    transcript.append_scalars(&data.0);
+    transcript.append_scalars(&data.1);
+    let rand: F = transcript.challenge_scalar();
+
+    // Compute l(rand) = (r, rand) or (rand,r)
+    let mut r_star = r.to_vec();
+    r_star.push(rand);
+
+    // Compute our claimed openings
+    let claimed: Vec<F> = data
+        .0
+        .iter()
+        .zip(data.1.iter())
+        .map(|(e0, e1)| *e0 + rand * (*e1 - *e0))
+        .collect();
+    (r_star, claimed)
 }
 
 #[cfg(test)]
@@ -553,7 +631,7 @@ mod quark_grand_product_tests {
         let srs = ZeromorphSRS::<Bn254>::setup(&mut rng, 1 << 9);
         let setup = srs.trim(1 << 9);
 
-        let (proof, _) =
+        let (proof, _, _) =
             QuarkGrandProductProof::<Zeromorph<Bn254>>::prove(&v, &mut transcript, &setup);
 
         // Note resetting the transcript is important

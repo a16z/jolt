@@ -17,5 +17,5 @@ For Spice, the count written during a write operation is set to the maximum of a
 
 *In the "collation" sum-check of Lasso that collates results of sub-table lookups into the result of the original big-table lookup, the algebraic implementation of "concatenate the results into one field element" changes. Over a large prime-order field, concatenating two $8$-bit values $a$ and $b$ corresponds to $2^8 \cdot a + b$. Over $GF(2^{128})$ constructed via towering, $2^8$ gets replaced with an appropriate element of the tower basis. The same change affects various R1CS constraints ensuring that certain committed values are a limb decomposition of another committed value. 
 
-*Many performance optimizations become available within the various invocations of the sum-check protocol, leveraging that $GF(2^128)$ has small characteristic and most values being summed are in $GF(2^k)$ for small $k$. 
+*Many performance optimizations become available within the various invocations of the sum-check protocol, leveraging that $GF(2^{128})$ has small characteristic and most values being summed are in $GF(2^k)$ for small $k$. 
 

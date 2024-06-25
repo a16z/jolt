@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{builder::CombinedUniformBuilder, ops::ConstraintInput};
-use digest::Digest;
+use sha3::Digest;
 
 use crate::utils::math::Math;
 
@@ -369,7 +369,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         hash_bytes.extend(offset_eq_bytes);
         hash_bytes.extend(num_steps.to_be_bytes().to_vec());
         let mut hasher = Sha3_256::new();
-        hasher.input(hash_bytes);
+        hasher.update(hash_bytes);
 
         let map_to_field = |digest: &[u8]| -> F {
             let bv = (0..250).map(|i| {
@@ -389,7 +389,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
             }
             digest
         };
-        map_to_field(&hasher.result())
+        map_to_field(&hasher.finalize())
     }
 }
 

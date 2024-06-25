@@ -41,9 +41,9 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         for _round in 0..self.num_rounds() {
             let cubic_poly = self.compute_cubic(coeffs, eq_poly, previous_claim);
             // append the prover's message to the transcript
-            cubic_poly.append_to_transcript(b"poly", transcript);
+            cubic_poly.append_to_transcript(transcript);
             //derive the verifier's challenge for the next round
-            let r_j = transcript.challenge_scalar(b"challenge_nextround");
+            let r_j = transcript.challenge_scalar();
 
             r.push(r_j);
             // bind polynomials to verifier's challenge
@@ -158,8 +158,8 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             let round_uni_poly = UniPoly::from_evals(&eval_points);
 
             // append the prover's message to the transcript
-            round_uni_poly.append_to_transcript(b"poly", transcript);
-            let r_j = transcript.challenge_scalar(b"challenge_nextround");
+            round_uni_poly.append_to_transcript(transcript);
+            let r_j = transcript.challenge_scalar();
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
@@ -268,10 +268,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             };
 
             // append the prover's message to the transcript
-            poly.append_to_transcript(b"poly", transcript);
+            poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar(b"challenge_nextround");
+            let r_i = transcript.challenge_scalar();
             r.push(r_i);
             polys.push(poly.compress());
 
@@ -361,10 +361,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         };
 
         // append the prover's message to the transcript
-        poly.append_to_transcript(b"poly", transcript);
+        poly.append_to_transcript(transcript);
 
         //derive the verifier's challenge for the next round
-        let r_i: F = transcript.challenge_scalar(b"challenge_nextround");
+        let r_i: F = transcript.challenge_scalar();
         r.push(r_i);
         polys.push(poly.compress());
 
@@ -408,10 +408,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             };
 
             // append the prover's message to the transcript
-            poly.append_to_transcript(b"poly", transcript);
+            poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i: F = transcript.challenge_scalar(b"challenge_nextround");
+            let r_i: F = transcript.challenge_scalar();
 
             r.push(r_i);
             polys.push(poly.compress());
@@ -518,10 +518,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
             // append the prover's message to the transcript
-            poly.append_to_transcript(b"poly", transcript);
+            poly.append_to_transcript(transcript);
 
             //derive the verifier's challenge for the next round
-            let r_i = transcript.challenge_scalar(b"challenge_nextround");
+            let r_i = transcript.challenge_scalar();
 
             r.push(r_i);
 
