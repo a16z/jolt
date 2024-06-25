@@ -186,7 +186,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar(b"t"))
+            .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
 
@@ -257,14 +257,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             outer_sumcheck_claims[2],
             outer_sumcheck_claims[3],
         );
-        ProofTranscript::append_scalars(
-            transcript,
-            b"claims_outer",
-            [claim_Az, claim_Bz, claim_Cz].as_slice(),
-        );
+        ProofTranscript::append_scalars(transcript, [claim_Az, claim_Bz, claim_Cz].as_slice());
 
         // inner sum-check
-        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = claim_Az
             + r_inner_sumcheck_RLC * claim_Bz
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * claim_Cz;
@@ -338,7 +334,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         // outer sum-check
         let tau = (0..num_rounds_x)
-            .map(|_i| transcript.challenge_scalar(b"t"))
+            .map(|_i| transcript.challenge_scalar())
             .collect::<Vec<F>>();
 
         let (claim_outer_final, r_x) = self
@@ -355,7 +351,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         }
 
         transcript.append_scalars(
-            b"claims_outer",
             [
                 self.outer_sumcheck_claims.0,
                 self.outer_sumcheck_claims.1,
@@ -365,7 +360,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         );
 
         // inner sum-check
-        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar(b"r");
+        let r_inner_sumcheck_RLC: F = transcript.challenge_scalar();
         let claim_inner_joint = self.outer_sumcheck_claims.0
             + r_inner_sumcheck_RLC * self.outer_sumcheck_claims.1
             + r_inner_sumcheck_RLC * r_inner_sumcheck_RLC * self.outer_sumcheck_claims.2;

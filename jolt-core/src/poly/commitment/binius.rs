@@ -15,7 +15,7 @@ pub struct Binius128Scheme {}
 pub struct BiniusCommitment {}
 
 impl AppendToTranscript for BiniusCommitment {
-    fn append_to_transcript(&self, _label: &[u8], _transcript: &mut ProofTranscript) {
+    fn append_to_transcript(&self, _transcript: &mut ProofTranscript) {
         todo!()
     }
 }
