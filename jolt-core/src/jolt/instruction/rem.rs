@@ -38,8 +38,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
                 (quotient as u32 as u64, remainder as u32 as u64)
             }
             64 => {
-                let mut quotient = (x as i64 / y as i64) as i64;
-                let mut remainder = (x as i64 % y as i64) as i64;
+                let mut quotient = x as i64 / y as i64;
+                let mut remainder = x as i64 % y as i64;
                 if (remainder < 0 && (y as i64) > 0) || (remainder > 0 && (y as i64) < 0) {
                     remainder += y as i64;
                     quotient -= 1;
