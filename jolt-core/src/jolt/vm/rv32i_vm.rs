@@ -20,10 +20,11 @@ use crate::jolt::instruction::{
 };
 use crate::jolt::subtable::{
     and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
-    left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable, or::OrSubtable,
-    right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable,
-    sra_sign::SraSignSubtable, srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable,
-    xor::XorSubtable, JoltSubtableSet, LassoSubtable, SubtableId,
+    left_is_zero::LeftIsZeroSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+    ltu::LtuSubtable, or::OrSubtable, right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable,
+    sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable,
+    SubtableId,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
@@ -136,7 +137,8 @@ subtable_enum!(
   SRL3: SrlSubtable<F, 3, WORD_SIZE>,
   TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
   TRUNCATE_BYTE: TruncateOverflowSubtable<F, 8>,
-  XOR: XorSubtable<F>
+  XOR: XorSubtable<F>,
+  LEFT_IS_ZERO: LeftIsZeroSubtable<F>
 );
 
 // ==================== JOLT ====================
