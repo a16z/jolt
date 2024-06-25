@@ -33,7 +33,7 @@ pub mod and;
 pub mod eq;
 pub mod eq_abs;
 pub mod identity;
-pub mod is_zero;
+pub mod left_is_zero;
 pub mod left_msb;
 pub mod lt_abs;
 pub mod ltu;

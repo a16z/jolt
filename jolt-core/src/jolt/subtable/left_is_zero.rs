@@ -5,11 +5,11 @@ use std::marker::PhantomData;
 use super::LassoSubtable;
 
 #[derive(Default)]
-pub struct IsZeroSubtable<F: JoltField> {
+pub struct LeftIsZeroSubtable<F: JoltField> {
     _field: PhantomData<F>,
 }
 
-impl<F: JoltField> IsZeroSubtable<F> {
+impl<F: JoltField> LeftIsZeroSubtable<F> {
     pub fn new() -> Self {
         Self {
             _field: PhantomData,
@@ -17,7 +17,7 @@ impl<F: JoltField> IsZeroSubtable<F> {
     }
 }
 
-impl<F: JoltField> LassoSubtable<F> for IsZeroSubtable<F> {
+impl<F: JoltField> LassoSubtable<F> for LeftIsZeroSubtable<F> {
     fn materialize(&self, M: usize) -> Vec<F> {
         let mut entries: Vec<F> = vec![F::zero(); M];
 
@@ -49,19 +49,19 @@ mod test {
 
     use crate::{
         field::binius::BiniusField,
-        jolt::subtable::{is_zero::IsZeroSubtable, LassoSubtable},
+        jolt::subtable::{left_is_zero::LeftIsZeroSubtable, LassoSubtable},
         subtable_materialize_mle_parity_test,
     };
 
     subtable_materialize_mle_parity_test!(
-        is_zero_materialize_mle_parity,
-        IsZeroSubtable<Fr>,
+        left_is_zero_materialize_mle_parity,
+        LeftIsZeroSubtable<Fr>,
         Fr,
         256
     );
     subtable_materialize_mle_parity_test!(
-        is_zero_binius_materialize_mle_parity,
-        IsZeroSubtable<BiniusField<BinaryField128b>>,
+        left_is_zero_binius_materialize_mle_parity,
+        LeftIsZeroSubtable<BiniusField<BinaryField128b>>,
         BiniusField<BinaryField128b>,
         1 << 16
     );
