@@ -179,21 +179,21 @@ pub struct R1CSCommitment<C: CommitmentScheme> {
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for R1CSCommitment<C> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"R1CSCommitment_begin");
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"R1CSCommitment_begin");
         for commitment in &self.io {
-            commitment.append_to_transcript(b"io", transcript);
+            commitment.append_to_transcript(transcript);
         }
         for commitment in &self.aux {
-            commitment.append_to_transcript(b"aux", transcript);
+            commitment.append_to_transcript(transcript);
         }
         for commitment in &self.chunks {
-            commitment.append_to_transcript(b"chunks_s", transcript);
+            commitment.append_to_transcript(transcript);
         }
         for commitment in &self.circuit_flags {
-            commitment.append_to_transcript(b"circuit_flags", transcript);
+            commitment.append_to_transcript(transcript);
         }
-        transcript.append_message(label, b"R1CSCommitment_end");
+        transcript.append_message(b"R1CSCommitment_end");
     }
 }
 
