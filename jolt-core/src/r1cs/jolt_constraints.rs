@@ -96,7 +96,7 @@ pub enum JoltIn {
     OpFlags_SignImm,
     OpFlags_IsConcat,
     OpFlags_IsVirtualSequence,
-    OpFlags_IsVirtual,
+    OpFlags_IsAssert,
 
     // Instruction Flags
     // Should match JoltInstructionSet
@@ -157,7 +157,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
             cs.constrain_binary(flag);
         }
 
-        cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_A);
+        cs.constrain_eq(JoltIn::PcIn, JoltIn::Bytecode_ELFAddress);
 
         cs.constrain_pack_be(flags.to_vec(), JoltIn::Bytecode_Bitflags, 1);
 
@@ -249,6 +249,10 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
             );
         }
 
+        cs.constrain_eq_conditional(JoltIn::IF_Lb + JoltIn::IF_Lh, chunks_query[0], 0);
+        cs.constrain_eq_conditional(JoltIn::IF_Lb + JoltIn::IF_Lh, chunks_query[1], 0);
+        cs.constrain_eq_conditional(JoltIn::IF_Lb, chunks_query[2], 0);
+
         // if (rd != 0 && update_rd_with_lookup_output == 1) constrain(rd_val == LookupOutput)
         // if (rd != 0 && is_jump_instr == 1) constrain(rd_val == 4 * PC)
         let rd_nonzero_and_lookup_to_rd =
@@ -262,6 +266,8 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for UniformJoltConstraints {
         let lhs = JoltIn::PcIn + (PC_START_ADDRESS - PC_NOOP_SHIFT);
         let rhs = JoltIn::RD_Write;
         cs.constrain_eq_conditional(rd_nonzero_and_jmp, lhs, rhs);
+
+        cs.constrain_eq_conditional(JoltIn::OpFlags_IsAssert, JoltIn::LookupOutput, 1);
 
         let branch_and_lookup_output =
             cs.allocate_prod(JoltIn::OpFlags_IsBranch, JoltIn::LookupOutput);
