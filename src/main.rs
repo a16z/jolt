@@ -187,10 +187,10 @@ fn preprocess_and_save(func_name: &str) -> Result<()> {
     decoded_data.serialize(&mut Serializer::new(&mut buf))?;
 
     let target_dir = Path::new("target/wasm32-unknown-unknown/release");
-    fs::create_dir_all(&target_dir)?;
+    fs::create_dir_all(target_dir)?;
 
     let output_path = target_dir.join(format!("preprocessed_{}.bin", func_name));
-    let mut file = File::create(&output_path)?;
+    let mut file = File::create(output_path)?;
     file.write_all(&buf)?;
     Ok(())
 }
@@ -228,10 +228,14 @@ fn is_provable(attr: &Attribute) -> bool {
 }
 
 fn get_project_name() -> Option<String> {
-    let cargo_toml_path = format!("Cargo.toml");
-    let content = fs::read_to_string(cargo_toml_path).ok()?;
+    let content = fs::read_to_string("Cargo.toml").ok()?;
     let doc = content.parse::<DocumentMut>().ok()?;
-    doc["package"]["name"].as_str().map(|s| s.replace("-", "_"))
+    // replace "-" with "_" to make it a valid identifier
+    doc["package"]["name"].as_str().map(|s| {
+        s.chars()
+            .map(|c| if c == '-' { '_' } else { c })
+            .collect::<String>()
+    })
 }
 
 fn create_index_html(func_names: Vec<String>) -> Result<()> {
@@ -385,7 +389,7 @@ fn build_wasm() {
     // todo implement test if wasm-pack is installed
 
     std::process::Command::new("wasm-pack")
-        .args(&["build", "--release", "--target", "web"])
+        .args(["build", "--release", "--target", "web"])
         .output()
         .expect("Failed to build the project with wasm-pack");
 }
