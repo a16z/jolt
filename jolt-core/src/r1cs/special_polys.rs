@@ -705,12 +705,14 @@ mod tests {
             }
         }
 
-        let mut a_poly = SparsePolynomial::new(num_vars, a);
-
+        let a_poly = SparsePolynomial::new(num_vars, a);
         let r = Fr::from(100);
-        assert_eq!(
-            a_poly.clone().bound_poly_var_bot(&r),
-            a_poly.bound_poly_var_bot_par(&r)
-        );
+
+        let mut regular = a_poly.clone();
+        regular.bound_poly_var_bot(&r);
+
+        let mut par = a_poly.clone();
+        par.bound_poly_var_bot(&r);
+        assert_eq!(regular, par);
     }
 }

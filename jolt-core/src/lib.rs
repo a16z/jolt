@@ -8,7 +8,8 @@
 #![feature(generic_const_exprs)]
 #![feature(iter_next_chunk)]
 #![allow(long_running_const_eval)]
-#[allow(clippy::len_without_is_empty)]
+#![allow(clippy::len_without_is_empty)]
+
 #[cfg(feature = "host")]
 pub mod benches;
 
