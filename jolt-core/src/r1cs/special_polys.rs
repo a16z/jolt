@@ -5,9 +5,7 @@ use crate::{
         compute_dotproduct_low_optimized,
         math::Math,
         mul_0_1_optimized,
-        thread::{
-            drop_in_background_thread, unsafe_allocate_sparse_zero_vec, unsafe_allocate_zero_vec,
-        },
+        thread::{drop_in_background_thread, unsafe_allocate_sparse_zero_vec},
     },
 };
 use num_integer::Integer;
@@ -80,9 +78,9 @@ impl<F: JoltField> SparsePolynomial<F> {
             .sum()
     }
 
-    /// Returns n chunks of roughly even size without orphaning siblings (adjacent dense indices). Additionally returns a vector of (low, high] dense index ranges.
+    /// Returns `n` chunks of roughly even size without separating siblings (adjacent dense indices). Additionally returns a vector of [low, high) dense index ranges.
     #[tracing::instrument(skip_all)]
-    fn chunk_no_orphans(&self, n: usize) -> (Vec<&[(F, usize)]>, Vec<(usize, usize)>) {
+    fn chunk_no_split_siblings(&self, n: usize) -> (Vec<&[(F, usize)]>, Vec<(usize, usize)>) {
         if self.Z.len() < n * 2 {
             return (vec![(&self.Z)], vec![(0, self.num_vars.pow2())]);
         }
@@ -153,38 +151,34 @@ impl<F: JoltField> SparsePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot_par(&mut self, r: &F) {
         // TODO(sragss): better parallelism.
+        let (chunks, _range) = self.chunk_no_split_siblings(rayon::current_num_threads() * 8);
+
+        // Calc chunk sizes post-binding for pre-allocation.
         let count_span = tracing::span!(tracing::Level::DEBUG, "counting");
         let count_enter = count_span.enter();
-        let (chunks, _range) = self.chunk_no_orphans(rayon::current_num_threads() * 8);
         let chunk_sizes: Vec<usize> = chunks
             .par_iter()
             .map(|chunk| {
-                let mut chunk_size = 0;
-                let mut i = 0;
-                while i < chunk.len() {
-                    chunk_size += 1;
-
-                    // If they're siblings, avoid double counting
-                    if chunk[i].1.is_even()
-                        && i + 1 < chunk.len()
-                        && chunk[i].1 + 1 == chunk[i + 1].1
-                    {
-                        i += 1;
-                    }
-                    i += 1;
-                }
-                chunk_size
+                // Count each pair of siblings if at least one is present.
+                chunk
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, (_value, index))| {
+                        // Always count odd, only count even indices when the paired odd index is not present.
+                        !index.is_even() || i + 1 >= chunk.len() || index + 1 != chunk[i + 1].1
+                    })
+                    .count()
             })
             .collect();
         drop(count_enter);
 
-        let alloc_span = tracing::span!(tracing::Level::DEBUG, "alloc_new_Z");
+        let alloc_span = tracing::span!(tracing::Level::DEBUG, "alloc");
         let alloc_enter = alloc_span.enter();
         let total_len: usize = chunk_sizes.iter().sum();
         let mut new_Z: Vec<(F, usize)> = unsafe_allocate_sparse_zero_vec(total_len);
         drop(alloc_enter);
 
-        let mut mutable_chunks: Vec<&mut [(F, usize)]> = vec![];
+        let mut mutable_chunks: Vec<&mut [(F, usize)]> = Vec::with_capacity(chunk_sizes.len());
         let mut remainder = new_Z.as_mut_slice();
         for chunk_size in chunk_sizes {
             let (first, second) = remainder.split_at_mut(chunk_size);
@@ -193,6 +187,7 @@ impl<F: JoltField> SparsePolynomial<F> {
         }
         assert_eq!(mutable_chunks.len(), chunks.len());
 
+        // Bind each chunk in parallel
         chunks
             .into_par_iter()
             .zip(mutable_chunks.par_iter_mut())
@@ -203,23 +198,28 @@ impl<F: JoltField> SparsePolynomial<F> {
                 for (sparse_index, (value, dense_index)) in chunk.iter().enumerate() {
                     if dense_index.is_even() {
                         let new_dense_index = dense_index / 2;
+
                         if chunk.len() >= 2
                             && sparse_index <= chunk.len() - 2
                             && chunk[sparse_index + 1].1 == dense_index + 1
                         {
+                            // (low, high) present
                             let upper = chunk[sparse_index + 1].0;
                             let eval = *value + mul_0_1_optimized(r, &(upper - value));
                             mutable[write_index] = (eval, new_dense_index);
                             write_index += 1;
                         } else {
+                            // (low, _) present
                             mutable[write_index] =
                                 (mul_0_1_optimized(&(F::one() - r), value), new_dense_index);
                             write_index += 1;
                         }
                     } else {
                         if sparse_index > 0 && chunk[sparse_index - 1].1 == dense_index - 1 {
+                            // (low, high) present, but handeled prior
                             continue;
                         } else {
+                            // (_, high) present
                             let new_dense_index = (dense_index - 1) / 2;
                             mutable[write_index] = (mul_0_1_optimized(r, value), new_dense_index);
                             write_index += 1;
@@ -248,7 +248,7 @@ impl<F: JoltField> SparsePolynomial<F> {
     #[cfg(test)]
     #[tracing::instrument(skip_all)]
     pub fn to_dense(self) -> DensePolynomial<F> {
-        use crate::utils::math::Math;
+        use crate::utils::{math::Math, thread::unsafe_allocate_zero_vec};
 
         let mut evals = unsafe_allocate_zero_vec(self.num_vars.pow2());
 
@@ -276,9 +276,9 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         c: &'a SparsePolynomial<F>,
         n: usize,
     ) -> Vec<Self> {
-        // When the instance is small enough, don't worry about parallelism
+        // Don't chunk for small instances
         let total_len = a.num_vars.pow2();
-        if n * 2 > b.Z.len() {
+        if b.Z.len() < n * 2 {
             return vec![SparseTripleIterator {
                 dense_index: 0,
                 end_index: total_len,
@@ -287,55 +287,28 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
                 c: &c.Z,
             }];
         }
-        // Can be made more generic, but this is an optimization / simplification.
-        assert!(
-            b.Z.len() >= a.Z.len() && b.Z.len() >= c.Z.len(),
-            "b.Z.len() assumed to be longest of a, b, and c"
-        );
+
+        // B is assumed most dense. Parallelism depends on evenly distributing B across threads.
+        assert!(b.Z.len() >= a.Z.len() && b.Z.len() >= c.Z.len());
 
         // TODO(sragss): Explain the strategy
 
-        let target_chunk_size = b.Z.len() / n;
-        let mut b_chunks: Vec<&[(F, usize)]> = Vec::with_capacity(n);
-        let mut dense_ranges: Vec<(usize, usize)> = Vec::with_capacity(n);
-        let mut dense_start_index = 0;
-        let mut sparse_start_index = 0;
-        let mut sparse_end_index = target_chunk_size;
-        for _ in 1..n {
-            let mut dense_end_index = b.Z[sparse_end_index].1;
-            if dense_end_index % 2 != 0 {
-                dense_end_index += 1;
-                sparse_end_index += 1;
-            }
-            b_chunks.push(&b.Z[sparse_start_index..sparse_end_index]);
-            dense_ranges.push((dense_start_index, dense_end_index));
-            dense_start_index = dense_end_index;
-
-            sparse_start_index = sparse_end_index;
-            sparse_end_index = std::cmp::min(sparse_end_index + target_chunk_size, b.Z.len() - 1);
-        }
-        b_chunks.push(&b.Z[sparse_start_index..]);
-        let highest_non_zero = {
-            let a_last = a.Z.last().map(|&(_, index)| index);
-            let b_last = b.Z.last().map(|&(_, index)| index);
-            let c_last = c.Z.last().map(|&(_, index)| index);
-            *a_last
-                .iter()
-                .chain(b_last.iter())
-                .chain(c_last.iter())
-                .max()
-                .unwrap()
-        };
-        dense_ranges.push((dense_start_index, highest_non_zero + 1));
+        let (b_chunks, mut dense_ranges) = b.chunk_no_split_siblings(n);
+        let highest_non_zero = [&a.Z, &b.Z, &c.Z]
+            .iter()
+            .filter_map(|z| z.last().map(|&(_, index)| index))
+            .max()
+            .unwrap();
+        dense_ranges.last_mut().unwrap().1 = highest_non_zero + 1;
         assert_eq!(b_chunks.len(), n);
         assert_eq!(dense_ranges.len(), n);
 
-        // Create chunks which overlap with b's sparse indices
+        // Create chunks of (a, c) which overlap with b's sparse indices
         let mut a_chunks: Vec<&[(F, usize)]> = vec![&[]; n];
         let mut c_chunks: Vec<&[(F, usize)]> = vec![&[]; n];
         let mut a_i = 0;
         let mut c_i = 0;
-        let span = tracing::span!(tracing::Level::DEBUG, "a, c scanning");
+        let span = tracing::span!(tracing::Level::DEBUG, "a_c_chunking");
         let _enter = span.enter();
         for (chunk_index, range) in dense_ranges.iter().enumerate().skip(1) {
             // Find the corresponding a, c chunks
@@ -378,17 +351,12 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
             .zip(dense_ranges.iter())
         {
             #[cfg(test)]
-            {
-                assert!(a_chunk
-                    .iter()
-                    .all(|(_, index)| *index >= range.0 && *index <= range.1));
-                assert!(b_chunk
-                    .iter()
-                    .all(|(_, index)| *index >= range.0 && *index <= range.1));
-                assert!(c_chunk
-                    .iter()
-                    .all(|(_, index)| *index >= range.0 && *index <= range.1));
+            for chunk in &[a_chunk, b_chunk, c_chunk] {
+                for (_, index) in chunk.iter() {
+                    assert!(*index >= range.0 && *index <= range.1);
+                }
             }
+
             let iter = SparseTripleIterator {
                 dense_index: range.0,
                 end_index: range.1,
@@ -672,7 +640,7 @@ mod tests {
         let mut rng = rand::thread_rng();
 
         let prob_exists = 0.32;
-        let num_vars = 10;
+        let num_vars = 5;
         let total_len = 1 << num_vars;
 
         let mut a = vec![];

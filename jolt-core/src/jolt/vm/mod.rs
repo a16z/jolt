@@ -4,7 +4,6 @@ use crate::field::JoltField;
 use crate::r1cs::builder::CombinedUniformBuilder;
 use crate::r1cs::jolt_constraints::{construct_jolt_constraints, JoltIn};
 use crate::r1cs::spartan::{self, UniformSpartanProof};
-use crate::utils::profiling;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::log2;
 use common::constants::RAM_START_ADDRESS;
@@ -590,7 +589,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         #[cfg(test)]
         {
-            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz_sparse(&inputs_flat, &aux);
+            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
             builder.assert_valid(&az, &bz, &cz);
         }
 

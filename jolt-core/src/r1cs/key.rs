@@ -566,7 +566,7 @@ mod test {
         inputs[TestInputs::OpFlags1 as usize][3] = Fr::from(3);
 
         // Confirms validity of constraints
-        let (_az, _bz, _cz) = combined_builder.compute_spartan_Az_Bz_Cz_sparse(&inputs, &[]);
+        let (_az, _bz, _cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &[]);
 
         let key = UniformSpartanKey::from_builder(&combined_builder);
 

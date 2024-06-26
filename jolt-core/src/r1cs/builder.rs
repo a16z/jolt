@@ -772,7 +772,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
     #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan_sparse")]
-    pub fn compute_spartan_Az_Bz_Cz_sparse(
+    pub fn compute_spartan_Az_Bz_Cz(
         &self,
         inputs: &[Vec<F>],
         aux: &[Vec<F>],
@@ -1352,7 +1352,7 @@ mod tests {
         let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(11 * 13)]]);
 
-        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz_sparse(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
         combined_builder.assert_valid(&az, &bz, &cz);
     }
 
@@ -1412,7 +1412,7 @@ mod tests {
             ]
         );
 
-        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz_sparse(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
         combined_builder.assert_valid(&az, &bz, &cz);
     }
 
@@ -1456,7 +1456,7 @@ mod tests {
         let aux = combined_builder.compute_aux(&inputs);
         assert_eq!(aux, vec![vec![Fr::from(5 * 7), Fr::from(5 * 13)]]);
 
-        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz_sparse(&inputs, &aux);
+        let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
         combined_builder.assert_valid(&az, &bz, &cz);
     }
 
@@ -1529,7 +1529,7 @@ mod tests {
         flat_witness.resize(flat_witness.len().next_power_of_two(), Fr::zero());
 
         let (builder_az, builder_bz, builder_cz) =
-            builder.compute_spartan_Az_Bz_Cz_sparse(&witness_segments, &[]);
+            builder.compute_spartan_Az_Bz_Cz(&witness_segments, &[]);
         let mut dense_az = builder_az.to_dense().evals();
         let mut dense_bz = builder_bz.to_dense().evals();
         let mut dense_cz = builder_cz.to_dense().evals();
