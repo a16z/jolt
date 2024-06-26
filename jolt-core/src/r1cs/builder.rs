@@ -27,21 +27,12 @@ pub trait R1CSConstraintBuilder<F: JoltField> {
     fn build_constraints(&self, builder: &mut R1CSBuilder<F, Self::Inputs>);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EvalHint {
-    Zero = 0,
-    Other = 1,
-}
-
 /// Constraints over a single row. Each variable points to a single item in Z and the corresponding coefficient.
 #[derive(Clone, Debug)]
 struct Constraint<I: ConstraintInput> {
     a: LC<I>,
     b: LC<I>,
     c: LC<I>,
-
-    /// Shortcut for evaluation of a, b, c for an honest prover
-    eval_hint: (EvalHint, EvalHint, EvalHint),
 }
 
 impl<I: ConstraintInput> Constraint<I> {
@@ -239,7 +230,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a,
             b,
             c: LC::zero(),
-            eval_hint: (EvalHint::Zero, EvalHint::Other, EvalHint::Zero),
         };
         self.constraints.push(constraint);
     }
@@ -258,12 +248,7 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let a = condition;
         let b = left - right;
         let c = LC::zero();
-        let constraint = Constraint {
-            a,
-            b,
-            c,
-            eval_hint: (EvalHint::Other, EvalHint::Other, EvalHint::Zero),
-        }; // TODO(sragss): Can do better on middle term.
+        let constraint = Constraint { a, b, c }; // TODO(sragss): Can do better on middle term.
         self.constraints.push(constraint);
     }
 
@@ -276,7 +261,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a,
             b,
             c: LC::zero(),
-            eval_hint: (EvalHint::Other, EvalHint::Other, EvalHint::Zero),
         };
         self.constraints.push(constraint);
     }
@@ -300,7 +284,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a: condition.clone(),
             b: (result_true - result_false.clone()),
             c: (alleged_result - result_false),
-            eval_hint: (EvalHint::Other, EvalHint::Other, EvalHint::Other), // TODO(sragss): Is this the best we can do?
         };
         self.constraints.push(constraint);
     }
@@ -446,7 +429,6 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a: x.into(),
             b: y.into(),
             c: z.into(),
-            eval_hint: (EvalHint::Other, EvalHint::Other, EvalHint::Other),
         };
         self.constraints.push(constraint);
     }
@@ -805,8 +787,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 .map(|(constraint_index, constraint)| {
                     let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
 
-                    let mut evaluate_lc_chunk = |hint, lc: &LC<I>| {
-                        if hint != EvalHint::Zero {
+                    let mut evaluate_lc_chunk = |lc: &LC<I>| {
+                        if lc.terms().len() != 0 {
                             let inputs = batch_inputs(lc);
                             lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
 
@@ -827,12 +809,9 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                         }
                     };
 
-                    let a_chunk: Vec<(F, usize)> =
-                        evaluate_lc_chunk(constraint.eval_hint.0, &constraint.a);
-                    let b_chunk: Vec<(F, usize)> =
-                        evaluate_lc_chunk(constraint.eval_hint.1, &constraint.b);
-                    let c_chunk: Vec<(F, usize)> =
-                        evaluate_lc_chunk(constraint.eval_hint.2, &constraint.c);
+                    let a_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.a);
+                    let b_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.b);
+                    let c_chunk: Vec<(F, usize)> = evaluate_lc_chunk(&constraint.c);
 
                     (a_chunk, b_chunk, c_chunk)
                 })
@@ -936,20 +915,6 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                     step: {step_index}",
                     self.uniform_builder.constraints[uniform_constraint_index]
                 );
-            }
-            // Verify hints
-            if constraint_index < self.uniform_repeat_constraint_rows() {
-                let (hint_a, hint_b, hint_c) =
-                    self.uniform_builder.constraints[uniform_constraint_index].eval_hint;
-                if hint_a == EvalHint::Zero {
-                    assert_eq!(az[constraint_index], F::zero(), "Mismatch at global constraint {constraint_index} uniform constraint: {uniform_constraint_index}");
-                }
-                if hint_b == EvalHint::Zero {
-                    assert_eq!(bz[constraint_index], F::zero(), "Mismatch at global constraint {constraint_index} uniform constraint: {uniform_constraint_index}");
-                }
-                if hint_c == EvalHint::Zero {
-                    assert_eq!(cz[constraint_index], F::zero(), "Mismatch at global constraint {constraint_index} uniform constraint: {uniform_constraint_index}");
-                }
             }
         }
     }
