@@ -11,7 +11,6 @@ use crate::utils::thread::drop_in_background_thread;
 use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
-use rayon::prelude::*;
 
 use thiserror::Error;
 
