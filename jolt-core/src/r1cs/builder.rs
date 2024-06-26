@@ -46,7 +46,7 @@ struct Constraint<I: ConstraintInput> {
 
 impl<I: ConstraintInput> Constraint<I> {
     #[cfg(test)]
-    fn is_sat(&self, inputs: &Vec<i64>) -> bool {
+    fn is_sat(&self, inputs: &[i64]) -> bool {
         // Find the number of variables and the number of aux. Inputs should be equal to this combined length
         let num_inputs = I::COUNT;
 
@@ -772,6 +772,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
     #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan_sparse")]
+    #[allow(clippy::type_complexity)]
     pub fn compute_spartan_Az_Bz_Cz(
         &self,
         inputs: &[Vec<F>],
@@ -967,7 +968,7 @@ mod tests {
     ) -> F {
         let multi_step_inputs: Vec<Vec<F>> = single_step_inputs
             .iter()
-            .map(|input| vec![input.clone()])
+            .map(|input| vec![*input])
             .collect();
         let multi_step_inputs_ref: Vec<&[F]> =
             multi_step_inputs.iter().map(|v| v.as_slice()).collect();

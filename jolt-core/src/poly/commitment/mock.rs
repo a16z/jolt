@@ -41,9 +41,7 @@ impl<F: JoltField> CommitmentScheme for MockCommitScheme<F> {
     type Proof = MockProof<F>;
     type BatchedProof = MockProof<F>;
 
-    fn setup(_shapes: &[CommitShape]) -> Self::Setup {
-        ()
-    }
+    fn setup(_shapes: &[CommitShape]) -> Self::Setup {}
     fn commit(poly: &DensePolynomial<Self::Field>, _setup: &Self::Setup) -> Self::Commitment {
         MockCommitment {
             poly: poly.to_owned(),

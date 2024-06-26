@@ -80,6 +80,7 @@ impl<F: JoltField> SparsePolynomial<F> {
 
     /// Returns `n` chunks of roughly even size without separating siblings (adjacent dense indices). Additionally returns a vector of [low, high) dense index ranges.
     #[tracing::instrument(skip_all)]
+    #[allow(clippy::type_complexity)]
     fn chunk_no_split_siblings(&self, n: usize) -> (Vec<&[(F, usize)]>, Vec<(usize, usize)>) {
         if self.Z.len() < n * 2 {
             return (vec![(&self.Z)], vec![(0, self.num_vars.pow2())]);
@@ -135,13 +136,11 @@ impl<F: JoltField> SparsePolynomial<F> {
                 } else {
                     new_Z.push(((F::one() - r) * value, new_dense_index));
                 }
+            } else if sparse_index > 0 && self.Z[sparse_index - 1].1 == dense_index - 1 {
+                continue;
             } else {
-                if sparse_index > 0 && self.Z[sparse_index - 1].1 == dense_index - 1 {
-                    continue;
-                } else {
-                    let new_dense_index = (dense_index - 1) / 2;
-                    new_Z.push((*r * value, new_dense_index));
-                }
+                let new_dense_index = (dense_index - 1) / 2;
+                new_Z.push((*r * value, new_dense_index));
             }
         }
         self.Z = new_Z;
@@ -214,16 +213,14 @@ impl<F: JoltField> SparsePolynomial<F> {
                                 (mul_0_1_optimized(&(F::one() - r), value), new_dense_index);
                             write_index += 1;
                         }
+                    } else if sparse_index > 0 && chunk[sparse_index - 1].1 == dense_index - 1 {
+                        // (low, high) present, but handeled prior
+                        continue;
                     } else {
-                        if sparse_index > 0 && chunk[sparse_index - 1].1 == dense_index - 1 {
-                            // (low, high) present, but handeled prior
-                            continue;
-                        } else {
-                            // (_, high) present
-                            let new_dense_index = (dense_index - 1) / 2;
-                            mutable[write_index] = (mul_0_1_optimized(r, value), new_dense_index);
-                            write_index += 1;
-                        }
+                        // (_, high) present
+                        let new_dense_index = (dense_index - 1) / 2;
+                        mutable[write_index] = (mul_0_1_optimized(r, value), new_dense_index);
+                        write_index += 1;
                     }
                 }
             });
@@ -235,7 +232,7 @@ impl<F: JoltField> SparsePolynomial<F> {
 
     pub fn final_eval(&self) -> F {
         assert_eq!(self.num_vars, 0);
-        if self.Z.len() == 0 {
+        if self.Z.is_empty() {
             F::zero()
         } else {
             assert_eq!(self.Z.len(), 1);

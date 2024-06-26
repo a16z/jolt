@@ -335,7 +335,7 @@ mod tests {
 
         let aux = combined_builder.compute_aux(&inputs);
 
-        // Implicitly asserts validity
         let (az, bz, cz) = combined_builder.compute_spartan_Az_Bz_Cz(&inputs, &aux);
+        combined_builder.assert_valid(&az, &bz, &cz);
     }
 }
