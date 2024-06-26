@@ -45,7 +45,7 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
 }
 
 #[tracing::instrument(skip_all, name = "unsafe_allocate_sparse_zero_vec")]
-pub fn unsafe_allocate_sparse_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<(usize, F)> {
+pub fn unsafe_allocate_sparse_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<(F, usize)> {
     // Check for safety of 0 allocation
     unsafe {
         let value = &F::zero();
@@ -55,10 +55,10 @@ pub fn unsafe_allocate_sparse_zero_vec<F: JoltField + Sized>(size: usize) -> Vec
     }
 
     // Bulk allocate zeros, unsafely
-    let result: Vec<(usize, F)>;
+    let result: Vec<(F, usize)>;
     unsafe {
-        let layout = std::alloc::Layout::array::<(usize, F)>(size).unwrap();
-        let ptr = std::alloc::alloc_zeroed(layout) as *mut (usize, F);
+        let layout = std::alloc::Layout::array::<(F, usize)>(size).unwrap();
+        let ptr = std::alloc::alloc_zeroed(layout) as *mut (F, usize);
 
         if ptr.is_null() {
             panic!("Zero vec allocation failed");

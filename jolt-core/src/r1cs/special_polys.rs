@@ -6,11 +6,11 @@ use rayon::prelude::*;
 pub struct SparsePolynomial<F: JoltField> {
     num_vars: usize,
     
-    Z: Vec<(usize, F)>,
+    Z: Vec<(F, usize)>,
 }
 
 impl<F: JoltField> SparsePolynomial<F> {
-    pub fn new(num_vars: usize, Z: Vec<(usize, F)>) -> Self {
+    pub fn new(num_vars: usize, Z: Vec<(F, usize)>) -> Self {
         SparsePolynomial { num_vars, Z }
     }
 
@@ -18,13 +18,23 @@ impl<F: JoltField> SparsePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn from_dense_evals(num_vars: usize, evals: Vec<F>) -> Self {
         assert!(num_vars.pow2() >= evals.len());
-        let non_zero_count: usize = evals.par_iter().filter(|f| !f.is_zero()).count();
-        let mut sparse: Vec<(usize, F)> = Vec::with_capacity(non_zero_count);
-        evals.into_iter().enumerate().for_each(|(dense_index, f)| {
-            if !f.is_zero() {
-                sparse.push((dense_index, f));
+        let non_zero_count: usize = evals.par_chunks(10_000).map(|chunk| chunk.iter().filter(|f| !f.is_zero()).count()).sum();
+
+        let span_allocate = tracing::span!(tracing::Level::DEBUG, "allocate");
+        let _enter_allocate = span_allocate.enter();
+        let mut sparse: Vec<(F, usize)> = unsafe_allocate_sparse_zero_vec(non_zero_count);
+        drop(_enter_allocate);
+
+        let span_copy = tracing::span!(tracing::Level::DEBUG, "copy");
+        let _enter_copy = span_copy.enter();
+        let mut sparse_index = 0;
+        for (dense_index, dense) in evals.iter().enumerate() {
+            if !dense.is_zero() {
+                sparse[sparse_index] = (*dense, dense_index);
+                sparse_index += 1;
             }
-        });
+        }
+        drop(_enter_copy);
         Self::new(num_vars, sparse)
     }
 
@@ -50,27 +60,27 @@ impl<F: JoltField> SparsePolynomial<F> {
         (0..self.Z.len())
             .into_par_iter()
             .map(|i| {
-                let bits = get_bits(self.Z[0].0, r.len());
-                SparsePolynomial::compute_chi(&bits, r) * self.Z[i].1
+                let bits = get_bits(self.Z[0].1, r.len());
+                SparsePolynomial::compute_chi(&bits, r) * self.Z[i].0
             })
             .sum()
     }
 
     /// Returns n chunks of roughly even size without orphaning siblings (adjacent dense indices). Additionally returns a vector of (low, high] dense index ranges.
     #[tracing::instrument(skip_all)]
-    fn chunk_no_orphans(&self, n: usize) -> (Vec<&[(usize, F)]>, Vec<(usize, usize)>) {
+    fn chunk_no_orphans(&self, n: usize) -> (Vec<&[(F, usize)]>, Vec<(usize, usize)>) {
         if self.Z.len() < n * 2 {
             return (vec![(&self.Z)], vec![(0, self.num_vars.pow2())]);
         }
 
         let target_chunk_size = self.Z.len() / n;
-        let mut chunks: Vec<&[(usize, F)]> = Vec::with_capacity(n);
+        let mut chunks: Vec<&[(F, usize)]> = Vec::with_capacity(n);
         let mut dense_ranges: Vec<(usize, usize)> = Vec::with_capacity(n);
         let mut dense_start_index = 0;
         let mut sparse_start_index = 0;
         let mut sparse_end_index = target_chunk_size;
         for _ in 1..n {
-            let mut dense_end_index = self.Z[sparse_end_index].0;
+            let mut dense_end_index = self.Z[sparse_end_index].1;
             if dense_end_index % 2 != 0 {
                 dense_end_index += 1;
                 sparse_end_index += 1;
@@ -83,9 +93,7 @@ impl<F: JoltField> SparsePolynomial<F> {
             sparse_end_index = std::cmp::min(sparse_end_index + target_chunk_size, self.Z.len() - 1);
         }
         chunks.push(&self.Z[sparse_start_index..]);
-        // TODO(sragss): likely makes more sense to return full range then truncate when needed (triple iterator)
-        // TODO(sragss): To use chunk_no_orphans in the triple iterator, we have to overwrite the top of the dense_ranges.
-        let highest_non_zero = self.Z.last().map(|&(index, _)| index).unwrap();
+        let highest_non_zero = self.Z.last().map(|&(_, index)| index).unwrap();
         dense_ranges.push((dense_start_index, highest_non_zero + 1));
         assert_eq!(chunks.len(), n);
         assert_eq!(dense_ranges.len(), n);
@@ -100,25 +108,24 @@ impl<F: JoltField> SparsePolynomial<F> {
         let n = self.Z.len();
         let span = tracing::span!(tracing::Level::DEBUG, "allocate");
         let _enter = span.enter();
-        let mut new_Z: Vec<(usize, F)> = Vec::with_capacity(n);
+        let mut new_Z: Vec<(F, usize)> = Vec::with_capacity(n);
         drop(_enter);
-        for (sparse_index, (dense_index, value)) in self.Z.iter().enumerate() {
+        for (sparse_index, (value, dense_index)) in self.Z.iter().enumerate() {
             if dense_index.is_even() {
                 let new_dense_index = dense_index / 2;
-                // TODO(sragss): Can likely combine these conditions for better speculative execution.
-                if self.Z.len() >= 2 && sparse_index <= self.Z.len() - 2 && self.Z[sparse_index + 1].0 == dense_index + 1 {
-                    let upper = self.Z[sparse_index + 1].1;
+                if self.Z.len() >= 2 && sparse_index <= self.Z.len() - 2 && self.Z[sparse_index + 1].1 == dense_index + 1 {
+                    let upper = self.Z[sparse_index + 1].0;
                     let eval = *value + *r  * (upper - value);
-                    new_Z.push((new_dense_index, eval));
+                    new_Z.push((eval, new_dense_index));
                 } else {
-                    new_Z.push((new_dense_index, (F::one() - r) * value));
+                    new_Z.push(((F::one() - r) * value, new_dense_index));
                 }
             } else {
-                if sparse_index > 0 && self.Z[sparse_index - 1].0 == dense_index - 1 {
+                if sparse_index > 0 && self.Z[sparse_index - 1].1 == dense_index - 1 {
                     continue;
                 } else {
                     let new_dense_index = (dense_index - 1) / 2;
-                    new_Z.push((new_dense_index, *r * value));
+                    new_Z.push((*r * value, new_dense_index));
                 }
             }
         }
@@ -139,7 +146,7 @@ impl<F: JoltField> SparsePolynomial<F> {
                 chunk_size += 1;
 
                 // If they're siblings, avoid double counting
-                if chunk[i].0.is_even() && i + 1 < chunk.len() && chunk[i].0 + 1 == chunk[i + 1].0 {
+                if chunk[i].1.is_even() && i + 1 < chunk.len() && chunk[i].1 + 1 == chunk[i + 1].1 {
                     i += 1;
                 }
                 i += 1;
@@ -151,10 +158,10 @@ impl<F: JoltField> SparsePolynomial<F> {
         let alloc_span = tracing::span!(tracing::Level::DEBUG, "alloc_new_Z");
         let alloc_enter = alloc_span.enter();
         let total_len: usize = chunk_sizes.iter().sum();
-        let mut new_Z: Vec<(usize, F)> = unsafe_allocate_sparse_zero_vec(total_len);
+        let mut new_Z: Vec<(F, usize)> = unsafe_allocate_sparse_zero_vec(total_len);
         drop(alloc_enter);
 
-        let mut mutable_chunks: Vec<&mut [(usize, F)]> = vec![];
+        let mut mutable_chunks: Vec<&mut [(F, usize)]> = vec![];
         let mut remainder = new_Z.as_mut_slice();
         for chunk_size in chunk_sizes {
             let (first, second) = remainder.split_at_mut(chunk_size);
@@ -163,61 +170,34 @@ impl<F: JoltField> SparsePolynomial<F> {
         }
         assert_eq!(mutable_chunks.len(), chunks.len());
 
-        // TODO(sragsss): We can scan up front and collect directly into the thing.
         chunks.into_par_iter().zip(mutable_chunks.par_iter_mut()).for_each(|(chunk, mutable)| {
             let span = tracing::span!(tracing::Level::DEBUG, "chunk");
             let _enter = span.enter();
-            // TODO(sragss): Do this with a scan instead;
-            // let mut chunk_Z: Vec<(usize, F)> = Vec::with_capacity(chunk.len());
             let mut write_index = 0;
-            for (sparse_index, (dense_index, value)) in chunk.iter().enumerate() {
+            for (sparse_index, (value, dense_index)) in chunk.iter().enumerate() {
                 if dense_index.is_even() {
                     let new_dense_index = dense_index / 2;
-                    // TODO(sragss): Can likely combine these conditions for better speculative execution.
-
-                    // All exist
-                    if chunk.len() >= 2 && sparse_index <= chunk.len() - 2 && chunk[sparse_index + 1].0 == dense_index + 1 {
-                        let upper = chunk[sparse_index + 1].1;
+                    if chunk.len() >= 2 && sparse_index <= chunk.len() - 2 && chunk[sparse_index + 1].1 == dense_index + 1 {
+                        let upper = chunk[sparse_index + 1].0;
                         let eval = *value + mul_0_1_optimized(r, &(upper - value));
-                        mutable[write_index] = (new_dense_index, eval);
+                        mutable[write_index] = (eval, new_dense_index);
                         write_index += 1;
-                    } else { // low exists
-                        mutable[write_index] = (new_dense_index, mul_0_1_optimized(&(F::one() - r), value));
+                    } else {
+                        mutable[write_index] = (mul_0_1_optimized(&(F::one() - r), value), new_dense_index);
                         write_index += 1;
                     }
                 } else {
-                    // low and high exist
-                    if sparse_index > 0 && chunk[sparse_index - 1].0 == dense_index - 1 {
+                    if sparse_index > 0 && chunk[sparse_index - 1].1 == dense_index - 1 {
                         continue;
-                    } else { // high only exists
+                    } else {
                         let new_dense_index = (dense_index - 1) / 2;
-                        mutable[write_index] = (new_dense_index, mul_0_1_optimized(r, value));
+                        mutable[write_index] = (mul_0_1_optimized(r, value), new_dense_index);
                         write_index += 1;
                     }
                 }
             }
         });
 
-        // for (sparse_index, (dense_index, value)) in self.Z.iter().enumerate() {
-        //     if dense_index.is_even() {
-        //         let new_dense_index = dense_index / 2;
-        //         // TODO(sragss): Can likely combine these conditions for better speculative execution.
-        //         if self.Z.len() >= 2 && sparse_index <= self.Z.len() - 2 && self.Z[sparse_index + 1].0 == dense_index + 1 {
-        //             let upper = self.Z[sparse_index + 1].1;
-        //             let eval = *value + *r  * (upper - value);
-        //             new_Z.push((new_dense_index, eval));
-        //         } else {
-        //             new_Z.push((new_dense_index, (F::one() - r) * value));
-        //         }
-        //     } else {
-        //         if sparse_index > 0 && self.Z[sparse_index - 1].0 == dense_index - 1 {
-        //             continue;
-        //         } else {
-        //             let new_dense_index = (dense_index - 1) / 2;
-        //             new_Z.push((new_dense_index, *r * value));
-        //         }
-        //     }
-        // }
         let old_Z = std::mem::replace(&mut self.Z, new_Z);
         drop_in_background_thread(old_Z);
         self.num_vars -= 1;
@@ -230,8 +210,8 @@ impl<F: JoltField> SparsePolynomial<F> {
         } else {
             assert_eq!(self.Z.len(), 1);
             let item = self.Z[0];
-            assert_eq!(item.0, 0);
-            item.1
+            assert_eq!(item.1, 0);
+            item.0
         }
     }
 
@@ -242,7 +222,7 @@ impl<F: JoltField> SparsePolynomial<F> {
 
         let mut evals = unsafe_allocate_zero_vec(self.num_vars.pow2());
 
-        for (index, value) in self.Z {
+        for (value, index) in self.Z {
             evals[index] = value;
         }
 
@@ -253,9 +233,9 @@ impl<F: JoltField> SparsePolynomial<F> {
 pub struct SparseTripleIterator<'a, F: JoltField> {
     dense_index: usize,
     end_index: usize,
-    a: &'a [(usize, F)],
-    b: &'a [(usize, F)],
-    c: &'a [(usize, F)],
+    a: &'a [(F, usize)],
+    b: &'a [(F, usize)],
+    c: &'a [(F, usize)],
 }
 
 impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
@@ -278,13 +258,13 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         // TODO(sragss): Explain the strategy
 
         let target_chunk_size = b.Z.len() / n;
-        let mut b_chunks: Vec<&[(usize, F)]> = Vec::with_capacity(n);
+        let mut b_chunks: Vec<&[(F, usize)]> = Vec::with_capacity(n);
         let mut dense_ranges: Vec<(usize, usize)> = Vec::with_capacity(n);
         let mut dense_start_index = 0;
         let mut sparse_start_index = 0;
         let mut sparse_end_index = target_chunk_size;
         for _ in 1..n {
-            let mut dense_end_index = b.Z[sparse_end_index].0;
+            let mut dense_end_index = b.Z[sparse_end_index].1;
             if dense_end_index % 2 != 0 {
                 dense_end_index += 1;
                 sparse_end_index += 1;
@@ -298,9 +278,9 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         }
         b_chunks.push(&b.Z[sparse_start_index..]);
         let highest_non_zero = {
-            let a_last = a.Z.last().map(|&(index, _)| index);
-            let b_last = b.Z.last().map(|&(index, _)| index);
-            let c_last = c.Z.last().map(|&(index, _)| index);
+            let a_last = a.Z.last().map(|&(_, index)| index);
+            let b_last = b.Z.last().map(|&(_, index)| index);
+            let c_last = c.Z.last().map(|&(_, index)| index);
             *a_last.iter().chain(b_last.iter()).chain(c_last.iter()).max().unwrap()
         };
         dense_ranges.push((dense_start_index, highest_non_zero + 1));
@@ -308,8 +288,8 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         assert_eq!(dense_ranges.len(), n);
 
         // Create chunks which overlap with b's sparse indices
-        let mut a_chunks: Vec<&[(usize, F)]> = vec![&[]; n];
-        let mut c_chunks: Vec<&[(usize, F)]> = vec![&[]; n];
+        let mut a_chunks: Vec<&[(F, usize)]> = vec![&[]; n];
+        let mut c_chunks: Vec<&[(F, usize)]> = vec![&[]; n];
         let mut a_i = 0;
         let mut c_i = 0;
         let span = tracing::span!(tracing::Level::DEBUG, "a, c scanning");
@@ -318,18 +298,18 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
             // Find the corresponding a, c chunks
             let prev_chunk_end = range.0;
 
-            if a_i < a.Z.len() && a.Z[a_i].0 < prev_chunk_end {
+            if a_i < a.Z.len() && a.Z[a_i].1 < prev_chunk_end {
                 let a_start = a_i;
-                while a_i < a.Z.len() && a.Z[a_i].0 < prev_chunk_end {
+                while a_i < a.Z.len() && a.Z[a_i].1 < prev_chunk_end {
                     a_i += 1;
                 }
 
                 a_chunks[chunk_index - 1] = &a.Z[a_start..a_i];
             }
 
-            if c_i < c.Z.len() && c.Z[c_i].0 < prev_chunk_end {
+            if c_i < c.Z.len() && c.Z[c_i].1 < prev_chunk_end {
                 let c_start = c_i;
-                while c_i < c.Z.len() && c.Z[c_i].0 < prev_chunk_end {
+                while c_i < c.Z.len() && c.Z[c_i].1 < prev_chunk_end {
                     c_i += 1;
                 }
 
@@ -352,9 +332,9 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
         for (((a_chunk, b_chunk), c_chunk), range) in a_chunks.iter().zip(b_chunks.iter()).zip(c_chunks.iter()).zip(dense_ranges.iter()) {
             #[cfg(test)]
             {
-                assert!(a_chunk.iter().all(|(index, _)| *index >= range.0 && *index <= range.1));
-                assert!(b_chunk.iter().all(|(index, _)| *index >= range.0 && *index <= range.1));
-                assert!(c_chunk.iter().all(|(index, _)| *index >= range.0 && *index <= range.1));
+                assert!(a_chunk.iter().all(|(_, index)| *index >= range.0 && *index <= range.1));
+                assert!(b_chunk.iter().all(|(_, index)| *index >= range.0 && *index <= range.1));
+                assert!(c_chunk.iter().all(|(_, index)| *index >= range.0 && *index <= range.1));
             }
             let iter = SparseTripleIterator {
                 dense_index: range.0,
@@ -376,10 +356,10 @@ impl<'a, F: JoltField> SparseTripleIterator<'a, F> {
     pub fn next_pairs(&mut self) -> (usize, F, F, F, F, F, F) {
         // TODO(sragss): We can store a map of big ranges of zeros and skip them rather than hitting each dense index.
         let low_index = self.dense_index;
-        let match_and_advance = |slice: &mut &[(usize, F)], index: usize| -> F {
+        let match_and_advance = |slice: &mut &[(F, usize)], index: usize| -> F {
             if let Some(first_item) = slice.first() {
-                if first_item.0 == index {
-                    let ret = first_item.1;
+                if first_item.1 == index {
+                    let ret = first_item.0;
                     *slice = &slice[1..];
                     ret
                 } else {
@@ -533,7 +513,7 @@ mod tests {
     #[test]
     fn sparse_bound_bot_all_left() {
         let dense_evals = vec![Fr::from(10), Fr::zero(), Fr::from(20), Fr::zero()];
-        let sparse_evals = vec![(0, Fr::from(10)), (2, Fr::from(20))];
+        let sparse_evals = vec![(Fr::from(10), 0), (Fr::from(20), 2)];
 
         let mut dense = DensePolynomial::new(dense_evals);
         let mut sparse = SparsePolynomial::new(2, sparse_evals);
@@ -549,7 +529,7 @@ mod tests {
     #[test]
     fn sparse_bound_bot_all_right() {
         let dense_evals = vec![Fr::zero(), Fr::from(10), Fr::zero(), Fr::from(20)];
-        let sparse_evals = vec![(1, Fr::from(10)), (3, Fr::from(20))];
+        let sparse_evals = vec![(Fr::from(10), 1), (Fr::from(20), 3)];
 
         let mut dense = DensePolynomial::new(dense_evals);
         let mut sparse = SparsePolynomial::new(2, sparse_evals);
@@ -565,7 +545,7 @@ mod tests {
     #[test]
     fn sparse_bound_bot_mixed() {
         let dense_evals = vec![Fr::zero(), Fr::from(10), Fr::zero(), Fr::from(20), Fr::from(30), Fr::from(40), Fr::zero(), Fr::from(50)];
-        let sparse_evals = vec![(1, Fr::from(10)), (3, Fr::from(20)), (4, Fr::from(30)), (5, Fr::from(40)), (7, Fr::from(50))];
+        let sparse_evals = vec![(Fr::from(10), 1), (Fr::from(20), 3), (Fr::from(30), 4), (Fr::from(40), 5), (Fr::from(50), 7)];
 
         let mut dense = DensePolynomial::new(dense_evals);
         let mut sparse = SparsePolynomial::new(3, sparse_evals);
@@ -580,9 +560,9 @@ mod tests {
 
     #[test]
     fn sparse_triple_iterator() {
-        let a = vec![(9, Fr::from(9)), (10, Fr::from(10)), (12, Fr::from(12))];
-        let b = vec![(0, Fr::from(100)), (1, Fr::from(1)), (2, Fr::from(2)), (3, Fr::from(3)), (4, Fr::from(4)), (5, Fr::from(5)), (6, Fr::from(6)), (7, Fr::from(7)), (8, Fr::from(8)), (9, Fr::from(9)), (10, Fr::from(10)), (11, Fr::from(11)), (12, Fr::from(12)), (13, Fr::from(13)), (14, Fr::from(14)), (15, Fr::from(15))];
-        let c = vec![(0, Fr::from(12)), (3, Fr::from(3))];
+        let a = vec![(Fr::from(9), 9), (Fr::from(10), 10), (Fr::from(12), 12)];
+        let b = vec![(Fr::from(100), 0), (Fr::from(1), 1), (Fr::from(2), 2), (Fr::from(3), 3), (Fr::from(4), 4), (Fr::from(5), 5), (Fr::from(6), 6), (Fr::from(7), 7), (Fr::from(8), 8), (Fr::from(9), 9), (Fr::from(10), 10), (Fr::from(11), 11), (Fr::from(12), 12), (Fr::from(13), 13), (Fr::from(14), 14), (Fr::from(15), 15)];
+        let c = vec![(Fr::from(12), 0), (Fr::from(3), 3)];
 
         let a_poly = SparsePolynomial::new(4, a);
         let b_poly = SparsePolynomial::new(4, b);
@@ -608,13 +588,13 @@ mod tests {
 
         for i in 0usize..total_len {
             if rng.gen::<f64>() < prob_exists {
-                a.push((i, Fr::from(i as u64)));
+                a.push((Fr::from(i as u64), i));
             }
             if rng.gen::<f64>() < prob_exists * 2f64 {
-                b.push((i, Fr::from(i as u64)));
+                b.push((Fr::from(i as u64), i));
             }
             if rng.gen::<f64>() < prob_exists {
-                c.push((i, Fr::from(i as u64)));
+                c.push((Fr::from(i as u64), i));
             }
         }
 
@@ -662,7 +642,7 @@ mod tests {
         let mut a = vec![];
         for i in 0usize..total_len {
             if rng.gen::<f64>() < prob_exists {
-                a.push((i, Fr::from(i as u64)));
+                a.push((Fr::from(i as u64), i));
             }
         }
 

@@ -878,15 +878,16 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         // TODO(sragss): Attempt moving onto key and computing from materialized rows rather than linear combos
         let span = tracing::span!(tracing::Level::DEBUG, "compute_constraints");
         let enter = span.enter();
-        let az_chunks = Az.par_chunks_mut(self.uniform_repeat);
-        let bz_chunks = Bz.par_chunks_mut(self.uniform_repeat);
-        let cz_chunks = Cz.par_chunks_mut(self.uniform_repeat);
+        let az_chunks = Az.chunks_mut(self.uniform_repeat);
+        let bz_chunks = Bz.chunks_mut(self.uniform_repeat);
+        let cz_chunks = Cz.chunks_mut(self.uniform_repeat);
 
         self.uniform_builder
             .constraints
-            .par_iter()
+            .iter()
+            .enumerate()
             .zip(az_chunks.zip(bz_chunks.zip(cz_chunks)))
-            .for_each(|(constraint, (az_chunk, (bz_chunk, cz_chunk)))| {
+            .for_each(|((constraint_index, constraint), (az_chunk, (bz_chunk, cz_chunk)))| {
                 let a_inputs = batch_inputs(&constraint.a);
                 let b_inputs = batch_inputs(&constraint.b);
                 let c_inputs = batch_inputs(&constraint.c);
@@ -894,8 +895,24 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                 constraint.a.evaluate_batch_mut(&a_inputs, az_chunk);
                 constraint.b.evaluate_batch_mut(&b_inputs, bz_chunk);
                 constraint.c.evaluate_batch_mut(&c_inputs, cz_chunk);
+
+                let az_zero = az_chunk.iter().filter(|item| item.is_zero()).count();
+                let bz_zero = bz_chunk.iter().filter(|item| item.is_zero()).count();
+                let cz_zero = cz_chunk.iter().filter(|item| item.is_zero()).count();
+
+                println!("[{constraint_index}] empty map az: {} bz: {} cz: {}", az_zero == az_chunk.len(), bz_zero == bz_chunk.len(), cz_zero == cz_chunk.len());
             });
         drop(enter);
+
+        let az_non_zero = Az.iter().filter(|item| !item.is_zero()).count();
+        let bz_non_zero = Bz.iter().filter(|item| !item.is_zero()).count();
+        let cz_non_zero = Cz.iter().filter(|item| !item.is_zero()).count();
+
+        println!("Uniform repeat: {}", self.uniform_repeat);
+        println!("Num constraints: {constraint_rows}");
+        println!("Az sparsity: {az_non_zero}/{}", Az.len());
+        println!("Bz sparsity: {bz_non_zero}/{}", Bz.len());
+        println!("Cz sparsity: {cz_non_zero}/{}", Cz.len());
 
         // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
         // (a - b) * condition == 0
