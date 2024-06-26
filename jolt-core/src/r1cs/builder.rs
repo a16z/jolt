@@ -788,7 +788,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                     let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
 
                     let mut evaluate_lc_chunk = |lc: &LC<I>| {
-                        if lc.terms().len() != 0 {
+                        if !lc.terms().is_empty() {
                             let inputs = batch_inputs(lc);
                             lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
 
