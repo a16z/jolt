@@ -2,7 +2,7 @@ use crate::{field::JoltField, poly::{dense_mlpoly::DensePolynomial, eq_poly::EqP
 use num_integer::Integer;
 use rayon::prelude::*;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SparsePolynomial<F: JoltField> {
     num_vars: usize,
     

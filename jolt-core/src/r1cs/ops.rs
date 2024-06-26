@@ -129,11 +129,6 @@ impl<I: ConstraintInput> LC<I> {
 
         let terms: Vec<F> = self.to_field_elements();
 
-        if terms.len() == 0 {
-            println!("no terms");
-            return;
-        }
-
         output
             .par_iter_mut()
             .enumerate()
