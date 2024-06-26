@@ -552,7 +552,7 @@ pub struct CombinedUniformBuilder<F: JoltField, I: ConstraintInput> {
     /// Padded to the nearest power of 2
     uniform_repeat: usize,
 
-    offset_equality_constraint: OffsetEqConstraint<I>,
+    offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
 }
 
 #[tracing::instrument(skip_all, name = "batch_inputs")]
@@ -574,13 +574,13 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
     pub fn construct(
         uniform_builder: R1CSBuilder<F, I>,
         uniform_repeat: usize,
-        offset_equality_constraint: OffsetEqConstraint<I>,
+        offset_equality_constraints: Vec<OffsetEqConstraint<I>>,
     ) -> Self {
         assert!(uniform_repeat.is_power_of_two());
         Self {
             uniform_builder,
             uniform_repeat,
-            offset_equality_constraint,
+            offset_equality_constraints,
         }
     }
 
