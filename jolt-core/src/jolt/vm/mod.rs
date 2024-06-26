@@ -403,10 +403,8 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        // drop_in_background_thread(jolt_polynomials);
-        drop(jolt_polynomials);
+        drop_in_background_thread(jolt_polynomials);
 
-        profiling::print_current_memory_usage("pre_spartan");
         let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
             &preprocessing.generators,
             r1cs_builder,
@@ -415,7 +413,6 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         )
         .expect("r1cs proof failed");
-        profiling::print_current_memory_usage("post_spartan");
         let r1cs_proof = R1CSProof {
             key: spartan_key,
             proof: spartan_proof,
@@ -593,7 +590,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
 
         #[cfg(test)]
         {
-            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz(&inputs_flat, &aux);
+            let (az, bz, cz) = builder.compute_spartan_Az_Bz_Cz_sparse(&inputs_flat, &aux);
             builder.assert_valid(&az, &bz, &cz);
         }
 

@@ -6,7 +6,6 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::key::UniformSpartanKey;
 use crate::r1cs::special_polys::SegmentedPaddedWitness;
 use crate::utils::math::Math;
-use crate::utils::profiling;
 use crate::utils::thread::drop_in_background_thread;
 
 use crate::utils::transcript::ProofTranscript;
@@ -108,16 +107,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let tau = (0..num_rounds_x)
             .map(|_i| transcript.challenge_scalar(b"t"))
             .collect::<Vec<F>>();
-        profiling::print_current_memory_usage("pre_poly_tau");
         let mut poly_tau = DensePolynomial::new(EqPolynomial::evals(&tau));
-        profiling::print_current_memory_usage("post_poly_tau");
 
         let inputs = &segmented_padded_witness.segments[0..I::COUNT];
         let aux = &segmented_padded_witness.segments[I::COUNT..];
-        profiling::print_current_memory_usage("pre_az_bz_cz");
         let (mut az, mut bz, mut cz) =
             constraint_builder.compute_spartan_Az_Bz_Cz_sparse(inputs, aux);
-        profiling::print_current_memory_usage("post_az_bz_cz");
 
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
@@ -137,8 +132,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             }
         };
 
-        // profiling::start_memory_tracing_span("outersumcheck");
-        profiling::print_current_memory_usage("pre_outersumcheck");
         let (outer_sumcheck_proof, outer_sumcheck_r, outer_sumcheck_claims) =
             SumcheckInstanceProof::prove_spartan_cubic::<_>(
                 &F::zero(), // claim is zero
@@ -151,9 +144,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 transcript,
             );
         let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
-        // drop_in_background_thread((poly_Az, poly_Bz, poly_Cz, poly_tau));
-        drop((az, bz, cz, poly_tau));
-        profiling::print_current_memory_usage("post_outersumcheck");
+        drop_in_background_thread((az, bz, cz, poly_tau));
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
@@ -181,10 +172,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .ilog2();
         let (rx_con, rx_ts) =
             outer_sumcheck_r.split_at(outer_sumcheck_r.len() - num_steps_bits as usize);
-        profiling::print_current_memory_usage("pre_poly_ABC");
         let mut poly_ABC =
             DensePolynomial::new(key.evaluate_r1cs_mle_rlc(rx_con, rx_ts, r_inner_sumcheck_RLC));
-        profiling::print_current_memory_usage("post_poly_ABC");
 
         let (inner_sumcheck_proof, inner_sumcheck_r, _claims_inner) =
             SumcheckInstanceProof::prove_spartan_quadratic::<SegmentedPaddedWitness<F>>(
@@ -194,8 +183,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 &segmented_padded_witness,
                 transcript,
             );
-        // drop_in_background_thread(poly_ABC);
-        drop(poly_ABC);
+        drop_in_background_thread(poly_ABC);
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
