@@ -2,7 +2,12 @@ use crate::{
     field::{JoltField, OptimizedMul},
     r1cs::key::{SparseConstraints, UniformR1CS},
     utils::{
-        math::Math, mul_0_1_optimized, thread::{drop_in_background_thread, par_flatten_triple, unsafe_allocate_sparse_zero_vec, unsafe_allocate_zero_vec}
+        math::Math,
+        mul_0_1_optimized,
+        thread::{
+            drop_in_background_thread, par_flatten_triple, unsafe_allocate_sparse_zero_vec,
+            unsafe_allocate_zero_vec,
+        },
     },
 };
 #[allow(unused_imports)] // clippy thinks these aren't needed lol
@@ -12,7 +17,8 @@ use std::{collections::HashMap, fmt::Debug};
 
 use super::{
     key::{NonUniformR1CS, SparseEqualityItem},
-    ops::{ConstraintInput, Term, Variable, LC}, special_polys::SparsePolynomial,
+    ops::{ConstraintInput, Term, Variable, LC},
+    special_polys::SparsePolynomial,
 };
 
 pub trait R1CSConstraintBuilder<F: JoltField> {
@@ -33,7 +39,7 @@ struct Constraint<I: ConstraintInput> {
     a: LC<I>,
     b: LC<I>,
     c: LC<I>,
-    evaluation_hint: (EvaluationHint, EvaluationHint, EvaluationHint)
+    evaluation_hint: (EvaluationHint, EvaluationHint, EvaluationHint),
 }
 
 impl<I: ConstraintInput> Constraint<I> {
@@ -231,7 +237,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a,
             b,
             c: LC::zero(),
-            evaluation_hint: (EvaluationHint::Zero, EvaluationHint::Other, EvaluationHint::Zero)
+            evaluation_hint: (
+                EvaluationHint::Zero,
+                EvaluationHint::Other,
+                EvaluationHint::Zero,
+            ),
         };
         self.constraints.push(constraint);
     }
@@ -250,7 +260,16 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         let a = condition;
         let b = left - right;
         let c = LC::zero();
-        let constraint = Constraint { a, b, c, evaluation_hint: (EvaluationHint::Other, EvaluationHint::Other, EvaluationHint::Zero) }; // TODO(sragss): Can do better on middle term.
+        let constraint = Constraint {
+            a,
+            b,
+            c,
+            evaluation_hint: (
+                EvaluationHint::Other,
+                EvaluationHint::Other,
+                EvaluationHint::Zero,
+            ),
+        }; // TODO(sragss): Can do better on middle term.
         self.constraints.push(constraint);
     }
 
@@ -263,7 +282,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a,
             b,
             c: LC::zero(),
-            evaluation_hint: (EvaluationHint::Other, EvaluationHint::Other, EvaluationHint::Zero)
+            evaluation_hint: (
+                EvaluationHint::Other,
+                EvaluationHint::Other,
+                EvaluationHint::Zero,
+            ),
         };
         self.constraints.push(constraint);
     }
@@ -287,7 +310,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a: condition.clone(),
             b: (result_true - result_false.clone()),
             c: (alleged_result - result_false),
-            evaluation_hint: (EvaluationHint::Other, EvaluationHint::Other, EvaluationHint::Other) // TODO(sragss): Is this the best we can do?
+            evaluation_hint: (
+                EvaluationHint::Other,
+                EvaluationHint::Other,
+                EvaluationHint::Other,
+            ), // TODO(sragss): Is this the best we can do?
         };
         self.constraints.push(constraint);
     }
@@ -433,7 +460,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
             a: x.into(),
             b: y.into(),
             c: z.into(),
-            evaluation_hint: (EvaluationHint::Other, EvaluationHint::Other, EvaluationHint::Other)
+            evaluation_hint: (
+                EvaluationHint::Other,
+                EvaluationHint::Other,
+                EvaluationHint::Other,
+            ),
         };
         self.constraints.push(constraint);
     }
@@ -858,14 +889,18 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         (Az, Bz, Cz)
     }
 
-        /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
+    /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
     /// aux should be of the format [[Aux(0), Aux(0), ...], ... [Aux(self.next_aux - 1), ...]]
     #[tracing::instrument(skip_all, name = "CombinedUniformBuilder::compute_spartan_sparse")]
     pub fn compute_spartan_Az_Bz_Cz_sparse(
         &self,
         inputs: &[Vec<F>],
         aux: &[Vec<F>],
-    ) -> (SparsePolynomial<F>, SparsePolynomial<F>, SparsePolynomial<F>) {
+    ) -> (
+        SparsePolynomial<F>,
+        SparsePolynomial<F>,
+        SparsePolynomial<F>,
+    ) {
         assert_eq!(inputs.len(), I::COUNT);
         let num_aux = self.uniform_builder.num_aux();
         assert_eq!(aux.len(), num_aux);
@@ -881,63 +916,82 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         // Enforce correctness of hints.
         // TODO(sragss): Can be moved into assert_valid.
         #[cfg(test)]
-        self.uniform_builder.constraints.iter().enumerate().for_each(|(constraint_index, constraint)| {
-            let assert_hint = |constraint: &Constraint<I>| {
-                let a_inputs = batch_inputs(&constraint.a);
-                let b_inputs = batch_inputs(&constraint.b);
-                let c_inputs = batch_inputs(&constraint.c);
+        self.uniform_builder
+            .constraints
+            .iter()
+            .for_each(|constraint| {
+                let assert_hint = |constraint: &Constraint<I>| {
+                    let a_inputs = batch_inputs(&constraint.a);
+                    let b_inputs = batch_inputs(&constraint.b);
+                    let c_inputs = batch_inputs(&constraint.c);
 
-                let a = constraint.a.evaluate_batch(&a_inputs, self.uniform_repeat);
-                let b = constraint.b.evaluate_batch(&b_inputs, self.uniform_repeat);
-                let c = constraint.c.evaluate_batch(&c_inputs, self.uniform_repeat);
+                    let a = constraint.a.evaluate_batch(&a_inputs, self.uniform_repeat);
+                    let b = constraint.b.evaluate_batch(&b_inputs, self.uniform_repeat);
+                    let c = constraint.c.evaluate_batch(&c_inputs, self.uniform_repeat);
 
-                if constraint.evaluation_hint.0 == EvaluationHint::Zero {
-                    a.iter().for_each(|item| assert_eq!(*item, F::zero(), "Wrong hint: {constraint_index} {constraint:?}"));
-                }
-                if constraint.evaluation_hint.1 == EvaluationHint::Zero {
-                    b.iter().for_each(|item| assert_eq!(*item, F::zero(), "Wrong hint: {constraint_index} {constraint:?}"));
-                }
-                if constraint.evaluation_hint.2 == EvaluationHint::Zero {
-                    c.iter().for_each(|item| assert_eq!(*item, F::zero(), "Wrong hint: {constraint_index} {constraint:?}"));
-                }
-            };
+                    if constraint.evaluation_hint.0 == EvaluationHint::Zero {
+                        a.iter().for_each(|item| assert_eq!(*item, F::zero(),));
+                    }
+                    if constraint.evaluation_hint.1 == EvaluationHint::Zero {
+                        b.iter().for_each(|item| assert_eq!(*item, F::zero(),));
+                    }
+                    if constraint.evaluation_hint.2 == EvaluationHint::Zero {
+                        c.iter().for_each(|item| assert_eq!(*item, F::zero(),));
+                    }
+                };
 
-            assert_hint(constraint);
-        });
+                assert_hint(constraint);
+            });
 
         // uniform_constraints: Xz[0..uniform_constraint_rows]
         let span = tracing::span!(tracing::Level::DEBUG, "uniform_evals");
         let _enter = span.enter();
-        let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> = self.uniform_builder.constraints.par_iter().enumerate().map(|(constraint_index, constraint)| {
-            let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
+        let uni_constraint_evals: Vec<(Vec<(F, usize)>, Vec<(F, usize)>, Vec<(F, usize)>)> =
+            self.uniform_builder
+                .constraints
+                .par_iter()
+                .enumerate()
+                .map(|(constraint_index, constraint)| {
+                    let mut dense_output_buffer = unsafe_allocate_zero_vec(self.uniform_repeat);
 
-            let mut evaluate_lc_chunk = |hint, lc: &LC<I>| {
-                if hint != EvaluationHint::Zero {
-                    let inputs = batch_inputs(lc);
-                    lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
+                    let mut evaluate_lc_chunk = |hint, lc: &LC<I>| {
+                        if hint != EvaluationHint::Zero {
+                            let inputs = batch_inputs(lc);
+                            lc.evaluate_batch_mut(&inputs, &mut dense_output_buffer);
 
-                    // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
-                    let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
-                    dense_output_buffer.iter().enumerate().for_each(|(local_index, item)| {
-                        if !item.is_zero() {
-                            let global_index = constraint_index * self.uniform_repeat + local_index;
-                            sparse.push((*item, global_index));
+                            // Take only the non-zero elements and represent them as sparse tuples (eval, dense_index)
+                            let mut sparse = Vec::with_capacity(self.uniform_repeat); // overshoot
+                            dense_output_buffer.iter().enumerate().for_each(
+                                |(local_index, item)| {
+                                    if !item.is_zero() {
+                                        let global_index =
+                                            constraint_index * self.uniform_repeat + local_index;
+                                        sparse.push((*item, global_index));
+                                    }
+                                },
+                            );
+                            sparse
+                        } else {
+                            vec![]
                         }
-                    });
-                    sparse
-                } else {
-                    vec![]
-                }
-            };
+                    };
 
-            let a_chunk: Vec<(F, usize)> = evaluate_lc_chunk(constraint.evaluation_hint.0, &constraint.a);
-            let b_chunk: Vec<(F, usize)> = evaluate_lc_chunk(constraint.evaluation_hint.1, &constraint.b);
-            let c_chunk: Vec<(F, usize)> = evaluate_lc_chunk(constraint.evaluation_hint.2, &constraint.c);
+                    let a_chunk: Vec<(F, usize)> =
+                        evaluate_lc_chunk(constraint.evaluation_hint.0, &constraint.a);
+                    let b_chunk: Vec<(F, usize)> =
+                        evaluate_lc_chunk(constraint.evaluation_hint.1, &constraint.b);
+                    let c_chunk: Vec<(F, usize)> =
+                        evaluate_lc_chunk(constraint.evaluation_hint.2, &constraint.c);
 
-            (a_chunk, b_chunk, c_chunk)
-        }).collect();
+                    (a_chunk, b_chunk, c_chunk)
+                })
+                .collect();
 
-        let (mut az_sparse, mut bz_sparse, cz_sparse) = par_flatten_triple(uni_constraint_evals, unsafe_allocate_sparse_zero_vec, self.uniform_repeat);
+        let (mut az_sparse, mut bz_sparse, cz_sparse) = par_flatten_triple(
+            uni_constraint_evals,
+            unsafe_allocate_sparse_zero_vec,
+            self.uniform_repeat,
+        );
 
         // offset_equality_constraints: Xz[uniform_constraint_rows..uniform_constraint_rows + 1]
         // (a - b) * condition == 0
@@ -981,7 +1035,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
                     .cloned()
                     .unwrap_or(constr.cond.1.constant_term_field());
                 (az, bz)
-            }).collect();
+            })
+            .collect();
 
         // Sparsify: take only the non-zero elements
         for (local_index, (az, bz)) in dense_az_bz.iter().enumerate() {
@@ -1000,11 +1055,14 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let cz_poly = SparsePolynomial::new(num_vars, cz_sparse);
 
         #[cfg(test)]
-        self.assert_valid(&az_poly.clone().to_dense().evals_ref(), &bz_poly.clone().to_dense().evals_ref(), &cz_poly.clone().to_dense().evals_ref());
+        self.assert_valid(
+            &az_poly.clone().to_dense().evals_ref(),
+            &bz_poly.clone().to_dense().evals_ref(),
+            &cz_poly.clone().to_dense().evals_ref(),
+        );
 
         (az_poly, bz_poly, cz_poly)
     }
-
 
     #[cfg(test)]
     pub fn assert_valid(&self, az: &[F], bz: &[F], cz: &[F]) {

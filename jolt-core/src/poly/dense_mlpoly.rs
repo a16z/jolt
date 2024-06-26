@@ -206,13 +206,13 @@ impl<F: JoltField> DensePolynomial<F> {
         let n = self.len() / 2;
         let mut new_z = unsafe_allocate_zero_vec(n);
         new_z.par_iter_mut().enumerate().for_each(|(i, z)| {
-            let m = self.Z[2*i + 1] - self.Z[2*i];
+            let m = self.Z[2 * i + 1] - self.Z[2 * i];
             *z = if m.is_zero() {
-                self.Z[2*i]
+                self.Z[2 * i]
             } else if m.is_one() {
-                self.Z[2*i] + r
-            }else {
-                self.Z[2*i] + *r * m 
+                self.Z[2 * i] + r
+            } else {
+                self.Z[2 * i] + *r * m
             }
         });
 

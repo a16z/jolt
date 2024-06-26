@@ -115,7 +115,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let inputs = &segmented_padded_witness.segments[0..I::COUNT];
         let aux = &segmented_padded_witness.segments[I::COUNT..];
         profiling::print_current_memory_usage("pre_az_bz_cz");
-        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz_sparse(inputs, aux);
+        let (mut az, mut bz, mut cz) =
+            constraint_builder.compute_spartan_Az_Bz_Cz_sparse(inputs, aux);
         profiling::print_current_memory_usage("post_az_bz_cz");
 
         let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {

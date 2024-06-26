@@ -1,5 +1,5 @@
-use std::thread::{self, JoinHandle};
 use rayon::prelude::*;
+use std::thread::{self, JoinHandle};
 
 use crate::field::JoltField;
 
@@ -45,7 +45,7 @@ pub fn unsafe_allocate_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<F> {
     result
 }
 
-#[tracing::instrument(skip_all)] 
+#[tracing::instrument(skip_all)]
 pub fn unsafe_allocate_sparse_zero_vec<F: JoltField + Sized>(size: usize) -> Vec<(F, usize)> {
     // Check for safety of 0 allocation
     unsafe {
@@ -72,18 +72,16 @@ pub fn unsafe_allocate_sparse_zero_vec<F: JoltField + Sized>(size: usize) -> Vec
 
 #[tracing::instrument(skip_all)]
 pub fn par_flatten_triple<T: Send + Sync + Copy, F: Fn(usize) -> Vec<T>>(
-        triple: Vec<(Vec<T>, Vec<T>, Vec<T>)>, 
-        allocate: F, 
-        excess_alloc: usize) -> (Vec<T>, Vec<T>, Vec<T>) {
+    triple: Vec<(Vec<T>, Vec<T>, Vec<T>)>,
+    allocate: F,
+    excess_alloc: usize,
+) -> (Vec<T>, Vec<T>, Vec<T>) {
     let az_len: usize = triple.iter().map(|item| item.0.len()).sum();
     let bz_len: usize = triple.iter().map(|item| item.1.len()).sum();
     let cz_len: usize = triple.iter().map(|item| item.2.len()).sum();
 
-    let (mut a_sparse, mut b_sparse, mut c_sparse): (Vec<T>, Vec<T>, Vec<T>) = (
-        allocate(az_len),
-        allocate(bz_len),
-        allocate(cz_len),
-    );
+    let (mut a_sparse, mut b_sparse, mut c_sparse): (Vec<T>, Vec<T>, Vec<T>) =
+        (allocate(az_len), allocate(bz_len), allocate(cz_len));
 
     let mut a_slices = Vec::with_capacity(triple.len() + excess_alloc);
     let mut b_slices = Vec::with_capacity(triple.len() + excess_alloc);
@@ -107,9 +105,20 @@ pub fn par_flatten_triple<T: Send + Sync + Copy, F: Fn(usize) -> Vec<T>>(
         c_rest = c_new_rest;
     }
 
-    triple.into_par_iter().zip(a_slices.par_iter_mut().zip(b_slices.par_iter_mut().zip(c_slices.par_iter_mut()))).for_each(|(chunk, (a, (b, c)))| {
-        join_triple(|| a.copy_from_slice(&chunk.0), || b.copy_from_slice(&chunk.1), || c.copy_from_slice(&chunk.2));
-    });
+    triple
+        .into_par_iter()
+        .zip(
+            a_slices
+                .par_iter_mut()
+                .zip(b_slices.par_iter_mut().zip(c_slices.par_iter_mut())),
+        )
+        .for_each(|(chunk, (a, (b, c)))| {
+            join_triple(
+                || a.copy_from_slice(&chunk.0),
+                || b.copy_from_slice(&chunk.1),
+                || c.copy_from_slice(&chunk.2),
+            );
+        });
 
     (a_sparse, b_sparse, c_sparse)
 }
