@@ -269,6 +269,7 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
+        println!("Working Fine!")
     }
 
     #[test]

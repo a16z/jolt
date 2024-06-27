@@ -3,12 +3,12 @@
 
 use crate::field::JoltField;
 use crate::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+use crate::poly::unipoly::{ CompressedUniPoly, UniPoly };
 use crate::r1cs::spartan::IndexablePoly;
 use crate::utils::errors::ProofVerifyError;
 use crate::utils::mul_0_optimized;
 use crate::utils::thread::drop_in_background_thread;
-use crate::utils::transcript::{AppendToTranscript, ProofTranscript};
+use crate::utils::transcript::{ AppendToTranscript, ProofTranscript };
 use ark_serialize::*;
 use rayon::prelude::*;
 
@@ -20,7 +20,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         &self,
         coeffs: &[F],
         eq_poly: &DensePolynomial<F>,
-        previous_round_claim: F,
+        previous_round_claim: F
     ) -> UniPoly<F>;
     fn final_claims(&self) -> (Vec<F>, Vec<F>);
 
@@ -30,7 +30,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
         claim: &F,
         coeffs: &[F],
         eq_poly: &mut DensePolynomial<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> (SumcheckInstanceProof<F>, Vec<F>, (Vec<F>, Vec<F>)) {
         debug_assert_eq!(eq_poly.get_num_vars(), self.num_rounds());
 
@@ -55,11 +55,7 @@ pub trait BatchedCubicSumcheck<F: JoltField>: Sync {
 
         debug_assert_eq!(eq_poly.len(), 1);
 
-        (
-            SumcheckInstanceProof::new(cubic_polys),
-            r,
-            self.final_claims(),
-        )
+        (SumcheckInstanceProof::new(cubic_polys), r, self.final_claims())
     }
 }
 
@@ -83,10 +79,9 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         polys: &mut Vec<DensePolynomial<F>>,
         comb_func: Func,
         combined_degree: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> (Self, Vec<F>, Vec<F>)
-    where
-        Func: Fn(&[F]) -> F + std::marker::Sync,
+        where Func: Fn(&[F]) -> F + std::marker::Sync
     {
         let mut r: Vec<F> = Vec::new();
         let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
@@ -111,7 +106,10 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
 
                     // eval 0: bound_func is A(low)
-                    let params_zero: Vec<F> = polys.iter().map(|poly| poly[poly_term_i]).collect();
+                    let params_zero: Vec<F> = polys
+                        .iter()
+                        .map(|poly| poly[poly_term_i])
+                        .collect();
                     accum[0] += comb_func(&params_zero);
 
                     // TODO(#28): Can be computed from prev_round_claim - eval_point_0
@@ -128,13 +126,14 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     // D_n(index, 3) = D_{n-1}[HIGH] + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
                     // ...
                     let mut existing_term = params_one;
-                    for eval_i in 2..(combined_degree + 1) {
+                    for eval_i in 2..combined_degree + 1 {
                         let mut poly_evals = vec![F::zero(); polys.len()];
                         for poly_i in 0..polys.len() {
                             let poly = &polys[poly_i];
-                            poly_evals[poly_i] = existing_term[poly_i]
-                                + poly[mle_half + poly_term_i]
-                                - poly[poly_term_i];
+                            poly_evals[poly_i] =
+                                existing_term[poly_i] +
+                                poly[mle_half + poly_term_i] -
+                                poly[poly_term_i];
                         }
 
                         accum[eval_i] += comb_func(&poly_evals);
@@ -156,38 +155,47 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 });
 
             let round_uni_poly = UniPoly::from_evals(&eval_points);
+            
+            
 
             // append the prover's message to the transcript
+
             round_uni_poly.append_to_transcript(b"poly", transcript);
+            // if _round == 0{
+            //     //println!("The value of r_j on prover side is {:?}", r_j);
+            //     println!("The state of the transcript after appending poly round 0 prover is {:?}", transcript.inner.strobe.state[100]);
+            // }
             let r_j = transcript.challenge_scalar(b"challenge_nextround");
+            // if _round == 0{
+            //     //println!("The value of r_j on prover side is {:?}", r_j);
+            //     println!("The state of the transcript after sampling prover is {:?}", transcript.inner.strobe.state[100]);
+            // }
             r.push(r_j);
 
             // bound all tables to the verifier's challenege
-            polys
-                .par_iter_mut()
-                .for_each(|poly| poly.bound_poly_var_top(&r_j));
+            polys.par_iter_mut().for_each(|poly| poly.bound_poly_var_top(&r_j));
             compressed_polys.push(round_uni_poly.compress());
+            
         }
 
-        let final_evals = polys.iter().map(|poly| poly[0]).collect();
+        let final_evals = polys
+            .iter()
+            .map(|poly| poly[0])
+            .collect();
 
         (SumcheckInstanceProof::new(compressed_polys), r, final_evals)
     }
 
     #[inline]
-    #[tracing::instrument(
-        skip_all,
-        name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic"
-    )]
+    #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::compute_eval_points_spartan_cubic")]
     pub fn compute_eval_points_spartan_cubic<Func>(
         poly_A: &DensePolynomial<F>,
         poly_B: &DensePolynomial<F>,
         poly_C: &DensePolynomial<F>,
         poly_D: &DensePolynomial<F>,
-        comb_func: &Func,
+        comb_func: &Func
     ) -> (F, F, F)
-    where
-        Func: Fn(&F, &F, &F, &F) -> F + Sync,
+        where Func: Fn(&F, &F, &F, &F) -> F + Sync
     {
         let len = poly_A.len() / 2;
         (0..len)
@@ -210,7 +218,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     &poly_A_bound_point,
                     &poly_B_bound_point,
                     &poly_C_bound_point,
-                    &poly_D_bound_point,
+                    &poly_D_bound_point
                 );
 
                 // eval 3: bound_func is -2A(low) + 3A(high); computed incrementally with bound_func applied to eval(2)
@@ -222,13 +230,13 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     &poly_A_bound_point,
                     &poly_B_bound_point,
                     &poly_C_bound_point,
-                    &poly_D_bound_point,
+                    &poly_D_bound_point
                 );
                 (eval_point_0, eval_point_2, eval_point_3)
             })
             .reduce(
                 || (F::zero(), F::zero(), F::zero()),
-                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+                |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2)
             )
     }
 
@@ -241,10 +249,9 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         poly_C: &mut DensePolynomial<F>,
         poly_D: &mut DensePolynomial<F>,
         comb_func: Func,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> (Self, Vec<F>, Vec<F>)
-    where
-        Func: Fn(&F, &F, &F, &F) -> F + Sync,
+        where Func: Fn(&F, &F, &F, &F) -> F + Sync
     {
         let mut r: Vec<F> = Vec::new();
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::new();
@@ -255,7 +262,11 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 // Make an iterator returning the contributions to the evaluations
                 let (eval_point_0, eval_point_2, eval_point_3) =
                     Self::compute_eval_points_spartan_cubic(
-                        poly_A, poly_B, poly_C, poly_D, &comb_func,
+                        poly_A,
+                        poly_B,
+                        poly_C,
+                        poly_D,
+                        &comb_func
                     );
 
                 let evals = [
@@ -287,19 +298,15 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                         || {
                             rayon::join(
                                 || poly_C.bound_poly_var_top_zero_optimized(&r_i),
-                                || poly_D.bound_poly_var_top_zero_optimized(&r_i),
+                                || poly_D.bound_poly_var_top_zero_optimized(&r_i)
                             )
-                        },
+                        }
                     )
-                },
+                }
             );
         }
 
-        (
-            SumcheckInstanceProof::new(polys),
-            r,
-            vec![poly_A[0], poly_B[0], poly_C[0], poly_D[0]],
-        )
+        (SumcheckInstanceProof::new(polys), r, vec![poly_A[0], poly_B[0], poly_C[0], poly_D[0]])
     }
 
     #[tracing::instrument(skip_all, name = "Spartan2::sumcheck::prove_spartan_quadratic")]
@@ -313,7 +320,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         num_rounds: usize,
         poly_A: &mut DensePolynomial<F>,
         W: &P,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> (Self, Vec<F>, Vec<F>) {
         let mut r: Vec<F> = Vec::with_capacity(num_rounds);
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds);
@@ -330,11 +337,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             let eval_point_0: F = (0..len)
                 .into_par_iter()
                 .map(|i| {
-                    if poly_A[i].is_zero() || W[i].is_zero() {
-                        F::zero()
-                    } else {
-                        poly_A[i] * W[i]
-                    }
+                    if poly_A[i].is_zero() || W[i].is_zero() { F::zero() } else { poly_A[i] * W[i] }
                 })
                 .sum();
             // eval_point_2 = \sum_i (2 * A[len + i] - A[i]) * (2 * B[len + i] - B[i])
@@ -353,7 +356,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 .sum();
             eval_point_2 += mul_0_optimized(
                 &(poly_A[len] + poly_A[len] - poly_A[0]),
-                &(F::from_u64(2).unwrap() - W[0]),
+                &(F::from_u64(2).unwrap() - W[0])
             );
 
             let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
@@ -383,9 +386,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                 let zero = F::zero();
                 let one = [F::one()];
                 let W_iter = (0..W.len()).into_par_iter().map(move |i| &W[i]);
-                let Z_iter = W_iter
-                    .chain(one.par_iter())
-                    .chain(rayon::iter::repeatn(&zero, len));
+                let Z_iter = W_iter.chain(one.par_iter()).chain(rayon::iter::repeatn(&zero, len));
                 let left_iter = Z_iter.clone().take(len);
                 let right_iter = Z_iter.skip(len).take(len);
                 let B = left_iter
@@ -393,15 +394,17 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     .map(|(a, b)| if *a == *b { *a } else { *a + r_i * (*b - *a) })
                     .collect();
                 DensePolynomial::new(B)
-            },
+            }
         );
 
         /*          Round 0 END          */
 
         for i in 1..num_rounds {
             let poly = {
-                let (eval_point_0, eval_point_2) =
-                    Self::compute_eval_points_spartan_quadratic(poly_A, &poly_B);
+                let (eval_point_0, eval_point_2) = Self::compute_eval_points_spartan_quadratic(
+                    poly_A,
+                    &poly_B
+                );
 
                 let evals = [eval_point_0, claim_per_round - eval_point_0, eval_point_2];
                 UniPoly::from_evals(&evals)
@@ -422,7 +425,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
             // bound all tables to the verifier's challenege
             rayon::join(
                 || poly_A.bound_poly_var_top_zero_optimized(&r_i),
-                || poly_B.bound_poly_var_top_zero_optimized(&r_i),
+                || poly_B.bound_poly_var_top_zero_optimized(&r_i)
             );
 
             if i == num_rounds - 1 {
@@ -440,7 +443,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
     #[tracing::instrument(skip_all, name = "Sumcheck::compute_eval_points_spartan_quadratic")]
     pub fn compute_eval_points_spartan_quadratic(
         poly_A: &DensePolynomial<F>,
-        poly_B: &DensePolynomial<F>,
+        poly_B: &DensePolynomial<F>
     ) -> (F, F) {
         let len = poly_A.len() / 2;
         (0..len)
@@ -464,13 +467,16 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
                 (eval_point_0, eval_point_2)
             })
-            .reduce(|| (F::zero(), F::zero()), |a, b| (a.0 + b.0, a.1 + b.1))
+            .reduce(
+                || (F::zero(), F::zero()),
+                |a, b| (a.0 + b.0, a.1 + b.1)
+            )
     }
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Debug)]
 pub struct SumcheckInstanceProof<F: JoltField> {
-    compressed_polys: Vec<CompressedUniPoly<F>>,
+    pub compressed_polys: Vec<CompressedUniPoly<F>>,
 }
 
 impl<F: JoltField> SumcheckInstanceProof<F> {
@@ -496,7 +502,7 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut ProofTranscript
     ) -> Result<(F, Vec<F>), ProofVerifyError> {
         let mut e = claim;
         let mut r: Vec<F> = Vec::new();
@@ -508,22 +514,34 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
 
             // verify degree bound
             if poly.degree() != degree_bound {
-                return Err(ProofVerifyError::InvalidInputLength(
-                    degree_bound,
-                    poly.degree(),
-                ));
+                return Err(ProofVerifyError::InvalidInputLength(degree_bound, poly.degree()));
             }
 
             // check if G_k(0) + G_k(1) = e
             assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
+           
             // append the prover's message to the transcript
             poly.append_to_transcript(b"poly", transcript);
+
+            // if i == 0{
+            //     println!("The state of the transcript verifier after appending is {:?}", transcript.inner.strobe.state[100]);
+            //     //println!("The value of r_i is {:?}", r_i)
+            // }
 
             //derive the verifier's challenge for the next round
             let r_i = transcript.challenge_scalar(b"challenge_nextround");
 
+            // if i == 0{
+            //     println!("The state of the transcript verifier after sampling is {:?}", transcript.inner.strobe.state[100]);
+            //     //println!("The value of r_i is {:?}", r_i)
+            // }
+
             r.push(r_i);
+            // if i == 0{
+            //     println!("The state of the transcript verifier is {:?}", transcript.inner.strobe.state[100]);
+            //     //println!("The value of r_i is {:?}", r_i)
+            // }
 
             // evaluate the claimed degree-ell polynomial at r_i
             e = poly.evaluate(&r_i);

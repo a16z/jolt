@@ -234,6 +234,8 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
             [..1 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
+        let memory_trace_commitments_len = jolt_commitments.read_write_memory.trace_commitments.len();
+        let remainder_commitment = &jolt_commitments.read_write_memory.trace_commitments[memory_trace_commitments_len -1];
         let instruction_lookup_indices_commitments =
             &jolt_commitments.instruction_lookups.trace_commitment[..C];
         let instruction_flag_commitments = &jolt_commitments.instruction_lookups.trace_commitment
@@ -268,6 +270,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().circuit_flags.iter());
 
         combined_commitments.extend(instruction_flag_commitments.iter());
+        combined_commitments.push(remainder_commitment);
 
         combined_commitments.extend(r1cs_commitments.as_ref().unwrap().aux.iter());
 

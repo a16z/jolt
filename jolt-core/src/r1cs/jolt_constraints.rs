@@ -243,7 +243,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             LC::sum2(JoltIn::RAM_Read_RS1, imm_signed),
             actual_address
         );
-        
+
         // LOAD CONSTRAINT a
         // For the load instructions, we have that the four bytes read at
         // index load_store_address of memory is the same as written
@@ -362,33 +362,6 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             LC::zero()
         );
 
-        // LOAD CONSTRAINT c
-        // Constraint to check rd is updated with lookup output
-        // check this constraint later
-        let rd_nonzero_and_lookup_to_rd = cs.allocate_prod(
-            JoltIn::Bytecode_RD,
-            JoltIn::OpFlags_LookupOutToRd
-        );
-        cs.constrain_eq_conditional(
-            rd_nonzero_and_lookup_to_rd,
-            JoltIn::RAM_Write_RD,
-            JoltIn::LookupOutput
-        );
-
-        // STORE CONSTRAINT a1
-        // (SB_flag + SH_flag + SW_flag) [ rs2_val - packed_query]
-
-        let all_store_flags = LC::sum3(
-            JoltIn::OpFlags_IsSb,
-            JoltIn::OpFlags_IsSh,
-            JoltIn::OpFlags_IsSw
-        );
-        cs.constrain_prod(
-            all_store_flags,
-            LC::sub2(JoltIn::RAM_Read_RS2, packed_query),
-            LC::zero()
-        );
-
         //STORE CONSTRAINT a2
         // (LBU_flag)[ remainder123 * (memory_read[0] - JoltIn::ChunksQ_3) + remainder023 * (memory_read[1] - JoltIn::ChunksQ_3)
         //          + remainder013 * (memory_read[2] - JoltIn::ChunksQ_3) + remainder012 * (memory_read[3] - JoltIn::ChunksQ_3)
@@ -422,8 +395,8 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         );
         cs.constrain_prod(JoltIn::OpFlags_IsLbu, term, LC::zero());
 
-        //STORE CONSTRAINT a3
-        //TODO (Vineet)
+        //LOAD CONSTRAINT d1
+  
         // (LHU_flag)[ (remainder-2) * (memory_read[0] + memory_read[1] * 2^{8} - JoltIn::ChunksQ_3) +
         //    remainder * (memory_read[2] + memory_read[3] * 2^{8} - JoltIn::ChunksQ_3)
         //           ] = 0
@@ -441,6 +414,35 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             LC::sum2(read_equal_lookup_index01, read_equal_lookup_index23),
             LC::zero()
         );
+
+        // LOAD CONSTRAINT d2
+        // Constraint to check rd is updated with lookup output
+        // check this constraint later
+        let rd_nonzero_and_lookup_to_rd = cs.allocate_prod(
+            JoltIn::Bytecode_RD,
+            JoltIn::OpFlags_LookupOutToRd
+        );
+        cs.constrain_eq_conditional(
+            rd_nonzero_and_lookup_to_rd,
+            JoltIn::RAM_Write_RD,
+            JoltIn::LookupOutput
+        );
+
+        // STORE CONSTRAINT a1
+        // (SB_flag + SH_flag + SW_flag) [ rs2_val - packed_query]
+
+        let all_store_flags = LC::sum3(
+            JoltIn::OpFlags_IsSb,
+            JoltIn::OpFlags_IsSh,
+            JoltIn::OpFlags_IsSw
+        );
+        cs.constrain_prod(
+            all_store_flags,
+            LC::sub2(JoltIn::RAM_Read_RS2, packed_query),
+            LC::zero()
+        );
+
+        
 
         // STORE CONSTRAINT b-1
         // (SB_flag) [

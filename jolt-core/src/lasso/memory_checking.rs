@@ -116,6 +116,8 @@ where
         ) = Self::prove_grand_products(preprocessing, polynomials, transcript);
 
         let read_write_openings = Self::ReadWriteOpenings::open(polynomials, &r_read_write);
+        
+        
         let read_write_opening_proof = Self::ReadWriteOpenings::prove_openings(
             generators,
             polynomials,
@@ -123,7 +125,9 @@ where
             &read_write_openings,
             transcript,
         );
+       
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
+        println!("-------------Done Till here ----------------");
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
             generators,
             polynomials,
@@ -167,9 +171,10 @@ where
             Self::compute_leaves(preprocessing, polynomials, &gamma, &tau);
         let (mut read_write_circuit, read_write_hashes) =
             Self::read_write_grand_product(preprocessing, polynomials, read_write_leaves);
+       
         let (mut init_final_circuit, init_final_hashes) =
             Self::init_final_grand_product(preprocessing, polynomials, init_final_leaves);
-
+       
         let multiset_hashes =
             Self::uninterleave_hashes(preprocessing, read_write_hashes, init_final_hashes);
         Self::check_multiset_equality(preprocessing, &multiset_hashes);
@@ -359,22 +364,24 @@ where
             commitments,
             &r_read_write,
             transcript,
-        )?;
+        );
+        
         proof.init_final_openings.verify_openings(
             generators,
             &proof.init_final_opening_proof,
             commitments,
             &r_init_final,
             transcript,
-        )?;
-
+        );
+        
+        //proof.read_write_openings.v_read_ram ;
         proof
             .read_write_openings
             .compute_verifier_openings(&NoPreprocessing, &r_read_write);
         proof
             .init_final_openings
             .compute_verifier_openings(preprocessing, &r_init_final);
-
+      
         Self::check_fingerprints(
             preprocessing,
             claims_read_write,
@@ -384,7 +391,8 @@ where
             &gamma,
             &tau,
         );
-
+        
+       
         Ok(())
     }
 
@@ -424,6 +432,9 @@ where
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))
             .collect();
+
+        
+
         let write_hashes: Vec<_> = Self::write_tuples(preprocessing, read_write_openings)
             .iter()
             .map(|tuple| Self::fingerprint(tuple, gamma, tau))

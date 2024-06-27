@@ -4,7 +4,7 @@ use merlin::Transcript;
 
 #[derive(Clone)]
 pub struct ProofTranscript {
-    inner: Transcript,
+    pub inner: Transcript,
 }
 
 impl ProofTranscript {
