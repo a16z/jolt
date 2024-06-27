@@ -4,8 +4,8 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
     add::ADDInstruction, beq::BEQInstruction, mul::MULInstruction,
-    virtual_advice::ADVICEInstruction,
-    virtual_assert_valid_remainder::ASSERTVALIDREMAINDERInstruction, JoltInstruction,
+    virtual_advice::ADVICEInstruction, virtual_assert_valid_div0::AssertValidDiv0Instruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction, JoltInstruction,
 };
 /// Perform signed division and return the result
 pub struct DIVInstruction<const WORD_SIZE: usize>;
@@ -88,12 +88,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             advice_value: Some(remainder), // What should advice value be here?
         });
 
-        let is_valid: u64 = ASSERTVALIDREMAINDERInstruction::<WORD_SIZE>(r, y).lookup_entry();
+        let is_valid: u64 = AssertValidSignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
         assert_eq!(is_valid, 1);
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER,
                 rs1: v_r,
                 rs2: r_y,
                 rd: None,
@@ -103,6 +103,27 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVInstruction<WORD_
             register_state: RegisterState {
                 rs1_val: Some(r),
                 rs2_val: Some(y),
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
+
+        let is_valid: u64 = AssertValidDiv0Instruction::<WORD_SIZE>(y, q).lookup_entry();
+        assert_eq!(is_valid, 1);
+        virtual_sequence.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
+                rs1: r_y,
+                rs2: trace_row.instruction.rd,
+                rd: None,
+                imm: None,
+                virtual_sequence_index: Some(virtual_sequence.len()),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(y),
+                rs2_val: Some(q),
                 rd_post_val: None,
             },
             memory_state: None,

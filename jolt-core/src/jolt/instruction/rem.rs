@@ -5,7 +5,7 @@ use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
     add::ADDInstruction, beq::BEQInstruction, mul::MULInstruction,
     virtual_advice::ADVICEInstruction,
-    virtual_assert_valid_remainder::ASSERTVALIDREMAINDERInstruction, JoltInstruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction, JoltInstruction,
 };
 
 /// Perform signed division and return the remainder
@@ -89,12 +89,12 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMInstruction<WORD_
             advice_value: Some(remainder),
         });
 
-        let is_valid: u64 = ASSERTVALIDREMAINDERInstruction::<WORD_SIZE>(r, y).lookup_entry();
+        let is_valid: u64 = AssertValidSignedRemainderInstruction::<WORD_SIZE>(r, y).lookup_entry();
         assert_eq!(is_valid, 1);
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_VALID_REMAINDER,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER,
                 rs1: trace_row.instruction.rd,
                 rs2: r_y,
                 rd: None,

@@ -3,8 +3,11 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, beq::BEQInstruction, mulu::MULUInstruction, sltu::SLTUInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
+    add::ADDInstruction, beq::BEQInstruction, mulu::MULUInstruction,
+    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_assert_valid_div0::AssertValidDiv0Instruction,
+    virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
+    JoltInstruction,
 };
 /// Perform unsigned division and return quotient
 pub struct DIVUInstruction<const WORD_SIZE: usize>;
@@ -37,7 +40,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs2: None,
                 rd: trace_row.instruction.rd,
                 imm: None,
-                virtual_sequence_index: Some(0),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: None,
@@ -57,7 +60,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs2: None,
                 rd: v_r,
                 imm: None,
-                virtual_sequence_index: Some(1),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: None,
@@ -77,7 +80,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs2: r_y,
                 rd: v_qy,
                 imm: None,
-                virtual_sequence_index: Some(2),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q),
@@ -88,16 +91,17 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
-        let _ltu = SLTUInstruction(r, y).lookup_entry();
+        let is_valid = AssertValidUnsignedRemainderInstruction(r, y).lookup_entry();
+        assert_eq!(is_valid, 1);
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_LTU,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
                 rs1: v_r,
                 rs2: r_y,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(3),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(r),
@@ -108,7 +112,8 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
             advice_value: None,
         });
 
-        let _lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
+        let lte = ASSERTLTEInstruction(q_y, x).lookup_entry();
+        assert_eq!(lte, 1);
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
@@ -117,11 +122,32 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs2: r_x,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(4),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
                 rs2_val: Some(x),
+                rd_post_val: None,
+            },
+            memory_state: None,
+            advice_value: None,
+        });
+
+        let is_valid = AssertValidDiv0Instruction::<WORD_SIZE>(y, q).lookup_entry();
+        assert_eq!(is_valid, 1);
+        virtual_sequence.push(RVTraceRow {
+            instruction: ELFInstruction {
+                address: trace_row.instruction.address,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
+                rs1: r_y,
+                rs2: trace_row.instruction.rd,
+                rd: None,
+                imm: None,
+                virtual_sequence_index: Some(virtual_sequence.len()),
+            },
+            register_state: RegisterState {
+                rs1_val: Some(y),
+                rs2_val: Some(q),
                 rd_post_val: None,
             },
             memory_state: None,
@@ -137,7 +163,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs2: v_r,
                 rd: v_0,
                 imm: None,
-                virtual_sequence_index: Some(5),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
@@ -157,7 +183,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for DIVUInstruction<WORD
                 rs2: r_x,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(6),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(add_0),

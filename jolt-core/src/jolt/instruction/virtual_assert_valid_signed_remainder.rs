@@ -1,4 +1,4 @@
-use crate::field::JoltField;
+use crate::{field::JoltField, jolt::subtable::right_is_zero::RightIsZeroSubtable};
 use rand::prelude::StdRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -15,9 +15,9 @@ use crate::{
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 /// (remainder, divisor)
-pub struct ASSERTVALIDREMAINDERInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
+pub struct AssertValidSignedRemainderInstruction<const WORD_SIZE: usize>(pub u64, pub u64);
 
-impl<const WORD_SIZE: usize> JoltInstruction for ASSERTVALIDREMAINDERInstruction<WORD_SIZE> {
+impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstruction<WORD_SIZE> {
     fn operands(&self) -> (u64, u64) {
         (self.0, self.1)
     }
@@ -32,6 +32,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTVALIDREMAINDERInstruction
         let eq_abs = vals_by_subtable[4];
         let lt_abs = vals_by_subtable[5];
         let remainder_is_zero: F = vals_by_subtable[6].iter().product();
+        let divisor_is_zero: F = vals_by_subtable[7].iter().product();
 
         // Accumulator for LTU(x_{<s}, y_{<s})
         let mut ltu_sum = lt_abs[0];
@@ -43,10 +44,11 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTVALIDREMAINDERInstruction
             eq_prod *= *eq_i;
         }
 
-        // (1 - x_s - y_s) * LTU(x_{<s}, y_{<s}) + x_s * y_s * (1 - EQ(x_{<s}, y_{<s})) + ((1 - x_s) * y_s) * EQ(x, 0)
+        // (1 - x_s - y_s) * LTU(x_{<s}, y_{<s}) + x_s * y_s * (1 - EQ(x_{<s}, y_{<s})) + (1 - x_s) * y_s * EQ(x, 0) + EQ(y, 0)
         (F::one() - left_msb[0] - right_msb[0]) * ltu_sum
             + left_msb[0] * right_msb[0] * (F::one() - eq_prod)
             + (F::one() - left_msb[0]) * right_msb[0] * remainder_is_zero
+            + divisor_is_zero
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -69,6 +71,10 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTVALIDREMAINDERInstruction
                 Box::new(LeftIsZeroSubtable::new()),
                 SubtableIndices::from(0..C),
             ),
+            (
+                Box::new(RightIsZeroSubtable::new()),
+                SubtableIndices::from(0..C),
+            ),
         ]
     }
 
@@ -82,8 +88,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTVALIDREMAINDERInstruction
                 let remainder = self.0 as u32 as i32;
                 let divisor = self.1 as u32 as i32;
                 let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
 
-                if is_remainder_zero {
+                if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
                     let remainder_sign = remainder >> 31;
@@ -95,8 +102,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for ASSERTVALIDREMAINDERInstruction
                 let remainder = self.0 as i64;
                 let divisor = self.1 as i64;
                 let is_remainder_zero = remainder == 0;
+                let is_divisor_zero = divisor == 0;
 
-                if is_remainder_zero {
+                if is_remainder_zero || is_divisor_zero {
                     1
                 } else {
                     let remainder_sign = remainder >> 63;
@@ -121,10 +129,10 @@ mod test {
 
     use crate::{jolt::instruction::JoltInstruction, jolt_instruction_test};
 
-    use super::ASSERTVALIDREMAINDERInstruction;
+    use super::AssertValidSignedRemainderInstruction;
 
     #[test]
-    fn assert_valid_remainder_instruction_32_e2e() {
+    fn assert_valid_signed_remainder_instruction_32_e2e() {
         let mut rng = test_rng();
         const C: usize = 4;
         const M: usize = 1 << 16;
@@ -132,19 +140,19 @@ mod test {
         for _ in 0..256 {
             let x = rng.next_u32() as u64;
             let y = rng.next_u32() as u64;
-            let instruction = ASSERTVALIDREMAINDERInstruction::<32>(x, y);
+            let instruction = AssertValidSignedRemainderInstruction::<32>(x, y);
             jolt_instruction_test!(instruction);
         }
         let u32_max: u64 = u32::MAX as u64;
         let instructions = vec![
-            ASSERTVALIDREMAINDERInstruction::<32>(100, 0),
-            ASSERTVALIDREMAINDERInstruction::<32>(0, 100),
-            ASSERTVALIDREMAINDERInstruction::<32>(1, 0),
-            ASSERTVALIDREMAINDERInstruction::<32>(0, u32_max),
-            ASSERTVALIDREMAINDERInstruction::<32>(u32_max, 0),
-            ASSERTVALIDREMAINDERInstruction::<32>(u32_max, u32_max),
-            ASSERTVALIDREMAINDERInstruction::<32>(u32_max, 1 << 8),
-            ASSERTVALIDREMAINDERInstruction::<32>(1 << 8, u32_max),
+            AssertValidSignedRemainderInstruction::<32>(100, 0),
+            AssertValidSignedRemainderInstruction::<32>(0, 100),
+            AssertValidSignedRemainderInstruction::<32>(1, 0),
+            AssertValidSignedRemainderInstruction::<32>(0, u32_max),
+            AssertValidSignedRemainderInstruction::<32>(u32_max, 0),
+            AssertValidSignedRemainderInstruction::<32>(u32_max, u32_max),
+            AssertValidSignedRemainderInstruction::<32>(u32_max, 1 << 8),
+            AssertValidSignedRemainderInstruction::<32>(1 << 8, u32_max),
         ];
         for instruction in instructions {
             jolt_instruction_test!(instruction);
@@ -152,19 +160,19 @@ mod test {
     }
 
     #[test]
-    fn assert_valid_remainder_instruction_64_e2e() {
+    fn assert_valid_signed_remainder_instruction_64_e2e() {
         let mut rng = test_rng();
         const C: usize = 8;
         const M: usize = 1 << 16;
 
         for _ in 0..256 {
             let (x, y) = (rng.next_u64(), rng.next_u64());
-            let instruction = ASSERTVALIDREMAINDERInstruction::<64>(x, y);
+            let instruction = AssertValidSignedRemainderInstruction::<64>(x, y);
             jolt_instruction_test!(instruction);
         }
         for _ in 0..256 {
             let x = rng.next_u64();
-            let instruction = ASSERTVALIDREMAINDERInstruction::<64>(x, x);
+            let instruction = AssertValidSignedRemainderInstruction::<64>(x, x);
             jolt_instruction_test!(instruction);
         }
     }

@@ -38,6 +38,8 @@ pub mod left_msb;
 pub mod lt_abs;
 pub mod ltu;
 pub mod or;
+pub mod right_is_ones;
+pub mod right_is_zero;
 pub mod right_msb;
 pub mod sign_extend;
 pub mod sll;
