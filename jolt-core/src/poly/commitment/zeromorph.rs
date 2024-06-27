@@ -68,8 +68,8 @@ pub struct ZeromorphVerifierKey<P: Pairing> {
 pub struct ZeromorphCommitment<P: Pairing>(P::G1Affine);
 
 impl<P: Pairing> AppendToTranscript for ZeromorphCommitment<P> {
-    fn append_to_transcript(&self, _label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_point(b"poly_commitment_share", &self.0.into_group());
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_point(&self.0.into_group());
     }
 }
 
@@ -274,12 +274,10 @@ where
             .map(|q| UnivariateKZG::commit(&pp.commit_pp, q).unwrap())
             .collect();
         let q_comms: Vec<P::G1> = q_k_com.par_iter().map(|c| c.into_group()).collect();
-        q_comms
-            .iter()
-            .for_each(|c| transcript.append_point(b"quo", c));
+        q_comms.iter().for_each(|c| transcript.append_point(c));
 
         // Sample challenge y
-        let y_challenge: P::ScalarField = transcript.challenge_scalar(b"y");
+        let y_challenge: P::ScalarField = transcript.challenge_scalar();
 
         // Compute the batched, lifted-degree quotient `\hat{q}`
         // qq_hat = ∑_{i=0}^{num_vars-1} y^i * X^(2^num_vars - d_k - 1) * q_i(x)
@@ -287,11 +285,11 @@ where
 
         // Compute and absorb the commitment C_q = [\hat{q}]
         let q_hat_com = UnivariateKZG::commit_offset(&pp.commit_pp, &q_hat, offset)?;
-        transcript.append_point(b"q_hat", &q_hat_com.into_group());
+        transcript.append_point(&q_hat_com.into_group());
 
         // Get x and z challenges
-        let x_challenge = transcript.challenge_scalar(b"x");
-        let z_challenge = transcript.challenge_scalar(b"z");
+        let x_challenge = transcript.challenge_scalar();
+        let z_challenge = transcript.challenge_scalar();
 
         // Compute batched degree and ZM-identity quotient polynomial pi
         let (eval_scalar, (degree_check_q_scalars, zmpoly_q_scalars)): (
@@ -335,7 +333,7 @@ where
         let n = 1 << num_vars;
 
         // Generate batching challenge \rho and powers 1,...,\rho^{m-1}
-        let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
+        let rho: P::ScalarField = transcript.challenge_scalar();
         let mut rho_powers = vec![P::ScalarField::one()];
         for i in 1..polynomials.len() {
             rho_powers.push(rho_powers[i - 1] * rho);
@@ -385,7 +383,7 @@ where
         //TODO(pat): produce powers in parallel using window method
         // Compute batching of unshifted polynomials f_i:
         // Compute powers of batching challenge rho
-        let rho: P::ScalarField = transcript.challenge_scalar(b"rho");
+        let rho: P::ScalarField = transcript.challenge_scalar();
         let mut scalar = P::ScalarField::one();
         let (batched_eval, batched_commitment) = evals.iter().zip(commitments.iter()).fold(
             (P::ScalarField::zero(), P::G1::zero()),
@@ -417,19 +415,17 @@ where
         transcript.append_protocol_name(Self::protocol_name());
 
         let q_comms: Vec<P::G1> = proof.q_k_com.iter().map(|c| c.into_group()).collect();
-        q_comms
-            .iter()
-            .for_each(|c| transcript.append_point(b"quo", c));
+        q_comms.iter().for_each(|c| transcript.append_point(c));
 
         // Challenge y
-        let y_challenge: P::ScalarField = transcript.challenge_scalar(b"y");
+        let y_challenge: P::ScalarField = transcript.challenge_scalar();
 
         // Receive commitment C_q_hat
-        transcript.append_point(b"q_hat", &proof.q_hat_com.into_group());
+        transcript.append_point(&proof.q_hat_com.into_group());
 
         // Get x and z challenges
-        let x_challenge = transcript.challenge_scalar(b"x");
-        let z_challenge = transcript.challenge_scalar(b"z");
+        let x_challenge = transcript.challenge_scalar();
+        let z_challenge = transcript.challenge_scalar();
 
         // Compute batched degree and ZM-identity quotient polynomial pi
         let (eval_scalar, (mut q_scalars, zmpoly_q_scalars)): (
@@ -866,7 +862,7 @@ mod test {
             let proof = Zeromorph::<Bn254>::open(&pk, &poly, &point, &eval, &mut prover_transcript)
                 .unwrap();
             let p_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
-                prover_transcript.challenge_scalar(b"c");
+                prover_transcript.challenge_scalar();
 
             // Verify proof.
             let mut verifier_transcript = ProofTranscript::new(b"TestEval");
@@ -880,7 +876,7 @@ mod test {
             )
             .unwrap();
             let v_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
-                verifier_transcript.challenge_scalar(b"c");
+                verifier_transcript.challenge_scalar();
 
             assert_eq!(p_transcipt_squeeze, v_transcipt_squeeze);
 
@@ -934,7 +930,7 @@ mod test {
                     &mut prover_transcript,
                 );
                 let p_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
-                    prover_transcript.challenge_scalar(b"c");
+                    prover_transcript.challenge_scalar();
 
                 // Verify proof.
                 let mut verifier_transcript = ProofTranscript::new(b"TestEval");
@@ -948,7 +944,7 @@ mod test {
                 )
                 .unwrap();
                 let v_transcipt_squeeze: <Bn254 as Pairing>::ScalarField =
-                    verifier_transcript.challenge_scalar(b"c");
+                    verifier_transcript.challenge_scalar();
 
                 assert_eq!(p_transcipt_squeeze, v_transcipt_squeeze);
 

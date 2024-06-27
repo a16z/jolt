@@ -172,12 +172,12 @@ pub struct RangeCheckCommitment<C: CommitmentScheme> {
 }
 
 impl<C: CommitmentScheme> AppendToTranscript for RangeCheckCommitment<C> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"RangeCheckCommitment_begin");
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"RangeCheckCommitment_begin");
         for commitment in &self.commitments {
-            commitment.append_to_transcript(b"range", transcript);
+            commitment.append_to_transcript(transcript);
         }
-        transcript.append_message(label, b"RangeCheckCommitment_end");
+        transcript.append_message(b"RangeCheckCommitment_end");
     }
 }
 
@@ -453,7 +453,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Timestamp validity proof memory checking"
+        b"Timestamp Validity Proof"
     }
 }
 
@@ -680,8 +680,8 @@ where
         setup: &C::Setup,
     ) -> (BatchedGrandProductProof<C>, MultisetHashes<F>, Vec<F>) {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
+        let gamma: F = transcript.challenge_scalar();
+        let tau: F = transcript.challenge_scalar();
 
         transcript.append_protocol_name(Self::protocol_name());
 
@@ -719,8 +719,8 @@ where
         transcript: &mut ProofTranscript,
     ) -> Result<(), ProofVerifyError> {
         // Fiat-Shamir randomness for multiset hashes
-        let gamma: F = transcript.challenge_scalar(b"Memory checking gamma");
-        let tau: F = transcript.challenge_scalar(b"Memory checking tau");
+        let gamma: F = transcript.challenge_scalar();
+        let tau: F = transcript.challenge_scalar();
 
         transcript.append_protocol_name(Self::protocol_name());
 
@@ -831,6 +831,6 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Timestamp validity proof memory checking"
+        b"Timestamp Validity Proof"
     }
 }

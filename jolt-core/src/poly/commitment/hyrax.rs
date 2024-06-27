@@ -215,12 +215,12 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> HyraxCommitment<G> {
 }
 
 impl<G: CurveGroup> AppendToTranscript for HyraxCommitment<G> {
-    fn append_to_transcript(&self, label: &'static [u8], transcript: &mut ProofTranscript) {
-        transcript.append_message(label, b"poly_commitment_begin");
+    fn append_to_transcript(&self, transcript: &mut ProofTranscript) {
+        transcript.append_message(b"poly_commitment_begin");
         for i in 0..self.row_commitments.len() {
-            transcript.append_point(b"poly_commitment_share", &self.row_commitments[i]);
+            transcript.append_point(&self.row_commitments[i]);
         }
-        transcript.append_message(label, b"poly_commitment_end");
+        transcript.append_message(b"poly_commitment_end");
     }
 }
 
@@ -340,10 +340,9 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         transcript.append_protocol_name(Self::protocol_name());
 
         // append the claimed evaluations to transcript
-        transcript.append_scalars(b"evals_ops_val", openings);
+        transcript.append_scalars(openings);
 
-        let rlc_coefficients: Vec<_> =
-            transcript.challenge_vector(b"challenge_combine_n_to_one", polynomials.len());
+        let rlc_coefficients: Vec<_> = transcript.challenge_vector(polynomials.len());
 
         let _span = trace_span!("Compute RLC of polynomials");
         let _enter = _span.enter();
@@ -425,10 +424,9 @@ impl<F: JoltField, G: CurveGroup<ScalarField = F>> BatchedHyraxOpeningProof<G> {
         transcript.append_protocol_name(Self::protocol_name());
 
         // append the claimed evaluations to transcript
-        transcript.append_scalars(b"evals_ops_val", openings);
+        transcript.append_scalars(openings);
 
-        let rlc_coefficients: Vec<_> =
-            transcript.challenge_vector(b"challenge_combine_n_to_one", openings.len());
+        let rlc_coefficients: Vec<_> = transcript.challenge_vector(openings.len());
 
         let rlc_eval = compute_dotproduct(&rlc_coefficients, openings);
 

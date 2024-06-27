@@ -383,7 +383,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Surge memory checking"
+        b"SurgeMemCheck"
     }
 }
 
@@ -579,11 +579,11 @@ where
         // TODO(sragss): Commit some of this stuff to transcript?
 
         // Primary sumcheck
-        let r_primary_sumcheck = transcript.challenge_vector(b"primary_sumcheck", num_rounds);
+        let r_primary_sumcheck = transcript.challenge_vector(num_rounds);
         let eq: DensePolynomial<F> = DensePolynomial::new(EqPolynomial::evals(&r_primary_sumcheck));
         let sumcheck_claim: F = Self::compute_primary_sumcheck_claim(&polynomials, &eq);
 
-        transcript.append_scalar(b"sumcheck_claim", &sumcheck_claim);
+        transcript.append_scalar(&sumcheck_claim);
         let mut combined_sumcheck_polys = polynomials.E_polys.clone();
         combined_sumcheck_polys.push(eq);
 
@@ -638,13 +638,9 @@ where
         transcript.append_protocol_name(Self::protocol_name());
         let instruction = Instruction::default();
 
-        let r_primary_sumcheck =
-            transcript.challenge_vector(b"primary_sumcheck", proof.primary_sumcheck.num_rounds);
+        let r_primary_sumcheck = transcript.challenge_vector(proof.primary_sumcheck.num_rounds);
 
-        transcript.append_scalar(
-            b"sumcheck_claim",
-            &proof.primary_sumcheck.claimed_evaluation,
-        );
+        transcript.append_scalar(&proof.primary_sumcheck.claimed_evaluation);
         let primary_sumcheck_poly_degree = instruction.g_poly_degree(C) + 1;
         let (claim_last, r_z) = proof.primary_sumcheck.sumcheck_proof.verify(
             proof.primary_sumcheck.claimed_evaluation,
