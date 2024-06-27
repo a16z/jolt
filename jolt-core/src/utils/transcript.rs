@@ -60,7 +60,7 @@ impl ProofTranscript {
     }
 
     pub fn append_u64(&mut self, x: u64) {
-        let hasher = self.hasher().chain_update(x.to_le_bytes());
+        let hasher = self.hasher().chain_update([0_u8; 24]).chain_update(x.to_le_bytes());
         self.state = hasher.finalize().into();
         self.n_rounds += 1;
     }
@@ -71,7 +71,7 @@ impl ProofTranscript {
 
     pub fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
         let mut buf = vec![];
-        scalar.serialize_compressed(&mut buf).unwrap();
+        scalar.serialize_uncompressed(&mut buf).unwrap();
         self.append_bytes(&buf);
     }
 
@@ -85,7 +85,7 @@ impl ProofTranscript {
 
     pub fn append_point<G: CurveGroup>(&mut self, point: &G) {
         let mut buf = vec![];
-        point.serialize_compressed(&mut buf).unwrap();
+        point.serialize_uncompressed(&mut buf).unwrap();
         self.append_bytes(&buf);
     }
 
