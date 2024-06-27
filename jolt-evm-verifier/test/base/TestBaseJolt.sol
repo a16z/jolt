@@ -23,6 +23,7 @@ contract TestBaseJolt is TestBase {
         verifier = IVerifier(address(new JoltVerifier(transcript)));
 
         Jolt.BatchedGrandProductProof memory proof = getProofData();
+        
         Fr[] memory claims = getClaims();
 
         bool res = verifier.verifyGrandProduct(proof, claims);

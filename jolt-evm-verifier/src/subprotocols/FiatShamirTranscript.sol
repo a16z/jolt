@@ -2,21 +2,22 @@
 
 pragma solidity >=0.8.0;
 
+// We wrap this memory region mostly to discourage downsteam touching of it
+// Note - Always init this via the new_transcript function as this hashes seed data and
+//        appends the protocol name
+// Note - We don't clean the data in the memory region as we always only hash up to the point we stored in each
+//        function context. Direct access of the region of memory inside of the transcript may contain dirty bits.
+struct Transcript {
+    // A laid out memory region of [32 byte seed][uint256 n rounds][working memory for hashes]
+    bytes32[] region;
+}
+
+
 // An implementation of a Fiat Shamir Public Coin protocol which matches the one from the Jolt rust repo
 // We first define an object and memory region (the max memory limit of writes is defined on init),
 // then users can write data to this trascript or pull determistic randoms values.
 // Care should be taken to ensure that all writes are done with consistent amounts of data.
 library FiatShamirTranscript {
-
-    // We wrap this memory region mostly to discourage downsteam touching of it
-    // Note - Always init this via the new_transcript function as this hashes seed data and
-    //        appends the protocol name
-    // Note - We don't clean the data in the memory region as we always only hash up to the point we stored in each
-    //        function context. Direct access of the region of memory inside of the transcript may contain dirty bits.
-    struct Transcript {
-        // A laid out memory region of [32 byte seed][uint256 n rounds][working memory for hashes]
-        bytes32[] region;
-    }
 
     /// Generates a new transcript held in memory by initializing the region in memory before hashing the protocol
     /// name into the first position
