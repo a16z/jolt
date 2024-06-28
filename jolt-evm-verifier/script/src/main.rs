@@ -45,7 +45,7 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
                     p.coeffs_except_linear_term
                         .clone()
                         .into_iter()
-                        .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+                        .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
                         .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>(),
@@ -53,12 +53,12 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
             left_claims: l
                 .left_claims
                 .iter()
-                .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+                .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
                 .collect::<Vec<_>>(),
             right_claims: l
                 .right_claims
                 .iter()
-                .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+                .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
                 .collect::<Vec<_>>(),
         })
         .collect::<Vec<_>>();
@@ -78,11 +78,27 @@ fn get_claims_data(batched_circuit: &BatchedDenseGrandProduct<Fr>) {
         );
     let claims = claims
         .iter()
-        .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+        .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
         .collect::<Vec<_>>();
     type U256Array = sol! { uint256[] };
     let encoded_claims = U256Array::abi_encode(&claims);
     print!("{}", hex::encode(encoded_claims));
+}
+
+fn get_prover_r(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
+    let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
+    let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+        Fr,
+        Zeromorph<Bn254>,
+    >>::prove_grand_product(batched_circuit, &mut transcript, None);
+
+    let r_prover = r_prover
+        .iter()
+        .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
+        .collect::<Vec<_>>();
+    type U256Array = sol! { uint256[] };
+    let encoded_r_prover = U256Array::abi_encode(&r_prover);
+    print!("{}", hex::encode(encoded_r_prover));
 }
 
 fn main() {
@@ -108,6 +124,7 @@ fn main() {
     match args[1].as_str() {
         "proofs" => get_proof_data(&mut batched_circuit),
         "claims" => get_claims_data(&batched_circuit),
+        "proverR" => get_prover_r(&mut batched_circuit),
         _ => println!("invalid arguement"),
     };
 }

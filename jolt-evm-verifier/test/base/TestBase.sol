@@ -60,4 +60,16 @@ contract TestBase is Test {
         }
         return(true);
     }
+    
+    function getProverRGrandProduct () internal returns (Fr[] memory) {
+
+        string[] memory cmds = new string[](3);
+        cmds[0] = "sh";
+        cmds[1] = "script/run.sh"; 
+        cmds[2] = "proverR";
+        bytes memory result = vm.ffi(cmds);
+        (Fr[] memory proverRGrandProduct) = abi.decode(result, (Fr[]));
+
+        return proverRGrandProduct;
+    }
 }

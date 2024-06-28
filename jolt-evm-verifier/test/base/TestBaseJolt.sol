@@ -23,12 +23,16 @@ contract TestBaseJolt is TestBase {
         verifier = IVerifier(address(new JoltVerifier(transcript)));
 
         Jolt.BatchedGrandProductProof memory proof = getProofData();
-        
-        Fr[] memory claims = getClaims();
+        Fr[] memory proverClaims = getClaims();
 
-        bool res = verifier.verifyGrandProduct(proof, claims);
+        Fr[] memory proverRGrandProduct = getProverRGrandProduct();
 
-        assertTrue(res);
+        Fr[] memory verifierRGrandProduct = verifier.verifyGrandProduct(proof, proverClaims);
+
+
+        for (uint256 i=0; i < verifierRGrandProduct.length; i++) {
+            assertTrue(proverRGrandProduct[i] == verifierRGrandProduct[i]);
+        }
     }
 
 }
