@@ -1,5 +1,5 @@
 Continuations via Chunking
-Today Jolt is a monolithic SNARK. RISC-V traces cannot be broken up, they must be proven monolithically or not at all. As a result, Jolt has a fixed maximum trace length that can be proved which is a function of the available RAM on the prover machine. Long term we'd like to solve this by implementing a streaming algorithm for sumcheck such that prover RAM usage is tunable with minimal performance loss.
+Today Jolt is a monolithic SNARK. RISC-V traces cannot be broken up, they must be proven monolithically or not at all. As a result, Jolt has a fixed maximum trace length that can be proved which is a function of the available RAM on the prover machine. Long term we'd like to solve this by implementing a streaming algorithm for sumcheck such that prover RAM usage is tunable with minimal performance loss. *TODO(sragss): Streaming prover link*
 
 Short term we're going to solve this via monolithic chunking. The plan: Take a trace of length $N$ split it into $M$ chunks of size $N/M$ and prove each independently. $N/M$ is a function of the max RAM available to the prover. 
 
