@@ -21,7 +21,7 @@ There are two options:
 - Sumcheck, MLE evaluations native, pairing operations non-native
 - Sumcheck, MLE evaluations non-native, pairing operations native
 
-We believe the latter is more efficient albeit unergonomic. Some of the details are worked out in this paper here (*TODO(sragss): Testudo link*).
+We believe the latter is more efficient albeit unergonomic. Some of the details are worked out in this paper [here](https://eprint.iacr.org/2023/961.pdf).
 
 ### Polynomial opening proof batching
 Jolt requires tens of opening proofs across all constituent polynomials in all sumchecks. If we did these independently the verifier would be prohibitively expensive. Instead we [batch](https://jolt.a16zcrypto.com/background/batched-openings.html) all opening proofs for polynomials which share an evaluation point $r$. 
