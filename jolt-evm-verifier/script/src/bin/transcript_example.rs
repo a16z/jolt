@@ -2,7 +2,7 @@ use jolt_core::{field::JoltField, utils::transcript::ProofTranscript};
 
 use ark_ff::{BigInteger, PrimeField};
 
-use alloy_primitives::{hex, Bytes, U256};
+use alloy_primitives::{hex, U256, FixedBytes};
 use alloy_sol_types::{sol, SolType};
 use ark_bn254::{Fr, G1Projective};
 use ark_std::rand::Rng;
@@ -18,7 +18,7 @@ fn main() {
         uint256[][] scalarArrays;
         uint256[] points;
         uint256[][] pointArrays;
-        bytes[] bytes_examples;
+        bytes32[][] bytes_examples;
         uint256[] expectedScalarResponses;
         uint256[][] expectedVectorResponses;
     });
@@ -37,7 +37,6 @@ fn main() {
 
     transcript.append_u64(usizes[0]);
     transcript.append_u64(usizes[1]);
-    //let encoded_usizes = vec![U64::from(usizes[0]), U64::from(usizes[1])];
 
     scalar_responses.push(transcript.challenge_scalar());
     vector_responses.push(transcript.challenge_vector(4));
@@ -45,9 +44,14 @@ fn main() {
     let scalars = vec![Fr::random(&mut rng), Fr::random(&mut rng)];
     transcript.append_scalar(&scalars[0]);
     transcript.append_scalar(&scalars[1]);
+    let mut serialized_0 = vec![];
+    let mut serialized_1 = vec![];
+    scalars[0].serialize_uncompressed(&mut serialized_0).unwrap();
+    scalars[1].serialize_uncompressed(&mut serialized_1).unwrap();
+
     let encoded_scalars = vec![
-        U256::from_le_slice(scalars[0].into_bigint().to_bytes_le().as_slice()),
-        U256::from_le_slice(scalars[1].into_bigint().to_bytes_le().as_slice()),
+        U256::from_le_slice(&serialized_0),
+        U256::from_le_slice(&serialized_1),
     ];
 
     scalar_responses.push(transcript.challenge_scalar());
@@ -65,7 +69,7 @@ fn main() {
         .into_iter()
         .map(|x| {
             x.into_iter()
-                .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+                .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
                 .collect()
         })
         .collect();
@@ -79,8 +83,8 @@ fn main() {
     for point in points {
         let mut dest = vec![];
         point.serialize_uncompressed(&mut dest).unwrap();
-        encoded_points.push(U256::from_le_slice(&dest[0..32]));
-        encoded_points.push(U256::from_le_slice(&dest[32..64]));
+        encoded_points.push(U256::from_be_slice(&dest[0..32]));
+        encoded_points.push(U256::from_be_slice(&dest[32..64]));
     }
 
     let point_vectors = vec![
@@ -98,36 +102,37 @@ fn main() {
         for point in point_vec {
             let mut dest = vec![];
             point.serialize_uncompressed(&mut dest).unwrap();
-            encoded_point.push(U256::from_le_slice(&dest[0..32]));
-            encoded_point.push(U256::from_le_slice(&dest[32..64]));
+            encoded_point.push(U256::from_be_slice(&dest[0..32]));
+            encoded_point.push(U256::from_be_slice(&dest[32..64]));
         }
         encoded_point_vector.push(encoded_point)
     }
 
-    let bytes_a: Vec<u8> = rng
-        .gen::<[u8; 32]>()
-        .into_iter()
-        .chain(rng.gen::<[u8; 32]>().into_iter())
-        .take(55)
-        .collect();
-    let bytes_b: Vec<u8> = rng.gen::<[u8; 32]>().to_vec();
-    let byte_vectors = vec![bytes_a.clone(), bytes_b.clone()];
-    transcript.append_bytes(&byte_vectors[0]);
-    transcript.append_bytes(&byte_vectors[1]);
+    let byte_vectors = vec![vec![rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>()], vec![rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>()]];
+    let mut encoded_bytes_vector = Vec::<Vec<FixedBytes::<32>>>::new();
+    for bytes in byte_vectors.clone() {
+        let mut encoded_bytes = Vec::<FixedBytes::<32>>::new();
+        for &byte32 in bytes.iter() {
+            encoded_bytes.push(FixedBytes::<32>::new(byte32.clone()));
+        }
+        encoded_bytes_vector.push(encoded_bytes)
+    }
+    
+    transcript.append_bytes(&(byte_vectors[0].clone().into_iter().map(|x| {x.into_iter()}).flatten().collect::<Vec<u8>>()));
+    transcript.append_bytes(&(byte_vectors[1].clone().into_iter().map(|x| {x.into_iter()}).flatten().collect::<Vec<u8>>()));
     scalar_responses.push(transcript.challenge_scalar());
     vector_responses.push(transcript.challenge_vector(4));
-    let encoded_bytes = vec![Bytes::from(bytes_a), Bytes::from(bytes_b)];
 
     let encoded_scalar_responses = scalar_responses
         .iter()
-        .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+        .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
         .collect();
     let encoded_vector_responses = vector_responses
         .iter()
         .into_iter()
         .map(|x| {
             x.into_iter()
-                .map(|c| U256::from_le_slice(c.into_bigint().to_bytes_le().as_slice()))
+                .map(|c| U256::from_be_slice(c.into_bigint().to_bytes_be().as_slice()))
                 .collect()
         })
         .collect();
@@ -138,7 +143,7 @@ fn main() {
         encoded_vectors,
         encoded_points,
         encoded_point_vector,
-        encoded_bytes,
+        encoded_bytes_vector,
         encoded_scalar_responses,
         encoded_vector_responses,
     ));

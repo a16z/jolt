@@ -5,7 +5,7 @@ use sha3::{Digest, Keccak256};
 #[derive(Clone)]
 pub struct ProofTranscript {
     // Ethereum compatible 256 bit running state
-    state: [u8; 32],
+    pub state: [u8; 32],
     // We append an ordinal to each invoke of the hash
     n_rounds: u32,
 }
@@ -18,7 +18,7 @@ impl ProofTranscript {
             Keccak256::new().chain_update(label)
         } else {
             let zeros = vec![0_u8; 32 - label.len()];
-            Keccak256::new().chain_update(zeros).chain_update(label)
+            Keccak256::new().chain_update(label).chain_update(zeros)
         };
         let out = hasher.finalize();
 
@@ -31,21 +31,24 @@ impl ProofTranscript {
     /// Gives the hasher object with the running seed and index added
     /// To load hash you must call finalize, after appending u8 vectors
     fn hasher(&self) -> Keccak256 {
+        let mut packed = [0_u8; 28].to_vec();
+        packed.append(&mut self.n_rounds.to_be_bytes().to_vec());
         // Note we add the extra memory here to improve the ease of eth integrations
         Keccak256::new()
             .chain_update(self.state)
-            .chain_update([0_u8; 28])
-            .chain_update(self.n_rounds.to_le_bytes())
+            .chain_update(&packed)
     }
 
     pub fn append_message(&mut self, msg: &'static [u8]) {
-        // We require all messages to fit into one evm word and then left pad them
+        // We require all messages to fit into one evm word and then right pad them
+        // right padding matches the format of the strings when cast to bytes 32 in solidity
         assert!(msg.len() < 33);
         let hasher = if msg.len() == 32 {
             self.hasher().chain_update(msg)
         } else {
-            let zeros = vec![0_u8; 32 - msg.len()];
-            self.hasher().chain_update(zeros).chain_update(msg)
+            let mut packed = msg.to_vec();
+            packed.append(&mut vec![0_u8; 32 - msg.len()]);
+            self.hasher().chain_update(packed)
         };
         // Instantiate hasher add our seed, position and msg
         self.state = hasher.finalize().into();
@@ -60,7 +63,10 @@ impl ProofTranscript {
     }
 
     pub fn append_u64(&mut self, x: u64) {
-        let hasher = self.hasher().chain_update([0_u8; 24]).chain_update(x.to_le_bytes());
+        // Allocate into a 32 byte region
+        let mut packed = [0_u8; 24].to_vec();
+        packed.append(&mut x.to_be_bytes().to_vec());
+        let hasher = self.hasher().chain_update(packed.clone());
         self.state = hasher.finalize().into();
         self.n_rounds += 1;
     }
@@ -72,6 +78,10 @@ impl ProofTranscript {
     pub fn append_scalar<F: JoltField>(&mut self, scalar: &F) {
         let mut buf = vec![];
         scalar.serialize_uncompressed(&mut buf).unwrap();
+        // Serialize uncompressed gives the scalar in LE byte order which is not
+        // a natural representation in the EVM for scalar math so we reverse
+        // to get an EVM compatible version.
+        buf = buf.into_iter().rev().collect();
         self.append_bytes(&buf);
     }
 
@@ -100,6 +110,9 @@ impl ProofTranscript {
     pub fn challenge_scalar<F: JoltField>(&mut self) -> F {
         let mut buf = vec![0u8; F::NUM_BYTES];
         self.challenge_bytes(&mut buf);
+        // Because onchain we don't want to do the bit reversal to get the LE ordering
+        // we reverse here so that the random is BE ordering.
+        buf = buf.into_iter().rev().collect();
         F::from_bytes(&buf)
     }
 

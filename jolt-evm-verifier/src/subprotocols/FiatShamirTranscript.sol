@@ -80,7 +80,7 @@ library FiatShamirTranscript {
     /// WARN - This function assumes that the caller has done the mod to ensure the top bits are zero
     /// @param transcript The transcript we are hashing the value into
     /// @param added The data which is hashed into the public coin's seed.
-    function append_scalars(Transcript memory transcript, uint256[] memory added) internal pure {
+    function append_vector(Transcript memory transcript, uint256[] memory added) internal pure {
         append_bytes32(transcript, "begin_append_vector");
         for (uint256 i = 0; i < added.length; i++) {
             append_bytes32(transcript, bytes32(added[i]));
@@ -134,50 +134,30 @@ library FiatShamirTranscript {
         // TODO - Similar comments as the vector append for scalars
     }
 
-    /// We include a bytes append method but discourage the use of it because it will not enforce invariants
-    /// about the length and encoding of the data (this creates a risk the caller does not have a unique encoding)
+    /// We include a bytes append method but require the use of it to be encoded in a secure way to a multiple of
+    /// 32 bytes and represented as a bytes32 array
     /// @param transcript The transcript we are hashing the value into
     /// @param added The bytes array we add to the transcript
     // TODO - This whole routine is complex, can we just get rid of it and have a 32 byte array version? or none?
-    function append_bytes_unchecked(Transcript memory transcript, bytes memory added) internal pure {
+    function append_bytes(Transcript memory transcript, bytes32[] memory added) internal pure {
         bytes32[] memory region = transcript.region;
-        // You can only call this function if the region was initialized with enough area
-        assert(region.length >= 2 + (added.length + 31)/32);
+        // The length checks are done in high level sol so we don't assert the memory length
+        for (uint256 i = 0; i < added.length; i++) {
+            region[i + 2] = added[i];
+        }
 
         // A mem copy routine for a byte array
         assembly ("memory-safe") {
-            // Move forward three words (one for len, one for seed and one for n_rounds)
-            let toPtr := add(region, 0x60)
-            // We can do this with one add, mstore and mload per 32 byte word
-            // The possible underflow here is no issue.
-            let offset := sub(add(added, 0x20), toPtr)
-            // We do (len(bytes)/32)*32 to calculate the number of 32 byte words in added, then
-            // convert it back to byte length and add to the to ptr to get the last point we 
-            // can do a 32 byte copy
-            let limit := add(mul(div(mload(added), 32), 32), toPtr)
-            for {} lt(toPtr, limit) {} {
-                mstore(toPtr, mload(add(toPtr, offset)))
-                toPtr := add(toPtr, 0x20)
-            }
-
-            // We check for the for the final bits in the word. The bits left inside of added are
-            // (toPtr, toPtr + (added.len % 32)) and so we construct a mask 2^8*(32 - (added.len % 32)) - 1
-            // Then our memory consistent storage is mask && mload(toPtr) || not(mask) && mload(toPtr + offset)
-            if iszero(eq(toPtr, limit)) {
-                let mask := sub(shl(1, mul(8, sub(32, mod(mload(added), 32)))), 1)
-                mstore(toPtr, or(and(mask, mload(toPtr)), and(not(mask), mload(add(toPtr, offset)))))
-            } 
-        }
-
-        // Now we do the hashing
-        assembly ("memory-safe") {
-            // the hash starts at the seed value and goes for 32 bytes plus the bytes in added
-            let hashed := keccak256(add(region, 0x20), add(0x40, mul(8, mload(added))))
+            // Hashes over the protocol name at the start of the array and stores into first array position
+            let seedPtr := add(region, 0x20)
+            let nRoundPtr := add(seedPtr, 0x20)
+            // Hash starting at the internal seed over four words
+            let hashed := keccak256(seedPtr, add(0x40, mul(0x20, mload(added))))
             // Update the seed and the nrounds
-            let nRoundPtr := add(region, 0x40)
             mstore(nRoundPtr, add(mload(nRoundPtr), 1))
-            mstore(sub(nRoundPtr, 0x20), hashed)
+            mstore(seedPtr, hashed)
         }
+
     }
 
     /// Loads a 32 byte deterministic random from a transcript by hashing the internal seed and round constant
@@ -192,7 +172,8 @@ library FiatShamirTranscript {
             // the hash starts at the seed value and goes for 32 bytes plus the bytes in added
             let hashed := keccak256(dataPtr, 0x40)
             // Update the seed and the nrounds
-            mstore(dataPtr, add(mload(add(dataPtr, 0x20)), 1))
+            let nroundsPtr := add(dataPtr, 0x20)
+            mstore(nroundsPtr, add(mload(nroundsPtr), 1))
             mstore(dataPtr, hashed)
             challenge := hashed
         }

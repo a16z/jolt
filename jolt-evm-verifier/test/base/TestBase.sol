@@ -4,10 +4,8 @@ pragma solidity >=0.8.21;
 
 import {Vm} from "forge-std/Vm.sol";
 import {Test} from "forge-std/Test.sol";
-import "forge-std/console.sol";
 import {Jolt} from "../../src/reference/JoltTypes.sol";
 import {Fr} from "../../src/reference/Fr.sol";
-import "forge-std/console.sol";
 
 contract TestBase is Test {
 
@@ -40,7 +38,7 @@ contract TestBase is Test {
         uint256[][] scalarArrays;
         uint256[] points;
         uint256[][] pointArrays;
-        bytes[] bytes_examples;
+        bytes32[][] bytesExamples;
         uint256[] expectedScalarResponses;
         uint256[][] expectedVectorResponses;
     }
@@ -48,15 +46,12 @@ contract TestBase is Test {
         
         string[] memory cmds = new string[](3);
         cmds[0] = "sh";
-        cmds[1] = "script/run_transcript.sh";
-        cmds[2] = "claims"; 
-        console.log("pre");
+        cmds[1] = "script/run_transcript_example.sh";
         bytes memory result = vm.ffi(cmds);
-        console.log("got here");
         return(abi.decode(result, (TranscriptExampleValues)));
     }
 
-    function array_eq(uint256[] memory a, uint256[] memory b) internal returns(bool) {
+    function array_eq(uint256[] memory a, uint256[] memory b) internal pure returns(bool) {
         if (a.length != b.length) {return(false);}
         for (uint256 i = 0; i < a.length; i++) {
             if (a[i] != b[i]) {
