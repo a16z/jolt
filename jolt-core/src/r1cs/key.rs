@@ -67,16 +67,16 @@ pub struct UniformR1CS<F: JoltField> {
     pub num_rows: usize,
 }
 
-/// NonUniformR1CS only supports a single additional equality constraint. 'a' holds the equality (something minus something),
+/// NonUniformR1CSConstraint only supports a single additional equality constraint. 'a' holds the equality (something minus something),
 /// 'b' holds the condition. 'a' * 'b' == 0. Each SparseEqualityItem stores a uniform_column (pointing to a variable) and an offset
 /// suggesting which other step to point to.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct NonUniformR1CS<F: JoltField> {
+pub struct NonUniformR1CSConstraint<F: JoltField> {
     pub eq: SparseEqualityItem<F>,
     pub condition: SparseEqualityItem<F>,
 }
 
-impl<F: JoltField> NonUniformR1CS<F> {
+impl<F: JoltField> NonUniformR1CSConstraint<F> {
     pub fn new(eq: SparseEqualityItem<F>, condition: SparseEqualityItem<F>) -> Self {
         Self { eq, condition }
     }
@@ -87,6 +87,12 @@ impl<F: JoltField> NonUniformR1CS<F> {
             condition: SparseEqualityItem::empty(),
         }
     }
+}
+
+/// NonUniformR1CS stores a vector of NonUniformR1CSConstraint
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct NonUniformR1CS<F: JoltField> {
+    pub constraints: Vec<NonUniformR1CSConstraint<F>>,
 }
 
 /// Represents a single constraint row where the variables are either from the current step (offset = false)
