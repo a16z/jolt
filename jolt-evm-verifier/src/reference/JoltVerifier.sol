@@ -14,35 +14,37 @@ error GrandProductArgumentFailed();
 error SumcheckFailed();
 
 contract JoltVerifier is IVerifier {
-
     ITranscript transcript;
     uint256 transcriptIndex;
 
     constructor(ITranscript _transcript) {
-
         transcript = _transcript;
         transcriptIndex = 0;
     }
 
-    function verifySumcheckLayer(Jolt.BatchedGrandProductLayerProof memory layer, Fr claim, uint256 degree_bound, uint256 num_rounds) internal returns (Fr, Fr[] memory){
-
-        if (layer.sumcheck_univariate_coeffs.length != num_rounds){
+    function verifySumcheckLayer(
+        Jolt.BatchedGrandProductLayerProof memory layer,
+        Fr claim,
+        uint256 degree_bound,
+        uint256 num_rounds
+    ) internal returns (Fr, Fr[] memory) {
+        if (layer.sumcheck_univariate_coeffs.length != num_rounds) {
             revert SumcheckFailed();
         }
 
         Fr e = claim;
         Fr[] memory r = new Fr[](num_rounds);
 
-        for (uint i=0; i < num_rounds; i++){
+        for (uint256 i = 0; i < num_rounds; i++) {
             UniPoly memory poly = UniPolyLib.decompress(layer.sumcheck_univariate_coeffs[i], e);
 
             //verify degree bound
-            if (layer.sumcheck_univariate_coeffs[i].length != degree_bound){
+            if (layer.sumcheck_univariate_coeffs[i].length != degree_bound) {
                 revert SumcheckFailed();
             }
 
             // check if G_k(0) + G_k(1) = e
-            if (UniPolyLib.evalAtZero(poly) + UniPolyLib.evalAtOne(poly) != e){
+            if (UniPolyLib.evalAtZero(poly) + UniPolyLib.evalAtOne(poly) != e) {
                 revert SumcheckFailed();
             }
 
@@ -54,7 +56,6 @@ contract JoltVerifier is IVerifier {
             r[i] = r_i;
 
             e = UniPolyLib.evaluate(poly, r_i);
-
         }
         return (e, r);
     }
@@ -87,13 +88,13 @@ contract JoltVerifier is IVerifier {
     ) internal returns (Fr[] memory newClaims, Fr[] memory newRGrandProduct) {
         Jolt.BatchedGrandProductLayerProof memory layerProof = layerProofs[layerIndex];
 
-
         Fr expectedSumcheckClaim = Fr.wrap(0);
-        
+
         for (uint256 i = 0; i < claims.length; i++) {
-            expectedSumcheckClaim = expectedSumcheckClaim + coeffs[i] * layerProof.leftClaims[i] * layerProof.rightClaims[i] * eqEval;
+            expectedSumcheckClaim =
+                expectedSumcheckClaim + coeffs[i] * layerProof.leftClaims[i] * layerProof.rightClaims[i] * eqEval;
         }
-        
+
         require(expectedSumcheckClaim == sumcheckClaim, "Sumcheck claim mismatch");
 
         // produce a random challenge to condense two claims into a single claim
@@ -113,27 +114,29 @@ contract JoltVerifier is IVerifier {
         return (newClaims, newRGrandProduct);
     }
 
-
-    function verifyGrandProduct(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims) external returns (Fr[] memory) {
-
-
+    function verifyGrandProduct(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims)
+        external
+        returns (Fr[] memory)
+    {
         Fr[] memory rGrandProduct = new Fr[](0);
-        for (uint256 i=0; i < proof.layers.length; i++){
-
+        for (uint256 i = 0; i < proof.layers.length; i++) {
             //get coeffs
             Fr[] memory coeffs = new Fr[](claims.length);
-            for (uint j = 0; j < claims.length; j++) {
+            for (uint256 j = 0; j < claims.length; j++) {
                 coeffs[j] = transcript.challengeScalar("rand_coeffs_next_layer", transcriptIndex);
                 transcriptIndex++;
             }
 
             //create a joined claim
             Fr joined_claim = Fr.wrap(0);
-            for (uint k = 0; k < claims.length; k++) {
+            for (uint256 k = 0; k < claims.length; k++) {
                 joined_claim = joined_claim + (claims[k] * coeffs[k]);
             }
 
-            if (claims.length != proof.layers[i].leftClaims.length || claims.length != proof.layers[i].rightClaims.length){
+            if (
+                claims.length != proof.layers[i].leftClaims.length
+                    || claims.length != proof.layers[i].rightClaims.length
+            ) {
                 revert GrandProductArgumentFailed();
             }
 
@@ -149,13 +152,13 @@ contract JoltVerifier is IVerifier {
             Fr eqEval = buildEqEval(rGrandProduct, rSumcheck);
 
             rGrandProduct = new Fr[](rSumcheck.length);
-            for (uint256 l=0; l < rSumcheck.length; l++) {
+            for (uint256 l = 0; l < rSumcheck.length; l++) {
                 rGrandProduct[l] = rSumcheck[rSumcheck.length - 1 - l];
             }
 
-            (claims, rGrandProduct) = verifySumcheckClaim(proof.layers, i, coeffs, sumcheckClaim, eqEval, claims, rGrandProduct);
+            (claims, rGrandProduct) =
+                verifySumcheckClaim(proof.layers, i, coeffs, sumcheckClaim, eqEval, claims, rGrandProduct);
         }
-
 
         return rGrandProduct;
     }

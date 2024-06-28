@@ -12,22 +12,20 @@ struct Transcript {
     bytes32[] region;
 }
 
-
 // An implementation of a Fiat Shamir Public Coin protocol which matches the one from the Jolt rust repo
 // We first define an object and memory region (the max memory limit of writes is defined on init),
 // then users can write data to this trascript or pull determistic randoms values.
 // Care should be taken to ensure that all writes are done with consistent amounts of data.
 library FiatShamirTranscript {
-
     /// Generates a new transcript held in memory by initializing the region in memory before hashing the protocol
     /// name into the first position
     /// @param encodedName A string of up to 32 bytes encoded as a bytes32 in solidity
     /// @param maxSize The number of 32 byte memory slots to reserve as the max input to the hashed region, MUST be > 1.
-    function new_transcript(bytes32 encodedName, uint256 maxSize) internal pure returns(Transcript memory) {
+    function new_transcript(bytes32 encodedName, uint256 maxSize) internal pure returns (Transcript memory) {
         // We have to write at least 32 bytes for the constant string labels in Jolt
         assert(maxSize > 1);
         // Allocates our transcript memory safely
-        bytes32[] memory internal_data = new bytes32[](maxSize+2);
+        bytes32[] memory internal_data = new bytes32[](maxSize + 2);
 
         assembly ("memory-safe") {
             // Hashes over the protocol name at the start of the array and stores into first array position
@@ -61,13 +59,13 @@ library FiatShamirTranscript {
     /// Mostly we have this function to maintain compatibility with the rust version.
     /// @param transcript The transcript we are hashing the value into
     /// @param added The data which is hashed into the public coin's seed.
-    function append_u64(Transcript memory transcript, uint64 added) internal pure  {
+    function append_u64(Transcript memory transcript, uint64 added) internal pure {
         /// Because we are passing in a solidity type checked uint64 we can just cast to 32 bytes and
         /// this ensures the top bits are clean
         append_bytes32(transcript, bytes32(uint256(added)));
     }
 
-    /// Appends a u256 scalar value to the transcript 
+    /// Appends a u256 scalar value to the transcript
     /// WARN - This function assumes that the caller has done the mod to ensure the top bits are zero
     /// @param transcript The transcript we are hashing the value into
     /// @param added The data which is hashed into the public coin's seed.
@@ -128,7 +126,7 @@ library FiatShamirTranscript {
         // the end of the array with a normal point addition.
         append_bytes32(transcript, "begin_append_vector");
         for (uint256 i = 0; i < added.length; i += 2) {
-            append_point(transcript, added[i], added[i+1]);
+            append_point(transcript, added[i], added[i + 1]);
         }
         append_bytes32(transcript, "end_append_vector");
         // TODO - Similar comments as the vector append for scalars
@@ -157,16 +155,15 @@ library FiatShamirTranscript {
             mstore(nRoundPtr, add(mload(nRoundPtr), 1))
             mstore(seedPtr, hashed)
         }
-
     }
 
     /// Loads a 32 byte deterministic random from a transcript by hashing the internal seed and round constant
     /// Then it updates the seed and round constant
     /// @param transcript The transcript which is a running hash of previous assigned data
-    function challenge_bytes32(Transcript memory transcript) internal pure returns(bytes32 challenge) {
+    function challenge_bytes32(Transcript memory transcript) internal pure returns (bytes32 challenge) {
         // Loads the pointer to the data field
         bytes32[] memory region = transcript.region;
-        // Hash just the seed and round constant 
+        // Hash just the seed and round constant
         assembly ("memory-safe") {
             let dataPtr := add(region, 0x20)
             // the hash starts at the seed value and goes for 32 bytes plus the bytes in added
@@ -184,7 +181,7 @@ library FiatShamirTranscript {
     /// for applications which are highly sensitive to slight deviations from the uniform distribution (eg private keys)
     /// @param transcript The transcript which is a running hash of previous assigned data
     /// @param order The value which we mod the result by
-    function challenge_scalar(Transcript memory transcript, uint256 order) internal pure returns(uint256) {
+    function challenge_scalar(Transcript memory transcript, uint256 order) internal pure returns (uint256) {
         return (uint256(challenge_bytes32(transcript)) % order);
     }
 
@@ -193,7 +190,11 @@ library FiatShamirTranscript {
     /// @param transcript The transcript which is a running hash of previous assigned data
     /// @param numb The number of scalars we want.
     /// @param order The value which we mod the result by
-    function challenge_scalars(Transcript memory transcript, uint256 numb, uint256 order) internal pure returns(uint256[] memory challenges) {
+    function challenge_scalars(Transcript memory transcript, uint256 numb, uint256 order)
+        internal
+        pure
+        returns (uint256[] memory challenges)
+    {
         challenges = new uint256[](numb);
         for (uint256 i = 0; i < numb; i++) {
             challenges[i] = challenge_scalar(transcript, order);

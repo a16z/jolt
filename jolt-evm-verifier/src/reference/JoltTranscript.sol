@@ -6,11 +6,9 @@ import {ITranscript} from "../interfaces/ITranscript.sol";
 import {Fr} from "./Fr.sol";
 
 contract JoltTranscript is ITranscript {
-
     //TODO: remove
-    // mocking fiat shamir values 
+    // mocking fiat shamir values
     Fr[68] public challenges = [
-
         Fr.wrap(0x1f6c8fd2c091d2160c5bf6c12cff019759cdd861f99f6e045909cb1dfaead156),
         Fr.wrap(0x1efacde73c1dd3b028a1b10d17428978701f9bd8526fce74a5230ecfe3a23dc7),
         Fr.wrap(0x0ac8d152ebce541f531bd9761d5f6cd11498163f705fe20baa04bcdd1903a688),
@@ -79,9 +77,8 @@ contract JoltTranscript is ITranscript {
         Fr.wrap(0x1a7f62aad74cd91bf1524bafddce4ef82e4d22fc4f96decf0a1ef9fec7504bae),
         Fr.wrap(0x1d7f1da958ba1b98def30f992047fe8371cb2879d7533db4a3a221746ae08153),
         Fr.wrap(0x24b1edf5822e0f9e928470ac0a3d26907aa6e9505e71b0b89342aac127cf7ba4)
-
     ];
-/*
+    /*
     function challengeVector(string memory label) external returns (bytes[] memory transcript){
         bytes[] memory ret;
         ret.push(challenges[0]);
@@ -89,12 +86,9 @@ contract JoltTranscript is ITranscript {
         return ret;
 
     }
-*/
-    
-    function challengeScalar(string memory label, uint256 index) external view returns (Fr challenge){
+    */
 
+    function challengeScalar(string memory label, uint256 index) external view returns (Fr challenge) {
         return challenges[index];
     }
-
-
 }

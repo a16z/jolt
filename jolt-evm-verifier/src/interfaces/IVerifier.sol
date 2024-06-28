@@ -6,5 +6,7 @@ import {Jolt} from "../reference/JoltTypes.sol";
 import {Fr} from "../reference/Fr.sol";
 
 interface IVerifier {
-    function verifyGrandProduct(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims) external returns (Fr[] memory);
+    function verifyGrandProduct(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims)
+        external
+        returns (Fr[] memory);
 }

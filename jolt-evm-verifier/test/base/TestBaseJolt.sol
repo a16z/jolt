@@ -17,7 +17,6 @@ contract TestBaseJolt is TestBase {
     ITranscript public transcript;
 
     function testValidGrandProductProof() public {
-
         transcript = ITranscript(address(new JoltTranscript()));
 
         verifier = IVerifier(address(new JoltVerifier(transcript)));
@@ -29,10 +28,8 @@ contract TestBaseJolt is TestBase {
 
         Fr[] memory verifierRGrandProduct = verifier.verifyGrandProduct(proof, proverClaims);
 
-
-        for (uint256 i=0; i < verifierRGrandProduct.length; i++) {
+        for (uint256 i = 0; i < verifierRGrandProduct.length; i++) {
             assertTrue(proverRGrandProduct[i] == verifierRGrandProduct[i]);
         }
     }
-
 }

@@ -8,11 +8,10 @@ import {Jolt} from "../../src/reference/JoltTypes.sol";
 import {Fr} from "../../src/reference/Fr.sol";
 
 contract TestBase is Test {
-
-    function getProofData () internal returns (Jolt.BatchedGrandProductProof memory) {
+    function getProofData() internal returns (Jolt.BatchedGrandProductProof memory) {
         string[] memory cmds = new string[](3);
         cmds[0] = "sh";
-        cmds[1] = "script/run.sh"; 
+        cmds[1] = "script/run.sh";
         cmds[2] = "proofs";
         bytes memory result = vm.ffi(cmds);
         (Jolt.BatchedGrandProductProof memory decodedProof) = abi.decode(result, (Jolt.BatchedGrandProductProof));
@@ -20,11 +19,10 @@ contract TestBase is Test {
         return decodedProof;
     }
 
-    function getClaims () internal returns (Fr[] memory) {
-
+    function getClaims() internal returns (Fr[] memory) {
         string[] memory cmds = new string[](3);
         cmds[0] = "sh";
-        cmds[1] = "script/run.sh"; 
+        cmds[1] = "script/run.sh";
         cmds[2] = "claims";
         bytes memory result = vm.ffi(cmds);
         (Fr[] memory claims) = abi.decode(result, (Fr[]));
@@ -42,30 +40,29 @@ contract TestBase is Test {
         uint256[] expectedScalarResponses;
         uint256[][] expectedVectorResponses;
     }
-    function getTranscriptExample() internal returns(TranscriptExampleValues memory) {
-        
+
+    function getTranscriptExample() internal returns (TranscriptExampleValues memory) {
         string[] memory cmds = new string[](3);
         cmds[0] = "sh";
         cmds[1] = "script/run_transcript_example.sh";
         bytes memory result = vm.ffi(cmds);
-        return(abi.decode(result, (TranscriptExampleValues)));
+        return (abi.decode(result, (TranscriptExampleValues)));
     }
 
-    function array_eq(uint256[] memory a, uint256[] memory b) internal pure returns(bool) {
-        if (a.length != b.length) {return(false);}
+    function array_eq(uint256[] memory a, uint256[] memory b) internal pure returns (bool) {
+        if (a.length != b.length) return (false);
         for (uint256 i = 0; i < a.length; i++) {
             if (a[i] != b[i]) {
-                return(false);
+                return (false);
             }
         }
-        return(true);
+        return (true);
     }
-    
-    function getProverRGrandProduct () internal returns (Fr[] memory) {
 
+    function getProverRGrandProduct() internal returns (Fr[] memory) {
         string[] memory cmds = new string[](3);
         cmds[0] = "sh";
-        cmds[1] = "script/run.sh"; 
+        cmds[1] = "script/run.sh";
         cmds[2] = "proverR";
         bytes memory result = vm.ffi(cmds);
         (Fr[] memory proverRGrandProduct) = abi.decode(result, (Fr[]));
