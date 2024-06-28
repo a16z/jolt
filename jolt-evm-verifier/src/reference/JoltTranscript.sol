@@ -88,7 +88,7 @@ contract JoltTranscript is ITranscript {
     }
     */
 
-    function challengeScalar(string memory , uint256 index) external view returns (Fr challenge) {
+    function challengeScalar(string memory, uint256 index) external view returns (Fr challenge) {
         return challenges[index];
     }
 }
