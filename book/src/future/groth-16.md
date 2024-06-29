@@ -1,5 +1,5 @@
 # Groth16 Recursion
-Jolt's verifier today is expensive. We estimate 1-5 million gas to verify within the EVM. Better batching techniques on opening proofs can bring this down 5-10x, but it will remain expensive. Further, the short-term continuations plan (INESERT LINK) causes a linear blowup depending on the count of monolithic trace chunks proven.
+Jolt's verifier today is expensive. We estimate 1-5 million gas to verify within the EVM. Better batching techniques on opening proofs can bring this down 5-10x, but it will remain expensive. Further, the short-term [continuations plan](https://jolt.a16zcrypto.com/future/continuations.html) causes a linear blowup depending on the count of monolithic trace chunks proven.
 
 To solve these two issues we're aiming to add a configuration option to the Jolt prover with a post processing step, which creates a Groth16 proof of the Jolt verifier for constant proof size / cost (~280k gas on EVM) regardless of continuation chunk count or opening proof cost. This technique is industry standard.
 
