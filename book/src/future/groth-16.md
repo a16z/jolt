@@ -55,6 +55,6 @@ A concrete example of changes to expect: we currently require 5-10 opening proof
 Suggested plan of attack:
 1. Circuit for HyperKZG verification
 2. Circuit for batched HyperKZG verification
-3. Circuit for RAM verification
-4. Circuit for lookups verification
+3. Circuit for sumcheck verification
+4. Circuit for instruction/subtable MLE evaluations
 5. Circuit for Spartan verification
