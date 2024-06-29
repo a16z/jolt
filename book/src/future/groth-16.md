@@ -18,8 +18,8 @@ After recursively verifying sumcheck, the verifier needs to compare the claimed 
 HyperKZG is currently the optimal commitment scheme for recursion due to the requirement of only 2-pairing operations per opening proof. Unfortunately non-native field arithmetic will always be expensive within a circuit. 
 
 There are two options:
-- Sumcheck, MLE evaluations native, pairing operations non-native
-- Sumcheck, MLE evaluations non-native, pairing operations native
+- Sumcheck and MLE evaluations using native arithmetic, pairing operations using non-native arithmetic
+- Sumcheck and MLE evaluations using non-native arithmetic, pairing operations using native arithmetic
 
 We believe the latter is more efficient albeit unergonomic. Some of the details are worked out in this paper [here](https://eprint.iacr.org/2023/961.pdf).
 
