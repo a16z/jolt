@@ -7,7 +7,7 @@ To solve these two issues we're aiming to add a configuration option to the Jolt
 The easiest way to understand the workload of the verifier circuit is to jump through the codebase starting at `vm/mod.rs Jolt::verify(...)`.  Verification can be split into 4 logical modules: [instruction lookups](https://jolt.a16zcrypto.com/how/instruction_lookups.html), [read-write memory](https://jolt.a16zcrypto.com/how/read_write_memory.html), [bytecode](https://jolt.a16zcrypto.com/how/bytecode.html), [r1cs](https://jolt.a16zcrypto.com/how/r1cs_constraints.html).
 
 Each of the modules do some combination of the following:
-- [Recursive sumcheck verification](https://jolt.a16zcrypto.com/background/sumcheck.html)
+- [Sumcheck verification](https://jolt.a16zcrypto.com/background/sumcheck.html)
 - Polynomial opening proof verification
 - Multi-linear extension evaluations
 
