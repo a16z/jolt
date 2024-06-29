@@ -93,7 +93,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #build_fn_name() -> (
                 impl Fn(#(#input_types),*) -> #prove_output_ty,
-                impl Fn(jolt::Proof) -> bool
+                impl Fn(jolt::RV32IHyraxProof) -> bool
             ) {
                 #imports
                 let (program, preprocessing) = #preprocess_fn_name();
@@ -110,7 +110,7 @@ impl MacroBuilder {
                 };
 
 
-                let verify_closure = move |proof: jolt::Proof| {
+                let verify_closure = move |proof: jolt::RV32IHyraxProof| {
                     let program = (*program_cp).clone();
                     let preprocessing = (*preprocessing_cp).clone();
                     RV32IJoltVM::verify(preprocessing, proof.proof, proof.commitments).is_ok()
@@ -179,7 +179,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #preprocess_fn_name() -> (
                 jolt::host::Program,
-                jolt::JoltPreprocessing<jolt::F, jolt::CommitmentScheme>
+                jolt::JoltPreprocessing<jolt::F, jolt::PCS>
             ) {
                 #imports
 
@@ -190,7 +190,7 @@ impl MacroBuilder {
                 let (bytecode, memory_init) = program.decode();
 
                 // TODO(moodlezoup): Feed in size parameters via macro
-                let preprocessing: JoltPreprocessing<jolt::F, jolt::CommitmentScheme> =
+                let preprocessing: JoltPreprocessing<jolt::F, jolt::PCS> =
                     RV32IJoltVM::preprocess(
                         bytecode,
                         memory_init,
@@ -206,6 +206,7 @@ impl MacroBuilder {
 
     fn make_prove_func(&self) -> TokenStream2 {
         let prove_output_ty = self.get_prove_output_type();
+        let write_to_file = self.make_write_to_file();
 
         let handle_return = match &self.func.sig.output {
             ReturnType::Default => quote! {
@@ -231,7 +232,7 @@ impl MacroBuilder {
             #[cfg(not(feature = "guest"))]
             pub fn #prove_fn_name(
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::CommitmentScheme>,
+                preprocessing: jolt::JoltPreprocessing<jolt::F, jolt::PCS>,
                 #inputs
             ) -> #prove_output_ty {
                 #imports
@@ -239,7 +240,7 @@ impl MacroBuilder {
                 #(#set_program_args;)*
 
                 let (io_device, trace, circuit_flags) =
-                    program.trace();
+                    program.clone().trace();
 
                 let output_bytes = io_device.outputs.clone();
 
@@ -252,10 +253,12 @@ impl MacroBuilder {
 
                 #handle_return
 
-                let proof = jolt::Proof {
+                let proof = jolt::RV32IHyraxProof {
                     proof: jolt_proof,
                     commitments: jolt_commitments,
                 };
+
+                #write_to_file
 
                 (ret_val, proof)
             }
@@ -443,6 +446,18 @@ impl MacroBuilder {
         }
     }
 
+    fn make_write_to_file(&self) -> TokenStream2 {
+        if self.get_jolt_save() {
+            let fn_name = self.get_guest_name();
+            quote! {
+                jolt::RV32IHyraxProof::save_to_file(&proof, format!("./{}.proof", #fn_name)).unwrap();
+                program.save_elf();
+            }
+        } else {
+            quote! {}
+        }
+    }
+
     fn parse_attributes(&self) -> Attributes {
         let mut attributes = HashMap::<_, u64>::new();
         for attr in &self.attr {
@@ -487,10 +502,10 @@ impl MacroBuilder {
     fn get_prove_output_type(&self) -> TokenStream2 {
         match &self.func.sig.output {
             ReturnType::Default => quote! {
-                ((), jolt::Proof)
+                ((), jolt::RV32IHyraxProof)
             },
             ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::Proof)
+                (#ty, jolt::RV32IHyraxProof)
             },
         }
     }
@@ -522,6 +537,10 @@ impl MacroBuilder {
 
     fn get_func_selector(&self) -> Option<String> {
         proc_macro::tracked_env::var("JOLT_FUNC_NAME").ok()
+    }
+
+    fn get_jolt_save(&self) -> bool {
+        proc_macro::tracked_env::var("JOLT_SAVE").is_ok()
     }
 }
 

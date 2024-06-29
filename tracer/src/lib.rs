@@ -70,12 +70,8 @@ pub fn trace(
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decode(elf: &PathBuf) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
-    let mut elf_file = File::open(elf).unwrap();
-    let mut elf_contents = Vec::new();
-    elf_file.read_to_end(&mut elf_contents).unwrap();
-
-    let obj = object::File::parse(&*elf_contents).unwrap();
+pub fn decode(elf: &[u8]) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
+    let obj = object::File::parse(elf).unwrap();
 
     let sections = obj
         .sections()
