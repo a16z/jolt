@@ -9,12 +9,14 @@ use dirs::home_dir;
 use eyre::{bail, eyre, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 
 const TOOLCHAIN_TAG: &str = include_str!("../../../.jolt.rust.toolchain-tag");
 const DOWNLOAD_RETRIES: usize = 5;
 const DELAY_BASE_MS: u64 = 500;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Installs the toolchain if it is not already
 pub fn install_toolchain() -> Result<()> {
     if !has_toolchain() {
@@ -31,6 +33,7 @@ pub fn install_toolchain() -> Result<()> {
     link_toolchain()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn retry_times<F, T, E>(times: usize, base_ms: u64, f: F) -> Result<T>
 where
     F: Fn() -> E,
@@ -93,6 +96,7 @@ fn unpack_toolchain() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
     let jolt_dir = jolt_dir();
     let output_path = jolt_dir.join("rust-toolchain.tar.gz");
