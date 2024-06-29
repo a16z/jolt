@@ -4,7 +4,7 @@ Precompiles are highly optimized SNARK gadgets which can be invoked from the hig
 By popular demand, Jolt will support these gadgets as well. The short term plan is to optimize for minimizing Jolt-core development resources rather than optimal prover speed.
 
 Precompile support plan:
-1. RV32 library for supported precompiles
+1. RV32 library wrapping syscalls of supported libraries
 2. Tracer picks up syscalls, sets relevant flag bits and loads memory accordingly
 3. Individual (uniform) Spartan instance for each precompile, repeated over `trace_length` steps
 4. Jolt config includes which precompiles are supported (there is some non-zero prover / verifier cost to including an unused precompile)
