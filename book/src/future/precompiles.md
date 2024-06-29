@@ -1,5 +1,5 @@
 # Precompiles
-Precompiles are highly optimized SNARK gadgets which can be invoked from the high-level programming language of the VM user. These gadgets are much more efficient for the prover than compiling down to the underlying ISA by exploiting the structure of the workload. In practice zkVMs use these for heavy cryptographic operations such as hash functions, signatures and other elliptic curve arithmetic.
+Precompiles are highly optimized SNARK gadgets which can be invoked from the high-level programming language of the VM user. These gadgets can be much more efficient for the prover than compiling down to the underlying ISA by exploiting the structure of the workload. In practice zkVMs use these for heavy cryptographic operations such as hash functions, signatures and other elliptic curve arithmetic.
 
 By popular demand, Jolt will support these gadgets as well. The short term plan is to optimize for minimizing Jolt-core development resources rather than optimal prover speed.
 
