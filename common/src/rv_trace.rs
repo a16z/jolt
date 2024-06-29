@@ -348,11 +348,11 @@ impl ELFInstruction {
             None => false
         };
         flags[10] = matches!(self.opcode,
-            RV32IM::VIRTUAL_ASSERT_EQ     |
-            RV32IM::VIRTUAL_ASSERT_LTE    |
-            RV32IM::VIRTUAL_ASSERT_LTU    |
-            RV32IM::VIRTUAL_ASSERT_LT_ABS |
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS,
+            RV32IM::VIRTUAL_ASSERT_EQ                        |
+            RV32IM::VIRTUAL_ASSERT_LTE                       |
+            RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
+            RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER  |
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0,
         );
 
         flags
@@ -445,11 +445,11 @@ pub enum RV32IM {
     // Virtual instructions
     VIRTUAL_MOVSIGN,
     VIRTUAL_ADVICE,
-    VIRTUAL_ASSERT_LTU,
     VIRTUAL_ASSERT_LTE,
-    VIRTUAL_ASSERT_LT_ABS,
-    VIRTUAL_ASSERT_EQ_SIGNS,
+    VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
+    VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER,
     VIRTUAL_ASSERT_EQ,
+    VIRTUAL_ASSERT_VALID_DIV0,
 }
 
 impl FromStr for RV32IM {
@@ -577,9 +577,9 @@ impl RV32IM {
             RV32IM::BGEU |
             RV32IM::VIRTUAL_ASSERT_EQ     |
             RV32IM::VIRTUAL_ASSERT_LTE    |
-            RV32IM::VIRTUAL_ASSERT_LTU    |
-            RV32IM::VIRTUAL_ASSERT_LT_ABS |
-            RV32IM::VIRTUAL_ASSERT_EQ_SIGNS => RV32InstructionFormat::SB,
+            RV32IM::VIRTUAL_ASSERT_VALID_DIV0    |
+            RV32IM::VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER    |
+            RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER => RV32InstructionFormat::SB,
 
             RV32IM::LUI   |
             RV32IM::AUIPC |

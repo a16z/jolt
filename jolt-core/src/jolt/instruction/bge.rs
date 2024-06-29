@@ -6,8 +6,8 @@ use super::{slt::SLTInstruction, JoltInstruction, SubtableIndices};
 use crate::{
     field::JoltField,
     jolt::subtable::{
-        eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable, gt_msb::GtMSBSubtable,
-        lt_abs::LtAbsSubtable, ltu::LtuSubtable, LassoSubtable,
+        eq::EqSubtable, eq_abs::EqAbsSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+        ltu::LtuSubtable, right_msb::RightMSBSubtable, LassoSubtable,
     },
     utils::instruction_utils::chunk_and_concatenate_operands,
 };
@@ -35,8 +35,8 @@ impl JoltInstruction for BGEInstruction {
         _: usize,
     ) -> Vec<(Box<dyn LassoSubtable<F>>, SubtableIndices)> {
         vec![
-            (Box::new(GtMSBSubtable::new()), SubtableIndices::from(0)),
-            (Box::new(EqMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(LeftMSBSubtable::new()), SubtableIndices::from(0)),
+            (Box::new(RightMSBSubtable::new()), SubtableIndices::from(0)),
             (Box::new(LtuSubtable::new()), SubtableIndices::from(1..C)),
             (Box::new(EqSubtable::new()), SubtableIndices::from(1..C)),
             (Box::new(LtAbsSubtable::new()), SubtableIndices::from(0)),

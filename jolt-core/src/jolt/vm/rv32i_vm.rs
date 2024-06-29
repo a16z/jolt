@@ -1,4 +1,8 @@
 use crate::field::JoltField;
+use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
+use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
+use crate::jolt::subtable::right_is_ones::RightIsOnesSubtable;
+use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -10,20 +14,21 @@ use super::{Jolt, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
-    movsign::MOVSIGNInstruction, mul::MULInstruction, mulhu::MULHUInstruction,
-    mulu::MULUInstruction, or::ORInstruction, sb::SBInstruction, sh::SHInstruction,
-    sll::SLLInstruction, slt::SLTInstruction, sltu::SLTUInstruction, sra::SRAInstruction,
-    srl::SRLInstruction, sub::SUBInstruction, sw::SWInstruction, virtual_advice::ADVICEInstruction,
-    virtual_assert_eq_signs::ASSERTEQSIGNSInstruction,
-    virtual_assert_lt_abs::ASSERTLTABSInstruction, virtual_assert_lte::ASSERTLTEInstruction,
-    xor::XORInstruction, JoltInstruction, JoltInstructionSet, SubtableIndices,
+    mul::MULInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction, or::ORInstruction,
+    sb::SBInstruction, sh::SHInstruction, sll::SLLInstruction, slt::SLTInstruction,
+    sltu::SLTUInstruction, sra::SRAInstruction, srl::SRLInstruction, sub::SUBInstruction,
+    sw::SWInstruction, virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_assert_valid_signed_remainder::AssertValidSignedRemainderInstruction,
+    virtual_movsign::MOVSIGNInstruction, xor::XORInstruction, JoltInstruction, JoltInstructionSet,
+    SubtableIndices,
 };
 use crate::jolt::subtable::{
-    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, eq_msb::EqMSBSubtable,
-    gt_msb::GtMSBSubtable, identity::IdentitySubtable, lt_abs::LtAbsSubtable, ltu::LtuSubtable,
-    or::OrSubtable, sign_extend::SignExtendSubtable, sll::SllSubtable, sra_sign::SraSignSubtable,
-    srl::SrlSubtable, truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable,
-    JoltSubtableSet, LassoSubtable, SubtableId,
+    and::AndSubtable, eq::EqSubtable, eq_abs::EqAbsSubtable, identity::IdentitySubtable,
+    left_is_zero::LeftIsZeroSubtable, left_msb::LeftMSBSubtable, lt_abs::LtAbsSubtable,
+    ltu::LtuSubtable, or::OrSubtable, right_msb::RightMSBSubtable, sign_extend::SignExtendSubtable,
+    sll::SllSubtable, sra_sign::SraSignSubtable, srl::SrlSubtable,
+    truncate_overflow::TruncateOverflowSubtable, xor::XorSubtable, JoltSubtableSet, LassoSubtable,
+    SubtableId,
 };
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 
@@ -110,16 +115,17 @@ instruction_set!(
   MULHU: MULHUInstruction<WORD_SIZE>,
   VIRTUAL_ADVICE: ADVICEInstruction<WORD_SIZE>,
   VIRTUAL_ASSERT_LTE: ASSERTLTEInstruction,
-  VIRTUAL_ASSERT_LT_ABS: ASSERTLTABSInstruction<WORD_SIZE>,
-  VIRTUAL_ASSERT_EQ_SIGNS: ASSERTEQSIGNSInstruction
+  VIRTUAL_ASSERT_VALID_SIGNED_REMAINDER: AssertValidSignedRemainderInstruction<WORD_SIZE>,
+  VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER: AssertValidUnsignedRemainderInstruction,
+  VIRTUAL_ASSERT_VALID_DIV0: AssertValidDiv0Instruction<WORD_SIZE>
 );
 subtable_enum!(
   RV32ISubtables,
   AND: AndSubtable<F>,
   EQ_ABS: EqAbsSubtable<F>,
-  EQ_MSB: EqMSBSubtable<F>,
   EQ: EqSubtable<F>,
-  GT_MSB: GtMSBSubtable<F>,
+  LEFT_MSB: LeftMSBSubtable<F>,
+  RIGHT_MSB: RightMSBSubtable<F>,
   IDENTITY: IdentitySubtable<F>,
   LT_ABS: LtAbsSubtable<F>,
   LTU: LtuSubtable<F>,
@@ -137,7 +143,10 @@ subtable_enum!(
   SRL3: SrlSubtable<F, 3, WORD_SIZE>,
   TRUNCATE: TruncateOverflowSubtable<F, WORD_SIZE>,
   TRUNCATE_BYTE: TruncateOverflowSubtable<F, 8>,
-  XOR: XorSubtable<F>
+  XOR: XorSubtable<F>,
+  LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
+  RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
+  RIGHT_IS_ONES: RightIsOnesSubtable<F>
 );
 
 // ==================== JOLT ====================

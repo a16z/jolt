@@ -3,8 +3,10 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, beq::BEQInstruction, mulu::MULUInstruction, sltu::SLTUInstruction,
-    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction, JoltInstruction,
+    add::ADDInstruction, beq::BEQInstruction, mulu::MULUInstruction,
+    virtual_advice::ADVICEInstruction, virtual_assert_lte::ASSERTLTEInstruction,
+    virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction,
+    JoltInstruction,
 };
 
 /// Perform unsigned divison and return remainder
@@ -38,7 +40,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rs2: None,
                 rd: v_q,
                 imm: None,
-                virtual_sequence_index: Some(0),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: None,
@@ -58,7 +60,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rs2: None,
                 rd: trace_row.instruction.rd,
                 imm: None,
-                virtual_sequence_index: Some(1),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: None,
@@ -78,7 +80,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rs2: r_y,
                 rd: v_qy,
                 imm: None,
-                virtual_sequence_index: Some(2),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q),
@@ -89,16 +91,17 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
             advice_value: None,
         });
 
-        let _ltu = SLTUInstruction(r, y).lookup_entry();
+        let is_valid = AssertValidUnsignedRemainderInstruction(r, y).lookup_entry();
+        assert_eq!(is_valid, 1);
         virtual_sequence.push(RVTraceRow {
             instruction: ELFInstruction {
                 address: trace_row.instruction.address,
-                opcode: RV32IM::VIRTUAL_ASSERT_LTU,
+                opcode: RV32IM::VIRTUAL_ASSERT_VALID_UNSIGNED_REMAINDER,
                 rs1: trace_row.instruction.rd,
                 rs2: r_y,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(3),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(r),
@@ -118,7 +121,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rs2: r_x,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(4),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
@@ -138,7 +141,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rs2: trace_row.instruction.rd,
                 rd: v_0,
                 imm: None,
-                virtual_sequence_index: Some(5),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(q_y),
@@ -158,7 +161,7 @@ impl<const WORD_SIZE: usize> VirtualInstructionSequence for REMUInstruction<WORD
                 rs2: r_x,
                 rd: None,
                 imm: None,
-                virtual_sequence_index: Some(6),
+                virtual_sequence_index: Some(virtual_sequence.len()),
             },
             register_state: RegisterState {
                 rs1_val: Some(add_0),
