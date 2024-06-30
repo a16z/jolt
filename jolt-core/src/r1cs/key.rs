@@ -269,7 +269,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let eval_variables: F = (0..self.uniform_r1cs.num_vars)
             .map(|var_index| r_var_eq[var_index] * segment_evals[var_index])
             .sum();
-        let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(0, F::one())]);
+        let const_poly = SparsePolynomial::new(self.num_vars_total().log_2(), vec![(F::one(), 0)]);
         let eval_const = const_poly.evaluate(r_rest);
 
         (F::one() - r_const) * eval_variables + r_const * eval_const
