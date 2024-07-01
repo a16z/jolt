@@ -68,7 +68,11 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-      
+
+      - name: Build the rust integration testing scripts
+        working-directory: ./jolt-evm-verifier          
+        run: cargo build --manifest-path script/Cargo.toml --release
+
       - name: Check build and denny warnings
         working-directory: ./jolt-evm-verifier
         run: forge build --deny-warnings
