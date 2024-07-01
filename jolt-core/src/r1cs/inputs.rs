@@ -36,7 +36,7 @@ pub struct R1CSInputs<'a, F: JoltField> {
     lookup_outputs: Vec<F>,
     pub circuit_flags_bits: Vec<F>,
     instruction_flags_bits: Vec<F>,
-    remainder: Vec<F>
+    remainder: Vec<F>,
 }
 
 impl<'a, F: JoltField> R1CSInputs<'a, F> {
@@ -55,7 +55,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         lookup_outputs: Vec<F>,
         circuit_flags_bits: Vec<F>,
         instruction_flags_bits: Vec<F>,
-        remainder: Vec<F>
+        remainder: Vec<F>,
     ) -> Self {
         assert!(pc.len() % padded_trace_len == 0);
         assert!(bytecode_a.len() % padded_trace_len == 0);
@@ -71,7 +71,6 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
         assert!(instruction_flags_bits.len() % padded_trace_len == 0);
         assert!(remainder.len() % padded_trace_len == 0);
 
-
         Self {
             padded_trace_len,
             pc,
@@ -86,7 +85,7 @@ impl<'a, F: JoltField> R1CSInputs<'a, F> {
             lookup_outputs,
             circuit_flags_bits,
             instruction_flags_bits,
-            remainder
+            remainder,
         }
     }
 
@@ -234,8 +233,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> R1CSProof<F, C> {
         let bytecode_trace_commitments = &jolt_commitments.bytecode.trace_commitments;
         let memory_trace_commitments = &jolt_commitments.read_write_memory.trace_commitments
             [..1 + MEMORY_OPS_PER_INSTRUCTION + 5]; // a_read_write, v_read, v_write
-        let memory_trace_commitments_len = jolt_commitments.read_write_memory.trace_commitments.len();
-        let remainder_commitment = &jolt_commitments.read_write_memory.trace_commitments[memory_trace_commitments_len -1];
+        let memory_trace_commitments_len =
+            jolt_commitments.read_write_memory.trace_commitments.len();
+        let remainder_commitment =
+            &jolt_commitments.read_write_memory.trace_commitments[memory_trace_commitments_len - 1];
         let instruction_lookup_indices_commitments =
             &jolt_commitments.instruction_lookups.trace_commitment[..C];
         let instruction_flag_commitments = &jolt_commitments.instruction_lookups.trace_commitment

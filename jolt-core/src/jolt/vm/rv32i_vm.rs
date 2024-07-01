@@ -256,7 +256,7 @@ mod tests {
 
         let preprocessing =
             RV32IJoltVM::preprocess(bytecode.clone(), memory_init, 1 << 20, 1 << 20, 1 << 20);
-        println!("Generating Proof");
+
         let (proof, commitments) = <RV32IJoltVM as Jolt<Fr, Zeromorph<Bn254>, C, M>>::prove(
             io_device,
             trace,
@@ -269,7 +269,7 @@ mod tests {
             "Verification failed with error: {:?}",
             verification_result.err()
         );
-        println!("Working Fine!")
+
     }
 
     #[test]

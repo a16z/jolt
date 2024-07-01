@@ -81,12 +81,12 @@ impl<I: ConstraintInput> LC<I> {
     }
 
     /// LC(a) + LC(b) + LC(c) -> LC(a + b + c)
-    pub fn sum3(a: impl Into<Term<I>>, b: impl Into<Term<I>>,  c: impl Into<Term<I>>) -> Self {
+    pub fn sum3(a: impl Into<Term<I>>, b: impl Into<Term<I>>, c: impl Into<Term<I>>) -> Self {
         LC(vec![a.into(), b.into(), c.into()])
     }
 
     pub fn sum_any(terms: Vec<impl Into<Term<I>>>) -> Self {
-        let mut terms_vec: Vec<Term<I>>  = Vec::new();
+        let mut terms_vec: Vec<Term<I>> = Vec::new();
         for term in terms {
             terms_vec.push(term.into());
         }
@@ -562,7 +562,11 @@ macro_rules! input_range {
 macro_rules! assert_static_aux_index {
     ($var:expr, $index:expr) => {{
         if let Variable::Auxiliary(aux_index) = $var {
-            assert_eq!(aux_index, $index, "Unexpected auxiliary index {:?}", aux_index);
+            assert_eq!(
+                aux_index, $index,
+                "Unexpected auxiliary index {:?}",
+                aux_index
+            );
         } else {
             panic!("Variable is not of variant type Variable::Auxiliary");
         }
