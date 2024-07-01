@@ -58,7 +58,6 @@ jobs:
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
   on-chain:
-    check:
     name: Onchain Verifier Tests
     runs-on: ubuntu-latest
     steps:
@@ -66,8 +65,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
       
