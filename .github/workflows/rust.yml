@@ -67,7 +67,6 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        working-directory: ./jolt-evm-verifier
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
