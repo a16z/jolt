@@ -42,9 +42,8 @@ contract TestBase is Test {
     }
 
     function getTranscriptExample() internal returns (TranscriptExampleValues memory) {
-        string[] memory cmds = new string[](3);
-        cmds[0] = "sh";
-        cmds[1] = "script/run_transcript_example.sh";
+        string[] memory cmds = new string[](1);
+        cmds[0] = "./script/target/release/transcript_example";
         bytes memory result = vm.ffi(cmds);
         return (abi.decode(result, (TranscriptExampleValues)));
     }
