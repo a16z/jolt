@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: ['**', main]
 
 env:
   RUSTFLAGS: -D warnings
@@ -57,3 +57,30 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-core tests
         run: cargo nextest run --release -p jolt-core
+  on-chain:
+    name: Onchain Verifier Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Build the rust integration testing scripts
+        working-directory: ./jolt-evm-verifier          
+        run: cargo build --manifest-path script/Cargo.toml --release
+
+      - name: Check build and denny warnings
+        working-directory: ./jolt-evm-verifier
+        run: forge build --deny-warnings
+
+      - name: Run tests
+        working-directory: ./jolt-evm-verifier
+        run: forge test -vvv --via-ir --ffi
+
+      - name: Check Format
+        working-directory: ./jolt-evm-verifier
+        run: forge fmt --check

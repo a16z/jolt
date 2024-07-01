@@ -87,7 +87,7 @@ fn get_claims_data(batched_circuit: &BatchedDenseGrandProduct<Fr>) {
 
 fn get_prover_r(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
     let mut transcript: ProofTranscript = ProofTranscript::new(b"test_transcript");
-    let (proof, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
+    let (_, r_prover) = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
         Fr,
         Zeromorph<Bn254>,
     >>::prove_grand_product(batched_circuit, &mut transcript, None);
