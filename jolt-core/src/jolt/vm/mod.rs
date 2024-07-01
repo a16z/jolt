@@ -229,12 +229,7 @@ where
             || PCS::commit(&self.read_write_memory.t_final_reg, generators),
         );
         let memory_ram_v_final_commitment = PCS::batch_commit_polys(
-            &vec![
-                self.read_write_memory.v_final_ram0.clone(),
-                self.read_write_memory.v_final_ram1.clone(),
-                self.read_write_memory.v_final_ram2.clone(),
-                self.read_write_memory.v_final_ram3.clone(),
-            ],
+            &self.read_write_memory.v_final_ram.to_vec(),
             generators,
             BatchType::Big,
         );
@@ -363,64 +358,21 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &preprocessing.instruction_lookups, &trace
         );
 
-        let mut load_store_flags_vec = Vec::new();
+        let mut load_store_flags = Vec::new();
 
-        // append the circuit flag corresponding to loads
-        let mut lbu_circuit_flag = Vec::new(); // store corresponding to index 2 -> lbu
-        let mut lhu_circuit_flag = Vec::new(); // store corresponding to index 3 -> lhu
-        let mut lw_circuit_flag = Vec::new(); // store corresponding to index 4 -> lw
-        let mut lb_circuit_flag = Vec::new(); // store corresponding to index 5 -> lb
-        let mut lh_circuit_flag = Vec::new(); // store corresponding to index 6 -> lh
-        let mut sb_circuit_flag = Vec::new(); // store corresponding to index 7 -> sb
-        let mut sh_circuit_flag = Vec::new(); // store corresponding to index 8 -> sh
-        let mut sw_circuit_flag = Vec::new(); // store corresponding to index 9 -> sw
-
+        // construct load store flags using the load store circuit flags (index from 2 - 9)
         circuit_flags
             .chunks(padded_trace_length)
             .enumerate()
-            .for_each(|(flag_index, chunk)| match flag_index {
-                2 => {
-                    lbu_circuit_flag = chunk.to_vec();
+            .for_each(|(flag_index, chunk)| {
+                if (2..=9).contains(&flag_index) {
+                    load_store_flags.push(DensePolynomial::new(chunk.to_vec()));
                 }
-                3 => {
-                    lhu_circuit_flag = chunk.to_vec();
-                }
-                4 => {
-                    lw_circuit_flag = chunk.to_vec();
-                }
-                5 => {
-                    lb_circuit_flag = chunk.to_vec();
-                }
-                6 => {
-                    lh_circuit_flag = chunk.to_vec();
-                }
-                7 => {
-                    sb_circuit_flag = chunk.to_vec();
-                }
-                8 => {
-                    sh_circuit_flag = chunk.to_vec();
-                }
-                9 => {
-                    sw_circuit_flag = chunk.to_vec();
-                }
-                _ => {}
             });
-
-        // create dense polynomials using circuit flags
-        load_store_flags_vec.push(DensePolynomial::new(lbu_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(lhu_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(lw_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(lb_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(lh_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(sb_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(sh_circuit_flag));
-        load_store_flags_vec.push(DensePolynomial::new(sw_circuit_flag));
-
-        let load_store_flags = &load_store_flags_vec[..];
 
         let (memory_polynomials, read_timestamps_reg, read_timestamps_ram) = ReadWriteMemory::new(
             &program_io,
-            load_store_flags,
+            &load_store_flags[..],
             &preprocessing.read_write_memory,
             &trace,
         );

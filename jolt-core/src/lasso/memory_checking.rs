@@ -362,7 +362,7 @@ where
             commitments,
             &r_read_write,
             transcript,
-        );
+        )?;
 
         proof.init_final_openings.verify_openings(
             generators,
@@ -370,7 +370,7 @@ where
             commitments,
             &r_init_final,
             transcript,
-        );
+        )?;
 
         //proof.read_write_openings.v_read_ram ;
         proof
