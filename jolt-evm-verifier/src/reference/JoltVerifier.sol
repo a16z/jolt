@@ -14,7 +14,6 @@ error GrandProductArgumentFailed();
 error SumcheckFailed();
 
 contract JoltVerifier is IVerifier {
-
     using FiatShamirTranscript for Transcript;
 
     function verifySumcheckLayer(
@@ -114,10 +113,11 @@ contract JoltVerifier is IVerifier {
         return (newClaims, newRGrandProduct);
     }
 
-    function verifyGrandProduct(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims, Transcript memory transcript)
-        external pure
-        returns (Fr[] memory)
-    {
+    function verifyGrandProduct(
+        Jolt.BatchedGrandProductProof memory proof,
+        Fr[] memory claims,
+        Transcript memory transcript
+    ) external pure returns (Fr[] memory) {
         Fr[] memory rGrandProduct = new Fr[](0);
         for (uint256 i = 0; i < proof.layers.length; i++) {
             //get coeffs
@@ -142,16 +142,17 @@ contract JoltVerifier is IVerifier {
             }
 
             // verify sumcheck and get rSumcheck
-            (Fr sumcheckClaim, Fr[] memory rSumcheck) = verifySumcheckLayer(proof.layers[i], transcript, joined_claim, 3, i);
+            (Fr sumcheckClaim, Fr[] memory rSumcheck) =
+                verifySumcheckLayer(proof.layers[i], transcript, joined_claim, 3, i);
 
             if (rSumcheck.length != rGrandProduct.length) {
                 revert GrandProductArgumentFailed();
             }
 
             // Append the right and left claims to the transcript
-            for (uint256 l = 0; l <  proof.layers[l].leftClaims.length; l++) {
-                transcript.append_scalar( Fr.unwrap(proof.layers[i].leftClaims[l]));
-                transcript.append_scalar( Fr.unwrap(proof.layers[i].rightClaims[l]));
+            for (uint256 l = 0; l < proof.layers[l].leftClaims.length; l++) {
+                transcript.append_scalar(Fr.unwrap(proof.layers[i].leftClaims[l]));
+                transcript.append_scalar(Fr.unwrap(proof.layers[i].rightClaims[l]));
             }
 
             Fr eqEval = buildEqEval(rGrandProduct, rSumcheck);

@@ -8,14 +8,16 @@ import {Jolt} from "../../src/reference/JoltTypes.sol";
 import {Fr} from "../../src/reference/Fr.sol";
 
 contract TestBase is Test {
-
     struct ProofAndData {
         Jolt.BatchedGrandProductProof encoded_proof;
         uint256[] claims;
         uint256[] r_prover;
     }
 
-    function getProofData() internal returns (Jolt.BatchedGrandProductProof memory, uint256[] memory, uint256[] memory) {
+    function getProofData()
+        internal
+        returns (Jolt.BatchedGrandProductProof memory, uint256[] memory, uint256[] memory)
+    {
         string[] memory cmds = new string[](2);
         cmds[0] = "sh";
         cmds[1] = "script/run.sh";
