@@ -8,26 +8,21 @@ import {Jolt} from "../../src/reference/JoltTypes.sol";
 import {Fr} from "../../src/reference/Fr.sol";
 
 contract TestBase is Test {
-    function getProofData() internal returns (Jolt.BatchedGrandProductProof memory) {
-        string[] memory cmds = new string[](3);
-        cmds[0] = "sh";
-        cmds[1] = "script/run.sh";
-        cmds[2] = "proofs";
-        bytes memory result = vm.ffi(cmds);
-        (Jolt.BatchedGrandProductProof memory decodedProof) = abi.decode(result, (Jolt.BatchedGrandProductProof));
 
-        return decodedProof;
+    struct ProofAndData {
+        Jolt.BatchedGrandProductProof encoded_proof;
+        uint256[] claims;
+        uint256[] r_prover;
     }
 
-    function getClaims() internal returns (Fr[] memory) {
-        string[] memory cmds = new string[](3);
+    function getProofData() internal returns (Jolt.BatchedGrandProductProof memory, uint256[] memory, uint256[] memory) {
+        string[] memory cmds = new string[](2);
         cmds[0] = "sh";
         cmds[1] = "script/run.sh";
-        cmds[2] = "claims";
         bytes memory result = vm.ffi(cmds);
-        (Fr[] memory claims) = abi.decode(result, (Fr[]));
+        (ProofAndData memory decodedProof) = abi.decode(result, (ProofAndData));
 
-        return claims;
+        return (decodedProof.encoded_proof, decodedProof.claims, decodedProof.r_prover);
     }
 
     struct TranscriptExampleValues {
@@ -56,16 +51,5 @@ contract TestBase is Test {
             }
         }
         return (true);
-    }
-
-    function getProverRGrandProduct() internal returns (Fr[] memory) {
-        string[] memory cmds = new string[](3);
-        cmds[0] = "sh";
-        cmds[1] = "script/run.sh";
-        cmds[2] = "proverR";
-        bytes memory result = vm.ffi(cmds);
-        (Fr[] memory proverRGrandProduct) = abi.decode(result, (Fr[]));
-
-        return proverRGrandProduct;
     }
 }
