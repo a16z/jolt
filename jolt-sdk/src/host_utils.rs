@@ -46,6 +46,6 @@ impl Proof {
     /// Reads a proof from a file
     pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
         let file = File::open(path.into())?;
-        Ok(RV32IHyraxProof::deserialize_compressed(file)?)
+        Ok(Proof::deserialize_compressed(file)?)
     }
 }
