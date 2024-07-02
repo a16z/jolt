@@ -1,6 +1,6 @@
 pub use ark_bn254::{Fr as F, G1Projective as G};
 pub use ark_ec::CurveGroup;
-pub use jolt_core::field::JoltField;
+pub use jolt_core::{poly::commitment::hyrax::HyraxScheme, field::JoltField};
 
 use eyre::Result;
 use std::fs::File;
@@ -20,11 +20,11 @@ pub use jolt_core::jolt::vm::{
 };
 pub use tracer;
 
-pub type ProofPCS = HyraxScheme<G1Projective>;
+pub type ProofPCS = HyraxScheme<G>;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct Proof {
-    pub proof: RV32IJoltProof<Fr, ProofPCS>,
+    pub proof: RV32IJoltProof<F, ProofPCS>,
     pub commitments: JoltCommitments<ProofPCS>,
 }
 
