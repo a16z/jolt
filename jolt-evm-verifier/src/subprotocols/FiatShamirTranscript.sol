@@ -12,6 +12,8 @@ struct Transcript {
     bytes32[] region;
 }
 
+import "forge-std/console.sol";
+
 // An implementation of a Fiat Shamir Public Coin protocol which matches the one from the Jolt rust repo
 // We first define an object and memory region (the max memory limit of writes is defined on init),
 // then users can write data to this trascript or pull determistic randoms values.

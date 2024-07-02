@@ -23,7 +23,7 @@ contract JoltVerifier is IVerifier {
         Fr claim,
         uint256 degree_bound,
         uint256 num_rounds
-    ) internal returns (Fr, Fr[] memory) {
+    ) internal pure returns (Fr, Fr[] memory) {
         if (layer.sumcheck_univariate_coeffs.length != num_rounds) {
             revert SumcheckFailed();
         }
@@ -86,7 +86,7 @@ contract JoltVerifier is IVerifier {
         Fr[] memory claims,
         Fr[] memory rGrandProduct,
         Transcript memory transcript
-    ) internal returns (Fr[] memory newClaims, Fr[] memory newRGrandProduct) {
+    ) internal pure returns (Fr[] memory newClaims, Fr[] memory newRGrandProduct) {
         Jolt.BatchedGrandProductLayerProof memory layerProof = layerProofs[layerIndex];
 
         Fr expectedSumcheckClaim = Fr.wrap(0);
@@ -115,7 +115,7 @@ contract JoltVerifier is IVerifier {
     }
 
     function verifyGrandProduct(Jolt.BatchedGrandProductProof memory proof, Fr[] memory claims, Transcript memory transcript)
-        external
+        external pure
         returns (Fr[] memory)
     {
         Fr[] memory rGrandProduct = new Fr[](0);
@@ -150,8 +150,8 @@ contract JoltVerifier is IVerifier {
 
             // Append the right and left claims to the transcript
             for (uint256 l = 0; l <  proof.layers[l].leftClaims.length; l++) {
-                transcript.append_scalar( Fr.unwrap(proof.layers[i].leftClaims[i]));
-                transcript.append_scalar( Fr.unwrap(proof.layers[i].rightClaims[i]));
+                transcript.append_scalar( Fr.unwrap(proof.layers[i].leftClaims[l]));
+                transcript.append_scalar( Fr.unwrap(proof.layers[i].rightClaims[l]));
             }
 
             Fr eqEval = buildEqEval(rGrandProduct, rSumcheck);
