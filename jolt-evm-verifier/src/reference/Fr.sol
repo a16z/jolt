@@ -95,7 +95,7 @@ function mul(Fr a, Fr b) pure returns (Fr) {
 }
 
 function sub(Fr a, Fr b) pure returns (Fr) {
-    unchecked{
+    unchecked {
         return Fr.wrap(addmod(Fr.unwrap(a), MODULUS - Fr.unwrap(b), MODULUS));
     }
 }

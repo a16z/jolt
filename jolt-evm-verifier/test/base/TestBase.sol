@@ -4,44 +4,54 @@ pragma solidity >=0.8.21;
 
 import {Vm} from "forge-std/Vm.sol";
 import {Test} from "forge-std/Test.sol";
-import "forge-std/console.sol";
 import {Jolt} from "../../src/reference/JoltTypes.sol";
 import {Fr} from "../../src/reference/Fr.sol";
 
 contract TestBase is Test {
-
-    function getProofData () internal returns (Jolt.BatchedGrandProductProof memory) {
-        string[] memory cmds = new string[](3);
-        cmds[0] = "sh";
-        cmds[1] = "script/run.sh"; 
-        cmds[2] = "proofs";
-        bytes memory result = vm.ffi(cmds);
-        (Jolt.BatchedGrandProductProof memory decodedProof) = abi.decode(result, (Jolt.BatchedGrandProductProof));
-
-        return decodedProof;
+    struct ProofAndData {
+        Jolt.BatchedGrandProductProof encoded_proof;
+        uint256[] claims;
+        uint256[] r_prover;
     }
 
-    function getClaims () internal returns (Fr[] memory) {
-
-        string[] memory cmds = new string[](3);
+    function getProofData()
+        internal
+        returns (Jolt.BatchedGrandProductProof memory, uint256[] memory, uint256[] memory)
+    {
+        string[] memory cmds = new string[](2);
         cmds[0] = "sh";
-        cmds[1] = "script/run.sh"; 
-        cmds[2] = "claims";
+        cmds[1] = "script/run.sh";
         bytes memory result = vm.ffi(cmds);
-        (Fr[] memory claims) = abi.decode(result, (Fr[]));
+        (ProofAndData memory decodedProof) = abi.decode(result, (ProofAndData));
 
-        return claims;
+        return (decodedProof.encoded_proof, decodedProof.claims, decodedProof.r_prover);
     }
 
-    function getProverRGrandProduct () internal returns (Fr[] memory) {
+    struct TranscriptExampleValues {
+        uint64[] usizes;
+        uint256[] scalars;
+        uint256[][] scalarArrays;
+        uint256[] points;
+        uint256[][] pointArrays;
+        bytes32[][] bytesExamples;
+        uint256[] expectedScalarResponses;
+        uint256[][] expectedVectorResponses;
+    }
 
-        string[] memory cmds = new string[](3);
-        cmds[0] = "sh";
-        cmds[1] = "script/run.sh"; 
-        cmds[2] = "proverR";
+    function getTranscriptExample() internal returns (TranscriptExampleValues memory) {
+        string[] memory cmds = new string[](1);
+        cmds[0] = "./script/target/release/transcript_example";
         bytes memory result = vm.ffi(cmds);
-        (Fr[] memory proverRGrandProduct) = abi.decode(result, (Fr[]));
+        return (abi.decode(result, (TranscriptExampleValues)));
+    }
 
-        return proverRGrandProduct;
+    function array_eq(uint256[] memory a, uint256[] memory b) internal pure returns (bool) {
+        if (a.length != b.length) return (false);
+        for (uint256 i = 0; i < a.length; i++) {
+            if (a[i] != b[i]) {
+                return (false);
+            }
+        }
+        return (true);
     }
 }

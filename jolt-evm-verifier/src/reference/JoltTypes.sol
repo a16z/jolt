@@ -5,8 +5,6 @@ pragma solidity >=0.8.21;
 import {Fr} from "./Fr.sol";
 
 library Jolt {
-
-
     struct BatchedGrandProductLayerProof {
         Fr[][] sumcheck_univariate_coeffs;
         Fr[] leftClaims;
