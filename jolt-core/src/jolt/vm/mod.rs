@@ -173,9 +173,9 @@ where
             .chain([&self.read_write_memory.v_write_rd].into_iter())
             .chain(self.read_write_memory.v_write_ram.iter())
             .chain(self.read_write_memory.t_read_reg.iter())
-            .chain(self.read_write_memory.t_read_ram.iter())
-            .chain(self.read_write_memory.t_write_ram.iter())
-            .chain(self.read_write_memory.remainder.iter())
+            .chain([&self.read_write_memory.t_read_ram].into_iter())
+            .chain([&self.read_write_memory.t_write_ram].into_iter())
+            .chain([&self.read_write_memory.remainder].into_iter())
             .collect();
         let num_memory_trace_polys = memory_trace_polys.len();
 
@@ -725,7 +725,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             polynomials.instruction_lookups.lookup_outputs.evals(),
             circuit_flags,
             instruction_flags,
-            polynomials.read_write_memory.remainder[0].Z.clone(),
+            polynomials.read_write_memory.remainder.Z.clone(),
         );
 
         inputs

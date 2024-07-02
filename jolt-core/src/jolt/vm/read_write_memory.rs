@@ -36,8 +36,10 @@ use common::constants::{
     MEMORY_OPS_PER_INSTRUCTION,
     RAM_OPS_PER_INSTRUCTION,
     RAM_START_ADDRESS,
+    RAM_WORD_OPS_PER_INSTRUCTION,
     REGISTER_COUNT,
     REG_OPS_PER_INSTRUCTION,
+    WORD_BYTES,
 };
 use common::rv_trace::{ JoltDevice, MemoryLayout, MemoryOp };
 
@@ -262,30 +264,30 @@ pub struct ReadWriteMemory<F, C> where F: JoltField, C: CommitmentScheme<Field =
     memory_size: usize,
     /// MLE of initial memory values. RAM is initialized to contain the program bytecode and inputs.
     pub v_init_reg: DensePolynomial<F>,
-    pub v_init_ram: [DensePolynomial<F>; 4],
+    pub v_init_ram: [DensePolynomial<F>; WORD_BYTES],
 
     /// MLE of read/write addresses. For offline memory checking, each read is paired with a "virtual" write
     /// and vice versa, so the read addresses and write addresses are the same.
     pub a_ram: DensePolynomial<F>,
     /// MLE of the read values.
     pub v_read_reg: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
-    pub v_read_ram: [DensePolynomial<F>; 4],
+    pub v_read_ram: [DensePolynomial<F>; WORD_BYTES],
     /// MLE of the write values.
     pub v_write_rd: DensePolynomial<F>,
-    pub v_write_ram: [DensePolynomial<F>; 4],
+    pub v_write_ram: [DensePolynomial<F>; WORD_BYTES],
     /// MLE of the final memory state.
     pub v_final_reg: DensePolynomial<F>,
-    pub v_final_ram: [DensePolynomial<F>; 4],
+    pub v_final_ram: [DensePolynomial<F>; WORD_BYTES],
 
     /// MLE of the read timestamps.
     pub t_read_reg: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
-    pub t_read_ram: [DensePolynomial<F>; 1],
+    pub t_read_ram: DensePolynomial<F>,
     /// MLE of the write timestamps.
-    pub t_write_ram: [DensePolynomial<F>; 1],
+    pub t_write_ram: DensePolynomial<F>,
     /// MLE of the final timestamps.
     pub t_final_reg: DensePolynomial<F>,
     pub t_final_ram: DensePolynomial<F>,
-    pub remainder: [DensePolynomial<F>; 1],
+    pub remainder: DensePolynomial<F>,
 }
 
 fn merge_vec_array(
@@ -321,11 +323,11 @@ fn map_to_polys<F: JoltField, const N: usize>(vals: &[Vec<u64>; N]) -> [DensePol
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Word {
-    pub bytes: [u64; 4],
+    pub bytes: [u64; WORD_BYTES],
 }
 
 impl Word {
-    fn new(bytes: [u64; 4]) -> Self {
+    fn new(bytes: [u64; WORD_BYTES]) -> Self {
         Word { bytes }
     }
 
@@ -335,6 +337,53 @@ impl Word {
             byte_vector.push(word.bytes[byte_index]);
         }
         byte_vector
+    }
+
+    fn get_array_of_bytes_from_word_vector(word_vector: &Vec<Word>) -> [Vec<u64>; WORD_BYTES] {
+        let input_vector_word: Vec<Vec<u64>> = (0..WORD_BYTES)
+            .map(|i|
+                word_vector
+                    .iter()
+                    .map(|row| row.bytes[i])
+                    .collect()
+            )
+            .collect();
+
+        let mut output_array: [Vec<u64>; WORD_BYTES] = Default::default();
+
+        for i in 0..WORD_BYTES {
+            for row in &input_vector_word {
+                output_array[i].push(row[i]);
+            }
+        }
+        output_array
+    }
+
+    fn get_array_of_bytes_from_u64_vector(input_vector: Vec<u64>) -> [Vec<u64>; WORD_BYTES] {
+        let input_vector: Vec<Vec<u64>> = input_vector
+            .chunks(WORD_BYTES)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        // now each row in input_vector will be a vector of bytes corresponding to the particular byte index in the word
+        // for example, the first row will be a vector of first bytes from all the words in the memory
+        let input_vector_word: Vec<Vec<u64>> = (0..WORD_BYTES)
+            .map(|i|
+                input_vector
+                    .iter()
+                    .map(|row| row[i])
+                    .collect()
+            )
+            .collect();
+
+        let mut output_array: [Vec<u64>; WORD_BYTES] = Default::default();
+
+        for i in 0..WORD_BYTES {
+            for row in &input_vector_word {
+                output_array[i].push(row[i]);
+            }
+        }
+        output_array
     }
 }
 
@@ -427,10 +476,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
 
         let reg_count = REGISTER_COUNT as usize;
 
+        // split v_init into v_init_reg and v_init_ram
         let v_init_reg = v_init[..reg_count].to_vec();
         let mut v_init_ram = v_init[reg_count..].to_vec();
         pad_zeros(&mut v_init_ram);
 
+        // split v_final into v_final_reg and v_final_ram
         let mut v_final_reg = v_init[..reg_count].to_vec();
         let mut v_final_ram = v_init[reg_count..].to_vec();
         pad_zeros(&mut v_final_ram);
@@ -441,7 +492,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         let mut v_read_reg: [Vec<u64>; REG_OPS_PER_INSTRUCTION] = std::array::from_fn(|_|
             Vec::with_capacity(m)
         );
-        //Arithmic: change for word-addressable
+        // change for word-addressable
         let mut v_read_ram: Vec<Word> = Vec::with_capacity(m);
 
         let mut t_read_reg: [Vec<u64>; REG_OPS_PER_INSTRUCTION] = std::array::from_fn(|_|
@@ -511,11 +562,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
                                 // construct word using v_final_ram and remapped index
                                 let v_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
@@ -524,17 +575,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 v_read_ram.push(v_word.clone());
                                 v_write_ram.push(v_word);
 
-                                // Do the above using t_final_ram
-
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
-                                // reset t_final_ram to timestamp
-
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                // reset t_final_ram to timestamp + 1
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             _ => {
-                                panic!(); // Change later
+                                panic!("Invalid memory ops for a load instruction");
                             }
                         }
                     } else if sw_flag[i].is_one() {
@@ -551,11 +599,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
                                 // construct old_word using v_final_ram and push it into v_read_ram
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
@@ -565,17 +613,17 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 let v_new_word = Word::new([v0_new, v1_new, v2_new, v3_new]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
                                 // change v_final_ram and t_final_ram
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             _ => {
-                                panic!(); // Change later
+                                panic!("Invalid memory ops for a store word instruction");
                             }
                         }
                     } else if sh_flag[i].is_one() {
@@ -592,11 +640,11 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
                                 // construct old_word using v_final_ram and push it into v_read_ram
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
@@ -611,16 +659,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 ]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                // construct t_word using t_final_ram and push it into t_read_ram
-
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
                                 // change v_final_ram and t_final_ram
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             [
                                 MemoryOp::Read(a0),
@@ -634,10 +680,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
@@ -651,16 +697,16 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 ]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             _ => {
-                                panic!(); // Change later
+                                panic!("Invalid memory ops for a store half instruction"); // Change later
                             }
                         }
                     } else if sb_flag[i].is_one() {
@@ -677,16 +723,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
                                 v_read_ram.push(v_old_word.clone());
 
-                                // construct new_word using v_new
                                 let v_new_word = Word::new([
                                     v0_new,
                                     v_old_word.bytes[1],
@@ -695,15 +740,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 ]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                // construct t_word using t_final_ram and push it into t_read_ram
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
-                                // change v_final_ram and t_final_ram
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             [
                                 MemoryOp::Read(a0),
@@ -717,17 +760,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
-                                // construct old_word using v_final_ram and push it into v_read_ram
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
                                 v_read_ram.push(v_old_word.clone());
 
-                                // construct new_word using v_new
                                 let v_new_word = Word::new([
                                     v_old_word.bytes[0],
                                     v1_new,
@@ -736,15 +777,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 ]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                // construct t_word using t_final_ram and push it into t_read_ram
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
-                                // change v_final_ram and t_final_ram
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             [
                                 MemoryOp::Read(a0),
@@ -758,17 +797,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
-                                // construct old_word using v_final_ram and push it into v_read_ram
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
                                 v_read_ram.push(v_old_word.clone());
 
-                                // construct new_word using v_new
                                 let v_new_word = Word::new([
                                     v_old_word.bytes[0],
                                     v_old_word.bytes[1],
@@ -777,16 +814,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 ]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                // construct t_word using t_final_ram and push it into t_read_ram
-                                // construct t_word using t_final_ram and push it into t_read_ram
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
-                                // change v_final_ram and t_final_ram
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             [
                                 MemoryOp::Read(a0),
@@ -800,17 +834,15 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 } else {
                                     remap_address_index(remapped_a)
                                 };
-                                a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                                a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
-                                // construct old_word using v_final_ram and push it into v_read_ram
                                 let v_old_word = Word::new(
-                                    v_final_ram[remapped_a_index..remapped_a_index + 4]
+                                    v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
                                         .try_into()
                                         .unwrap()
                                 );
                                 v_read_ram.push(v_old_word.clone());
 
-                                // construct new_word using v_new
                                 let v_new_word = Word::new([
                                     v_old_word.bytes[0],
                                     v_old_word.bytes[1],
@@ -819,40 +851,38 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                                 ]);
                                 v_write_ram.push(v_new_word.clone());
 
-                                // construct t_word using t_final_ram and push it into t_read_ram
-                                // construct t_word using t_final_ram and push it into t_read_ram
-                                t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                                t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                                 t_write_ram.push(timestamp + 1);
 
-                                // change v_final_ram and t_final_ram
-                                for index in 0..4 {
+                                for index in 0..WORD_BYTES {
                                     v_final_ram[remapped_a_index + index] = v_new_word.bytes[index];
                                 }
-                                t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                                t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                             }
                             _ => {
-                                panic!(); // Change later
+                                panic!("Invalid memory ops for a store byte instruction");
                             }
                         }
                     } else {
                         let remapped_a_index = 0;
-                        a_ram.push((remapped_a_index / 4).try_into().unwrap());
+                        a_ram.push((remapped_a_index / WORD_BYTES).try_into().unwrap());
 
                         // construct word using v_final_ram and remapped index
                         let v_word = Word::new(
-                            v_final_ram[remapped_a_index..remapped_a_index + 4].try_into().unwrap()
+                            v_final_ram[remapped_a_index..remapped_a_index + WORD_BYTES]
+                                .try_into()
+                                .unwrap()
                         );
 
                         // push the word into both v_read_ram and v_write_ram as it is a load instruction
                         v_read_ram.push(v_word.clone());
                         v_write_ram.push(v_word);
 
-                        // Do the above using t_final_ram
-                        t_read_ram.push(t_final_ram[remapped_a_index / 4]);
+                        t_read_ram.push(t_final_ram[remapped_a_index / WORD_BYTES]);
                         t_write_ram.push(timestamp + 1);
 
-                        // reset t_final_ram to timestamp
-                        t_final_ram[remapped_a_index / 4] = timestamp + 1;
+                        // reset t_final_ram to timestamp + 1
+                        t_final_ram[remapped_a_index / WORD_BYTES] = timestamp + 1;
                     }
                 }
 
@@ -981,6 +1011,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             v_final_ram3.push(chunk[3]);
         });
 
+        // // make 4 dense polynomials from v_init_ram and 4 dense polynomials from v_final_ram
+        // let v_init_ram = Word::get_array_of_bytes_from_u64_vector(v_init_ram);
+        // let v_final_ram = Word::get_array_of_bytes_from_u64_vector(v_final_ram);
+
         let (
             [
                 a_ram,
@@ -1011,9 +1045,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             [DensePolynomial<F>; 4],
             [DensePolynomial<F>; 4],
             [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
-            [DensePolynomial<F>; 1],
-            [DensePolynomial<F>; 1],
-            [DensePolynomial<F>; 1],
+            DensePolynomial<F>,
+            DensePolynomial<F>,
+            DensePolynomial<F>,
         ) = common::par_join_8!(
             ||
                 map_to_polys(
@@ -1054,9 +1088,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                     ]
                 ),
             || map_to_polys(&[t_read_reg[0].clone(), t_read_reg[1].clone(), t_read_reg[2].clone()]),
-            || map_to_polys(&[t_read_ram.clone()]),
-            || map_to_polys(&[t_write_ram]),
-            || map_to_polys(&[remainder_vec])
+            || map_to_polys(&[t_read_ram.clone()])[0].clone(),
+            || map_to_polys(&[t_write_ram])[0].clone(),
+            || map_to_polys(&[remainder_vec])[0].clone()
         );
         (
             Self {
@@ -1081,6 +1115,91 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             t_read_reg,
             t_read_ram,
         )
+
+        // let (
+        //     [
+        //         a_ram,
+        //         v_write_rd,
+        //         v_init_reg,
+        //         v_final_reg,
+        //         t_final_reg,
+        //         t_final_ram,
+        //     ],
+        //     v_init_ram,
+        //     v_final_ram,
+        //     v_read_reg,
+        //     v_read_ram,
+        //     v_write_ram,
+        //     t_read_reg_polys,
+        //     t_read_ram_polys,
+        //     t_write_ram,
+        //     remainder,
+        // ): (
+        //     [DensePolynomial<F>; 6],
+        //     [DensePolynomial<F>; WORD_BYTES],
+        //     [DensePolynomial<F>; WORD_BYTES],
+        //     [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
+        //     [DensePolynomial<F>; WORD_BYTES],
+        //     [DensePolynomial<F>; WORD_BYTES],
+        //     [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
+        //     DensePolynomial<F>,
+        //     DensePolynomial<F>,
+        //     DensePolynomial<F>,
+        // ) = common::par_join_10!(
+        //     ||
+        //         map_to_polys(
+        //             &[
+        //                 a_ram,
+        //                 v_write_rd,
+        //                 v_init_reg,
+        //                 v_final_reg,
+        //                 t_final_reg,
+        //                 t_final_ram,
+        //             ]
+        //         ),
+        //     || map_to_polys(
+        //             &v_init_ram
+        //         ),
+        //     || map_to_polys(
+        //             &v_final_ram
+        //         ),
+        //     || map_to_polys(&[v_read_reg[0].clone(), v_read_reg[1].clone(), v_read_reg[2].clone()]),
+        //     ||
+        //         map_to_polys(
+        //             &Word::get_array_of_bytes_from_word_vector(&v_read_ram)
+        //         ),
+        //     ||
+        //         map_to_polys(
+        //             &Word::get_array_of_bytes_from_word_vector(&v_write_ram)
+        //         ),
+        //     || map_to_polys(&[t_read_reg[0].clone(), t_read_reg[1].clone(), t_read_reg[2].clone()]),
+        //     || map_to_polys(&[t_read_ram.clone()])[0].clone(),
+        //     || map_to_polys(&[t_write_ram])[0].clone(),
+        //     || map_to_polys(&[remainder_vec])[0].clone()
+        // );
+        // (
+        //     Self {
+        //         _group: PhantomData,
+        //         memory_size,
+        //         v_init_reg,
+        //         v_init_ram,
+        //         a_ram,
+        //         v_read_reg,
+        //         v_read_ram,
+        //         v_write_rd,
+        //         v_write_ram,
+        //         v_final_reg,
+        //         v_final_ram,
+        //         t_read_reg: t_read_reg_polys,
+        //         t_read_ram: t_read_ram_polys,
+        //         t_write_ram,
+        //         t_final_reg,
+        //         t_final_ram,
+        //         remainder,
+        //     },
+        //     t_read_reg,
+        //     t_read_ram,
+        // )
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]
@@ -1121,7 +1240,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         // { rs1, rs2, rd, ram_byte_1, ram_byte_2, ram_byte_3, ram_byte_4 }
         let t_read_write_len = (
             max_trace_length *
-            (REG_OPS_PER_INSTRUCTION + 1)
+            (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION)
         ).next_power_of_two();
         let t_read_write_shape = CommitShape::new(t_read_write_len, BatchType::Big);
 
@@ -1159,13 +1278,13 @@ impl<C: CommitmentScheme> AppendToTranscript for MemoryCommitment<C> {
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryReadWriteOpenings<F, C> where F: JoltField, C: CommitmentScheme<Field = F> {
     /// Evaluation of the a_read_write polynomial at the opening point.
-    pub a_read_write_opening: [F; REG_OPS_PER_INSTRUCTION + 1],
+    pub a_read_write_opening: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
     /// Evaluation of the v_read polynomial at the opening point.
     pub v_read_opening: [F; MEMORY_OPS_PER_INSTRUCTION],
     /// Evaluation of the v_write polynomial at the opening point.
     pub v_write_opening: [F; 5],
     /// Evaluation of the t_read polynomial at the opening point.
-    pub t_read_opening: [F; REG_OPS_PER_INSTRUCTION + 1],
+    pub t_read_opening: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
     /// Evaluation of the t_write_ram polynomial at the opening point.
     pub t_write_ram_opening: [F; 1],
     pub identity_poly_opening: Option<F>,
@@ -1192,8 +1311,8 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
             .chain([&polynomials.read_write_memory.v_write_rd].into_par_iter())
             .chain(polynomials.read_write_memory.v_write_ram.par_iter())
             .chain(polynomials.read_write_memory.t_read_reg.par_iter())
-            .chain(polynomials.read_write_memory.t_read_ram.par_iter())
-            .chain(polynomials.read_write_memory.t_write_ram.par_iter())
+            .chain([&polynomials.read_write_memory.t_read_ram].into_par_iter())
+            .chain([&polynomials.read_write_memory.t_write_ram].into_par_iter())
             .map(|poly| poly.evaluate_at_chi(&chis))
             .collect::<Vec<F>>()
             .into_iter();
@@ -1234,8 +1353,8 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
             .chain([&polynomials.read_write_memory.v_write_rd].into_iter())
             .chain(polynomials.read_write_memory.v_write_ram.iter())
             .chain(polynomials.read_write_memory.t_read_reg.iter())
-            .chain(polynomials.read_write_memory.t_read_ram.iter())
-            .chain(polynomials.read_write_memory.t_write_ram.iter())
+            .chain([&polynomials.read_write_memory.t_read_ram].into_iter())
+            .chain([&polynomials.read_write_memory.t_write_ram].into_iter())
             .collect::<Vec<_>>();
         let read_write_openings = openings.a_read_write_opening
             .into_iter()
@@ -1297,10 +1416,10 @@ pub struct MemoryInitFinalOpenings<F> where F: JoltField {
     a_init_final_ram: Option<F>,
     /// Evaluation of the v_init polynomial at the opening point. Computed by the verifier in `compute_verifier_openings`.
     v_init_reg: Option<F>,
-    v_init_ram: [Option<F>; 4],
+    v_init_ram: [Option<F>; WORD_BYTES],
     /// Evaluation of the v_final polynomial at the opening point.
     v_final_reg: F,
-    v_final_ram: [F; 4],
+    v_final_ram: [F; WORD_BYTES],
     /// Evaluation of the t_final polynomial at the opening point.
     t_final_reg: F,
     t_final_ram: F,
@@ -1336,7 +1455,7 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
                     || {
                         let evaluations: Vec<_> = polynomials.read_write_memory.v_final_ram
                             .iter()
-                            .take(4)
+                            .take(WORD_BYTES)
                             .map(|ram| ram.evaluate_at_chi(&chis))
                             .collect();
 
@@ -1449,8 +1568,8 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
         );
         v_init_index -= REGISTER_COUNT as usize;
         for byte in preprocessing.bytecode_bytes.iter() {
-            let quotient = v_init_index / 4;
-            let remainder = v_init_index % 4;
+            let quotient = v_init_index / WORD_BYTES;
+            let remainder = v_init_index % WORD_BYTES;
             v_init[remainder][quotient] = *byte as u64;
             v_init_index += 1;
         }
@@ -1541,7 +1660,7 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
 
         let num_ops = polynomials.read_write_memory.a_ram.len();
 
-        let read_write_leaves = (0..REG_OPS_PER_INSTRUCTION + 1)
+        let read_write_leaves = (0..REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION)
             .into_par_iter()
             .flat_map(|i| {
                 let read_fingerprints = (0..num_ops)
@@ -1577,9 +1696,8 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
                             }
                             _ => {
                                 polynomials.read_write_memory.a_ram[j] +
-                                    polynomials.read_write_memory.t_read_ram[0][j] *
-                                        gamma_powers[5] +
-                                    (0..4)
+                                    polynomials.read_write_memory.t_read_ram[j] * gamma_powers[5] +
+                                    (0..WORD_BYTES)
                                         .map(|i|
                                             mul_0_optimized(
                                                 &polynomials.read_write_memory.v_read_ram[i][j],
@@ -1627,9 +1745,8 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
                             }
                             _ => {
                                 polynomials.read_write_memory.a_ram[j] +
-                                    polynomials.read_write_memory.t_write_ram[0][j] *
-                                        gamma_powers[5] +
-                                    (0..4)
+                                    polynomials.read_write_memory.t_write_ram[j] * gamma_powers[5] +
+                                    (0..WORD_BYTES)
                                         .map(|i|
                                             mul_0_optimized(
                                                 &polynomials.read_write_memory.v_write_ram[i][j],
@@ -1651,7 +1768,7 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
 
         let init_fingerprints_reg: Vec<F> = (0..(
             (polynomials.read_write_memory.memory_size - (REGISTER_COUNT as usize)) /
-            4
+            WORD_BYTES
         ).next_power_of_two())
             .into_par_iter()
             .map(|i| {
@@ -1667,14 +1784,14 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
             .collect();
         let init_fingerprints_memory: Vec<F> = (0..(
             (polynomials.read_write_memory.memory_size - (REGISTER_COUNT as usize)) /
-            4
+            WORD_BYTES
         ).next_power_of_two())
             .into_par_iter()
             .map(
                 |i|
                     /* 0 * gamma^2 + */
                     F::from_u64(i as u64).unwrap() +
-                    (0..4)
+                    (0..WORD_BYTES)
                         .map(|j|
                             mul_0_optimized(
                                 &polynomials.read_write_memory.v_init_ram[j][i as usize],
@@ -1688,7 +1805,7 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
 
         let final_fingerprints_reg: Vec<F> = (0..(
             (polynomials.read_write_memory.memory_size - (REGISTER_COUNT as usize)) /
-            4
+            WORD_BYTES
         ).next_power_of_two())
             .into_par_iter()
             .map(|i| {
@@ -1711,12 +1828,12 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
             .collect();
         let final_fingerprints_memory: Vec<F> = (0..(
             (polynomials.read_write_memory.memory_size - (REGISTER_COUNT as usize)) /
-            4
+            WORD_BYTES
         ).next_power_of_two())
             .into_par_iter()
             .map(|i| {
                 mul_0_optimized(&polynomials.read_write_memory.t_final_ram[i], &gamma_powers[5]) +
-                    (0..4)
+                    (0..WORD_BYTES)
                         .map(|j|
                             mul_0_optimized(
                                 &polynomials.read_write_memory.v_final_ram[j][i as usize],
@@ -1745,10 +1862,17 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>
     ) -> MultisetHashes<F> {
-        assert_eq!(read_write_hashes.len(), 2 * (REG_OPS_PER_INSTRUCTION + 1));
-        let mut read_hashes = Vec::with_capacity(REG_OPS_PER_INSTRUCTION + 1);
-        let mut write_hashes = Vec::with_capacity(REG_OPS_PER_INSTRUCTION + 1);
-        for i in 0..REG_OPS_PER_INSTRUCTION + 1 {
+        assert_eq!(
+            read_write_hashes.len(),
+            2 * (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION)
+        );
+        let mut read_hashes = Vec::with_capacity(
+            REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION
+        );
+        let mut write_hashes = Vec::with_capacity(
+            REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION
+        );
+        for i in 0..REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION {
             read_hashes.push(read_write_hashes[2 * i]);
             write_hashes.push(read_write_hashes[2 * i + 1]);
         }
@@ -1769,8 +1893,14 @@ impl<F, C> MemoryCheckingProver<F, C, JoltPolynomials<F, C>>
         _preprocessing: &Self::Preprocessing,
         multiset_hashes: &MultisetHashes<F>
     ) {
-        assert_eq!(multiset_hashes.read_hashes.len(), REG_OPS_PER_INSTRUCTION + 1);
-        assert_eq!(multiset_hashes.write_hashes.len(), REG_OPS_PER_INSTRUCTION + 1);
+        assert_eq!(
+            multiset_hashes.read_hashes.len(),
+            REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION
+        );
+        assert_eq!(
+            multiset_hashes.write_hashes.len(),
+            REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION
+        );
         assert_eq!(multiset_hashes.init_hashes.len(), 2);
         assert_eq!(multiset_hashes.final_hashes.len(), 2);
 
@@ -1972,7 +2102,7 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
         transcript: &mut ProofTranscript
     ) -> (Self, Self, Self, Self) {
         let actual_memory_size =
-            (polynomials.memory_size - (REGISTER_COUNT as usize)).next_power_of_two() / 4;
+            (polynomials.memory_size - (REGISTER_COUNT as usize)).next_power_of_two() / WORD_BYTES;
         let num_rounds = actual_memory_size.log_2();
         let r_eq = transcript.challenge_vector(b"output_sumcheck", num_rounds);
 
@@ -2002,20 +2132,20 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
             })
             .collect();
 
-        let mut v_io: Vec<Vec<u64>> = vec![vec![0; actual_memory_size]; 4];
+        let mut v_io: Vec<Vec<u64>> = vec![vec![0; actual_memory_size]; WORD_BYTES];
         // Copy input bytes
         let mut input_index = memory_address_to_witness_index(
             program_io.memory_layout.input_start,
             program_io.memory_layout.ram_witness_offset
         );
         input_index = input_index - (REGISTER_COUNT as usize);
-        let mut input_index_quotient = input_index / 4;
-        let mut input_index_remainder = input_index % 4;
+        let mut input_index_quotient = input_index / WORD_BYTES;
+        let mut input_index_remainder = input_index % WORD_BYTES;
         for byte in program_io.inputs.iter() {
             v_io[input_index_remainder][input_index_quotient] = *byte as u64;
             input_index += 1;
-            input_index_quotient = input_index / 4;
-            input_index_remainder = input_index % 4;
+            input_index_quotient = input_index / WORD_BYTES;
+            input_index_remainder = input_index % WORD_BYTES;
         }
         // Copy output bytes
         let mut output_index = memory_address_to_witness_index(
@@ -2023,13 +2153,13 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
             program_io.memory_layout.ram_witness_offset
         );
         output_index = output_index - (REGISTER_COUNT as usize);
-        let mut output_index_quotient = output_index / 4;
-        let mut output_index_remainder = output_index % 4;
+        let mut output_index_quotient = output_index / WORD_BYTES;
+        let mut output_index_remainder = output_index % WORD_BYTES;
         for byte in program_io.outputs.iter() {
             v_io[output_index_remainder][output_index_quotient] = *byte as u64;
             output_index += 1;
-            output_index_quotient = output_index / 4;
-            output_index_remainder = output_index % 4;
+            output_index_quotient = output_index / WORD_BYTES;
+            output_index_remainder = output_index % WORD_BYTES;
         }
 
         // Copy panic bit
@@ -2037,11 +2167,11 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
             program_io.memory_layout.panic,
             program_io.memory_layout.ram_witness_offset
         );
-        let panic_index_quotient = (panic_index - (REGISTER_COUNT as usize)) / 4;
-        let panic_index_remainder = (panic_index - (REGISTER_COUNT as usize)) % 4;
+        let panic_index_quotient = (panic_index - (REGISTER_COUNT as usize)) / WORD_BYTES;
+        let panic_index_remainder = (panic_index - (REGISTER_COUNT as usize)) % WORD_BYTES;
         v_io[panic_index_remainder][panic_index_quotient] = program_io.panic as u64;
 
-        let mut sumcheck_polys = (0..4)
+        let mut sumcheck_polys = (0..WORD_BYTES)
             .map(|i| {
                 vec![
                     eq.clone(),
@@ -2055,7 +2185,7 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
         // eq * io_witness_range * (v_final - v_io)
         let output_check_fn = |vals: &[F]| -> F { vals[0] * vals[1] * (vals[2] - vals[3]) };
 
-        let mut output: Vec<_> = (0..4)
+        let mut output: Vec<_> = (0..WORD_BYTES)
             .map(|i| {
                 let (sumcheck_proof, r_sumcheck, sumcheck_opening) =
                     SumcheckInstanceProof::<F>::prove_arbitrary::<_>(
@@ -2096,7 +2226,7 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
         let memory_layout = &preprocessing.program_io.as_ref().unwrap().memory_layout;
 
         let nonzero_memory_size = memory_layout.ram_witness_offset as usize;
-        let log_nonzero_memory_size = (nonzero_memory_size / 4).log_2();
+        let log_nonzero_memory_size = (nonzero_memory_size / WORD_BYTES).log_2();
         assert!(nonzero_memory_size.is_power_of_two(), "Ram witness offset must be a power of two");
 
         let mut input_start = memory_address_to_witness_index(
@@ -2104,9 +2234,9 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
             memory_layout.ram_witness_offset
         );
         input_start = input_start - (REGISTER_COUNT as usize);
-        let io_witness_range: Vec<Vec<F>> = (0..4)
+        let io_witness_range: Vec<Vec<F>> = (0..WORD_BYTES as u64)
             .map(|io_witness_range_index| {
-                (0..(nonzero_memory_size / 4) as u64)
+                (0..(nonzero_memory_size / WORD_BYTES) as u64)
                     .map(|i| {
                         if
                             4 * i + io_witness_range_index >= (input_start as u64) &&
@@ -2123,10 +2253,10 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
             .collect();
 
         let mut v_io = [
-            vec![0; nonzero_memory_size / 4],
-            vec![0; nonzero_memory_size / 4],
-            vec![0; nonzero_memory_size / 4],
-            vec![0; nonzero_memory_size / 4],
+            vec![0; nonzero_memory_size / WORD_BYTES],
+            vec![0; nonzero_memory_size / WORD_BYTES],
+            vec![0; nonzero_memory_size / WORD_BYTES],
+            vec![0; nonzero_memory_size / WORD_BYTES],
         ];
         // Copy input bytes
         let mut input_index = memory_address_to_witness_index(
@@ -2135,8 +2265,8 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
         );
         input_index -= REGISTER_COUNT as usize;
         for byte in preprocessing.program_io.as_ref().unwrap().inputs.iter() {
-            let remainder = input_index % 4;
-            let quotient = input_index / 4;
+            let remainder = input_index % WORD_BYTES;
+            let quotient = input_index / WORD_BYTES;
 
             v_io[remainder][quotient] = *byte as u64;
 
@@ -2149,8 +2279,8 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
         );
         output_index -= REGISTER_COUNT as usize;
         for byte in preprocessing.program_io.as_ref().unwrap().outputs.iter() {
-            let remainder = output_index % 4;
-            let quotient = output_index / 4;
+            let remainder = output_index % WORD_BYTES;
+            let quotient = output_index / WORD_BYTES;
             v_io[remainder][quotient] = *byte as u64;
 
             output_index += 1;
@@ -2161,12 +2291,12 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
             memory_layout.ram_witness_offset
         );
         panic_address -= REGISTER_COUNT as usize;
-        let remainder = panic_address % 4;
-        let quotient = panic_address / 4;
+        let remainder = panic_address % WORD_BYTES;
+        let quotient = panic_address / WORD_BYTES;
         v_io[remainder][quotient] = preprocessing.program_io.as_ref().unwrap().panic as u64;
 
         // Four sumchecks
-        for index in 0..4 {
+        for index in 0..WORD_BYTES {
             let (sumcheck_claim, r_sumcheck) = proof[index].sumcheck_proof.verify(
                 F::zero(),
                 proof[index].num_rounds,
@@ -2179,10 +2309,11 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
                 io_witness_range[0].clone()
             ).evaluate(&r_sumcheck[r_sumcheck.len() - log_nonzero_memory_size..r_sumcheck.len()]);
 
-            let mut r_prod = F::one();
-            for i in 0..r_sumcheck.len() - log_nonzero_memory_size {
-                r_prod *= F::one() - r_sumcheck[i];
-            }
+            let r_prod = r_sumcheck
+                .iter()
+                .take(r_sumcheck.len() - log_nonzero_memory_size)
+                .fold(F::one(), |acc, &r| acc * (F::one() - r));
+
             io_witness_range_eval *= r_prod;
 
             let mut v_io_eval = DensePolynomial::from_u64(&v_io[index]).evaluate(
@@ -2196,16 +2327,20 @@ impl<F, C> OutputSumcheckProof<F, C> where F: JoltField, C: CommitmentScheme<Fie
                 "Output sumcheck check failed."
             );
 
-            match C::verify(
-                &proof[index].opening_proof,
-                generators,
-                transcript,
-                &r_sumcheck,
-                &proof[index].opening,
-                &commitment.v_final_ram_commitment[index]
-            ) {
-                Ok(_) => {},
-                Err(error) => return Err(error)
+            match
+                C::verify(
+                    &proof[index].opening_proof,
+                    generators,
+                    transcript,
+                    &r_sumcheck,
+                    &proof[index].opening,
+                    &commitment.v_final_ram_commitment[index]
+                )
+            {
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -2248,7 +2383,7 @@ impl<F, C> ReadWriteMemoryProof<F, C> where F: JoltField, C: CommitmentScheme<Fi
         );
 
         let mut t_read = polynomials.read_write_memory.t_read_reg.to_vec();
-        t_read.push(polynomials.read_write_memory.t_read_ram[0].clone());
+        t_read.push(polynomials.read_write_memory.t_read_ram.clone());
         let timestamp_validity_proof = TimestampValidityProof::prove(
             generators,
             &polynomials.timestamp_range_check,

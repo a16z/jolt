@@ -169,8 +169,6 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         // Converts from unsigned to twos-complement representation
         cs.constrain_eq_conditional(JoltIn::IF_Sub, packed_query, x - y + (0xffffffffi64 + 1));
 
-        // CONSTRAINT: actual_address - 4 * load_store_address - remainder = 0 (TBA)
-
         // CONSTRAINT: (LB_flag + LBU_flag + SB_flag) [remainder*(remainder -1)*(remainder -2)*(remainder-3)] + (LH_flag + LHU_flag + SH_flag) [remainder*(remainder -2)] + (LW_flag + SW_flag)*remainder  = 0
 
         // remainder * (remainder - 2) -> remainder02
@@ -215,7 +213,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         let product6 = cs.allocate_prod(remainder, lw_sw_sum);
 
         // product4 + product5 + product6 = 0
-        let sum = LC::new(vec![product4.into(), product5.into(), product6.into()]);
+        let sum = LC::sum_any(vec![product4, product5, product6]);
         cs.constrain_eq_zero(sum);
 
         // CONSTRAINT - actual_address is computed correctly using rs1_val, and imm_extension
@@ -303,14 +301,14 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         // (LH_flag) [ (memory_read[0] + 2^{8}memory_read[1] - packed_query) * (remainder - 2)  +
         //                  (memory_read[2] + 2^{8}*memory_read[3] - packed_query) * remainder
         //                ] = 0
-        let read01_memory = LC::new(vec![
+        let read01_memory = LC::sum2(
             cs.create_memory_term(JoltIn::RAM_Read_Byte0, 1),
             cs.create_memory_term(JoltIn::RAM_Read_Byte1, 1 << 8),
-        ]);
-        let read23_memory = LC::new(vec![
+        );
+        let read23_memory = LC::sum2(
             cs.create_memory_term(JoltIn::RAM_Read_Byte2, 1),
             cs.create_memory_term(JoltIn::RAM_Read_Byte3, 1 << 8),
-        ]);
+        );
         let read01_minus_packed_query = cs.allocate_prod(
             LC::sub2(read01_memory.clone(), packed_query),
             remainder_minus_2_term.clone(),
@@ -320,17 +318,17 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
             JoltIn::Remainder,
         );
         // let lh_lhu_flag = LC::sum2(JoltIn::OpFlags_IsLh, JoltIn::OpFlags_IsLhu);
-        let term1 = LC::new(vec![
-            read01_minus_packed_query.into(),
-            read23_minus_packed_query.into(),
-        ]);
+        let term1 = LC::sum2(
+            read01_minus_packed_query,
+            read23_minus_packed_query,
+        );
         cs.constrain_prod(JoltIn::OpFlags_IsLh, term1, LC::zero());
 
         // LOAD CONSTRAINT b-3
         // (LW_flag) [ memory_read[0] + 2^{8}memory_read[1] + 2^{16}memory_read[2] +
         //                  2^{24}memory_read[3]  - combined_z_chunks) ] = 0
 
-        let read_memory = LC::new(vec![
+        let read_memory = LC::sum_any(vec![
             cs.create_memory_term(JoltIn::RAM_Read_Byte0, 1),
             cs.create_memory_term(JoltIn::RAM_Read_Byte1, 1 << 8),
             cs.create_memory_term(JoltIn::RAM_Read_Byte2, 1 << 16),
@@ -454,14 +452,14 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         //           (memory_write[0] + 2^{8}memory_write[1] - lookup_output) * (remainder - 2)  +
         //           (memory_write[2] +  2^{8}*memory_write[3] - lookup_output) * remainder
         //     ] = 0
-        let write01_memory = LC::new(vec![
+        let write01_memory = LC::sum2(
             cs.create_memory_term(JoltIn::RAM_Write_Byte0, 1),
             cs.create_memory_term(JoltIn::RAM_Write_Byte1, 1 << 8),
-        ]);
-        let write23_memory = LC::new(vec![
+        );
+        let write23_memory = LC::sum2(
             cs.create_memory_term(JoltIn::RAM_Write_Byte2, 1),
             cs.create_memory_term(JoltIn::RAM_Write_Byte3, 1 << 8),
-        ]);
+        );
         let write01_minus_lookupoutput = cs.allocate_prod(
             LC::sub2(write01_memory.clone(), JoltIn::LookupOutput),
             remainder_minus_2_term.clone(),
@@ -480,7 +478,7 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         //           packed_query)
         //           ] = 0
 
-        let write_memory = LC::new(vec![
+        let write_memory = LC::sum_any(vec![
             cs.create_memory_term(JoltIn::RAM_Write_Byte0, 1),
             cs.create_memory_term(JoltIn::RAM_Write_Byte1, 1 << 8),
             cs.create_memory_term(JoltIn::RAM_Write_Byte2, 1 << 16),

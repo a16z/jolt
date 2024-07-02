@@ -5,7 +5,7 @@ use crate::subprotocols::grand_product::{
 };
 use crate::utils::thread::drop_in_background_thread;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use common::constants::{MEMORY_OPS_PER_INSTRUCTION, REG_OPS_PER_INSTRUCTION};
+use common::constants::{MEMORY_OPS_PER_INSTRUCTION, RAM_WORD_OPS_PER_INSTRUCTION, REG_OPS_PER_INSTRUCTION};
 use itertools::interleave;
 use rayon::iter::{
     IntoParallelIterator, IntoParallelRefIterator, ParallelExtend, ParallelIterator,
@@ -39,11 +39,11 @@ where
     C: CommitmentScheme<Field = F>,
 {
     _group: PhantomData<C>,
-    pub read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION + 1],
-    pub read_cts_read_timestamp: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
-    pub read_cts_global_minus_read: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
-    pub final_cts_read_timestamp: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
-    pub final_cts_global_minus_read: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + 1],
+    pub read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    pub read_cts_read_timestamp: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    pub read_cts_global_minus_read: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    pub final_cts_read_timestamp: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    pub final_cts_global_minus_read: [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
 }
 
 impl<F, C> RangeCheckPolynomials<F, C>
@@ -52,7 +52,7 @@ where
     C: CommitmentScheme<Field = F>,
 {
     #[tracing::instrument(skip_all, name = "RangeCheckPolynomials::new")]
-    pub fn new(read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION + 1]) -> Self {
+    pub fn new(read_timestamps: [Vec<u64>; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION]) -> Self {
         let M = read_timestamps[0].len();
 
         #[cfg(test)]
@@ -64,7 +64,7 @@ where
             }
         }
 
-        let read_and_final_cts: Vec<[Vec<u64>; 4]> = (0..REG_OPS_PER_INSTRUCTION + 1)
+        let read_and_final_cts: Vec<[Vec<u64>; 4]> = (0..REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION)
             .into_par_iter()
             .map(|i| {
                 let mut read_cts_read_timestamp: Vec<u64> = vec![0; M];
@@ -211,11 +211,11 @@ where
     F: JoltField,
     C: CommitmentScheme<Field = F>,
 {
-    read_cts_read_timestamp: [F; REG_OPS_PER_INSTRUCTION + 1],
-    read_cts_global_minus_read: [F; REG_OPS_PER_INSTRUCTION + 1],
-    final_cts_read_timestamp: [F; REG_OPS_PER_INSTRUCTION + 1],
-    final_cts_global_minus_read: [F; REG_OPS_PER_INSTRUCTION + 1],
-    memory_t_read: [F; REG_OPS_PER_INSTRUCTION + 1],
+    read_cts_read_timestamp: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    read_cts_global_minus_read: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    final_cts_read_timestamp: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    final_cts_global_minus_read: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
+    memory_t_read: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
     identity_poly_opening: Option<F>,
 }
 
@@ -305,7 +305,7 @@ where
         let M = polynomials.read_timestamps[0].len();
         let gamma_squared = gamma.square();
 
-        let read_write_leaves: Vec<Vec<F>> = (0..(REG_OPS_PER_INSTRUCTION + 1))
+        let read_write_leaves: Vec<Vec<F>> = (0..(REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION))
             .into_par_iter()
             .flat_map(|i| {
                 let read_fingerprints_0: Vec<F> = (0..M)
@@ -361,7 +361,7 @@ where
             .collect();
 
         leaves.par_extend(
-            (0..(REG_OPS_PER_INSTRUCTION + 1))
+            (0..(REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION))
                 .into_par_iter()
                 .flat_map(|i| {
                     let final_fingerprints_0 = (0..M)
@@ -412,7 +412,7 @@ where
         read_write_hashes: Vec<F>,
         init_final_hashes: Vec<F>,
     ) -> MultisetHashes<F> {
-        let num_memories = 2 * (REG_OPS_PER_INSTRUCTION + 1);
+        let num_memories = 2 * (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION);
 
         assert_eq!(read_write_hashes.len(), 2 * num_memories);
         let mut read_hashes = Vec::with_capacity(num_memories);
@@ -435,7 +435,7 @@ where
     }
 
     fn check_multiset_equality(_: &NoPreprocessing, multiset_hashes: &MultisetHashes<F>) {
-        let num_memories = 2 * (REG_OPS_PER_INSTRUCTION + 1);
+        let num_memories = 2 * (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION);
         assert_eq!(multiset_hashes.read_hashes.len(), num_memories);
         assert_eq!(multiset_hashes.write_hashes.len(), num_memories);
         assert_eq!(multiset_hashes.final_hashes.len(), num_memories);
@@ -487,7 +487,7 @@ where
     ) -> Vec<Self::MemoryTuple> {
         let t_read_openings = openings.memory_t_read;
 
-        (0..(REG_OPS_PER_INSTRUCTION + 1))
+        (0..(REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION))
             .flat_map(|i| {
                 [
                     (
@@ -511,7 +511,7 @@ where
     ) -> Vec<Self::MemoryTuple> {
         let t_read_openings = openings.memory_t_read;
 
-        (0..(REG_OPS_PER_INSTRUCTION + 1))
+        (0..(REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION))
             .flat_map(|i| {
                 [
                     (
@@ -544,7 +544,7 @@ where
         _: &NoPreprocessing,
         openings: &Self::InitFinalOpenings,
     ) -> Vec<Self::MemoryTuple> {
-        (0..(REG_OPS_PER_INSTRUCTION + 1))
+        (0..(REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION))
             .flat_map(|i| {
                 [
                     (
@@ -617,7 +617,7 @@ where
     pub fn prove(
         generators: &C::Setup,
         range_check_polys: &RangeCheckPolynomials<F, C>,
-        t_read_polynomials: &Vec<DensePolynomial<F>>, // REG_OPS_PER_INSTRUCTION + 1],
+        t_read_polynomials: &Vec<DensePolynomial<F>>, // REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION],
         transcript: &mut ProofTranscript,
     ) -> Self {
         let (batched_grand_product, multiset_hashes, r_grand_product) =
@@ -649,7 +649,7 @@ where
         );
 
         let mut openings = openings.into_iter();
-        let read_cts_read_timestamp: [F; REG_OPS_PER_INSTRUCTION + 1] =
+        let read_cts_read_timestamp: [F; REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION] =
             openings.next_chunk().unwrap();
         let read_cts_global_minus_read = openings.next_chunk().unwrap();
         let final_cts_read_timestamp = openings.next_chunk().unwrap();
@@ -691,7 +691,7 @@ where
 
         let hashes: Vec<F> = batched_circuit.claims();
         let (read_write_hashes, init_final_hashes) =
-            hashes.split_at(4 * (REG_OPS_PER_INSTRUCTION + 1));
+            hashes.split_at(4 * (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION));
         let multiset_hashes = TimestampValidityProof::<F, C>::uninterleave_hashes(
             &NoPreprocessing,
             read_write_hashes.to_vec(),
@@ -756,7 +756,7 @@ where
 
         let t_read_commitments =
             &memory_commitment.trace_commitments[1 + (MEMORY_OPS_PER_INSTRUCTION) + 5
-                ..1 + (MEMORY_OPS_PER_INSTRUCTION) + 5 + (REG_OPS_PER_INSTRUCTION + 1)];
+                ..1 + (MEMORY_OPS_PER_INSTRUCTION) + 5 + (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION)];
         let commitments: Vec<_> = range_check_commitment
             .commitments
             .iter()
@@ -798,10 +798,10 @@ where
 
         assert_eq!(
             grand_product_claims.len(),
-            6 * (REG_OPS_PER_INSTRUCTION + 1) + 1
+            6 * (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION) + 1
         );
         let (read_write_claims, init_final_claims) =
-            grand_product_claims.split_at(4 * (REG_OPS_PER_INSTRUCTION + 1));
+            grand_product_claims.split_at(4 * (REG_OPS_PER_INSTRUCTION + RAM_WORD_OPS_PER_INSTRUCTION));
 
         let multiset_hashes = MultisetHashes {
             read_hashes,
