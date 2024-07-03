@@ -211,11 +211,11 @@ impl<F: JoltField, I: ConstraintInput> R1CSBuilder<F, I> {
         }
     }
 
-    pub fn create_remainder_term_with_value(&self, value: i64) -> Term<I> {
+    pub fn create_term_with_constant_variable(&self, value: i64) -> Term<I> {
         Term(Variable::Constant, value)
     }
 
-    pub fn create_memory_term(&self, input: I, value: i64) -> Term<I> {
+    pub fn create_term(&self, input: I, value: i64) -> Term<I> {
         Term(Variable::Input(input), value)
     }
 

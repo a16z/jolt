@@ -331,15 +331,7 @@ impl Word {
         Word { bytes }
     }
 
-    fn get_byte_vector(word_vector: &Vec<Word>, byte_index: usize) -> Vec<u64> {
-        let mut byte_vector = Vec::new();
-        for word in word_vector.iter() {
-            byte_vector.push(word.bytes[byte_index]);
-        }
-        byte_vector
-    }
-
-    fn get_array_of_bytes_from_word_vector(word_vector: &Vec<Word>) -> [Vec<u64>; WORD_BYTES] {
+    fn get_bytes_array_from_word_vec(word_vector: &Vec<Word>) -> [Vec<u64>; WORD_BYTES] {
         let input_vector_word: Vec<Vec<u64>> = (0..WORD_BYTES)
             .map(|i|
                 word_vector
@@ -351,15 +343,14 @@ impl Word {
 
         let mut output_array: [Vec<u64>; WORD_BYTES] = Default::default();
 
-        for i in 0..WORD_BYTES {
-            for row in &input_vector_word {
-                output_array[i].push(row[i]);
-            }
+        for (i, row) in input_vector_word.iter().enumerate() {
+            output_array[i] = row.clone();
         }
+
         output_array
     }
 
-    fn get_array_of_bytes_from_u64_vector(input_vector: Vec<u64>) -> [Vec<u64>; WORD_BYTES] {
+    fn get_bytes_array_from_u64_vec(input_vector: Vec<u64>) -> [Vec<u64>; WORD_BYTES] {
         let input_vector: Vec<Vec<u64>> = input_vector
             .chunks(WORD_BYTES)
             .map(|chunk| chunk.to_vec())
@@ -378,11 +369,10 @@ impl Word {
 
         let mut output_array: [Vec<u64>; WORD_BYTES] = Default::default();
 
-        for i in 0..WORD_BYTES {
-            for row in &input_vector_word {
-                output_array[i].push(row[i]);
-            }
+        for (i, row) in input_vector_word.iter().enumerate() {
+            output_array[i] = row.clone();
         }
+
         output_array
     }
 }
@@ -986,52 +976,13 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
         let (v_final_ram, t_final_ram, v_read_ram, t_read_ram, v_write_ram, t_write_ram, a_ram) =
             result.0;
 
-        // make 4 dense polynomials from v_init_ram and 4 dense polynomials from v_final_ram
-        let mut v_init_ram0 = Vec::new();
-        let mut v_init_ram1 = Vec::new();
-        let mut v_init_ram2 = Vec::new();
-        let mut v_init_ram3 = Vec::new();
-
-        v_init_ram.chunks(4).for_each(|chunk| {
-            v_init_ram0.push(chunk[0]);
-            v_init_ram1.push(chunk[1]);
-            v_init_ram2.push(chunk[2]);
-            v_init_ram3.push(chunk[3]);
-        });
-
-        let mut v_final_ram0 = Vec::new();
-        let mut v_final_ram1 = Vec::new();
-        let mut v_final_ram2 = Vec::new();
-        let mut v_final_ram3 = Vec::new();
-
-        v_final_ram.chunks(4).for_each(|chunk| {
-            v_final_ram0.push(chunk[0]);
-            v_final_ram1.push(chunk[1]);
-            v_final_ram2.push(chunk[2]);
-            v_final_ram3.push(chunk[3]);
-        });
-
-        // // make 4 dense polynomials from v_init_ram and 4 dense polynomials from v_final_ram
-        // let v_init_ram = Word::get_array_of_bytes_from_u64_vector(v_init_ram);
-        // let v_final_ram = Word::get_array_of_bytes_from_u64_vector(v_final_ram);
+        let v_init_ram = Word::get_bytes_array_from_u64_vec(v_init_ram);
+        let v_final_ram = Word::get_bytes_array_from_u64_vec(v_final_ram);
 
         let (
-            [
-                a_ram,
-                v_write_rd,
-                v_init_reg,
-                v_init_ram0,
-                v_init_ram1,
-                v_init_ram2,
-                v_init_ram3,
-                mut v_final_reg,
-                v_final_ram0,
-                v_final_ram1,
-                v_final_ram2,
-                v_final_ram3,
-                mut t_final_reg,
-                t_final_ram,
-            ],
+            [a_ram, v_write_rd, v_init_reg, mut v_final_reg, mut t_final_reg, t_final_ram],
+            v_init_ram,
+            v_final_ram,
             v_read_reg,
             v_read_ram,
             v_write_ram,
@@ -1040,60 +991,33 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             t_write_ram,
             remainder,
         ): (
-            [DensePolynomial<F>; 14],
+            [DensePolynomial<F>; 6],
+            [DensePolynomial<F>; WORD_BYTES],
+            [DensePolynomial<F>; WORD_BYTES],
             [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
-            [DensePolynomial<F>; 4],
-            [DensePolynomial<F>; 4],
+            [DensePolynomial<F>; WORD_BYTES],
+            [DensePolynomial<F>; WORD_BYTES],
             [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
             DensePolynomial<F>,
             DensePolynomial<F>,
             DensePolynomial<F>,
-        ) = common::par_join_8!(
+        ) = common::par_join_10!(
             ||
                 map_to_polys(
-                    &[
-                        a_ram,
-                        v_write_rd,
-                        v_init_reg,
-                        v_init_ram0,
-                        v_init_ram1,
-                        v_init_ram2,
-                        v_init_ram3,
-                        v_final_reg,
-                        v_final_ram0,
-                        v_final_ram1,
-                        v_final_ram2,
-                        v_final_ram3,
-                        t_final_reg,
-                        t_final_ram,
-                    ]
+                    &[a_ram, v_write_rd, v_init_reg, v_final_reg, t_final_reg, t_final_ram]
                 ),
+            || map_to_polys(&v_init_ram),
+            || map_to_polys(&v_final_ram),
             || map_to_polys(&[v_read_reg[0].clone(), v_read_reg[1].clone(), v_read_reg[2].clone()]),
-            ||
-                map_to_polys(
-                    &[
-                        Word::get_byte_vector(&v_read_ram, 0),
-                        Word::get_byte_vector(&v_read_ram, 1),
-                        Word::get_byte_vector(&v_read_ram, 2),
-                        Word::get_byte_vector(&v_read_ram, 3),
-                    ]
-                ),
-            ||
-                map_to_polys(
-                    &[
-                        Word::get_byte_vector(&v_write_ram, 0),
-                        Word::get_byte_vector(&v_write_ram, 1),
-                        Word::get_byte_vector(&v_write_ram, 2),
-                        Word::get_byte_vector(&v_write_ram, 3),
-                    ]
-                ),
+            || map_to_polys(&Word::get_bytes_array_from_word_vec(&v_read_ram)),
+            || map_to_polys(&Word::get_bytes_array_from_word_vec(&v_write_ram)),
             || map_to_polys(&[t_read_reg[0].clone(), t_read_reg[1].clone(), t_read_reg[2].clone()]),
             || map_to_polys(&[t_read_ram.clone()])[0].clone(),
             || map_to_polys(&[t_write_ram])[0].clone(),
             || map_to_polys(&[remainder_vec])[0].clone()
         );
 
-        v_final_reg.padded_to_length(v_final_ram0.len());
+        v_final_reg.padded_to_length(v_final_ram[0].len());
         t_final_reg.padded_to_length(t_final_ram.len());
 
         (
@@ -1101,14 +1025,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                 _group: PhantomData,
                 memory_size,
                 v_init_reg,
-                v_init_ram: [v_init_ram0, v_init_ram1, v_init_ram2, v_init_ram3],
+                v_init_ram,
                 a_ram,
                 v_read_reg,
                 v_read_ram,
                 v_write_rd,
                 v_write_ram,
                 v_final_reg,
-                v_final_ram: [v_final_ram0, v_final_ram1, v_final_ram2, v_final_ram3],
+                v_final_ram,
                 t_read_reg: t_read_reg_polys,
                 t_read_ram: t_read_ram_polys,
                 t_write_ram,
@@ -1119,91 +1043,6 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             t_read_reg,
             t_read_ram,
         )
-
-        // let (
-        //     [
-        //         a_ram,
-        //         v_write_rd,
-        //         v_init_reg,
-        //         v_final_reg,
-        //         t_final_reg,
-        //         t_final_ram,
-        //     ],
-        //     v_init_ram,
-        //     v_final_ram,
-        //     v_read_reg,
-        //     v_read_ram,
-        //     v_write_ram,
-        //     t_read_reg_polys,
-        //     t_read_ram_polys,
-        //     t_write_ram,
-        //     remainder,
-        // ): (
-        //     [DensePolynomial<F>; 6],
-        //     [DensePolynomial<F>; WORD_BYTES],
-        //     [DensePolynomial<F>; WORD_BYTES],
-        //     [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
-        //     [DensePolynomial<F>; WORD_BYTES],
-        //     [DensePolynomial<F>; WORD_BYTES],
-        //     [DensePolynomial<F>; REG_OPS_PER_INSTRUCTION],
-        //     DensePolynomial<F>,
-        //     DensePolynomial<F>,
-        //     DensePolynomial<F>,
-        // ) = common::par_join_10!(
-        //     ||
-        //         map_to_polys(
-        //             &[
-        //                 a_ram,
-        //                 v_write_rd,
-        //                 v_init_reg,
-        //                 v_final_reg,
-        //                 t_final_reg,
-        //                 t_final_ram,
-        //             ]
-        //         ),
-        //     || map_to_polys(
-        //             &v_init_ram
-        //         ),
-        //     || map_to_polys(
-        //             &v_final_ram
-        //         ),
-        //     || map_to_polys(&[v_read_reg[0].clone(), v_read_reg[1].clone(), v_read_reg[2].clone()]),
-        //     ||
-        //         map_to_polys(
-        //             &Word::get_array_of_bytes_from_word_vector(&v_read_ram)
-        //         ),
-        //     ||
-        //         map_to_polys(
-        //             &Word::get_array_of_bytes_from_word_vector(&v_write_ram)
-        //         ),
-        //     || map_to_polys(&[t_read_reg[0].clone(), t_read_reg[1].clone(), t_read_reg[2].clone()]),
-        //     || map_to_polys(&[t_read_ram.clone()])[0].clone(),
-        //     || map_to_polys(&[t_write_ram])[0].clone(),
-        //     || map_to_polys(&[remainder_vec])[0].clone()
-        // );
-        // (
-        //     Self {
-        //         _group: PhantomData,
-        //         memory_size,
-        //         v_init_reg,
-        //         v_init_ram,
-        //         a_ram,
-        //         v_read_reg,
-        //         v_read_ram,
-        //         v_write_rd,
-        //         v_write_ram,
-        //         v_final_reg,
-        //         v_final_ram,
-        //         t_read_reg: t_read_reg_polys,
-        //         t_read_ram: t_read_ram_polys,
-        //         t_write_ram,
-        //         t_final_reg,
-        //         t_final_ram,
-        //         remainder,
-        //     },
-        //     t_read_reg,
-        //     t_read_ram,
-        // )
     }
 
     #[tracing::instrument(skip_all, name = "ReadWriteMemory::get_polys_r1cs")]

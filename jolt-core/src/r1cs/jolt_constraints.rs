@@ -1,6 +1,6 @@
 use crate::{
     assert_static_aux_index, field::JoltField, impl_r1cs_input_lc_conversions, input_range,
-    jolt::vm::rv32i_vm::C, r1cs::ops::Term,
+    jolt::vm::rv32i_vm::C,
 };
 
 use super::{
@@ -173,12 +173,12 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
 
         // remainder * (remainder - 2) -> remainder02
         let remainder = JoltIn::Remainder;
-        let remainder_minus_2_term = LC::sum2(JoltIn::Remainder, Term(Variable::Constant, -2));
+        let remainder_minus_2_term = LC::sum2(JoltIn::Remainder, cs.create_term_with_constant_variable(-2));
         let remainder02 = cs.allocate_prod(remainder, remainder_minus_2_term.clone());
 
         // (remainder - 1) * (remainder - 3) -> remainder13
-        let remainder_minus_1_term = LC::sum2(JoltIn::Remainder, Term(Variable::Constant, -1));
-        let remainder_minus_3_term = LC::sum2(JoltIn::Remainder, Term(Variable::Constant, -3));
+        let remainder_minus_1_term = LC::sum2(JoltIn::Remainder, cs.create_term_with_constant_variable(-1));
+        let remainder_minus_3_term = LC::sum2(JoltIn::Remainder, cs.create_term_with_constant_variable(-3));
         let remainder13 = cs.allocate_prod(
             remainder_minus_1_term.clone(),
             remainder_minus_3_term.clone(),
@@ -229,9 +229,9 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         ]);
         let memory_start: i64 = self.memory_start.try_into().unwrap();
         let actual_address = LC::sum_any(vec![
-            Term(Variable::Input(JoltIn::RAM_A), 4),
-            Term(Variable::Input(JoltIn::Remainder), 1),
-            Term(Variable::Constant, memory_start),
+            cs.create_term(JoltIn::RAM_A, 4),
+            cs.create_term(JoltIn::Remainder, 1),
+            cs.create_term_with_constant_variable(memory_start),
         ]);
         cs.constrain_eq_conditional(
             flag_0_or_1_condition,
@@ -302,12 +302,12 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         //                  (memory_read[2] + 2^{8}*memory_read[3] - packed_query) * remainder
         //                ] = 0
         let read01_memory = LC::sum2(
-            cs.create_memory_term(JoltIn::RAM_Read_Byte0, 1),
-            cs.create_memory_term(JoltIn::RAM_Read_Byte1, 1 << 8),
+            cs.create_term(JoltIn::RAM_Read_Byte0, 1),
+            cs.create_term(JoltIn::RAM_Read_Byte1, 1 << 8),
         );
         let read23_memory = LC::sum2(
-            cs.create_memory_term(JoltIn::RAM_Read_Byte2, 1),
-            cs.create_memory_term(JoltIn::RAM_Read_Byte3, 1 << 8),
+            cs.create_term(JoltIn::RAM_Read_Byte2, 1),
+            cs.create_term(JoltIn::RAM_Read_Byte3, 1 << 8),
         );
         let read01_minus_packed_query = cs.allocate_prod(
             LC::sub2(read01_memory.clone(), packed_query),
@@ -329,10 +329,10 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         //                  2^{24}memory_read[3]  - combined_z_chunks) ] = 0
 
         let read_memory = LC::sum_any(vec![
-            cs.create_memory_term(JoltIn::RAM_Read_Byte0, 1),
-            cs.create_memory_term(JoltIn::RAM_Read_Byte1, 1 << 8),
-            cs.create_memory_term(JoltIn::RAM_Read_Byte2, 1 << 16),
-            cs.create_memory_term(JoltIn::RAM_Read_Byte3, 1 << 24),
+            cs.create_term(JoltIn::RAM_Read_Byte0, 1),
+            cs.create_term(JoltIn::RAM_Read_Byte1, 1 << 8),
+            cs.create_term(JoltIn::RAM_Read_Byte2, 1 << 16),
+            cs.create_term(JoltIn::RAM_Read_Byte3, 1 << 24),
         ]);
         cs.constrain_prod(
             JoltIn::OpFlags_IsLw,
@@ -453,12 +453,12 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         //           (memory_write[2] +  2^{8}*memory_write[3] - lookup_output) * remainder
         //     ] = 0
         let write01_memory = LC::sum2(
-            cs.create_memory_term(JoltIn::RAM_Write_Byte0, 1),
-            cs.create_memory_term(JoltIn::RAM_Write_Byte1, 1 << 8),
+            cs.create_term(JoltIn::RAM_Write_Byte0, 1),
+            cs.create_term(JoltIn::RAM_Write_Byte1, 1 << 8),
         );
         let write23_memory = LC::sum2(
-            cs.create_memory_term(JoltIn::RAM_Write_Byte2, 1),
-            cs.create_memory_term(JoltIn::RAM_Write_Byte3, 1 << 8),
+            cs.create_term(JoltIn::RAM_Write_Byte2, 1),
+            cs.create_term(JoltIn::RAM_Write_Byte3, 1 << 8),
         );
         let write01_minus_lookupoutput = cs.allocate_prod(
             LC::sub2(write01_memory.clone(), JoltIn::LookupOutput),
@@ -479,10 +479,10 @@ impl<F: JoltField> R1CSConstraintBuilder<F> for JoltConstraints {
         //           ] = 0
 
         let write_memory = LC::sum_any(vec![
-            cs.create_memory_term(JoltIn::RAM_Write_Byte0, 1),
-            cs.create_memory_term(JoltIn::RAM_Write_Byte1, 1 << 8),
-            cs.create_memory_term(JoltIn::RAM_Write_Byte2, 1 << 16),
-            cs.create_memory_term(JoltIn::RAM_Write_Byte3, 1 << 24),
+            cs.create_term(JoltIn::RAM_Write_Byte0, 1),
+            cs.create_term(JoltIn::RAM_Write_Byte1, 1 << 8),
+            cs.create_term(JoltIn::RAM_Write_Byte2, 1 << 16),
+            cs.create_term(JoltIn::RAM_Write_Byte3, 1 << 24),
         ]);
         cs.constrain_prod(
             JoltIn::OpFlags_IsSw,
