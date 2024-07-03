@@ -7,6 +7,7 @@ use crate::field::JoltField;
 use crate::utils::math::Math;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use core::ops::Index;
+use std::thread::current;
 use rand_core::{CryptoRng, RngCore};
 use rayon::prelude::*;
 use std::ops::{AddAssign, Mul};
@@ -45,6 +46,19 @@ impl<F: JoltField> DensePolynomial<F> {
             len: poly_evals.len(),
             Z: poly_evals,
         }
+    }
+
+    pub fn padded_to_length(&mut self, length: usize) {
+        
+        assert!(utils::is_power_of_two(length), "The passed length is not a power of two");
+        let current_length = self.len();
+        let append_length  = length - current_length;
+        let mut append_vector = vec![F::zero(); append_length];
+       
+        self.Z.append(&mut append_vector);
+        self.num_vars = length.log_2();
+        self.len = length;
+
     }
 
     pub fn get_num_vars(&self) -> usize {

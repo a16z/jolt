@@ -1024,12 +1024,12 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
                 v_init_ram1,
                 v_init_ram2,
                 v_init_ram3,
-                v_final_reg,
+                mut v_final_reg,
                 v_final_ram0,
                 v_final_ram1,
                 v_final_ram2,
                 v_final_ram3,
-                t_final_reg,
+                mut t_final_reg,
                 t_final_ram,
             ],
             v_read_reg,
@@ -1092,6 +1092,10 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> ReadWriteMemory<F, C> {
             || map_to_polys(&[t_write_ram])[0].clone(),
             || map_to_polys(&[remainder_vec])[0].clone()
         );
+
+        v_final_reg.padded_to_length(v_final_ram0.len());
+        t_final_reg.padded_to_length(t_final_ram.len());
+
         (
             Self {
                 _group: PhantomData,
@@ -1402,7 +1406,11 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
             &openings,
             &commitment.bytecode.trace_commitments[4..7]
                 .iter()
-                .chain(commitment.read_write_memory.trace_commitments.iter())
+                .chain(
+                    commitment.read_write_memory.trace_commitments[
+                        ..commitment.read_write_memory.trace_commitments.len() - 1
+                    ].iter()
+                )
                 .collect::<Vec<_>>(),
             transcript
         )
@@ -1440,18 +1448,11 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
     #[tracing::instrument(skip_all, name = "MemoryInitFinalOpenings::open")]
     fn open(polynomials: &JoltPolynomials<F, C>, opening_point: &[F]) -> Self {
         let chis = EqPolynomial::evals(opening_point);
+
         let ((v_final_reg, v_final_ram), (t_final_reg, t_final_ram)) = rayon::join(
             || {
                 rayon::join(
-                    || {
-                        let append_length =
-                            polynomials.read_write_memory.v_final_ram[0].len() -
-                            (REGISTER_COUNT as usize);
-                        let mut append_vector = vec![F::zero(); append_length];
-                        let mut v_final_reg = polynomials.read_write_memory.v_final_reg.clone();
-                        v_final_reg.Z.append(&mut append_vector);
-                        v_final_reg.evaluate_at_chi(&chis)
-                    },
+                    || { polynomials.read_write_memory.v_final_reg.evaluate_at_chi(&chis) },
                     || {
                         let evaluations: Vec<_> = polynomials.read_write_memory.v_final_ram
                             .iter()
@@ -1465,15 +1466,7 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
             },
             || {
                 rayon::join(
-                    || {
-                        let append_length =
-                            polynomials.read_write_memory.t_final_ram.len() -
-                            (REGISTER_COUNT as usize);
-                        let mut append_vector = vec![F::zero(); append_length];
-                        let mut t_final_reg = polynomials.read_write_memory.t_final_reg.clone();
-                        t_final_reg.Z.append(&mut append_vector);
-                        t_final_reg.evaluate_at_chi(&chis)
-                    },
+                    || { polynomials.read_write_memory.t_final_reg.evaluate_at_chi(&chis) },
                     || { polynomials.read_write_memory.t_final_ram.evaluate_at_chi(&chis) }
                 )
             }
@@ -1499,26 +1492,15 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
         openings: &Self,
         transcript: &mut ProofTranscript
     ) -> Self::Proof {
-        let append_length =
-            polynomials.read_write_memory.v_final_ram[0].len() - (REGISTER_COUNT as usize);
-        let mut append_vector = vec![F::zero(); append_length];
-        let mut v_final_reg = polynomials.read_write_memory.v_final_reg.clone();
-        v_final_reg.Z.append(&mut append_vector);
-
-        let append_length =
-            polynomials.read_write_memory.t_final_ram.len() - (REGISTER_COUNT as usize);
-        let mut append_vector = vec![F::zero(); append_length];
-        let mut t_final_reg = polynomials.read_write_memory.t_final_reg.clone();
-        t_final_reg.Z.append(&mut append_vector);
         let v_t_opening_proof = C::batch_prove(
             generators,
             &[
-                &v_final_reg,
+                &polynomials.read_write_memory.v_final_reg,
                 &polynomials.read_write_memory.v_final_ram[0],
                 &polynomials.read_write_memory.v_final_ram[1],
                 &polynomials.read_write_memory.v_final_ram[2],
                 &polynomials.read_write_memory.v_final_ram[3],
-                &t_final_reg,
+                &polynomials.read_write_memory.t_final_reg,
                 &polynomials.read_write_memory.t_final_ram,
             ],
             &opening_point,
@@ -1600,6 +1582,8 @@ impl<F, C> StructuredOpeningProof<F, C, JoltPolynomials<F, C>>
         opening_point: &[F],
         transcript: &mut ProofTranscript
     ) -> Result<(), ProofVerifyError> {
+        // println!("The length of v_final_reg_commitments is {:?}", commitment.read_write_memory.v_final_reg_commitment;
+
         C::batch_verify(
             &opening_proof.v_t_opening_proof,
             generators,
@@ -2375,6 +2359,7 @@ impl<F, C> ReadWriteMemoryProof<F, C> where F: JoltField, C: CommitmentScheme<Fi
             polynomials,
             transcript
         );
+
         let output_proof = OutputSumcheckProof::prove_outputs(
             generators,
             &polynomials.read_write_memory,

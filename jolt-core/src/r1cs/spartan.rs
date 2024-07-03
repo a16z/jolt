@@ -288,6 +288,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 transcript,
             );
         drop_in_background_thread(poly_ABC);
+        
 
         // Requires 'r_col_segment_bits' to index the (const, segment). Within that segment we index the step using 'r_col_step'
         let r_col_segment_bits = key.uniform_r1cs.num_vars.next_power_of_two().log_2() + 1;
@@ -306,7 +307,7 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             BatchType::Big,
             transcript,
         );
-
+       
         drop_in_background_thread(witness_segment_polys);
 
         // Outer sumcheck claims: [eq(r_x), A(r_x), B(r_x), C(r_x)]

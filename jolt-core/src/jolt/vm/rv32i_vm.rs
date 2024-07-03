@@ -219,7 +219,7 @@ mod tests {
     //     type Field = crate::field::binius::BiniusField<binius_field::BinaryField128b>;
     //     fib_e2e::<Field, MockCommitScheme<Field>>();
     // }
-
+  
     fn fib_e2e<F: JoltField, PCS: CommitmentScheme<Field = F>>() {
         let _guard = FIB_FILE_LOCK.lock().unwrap();
 

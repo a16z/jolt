@@ -125,6 +125,7 @@ where
             transcript,
         );
 
+        
         let init_final_openings = Self::InitFinalOpenings::open(polynomials, &r_init_final);
         let init_final_opening_proof = Self::InitFinalOpenings::prove_openings(
             generators,
@@ -133,7 +134,8 @@ where
             &init_final_openings,
             transcript,
         );
-
+       
+       
         MemoryCheckingProof {
             _polys: PhantomData,
             multiset_hashes,
@@ -372,6 +374,9 @@ where
             transcript,
         )?;
 
+       
+        
+
         //proof.read_write_openings.v_read_ram ;
         proof
             .read_write_openings
@@ -379,6 +384,8 @@ where
         proof
             .init_final_openings
             .compute_verifier_openings(preprocessing, &r_init_final);
+
+      
 
         Self::check_fingerprints(
             preprocessing,

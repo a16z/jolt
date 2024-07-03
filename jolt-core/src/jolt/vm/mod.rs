@@ -228,10 +228,12 @@ where
             || PCS::commit(&self.read_write_memory.v_final_reg, generators),
             || PCS::commit(&self.read_write_memory.t_final_reg, generators),
         );
+
+        //ToCheck: Here using batchtype = Small as we want the ratio to be one.
         let memory_ram_v_final_commitment = PCS::batch_commit_polys(
             &self.read_write_memory.v_final_ram.to_vec(),
             generators,
-            BatchType::Big,
+            BatchType::Small,
         );
         let memory_ram_t_final_commitment =
             PCS::commit(&self.read_write_memory.t_final_ram, generators);
@@ -425,7 +427,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &mut transcript,
         );
 
-        //panic!();
+        
         let memory_proof = ReadWriteMemoryProof::prove(
             &preprocessing.generators,
             &preprocessing.read_write_memory,
@@ -433,7 +435,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &program_io,
             &mut transcript,
         );
-
+    
         drop_in_background_thread(jolt_polynomials);
 
         let spartan_proof = UniformSpartanProof::<F, PCS>::prove_precommitted(
@@ -448,7 +450,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             key: spartan_key,
             proof: spartan_proof,
         };
-
+       
         let jolt_proof = JoltProof {
             trace_length,
             program_io,
@@ -490,7 +492,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             &commitments.instruction_lookups,
             &mut transcript,
         )?;
-
+       
         Self::verify_memory(
             &mut preprocessing.read_write_memory,
             &preprocessing.generators,
@@ -499,6 +501,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             proof.program_io,
             &mut transcript,
         )?;
+        
         Self::verify_r1cs(
             &preprocessing.generators,
             proof.r1cs,
@@ -725,7 +728,7 @@ pub trait Jolt<F: JoltField, PCS: CommitmentScheme<Field = F>, const C: usize, c
             polynomials.instruction_lookups.lookup_outputs.evals(),
             circuit_flags,
             instruction_flags,
-            polynomials.read_write_memory.remainder.Z.clone(),
+            polynomials.read_write_memory.remainder.evals(),
         );
 
         inputs
