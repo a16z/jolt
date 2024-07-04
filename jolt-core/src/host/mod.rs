@@ -257,16 +257,6 @@ impl Program {
     fn linker_path(&self) -> String {
         format!("/tmp/jolt-guest-linkers/{}.ld", self.guest)
     }
-
-    /// Saves the proof to a file
-    pub fn save_elf(&self) {
-        if !PathBuf::from("elf/").exists() {
-            fs::create_dir_all("elf/").expect("could not create elf directory");
-        }
-        let elf = self.elf.as_ref().unwrap();
-        fs::copy(elf, format!("elf/{}.elf", self.guest))
-            .expect("could not save elf to local directory");
-    }
 }
 
 const LINKER_SCRIPT_TEMPLATE: &str = r#"
