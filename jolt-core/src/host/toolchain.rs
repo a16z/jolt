@@ -9,7 +9,7 @@ use dirs::home_dir;
 use eyre::{bail, eyre, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
-use tokio::runtime::Runtime;
+use tokio::runtime::Builder;
 
 const TOOLCHAIN_TAG: &str = "nightly-3c5f0ec3f4f98a2d211061a83bade8d62c6a6135";
 const DOWNLOAD_RETRIES: usize = 5;
@@ -24,7 +24,7 @@ pub fn install_toolchain() -> Result<()> {
     let client = Client::builder().user_agent("Mozilla/5.0").build()?;
     let toolchain_url = toolchain_url();
 
-    let rt = Runtime::new().unwrap();
+    let rt = Builder::new_current_thread().enable_all().build()?;
     rt.block_on(retry_times(DOWNLOAD_RETRIES, DELAY_BASE_MS, || {
         download_toolchain(&client, &toolchain_url)
     }))?;
