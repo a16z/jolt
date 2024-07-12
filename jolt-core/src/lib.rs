@@ -16,6 +16,7 @@ pub mod benches;
 #[cfg(feature = "host")]
 pub mod host;
 
+pub mod circuits;
 pub mod field;
 pub mod jolt;
 pub mod lasso;
