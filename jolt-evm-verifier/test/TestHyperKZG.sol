@@ -39,6 +39,14 @@ contract TestHyperKZG is TestBase {
         uint256 claim;
     }
 
+    struct BatchedExample {
+        VK vk;
+        HyperKZGProof proof;
+        uint256[] commitments;
+        uint256[] point;
+        uint256[] claims;
+    }
+
     function testHyperKZGPasses() public {
         // Invoke the rust to get a non trivial example proof
         string[] memory cmds = new string[](1);
@@ -53,6 +61,24 @@ contract TestHyperKZG is TestBase {
         // We call into the verifier contract
         bool passes =
             verifier.verify(data.commitment_x, data.commitment_y, data.point, data.claim, data.proof, transcript);
+        require(passes, "does not verify a valid proof");
+    }
+
+        
+    function testHyperKZGBatchPasses() public {
+        // Invoke the rust to get a non trivial example proof
+        string[] memory cmds = new string[](1);
+        cmds[0] = "./script/target/release/hyperkzg_batch_example";
+        bytes memory result = vm.ffi(cmds);
+        BatchedExample memory data = abi.decode(result, (BatchedExample));
+        // Now deploy a verifier with the key inited
+        HyperKZG verifier = new DeployableHyperKZG(data.vk);
+        // We build a transcript in memory
+        bytes32 start_string = "TestEval";
+        Transcript memory transcript = FiatShamirTranscript.new_transcript(start_string, 3);
+        // We call into the verifier contract
+        bool passes =
+            verifier.batch_verify(data.commitments, data.point, data.claims, data.proof, transcript);
         require(passes, "does not verify a valid proof");
     }
 }

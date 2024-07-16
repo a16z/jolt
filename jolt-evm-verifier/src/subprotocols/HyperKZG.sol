@@ -51,14 +51,14 @@ contract HyperKZG {
         uint256[] memory p_of_x,
         HyperKZGProof memory pi,
         Transcript memory transcript
-    ) internal view returns (bool) {
+    ) public view returns (bool) {
         // Load a rho from transcript
         Fr rho = Fr.wrap(transcript.challenge_scalar(MODULUS));
-        (uint256 running_x, uint256 running_y) = ec_scalar_mul(commitments[0], commitments[1], rho.unwrap());
+        (uint256 running_x, uint256 running_y) = (commitments[0], commitments[1]);
         Fr running_eval = Fr.wrap(p_of_x[0]);
         Fr scalar = rho;
         for (uint256 i = 2; i < commitments.length; i += 2) {
-            (uint256 next_x, uint256 next_y) = ec_scalar_mul(commitments[i], commitments[i + 1], rho.unwrap());
+            (uint256 next_x, uint256 next_y) = ec_scalar_mul(commitments[i], commitments[i + 1], scalar.unwrap());
             (running_x, running_y) = ec_add(running_x, running_y, next_x, next_y);
             running_eval = running_eval + Fr.wrap(mulmod(p_of_x[i / 2], scalar.unwrap(), MODULUS));
             scalar = scalar * rho;
