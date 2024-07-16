@@ -81,17 +81,15 @@ fn extract_provable_functions() -> Vec<FunctionAttributes> {
 fn is_provable(attr: &Attribute) -> bool {
     if let Some(ident) = attr.path.get_ident() {
         if ident == "jolt" {
-            if let Some(nested_meta) = attr.parse_meta().ok() {
-                if let syn::Meta::List(meta_list) = nested_meta {
-                    return meta_list.nested.iter().any(|nested| {
-                        if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested {
-                            if let Some(ident) = path.get_ident() {
-                                return ident == "provable";
-                            }
+            if let Ok(syn::Meta::List(meta_list)) = attr.parse_meta() {
+                return meta_list.nested.iter().any(|nested| {
+                    if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested {
+                        if let Some(ident) = path.get_ident() {
+                            return ident == "provable";
                         }
-                        false
-                    });
-                }
+                    }
+                    false
+                });
             }
         }
     }
