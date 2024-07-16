@@ -95,6 +95,12 @@ impl ProofTranscript {
     }
 
     pub fn append_point<G: CurveGroup>(&mut self, point: &G) {
+        // If we add the point at infinity then we hash over a region of zeros
+        if point.is_zero() {
+            self.append_bytes(&vec![0_u8; 64]);
+            return
+        }
+
         let aff = point.into_affine();
         let mut x_bytes = vec![];
         let mut y_bytes = vec![];
