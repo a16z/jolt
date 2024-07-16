@@ -107,7 +107,7 @@ impl ProofTranscript {
         y.serialize_compressed(&mut y_bytes).unwrap();
         y_bytes = y_bytes.into_iter().rev().collect();
 
-        let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes); 
+        let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes);
         self.state = hasher.finalize().into();
         self.n_rounds += 1;
     }
