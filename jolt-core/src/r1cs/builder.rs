@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use std::{collections::HashMap, fmt::Debug};
 
 use super::{
-    key::{NonUniformR1CS, SparseEqualityItem},
+    key::{NonUniformR1CS, NonUniformR1CSConstraint, SparseEqualityItem},
     ops::{ConstraintInput, Term, Variable, LC},
     special_polys::SparsePolynomial,
 };
@@ -684,71 +684,75 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         self.uniform_builder.materialize()
     }
 
+    /// Converts builder::OffsetEqConstraints into key::NonUniformR1CSConstraint
     pub fn materialize_offset_eq(&self) -> NonUniformR1CS<F> {
         // (a - b) * condition == 0
         // A: a - b
         // B: condition
         // C: 0
 
-        let mut eq = SparseEqualityItem::<F>::empty();
-        let mut condition = SparseEqualityItem::<F>::empty();
+        let mut constraints = Vec::with_capacity(self.offset_equality_constraints.len());
+        for constraint in &self.offset_equality_constraints {
+            let mut eq = SparseEqualityItem::<F>::empty();
+            let mut condition = SparseEqualityItem::<F>::empty();
 
-        let constraint = &self.offset_equality_constraint;
+            constraint
+                .cond
+                .1
+                .terms()
+                .iter()
+                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+                .for_each(|term| {
+                    condition.offset_vars.push((
+                        self.uniform_builder.variable_to_column(term.0),
+                        constraint.cond.0,
+                        F::from_i64(term.1),
+                    ))
+                });
+            if let Some(term) = constraint.cond.1.constant_term() {
+                condition.constant = F::from_i64(term.1);
+            }
 
-        constraint
-            .cond
-            .1
-            .terms()
-            .iter()
-            .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-            .for_each(|term| {
-                condition.offset_vars.push((
-                    self.uniform_builder.variable_to_column(term.0),
-                    constraint.cond.0,
-                    F::from_i64(term.1),
-                ))
+            // Can't simply combine like terms because of the offset
+            let lhs = constraint.a.1.clone();
+            let rhs = -constraint.b.1.clone();
+
+            lhs.terms()
+                .iter()
+                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+                .for_each(|term| {
+                    eq.offset_vars.push((
+                        self.uniform_builder.variable_to_column(term.0),
+                        constraint.a.0,
+                        F::from_i64(term.1),
+                    ))
+                });
+            rhs.terms()
+                .iter()
+                .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
+                .for_each(|term| {
+                    eq.offset_vars.push((
+                        self.uniform_builder.variable_to_column(term.0),
+                        constraint.b.0,
+                        F::from_i64(term.1),
+                    ))
+                });
+
+            // Handle constants
+            lhs.terms().iter().for_each(|term| {
+                assert!(
+                    !matches!(term.0, Variable::Constant),
+                    "Constants only supported in RHS"
+                )
             });
-        if let Some(term) = constraint.cond.1.constant_term() {
-            condition.constant = F::from_i64(term.1);
+            if let Some(term) = rhs.constant_term() {
+                eq.constant = F::from_i64(term.1);
+            }
+
+            constraints.push(NonUniformR1CSConstraint::new(eq, condition));
         }
 
-        // Can't simply combine like terms because of the offset
-        let lhs = constraint.a.1.clone();
-        let rhs = -constraint.b.1.clone();
-
-        lhs.terms()
-            .iter()
-            .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-            .for_each(|term| {
-                eq.offset_vars.push((
-                    self.uniform_builder.variable_to_column(term.0),
-                    constraint.a.0,
-                    F::from_i64(term.1),
-                ))
-            });
-        rhs.terms()
-            .iter()
-            .filter(|term| matches!(term.0, Variable::Input(_) | Variable::Auxiliary(_)))
-            .for_each(|term| {
-                eq.offset_vars.push((
-                    self.uniform_builder.variable_to_column(term.0),
-                    constraint.b.0,
-                    F::from_i64(term.1),
-                ))
-            });
-
-        // Handle constants
-        lhs.terms().iter().for_each(|term| {
-            assert!(
-                !matches!(term.0, Variable::Constant),
-                "Constants only supported in RHS"
-            )
-        });
-        if let Some(term) = rhs.constant_term() {
-            eq.constant = F::from_i64(term.1);
-        }
-
-        NonUniformR1CS::new(eq, condition)
+        NonUniformR1CS { constraints }
     }
 
     /// inputs should be of the format [[I::0, I::0, ...], [I::1, I::1, ...], ... [I::N, I::N]]
@@ -829,53 +833,54 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let span = tracing::span!(tracing::Level::DEBUG, "offset_eq");
         let _enter = span.enter();
 
-        let constr = &self.offset_equality_constraint;
-        let condition_evals = constr
-            .cond
-            .1
-            .evaluate_batch(&batch_inputs(&constr.cond.1), self.uniform_repeat);
-        let eq_a_evals = constr
-            .a
-            .1
-            .evaluate_batch(&batch_inputs(&constr.a.1), self.uniform_repeat);
-        let eq_b_evals = constr
-            .b
-            .1
-            .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
+        for constr in &self.offset_equality_constraints {
+            let condition_evals = constr
+                .cond
+                .1
+                .evaluate_batch(&batch_inputs(&constr.cond.1), self.uniform_repeat);
+            let eq_a_evals = constr
+                .a
+                .1
+                .evaluate_batch(&batch_inputs(&constr.a.1), self.uniform_repeat);
+            let eq_b_evals = constr
+                .b
+                .1
+                .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
 
-        let dense_az_bz: Vec<(F, F)> = (0..self.uniform_repeat)
-            .into_par_iter()
-            .map(|step_index| {
-                // Write corresponding values, if outside the step range, only include the constant.
-                let a_step = step_index + if constr.a.0 { 1 } else { 0 };
-                let b_step = step_index + if constr.b.0 { 1 } else { 0 };
-                let a = eq_a_evals
-                    .get(a_step)
-                    .cloned()
-                    .unwrap_or(constr.a.1.constant_term_field());
-                let b = eq_b_evals
-                    .get(b_step)
-                    .cloned()
-                    .unwrap_or(constr.b.1.constant_term_field());
-                let az = a - b;
+            let dense_az_bz: Vec<(F, F)> = (0..self.uniform_repeat)
+                .into_par_iter()
+                .map(|step_index| {
+                    // Write corresponding values, if outside the step range, only include the constant.
+                    let a_step = step_index + if constr.a.0 { 1 } else { 0 };
+                    let b_step = step_index + if constr.b.0 { 1 } else { 0 };
+                    let a = eq_a_evals
+                        .get(a_step)
+                        .cloned()
+                        .unwrap_or(constr.a.1.constant_term_field());
+                    let b = eq_b_evals
+                        .get(b_step)
+                        .cloned()
+                        .unwrap_or(constr.b.1.constant_term_field());
+                    let az = a - b;
 
-                let condition_step = step_index + if constr.cond.0 { 1 } else { 0 };
-                let bz = condition_evals
-                    .get(condition_step)
-                    .cloned()
-                    .unwrap_or(constr.cond.1.constant_term_field());
-                (az, bz)
-            })
-            .collect();
+                    let condition_step = step_index + if constr.cond.0 { 1 } else { 0 };
+                    let bz = condition_evals
+                        .get(condition_step)
+                        .cloned()
+                        .unwrap_or(constr.cond.1.constant_term_field());
+                    (az, bz)
+                })
+                .collect();
 
-        // Sparsify: take only the non-zero elements
-        for (local_index, (az, bz)) in dense_az_bz.iter().enumerate() {
-            let global_index = uniform_constraint_rows + local_index;
-            if !az.is_zero() {
-                az_sparse.push((*az, global_index));
-            }
-            if !bz.is_zero() {
-                bz_sparse.push((*bz, global_index));
+            // Sparsify: take only the non-zero elements
+            for (local_index, (az, bz)) in dense_az_bz.iter().enumerate() {
+                let global_index = uniform_constraint_rows + local_index;
+                if !az.is_zero() {
+                    az_sparse.push((*az, global_index));
+                }
+                if !bz.is_zero() {
+                    bz_sparse.push((*bz, global_index));
+                }
             }
         }
 
@@ -1304,11 +1309,8 @@ mod tests {
         assert_eq!(uniform_builder.constraints.len(), 1);
         assert_eq!(uniform_builder.next_aux, 1);
         let num_steps = 2;
-        let combined_builder = CombinedUniformBuilder::construct(
-            uniform_builder,
-            num_steps,
-            OffsetEqConstraint::empty(),
-        );
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1348,11 +1350,8 @@ mod tests {
         assert_eq!(uniform_builder.next_aux, 2);
 
         let num_steps = 2;
-        let combined_builder = CombinedUniformBuilder::construct(
-            uniform_builder,
-            num_steps,
-            OffsetEqConstraint::empty(),
-        );
+        let combined_builder =
+            CombinedUniformBuilder::construct(uniform_builder, num_steps, vec![]);
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1409,8 +1408,11 @@ mod tests {
             (TestInputs::OpFlags0, false),
             (TestInputs::OpFlags0, true),
         );
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraint);
+        let combined_builder = CombinedUniformBuilder::construct(
+            uniform_builder,
+            num_steps,
+            vec![non_uniform_constraint],
+        );
 
         let mut inputs = vec![vec![Fr::zero(); num_steps]; TestInputs::COUNT];
         inputs[TestInputs::OpFlags0 as usize][0] = Fr::from(5);
@@ -1453,8 +1455,11 @@ mod tests {
             (TestInputs::OpFlags0, false),
             (TestInputs::OpFlags0, true),
         );
-        let combined_builder =
-            CombinedUniformBuilder::construct(uniform_builder, num_steps, non_uniform_constraint);
+        let combined_builder = CombinedUniformBuilder::construct(
+            uniform_builder,
+            num_steps,
+            vec![non_uniform_constraint],
+        );
 
         let offset_eq = combined_builder.materialize_offset_eq();
         let mut expected_condition = SparseEqualityItem::<Fr>::empty();
@@ -1466,8 +1471,8 @@ mod tests {
             (TestInputs::OpFlags0 as usize, true, Fr::from_i64(-1)),
         ];
 
-        assert_eq!(offset_eq.condition, expected_condition);
-        assert_eq!(offset_eq.eq, expected_eq);
+        assert_eq!(offset_eq.constraints[0].condition, expected_condition);
+        assert_eq!(offset_eq.constraints[0].eq, expected_eq);
     }
 
     #[test]
