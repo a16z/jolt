@@ -30,6 +30,10 @@ library FrLib {
         return bytes32(Fr.unwrap(value));
     }
 
+    function unwrap(Fr value) internal pure returns (uint256) {
+        return Fr.unwrap(value);
+    }
+
     function invert(Fr value) internal view returns (Fr) {
         uint256 v = Fr.unwrap(value);
         uint256 result;

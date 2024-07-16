@@ -8,8 +8,8 @@ use std::env;
 
 use alloy_primitives::{hex, U256};
 use alloy_sol_types::{sol, SolType};
-use ark_serialize::CanonicalSerialize;
 use ark_bn254::{Bn254, Fr};
+use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
 
 fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
@@ -19,8 +19,10 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
         Fr,
         Zeromorph<Bn254>,
     >>::prove_grand_product(batched_circuit, &mut transcript, None);
-    let claims = <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<
-    Fr, Zeromorph<Bn254>>>::claims(batched_circuit);
+    let claims =
+        <BatchedDenseGrandProduct<Fr> as BatchedGrandProduct<Fr, Zeromorph<Bn254>>>::claims(
+            batched_circuit,
+        );
 
     //encoding the proof into abi
 
@@ -77,15 +79,12 @@ fn get_proof_data(batched_circuit: &mut BatchedDenseGrandProduct<Fr>) {
         .map(|c| fr_to_uint256(c))
         .collect::<Vec<_>>();
 
-    let claims = claims
-        .iter()
-        .map(|c| fr_to_uint256(c))
-        .collect::<Vec<_>>();
+    let claims = claims.iter().map(|c| fr_to_uint256(c)).collect::<Vec<_>>();
 
-    let proof_plus_results = SolProductProofAndClaims{
+    let proof_plus_results = SolProductProofAndClaims {
         encoded_proof,
         claims,
-        r_prover
+        r_prover,
     };
 
     print!(
@@ -98,7 +97,7 @@ fn fr_to_uint256(c: &Fr) -> U256 {
     let mut serialize = vec![];
     let _ = c.serialize_uncompressed(&mut serialize);
     U256::from_le_slice(&serialize)
-} 
+}
 
 fn main() {
     let _: Vec<_> = env::args().collect();

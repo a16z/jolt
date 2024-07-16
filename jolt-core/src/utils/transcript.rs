@@ -1,5 +1,6 @@
 use crate::field::JoltField;
-use ark_ec::CurveGroup;
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_serialize::CanonicalSerialize;
 use sha3::{Digest, Keccak256};
 
 #[derive(Clone)]
@@ -94,9 +95,21 @@ impl ProofTranscript {
     }
 
     pub fn append_point<G: CurveGroup>(&mut self, point: &G) {
-        let mut buf = vec![];
-        point.serialize_uncompressed(&mut buf).unwrap();
-        self.append_bytes(&buf);
+        let aff = point.into_affine();
+        let mut x_bytes = vec![];
+        let mut y_bytes = vec![];
+        // The native serialize for the points are le encoded in x,y format and simply reversing
+        // can lead to errors so we extract the affine coordinates and the encode them be before writing
+        let x = aff.x().unwrap();
+        x.serialize_compressed(&mut x_bytes).unwrap();
+        x_bytes = x_bytes.into_iter().rev().collect();
+        let y = aff.y().unwrap();
+        y.serialize_compressed(&mut y_bytes).unwrap();
+        y_bytes = y_bytes.into_iter().rev().collect();
+
+        let hasher = self.hasher().chain_update(x_bytes).chain_update(y_bytes); 
+        self.state = hasher.finalize().into();
+        self.n_rounds += 1;
     }
 
     pub fn append_points<G: CurveGroup>(&mut self, points: &[G]) {
