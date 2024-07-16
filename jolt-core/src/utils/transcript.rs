@@ -98,7 +98,7 @@ impl ProofTranscript {
         // If we add the point at infinity then we hash over a region of zeros
         if point.is_zero() {
             self.append_bytes(&vec![0_u8; 64]);
-            return
+            return;
         }
 
         let aff = point.into_affine();
