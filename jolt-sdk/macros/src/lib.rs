@@ -3,27 +3,15 @@
 extern crate proc_macro;
 
 use core::panic;
-use std::collections::HashMap;
 
-use common::{
-    constants::{
-        DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    },
-    rv_trace::MemoryLayout,
-};
-use lazy_static::lazy_static;
+use common::{attributes::parse_attributes, rv_trace::MemoryLayout};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use std::sync::Mutex;
-use syn::{
-    parse_macro_input, AttributeArgs, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, PatType,
-    ReturnType, Type,
-};
+use std::sync::Once;
+use syn::{parse_macro_input, AttributeArgs, Ident, ItemFn, PatType, ReturnType, Type};
 
-lazy_static! {
-    static ref WASM_IMPORTS_ADDED: Mutex<bool> = Mutex::new(false);
-}
+static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
 pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -36,12 +24,10 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Add wasm utilities and functions if the function is marked as wasm
     if builder.has_wasm_attr() {
         // wasm utilities should only be added once
-        let mut module_added = WASM_IMPORTS_ADDED.lock().unwrap();
-        if !*module_added {
+        WASM_IMPORTS_INIT.call_once(|| {
             let wasm_utilities: TokenStream = builder.make_wasm_utilities().into();
             token_stream.extend(wasm_utilities);
-            *module_added = true;
-        }
+        });
         let wasm_token_stream: TokenStream = builder.make_wasm_function().into();
         token_stream.extend(wasm_token_stream);
     }
@@ -288,7 +274,7 @@ impl MacroBuilder {
     }
 
     fn make_main_func(&self) -> TokenStream2 {
-        let attributes = self.parse_attributes();
+        let attributes = parse_attributes(&self.attr);
         let memory_layout =
             MemoryLayout::new(attributes.max_input_size, attributes.max_output_size);
         let input_start = memory_layout.input_start;
@@ -459,7 +445,7 @@ impl MacroBuilder {
     }
 
     fn make_set_linker_parameters(&self) -> TokenStream2 {
-        let attributes = self.parse_attributes();
+        let attributes = parse_attributes(&self.attr);
         let mut code: Vec<TokenStream2> = Vec::new();
 
         let value = attributes.memory_size;
@@ -496,53 +482,6 @@ impl MacroBuilder {
             quote! {
                 program.set_std(false);
             }
-        }
-    }
-
-    fn parse_attributes(&self) -> Attributes {
-        let mut attributes = HashMap::<_, u64>::new();
-        let mut wasm = false;
-
-        for attr in &self.attr {
-            match attr {
-                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
-                    let value: u64 = match lit {
-                        Lit::Int(lit) => lit.base10_parse().unwrap(),
-                        _ => panic!("expected integer literal"),
-                    };
-                    let ident = &path.get_ident().expect("Expected identifier");
-                    match ident.to_string().as_str() {
-                        "memory_size" => attributes.insert("memory_size", value),
-                        "stack_size" => attributes.insert("stack_size", value),
-                        "max_input_size" => attributes.insert("max_input_size", value),
-                        "max_output_size" => attributes.insert("max_output_size", value),
-                        _ => panic!("invalid attribute"),
-                    };
-                }
-                NestedMeta::Meta(Meta::Path(path)) if path.is_ident("wasm") => {
-                    wasm = true;
-                }
-                _ => panic!("expected integer literal"),
-            }
-        }
-
-        let memory_size = *attributes
-            .get("memory_size")
-            .unwrap_or(&DEFAULT_MEMORY_SIZE);
-        let stack_size = *attributes.get("stack_size").unwrap_or(&DEFAULT_STACK_SIZE);
-        let max_input_size = *attributes
-            .get("max_input_size")
-            .unwrap_or(&DEFAULT_MAX_INPUT_SIZE);
-        let max_output_size = *attributes
-            .get("max_output_size")
-            .unwrap_or(&DEFAULT_MAX_OUTPUT_SIZE);
-
-        Attributes {
-            wasm,
-            memory_size,
-            stack_size,
-            max_input_size,
-            max_output_size,
         }
     }
 
@@ -587,7 +526,7 @@ impl MacroBuilder {
     }
 
     fn has_wasm_attr(&self) -> bool {
-        self.parse_attributes().wasm
+        parse_attributes(&self.attr).wasm
     }
 
     fn make_wasm_function(&self) -> TokenStream2 {
@@ -616,12 +555,4 @@ impl MacroBuilder {
             }
         }
     }
-}
-
-struct Attributes {
-    wasm: bool,
-    memory_size: u64,
-    stack_size: u64,
-    max_input_size: u64,
-    max_output_size: u64,
 }
