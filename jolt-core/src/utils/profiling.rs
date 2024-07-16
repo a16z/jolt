@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Mutex};
-
+#[cfg(not(target_arch = "wasm32"))]
 use memory_stats::memory_stats;
+use std::{collections::HashMap, sync::Mutex};
 
 lazy_static::lazy_static! {
     static ref MEMORY_USAGE_MAP: Mutex<HashMap<&'static str, f64>> = {
@@ -14,6 +14,7 @@ lazy_static::lazy_static! {
     };
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn start_memory_tracing_span(label: &'static str) {
     let memory_usage = memory_stats().unwrap().physical_mem;
     let mut map = MEMORY_USAGE_MAP.lock().unwrap();
@@ -23,6 +24,7 @@ pub fn start_memory_tracing_span(label: &'static str) {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn end_memory_tracing_span(label: &'static str) {
     let memory_usage_end = memory_stats().unwrap().physical_mem as f64 / 1_000_000_000.0;
     let mut memory_usage_map = MEMORY_USAGE_MAP.lock().unwrap();
@@ -53,6 +55,7 @@ pub fn report_memory_usage() {
     println!("=====================================================");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn print_current_memory_usage(label: &str) {
     if let Some(usage) = memory_stats() {
         let memory_usage_gb = usage.physical_mem as f64 / 1_000_000_000.0;
