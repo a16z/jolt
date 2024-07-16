@@ -64,7 +64,6 @@ contract TestHyperKZG is TestBase {
         require(passes, "does not verify a valid proof");
     }
 
-        
     function testHyperKZGBatchPasses() public {
         // Invoke the rust to get a non trivial example proof
         string[] memory cmds = new string[](1);
@@ -77,8 +76,7 @@ contract TestHyperKZG is TestBase {
         bytes32 start_string = "TestEval";
         Transcript memory transcript = FiatShamirTranscript.new_transcript(start_string, 3);
         // We call into the verifier contract
-        bool passes =
-            verifier.batch_verify(data.commitments, data.point, data.claims, data.proof, transcript);
+        bool passes = verifier.batch_verify(data.commitments, data.point, data.claims, data.proof, transcript);
         require(passes, "does not verify a valid proof");
     }
 }

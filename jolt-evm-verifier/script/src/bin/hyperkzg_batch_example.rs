@@ -6,12 +6,12 @@ use ark_ec::pairing::Pairing;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use ark_std::UniformRand;
+use jolt_core::poly::commitment::commitment_scheme::{BatchType, CommitmentScheme};
 use jolt_core::poly::commitment::hyperkzg::*;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::utils::transcript::ProofTranscript;
 use rand_chacha;
 use rand_core::SeedableRng;
-use jolt_core::poly::commitment::commitment_scheme::{CommitmentScheme, BatchType};
 
 fn main() {
     // Testing 2^12 ie 4096 elements
@@ -52,9 +52,14 @@ fn main() {
 
     // prove an evaluation
     let mut prover_transcript = ProofTranscript::new(b"TestEval");
-    let proof: HyperKZGProof<Bn254> =
-        HyperKZG::batch_prove(&(pk, vk), borrowed.as_slice(), &point, &evals, BatchType::Big, &mut prover_transcript);
-
+    let proof: HyperKZGProof<Bn254> = HyperKZG::batch_prove(
+        &(pk, vk),
+        borrowed.as_slice(),
+        &point,
+        &evals,
+        BatchType::Big,
+        &mut prover_transcript,
+    );
 
     sol!(struct VK {
         uint256 VK_g1_x;

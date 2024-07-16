@@ -3,9 +3,9 @@ use jolt_core::{field::JoltField, utils::transcript::ProofTranscript};
 use ark_ff::{BigInteger, PrimeField};
 
 use alloy_primitives::{hex, FixedBytes, U256};
-use ark_ec::CurveGroup;
 use alloy_sol_types::{sol, SolType};
 use ark_bn254::{Fr, G1Projective};
+use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 use ark_std::test_rng;
 use ark_std::UniformRand;
@@ -87,8 +87,12 @@ fn main() {
     let mut encoded_points = Vec::<U256>::new();
     for point in points {
         let point_aff = point.into_affine();
-        encoded_points.push(U256::from_be_slice(&point_aff.x.into_bigint().to_bytes_be()));
-        encoded_points.push(U256::from_be_slice(&point_aff.y.into_bigint().to_bytes_be()));
+        encoded_points.push(U256::from_be_slice(
+            &point_aff.x.into_bigint().to_bytes_be(),
+        ));
+        encoded_points.push(U256::from_be_slice(
+            &point_aff.y.into_bigint().to_bytes_be(),
+        ));
     }
 
     let point_vectors = vec![
@@ -105,8 +109,12 @@ fn main() {
         let mut encoded_point = Vec::<U256>::new();
         for point in point_vec {
             let point_aff = point.into_affine();
-            encoded_point.push(U256::from_be_slice(&point_aff.x.into_bigint().to_bytes_be()));
-            encoded_point.push(U256::from_be_slice(&point_aff.y.into_bigint().to_bytes_be()));
+            encoded_point.push(U256::from_be_slice(
+                &point_aff.x.into_bigint().to_bytes_be(),
+            ));
+            encoded_point.push(U256::from_be_slice(
+                &point_aff.y.into_bigint().to_bytes_be(),
+            ));
         }
         encoded_point_vector.push(encoded_point)
     }
