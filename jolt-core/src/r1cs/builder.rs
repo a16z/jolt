@@ -833,7 +833,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
         let span = tracing::span!(tracing::Level::DEBUG, "offset_eq");
         let _enter = span.enter();
 
-        for constr in &self.offset_equality_constraints {
+        for (constr_i, constr) in self.offset_equality_constraints.iter().enumerate() {
             let condition_evals = constr
                 .cond
                 .1
@@ -874,7 +874,8 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
 
             // Sparsify: take only the non-zero elements
             for (local_index, (az, bz)) in dense_az_bz.iter().enumerate() {
-                let global_index = uniform_constraint_rows + local_index;
+                let global_index =
+                    uniform_constraint_rows + constr_i * self.uniform_repeat + local_index;
                 if !az.is_zero() {
                     az_sparse.push((*az, global_index));
                 }
