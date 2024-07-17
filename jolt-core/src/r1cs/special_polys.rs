@@ -532,7 +532,7 @@ mod tests {
 
         let r = Fr::from(121);
         sparse.bound_poly_var_bot(&r);
-        dense.bound_poly_var_bot(&r);
+        dense.bound_poly_var_bot_01_optimized(&r);
         assert_eq!(sparse.to_dense(), dense);
     }
 
@@ -548,7 +548,7 @@ mod tests {
 
         let r = Fr::from(121);
         sparse.bound_poly_var_bot(&r);
-        dense.bound_poly_var_bot(&r);
+        dense.bound_poly_var_bot_01_optimized(&r);
         assert_eq!(sparse.to_dense(), dense);
     }
 
@@ -579,7 +579,7 @@ mod tests {
 
         let r = Fr::from(121);
         sparse.bound_poly_var_bot(&r);
-        dense.bound_poly_var_bot(&r);
+        dense.bound_poly_var_bot_01_optimized(&r);
         assert_eq!(sparse.to_dense(), dense);
     }
 

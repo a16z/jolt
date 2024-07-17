@@ -201,6 +201,7 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
+    /// Note: does not truncate
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let n = self.len() / 2;
