@@ -841,7 +841,7 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             .1
             .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
 
-        (0..self.uniform_repeat).into_iter().for_each(|step_index| {
+        (0..self.uniform_repeat).for_each(|step_index| {
             // Write corresponding values, if outside the step range, only include the constant.
             let a_step = step_index + constr.a.0 as usize;
             let b_step = step_index + constr.b.0 as usize;
