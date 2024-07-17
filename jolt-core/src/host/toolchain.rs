@@ -68,7 +68,7 @@ fn link_toolchain() -> Result<()> {
         .args([
             "toolchain",
             "link",
-            "riscv32i-jolt-zkvm-elf",
+            "riscv32im-jolt-zkvm-elf",
             link_path.to_str().unwrap(),
         ])
         .output()?;

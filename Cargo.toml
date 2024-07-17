@@ -44,6 +44,8 @@ members = [
     "examples/alloc/guest",
     "examples/stdlib",
     "examples/stdlib/guest",
+    "examples/muldiv",
+    "examples/muldiv/guest",
 ]
 
 [features]
