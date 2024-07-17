@@ -125,8 +125,10 @@ async fn download_toolchain(client: &Client, url: &str) -> Result<()> {
 
         Ok(())
     } else {
-        let err = response.error_for_status().err().unwrap();
-        Err(eyre!("failed to download toolchain: {}", err))
+        Err(match response.error_for_status() {
+            Ok(_) => eyre!("failed to download toolchain"),
+            Err(err) => eyre!("failed to download toolchain: {}", err),
+        })
     }
 }
 
