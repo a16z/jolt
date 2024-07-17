@@ -2,9 +2,10 @@ use jolt_core::{field::JoltField, utils::transcript::ProofTranscript};
 
 use ark_ff::{BigInteger, PrimeField};
 
-use alloy_primitives::{hex, U256, FixedBytes};
+use alloy_primitives::{hex, FixedBytes, U256};
 use alloy_sol_types::{sol, SolType};
 use ark_bn254::{Fr, G1Projective};
+use ark_ec::CurveGroup;
 use ark_std::rand::Rng;
 use ark_std::test_rng;
 use ark_std::UniformRand;
@@ -46,8 +47,12 @@ fn main() {
     transcript.append_scalar(&scalars[1]);
     let mut serialized_0 = vec![];
     let mut serialized_1 = vec![];
-    scalars[0].serialize_uncompressed(&mut serialized_0).unwrap();
-    scalars[1].serialize_uncompressed(&mut serialized_1).unwrap();
+    scalars[0]
+        .serialize_uncompressed(&mut serialized_0)
+        .unwrap();
+    scalars[1]
+        .serialize_uncompressed(&mut serialized_1)
+        .unwrap();
 
     let encoded_scalars = vec![
         U256::from_le_slice(&serialized_0),
@@ -81,10 +86,13 @@ fn main() {
     vector_responses.push(transcript.challenge_vector(4));
     let mut encoded_points = Vec::<U256>::new();
     for point in points {
-        let mut dest = vec![];
-        point.serialize_uncompressed(&mut dest).unwrap();
-        encoded_points.push(U256::from_be_slice(&dest[0..32]));
-        encoded_points.push(U256::from_be_slice(&dest[32..64]));
+        let point_aff = point.into_affine();
+        encoded_points.push(U256::from_be_slice(
+            &point_aff.x.into_bigint().to_bytes_be(),
+        ));
+        encoded_points.push(U256::from_be_slice(
+            &point_aff.y.into_bigint().to_bytes_be(),
+        ));
     }
 
     let point_vectors = vec![
@@ -100,26 +108,54 @@ fn main() {
     for point_vec in point_vectors {
         let mut encoded_point = Vec::<U256>::new();
         for point in point_vec {
-            let mut dest = vec![];
-            point.serialize_uncompressed(&mut dest).unwrap();
-            encoded_point.push(U256::from_be_slice(&dest[0..32]));
-            encoded_point.push(U256::from_be_slice(&dest[32..64]));
+            let point_aff = point.into_affine();
+            encoded_point.push(U256::from_be_slice(
+                &point_aff.x.into_bigint().to_bytes_be(),
+            ));
+            encoded_point.push(U256::from_be_slice(
+                &point_aff.y.into_bigint().to_bytes_be(),
+            ));
         }
         encoded_point_vector.push(encoded_point)
     }
 
-    let byte_vectors = vec![vec![rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>()], vec![rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>(), rng.gen::<[u8; 32]>()]];
-    let mut encoded_bytes_vector = Vec::<Vec<FixedBytes::<32>>>::new();
+    let byte_vectors = vec![
+        vec![
+            rng.gen::<[u8; 32]>(),
+            rng.gen::<[u8; 32]>(),
+            rng.gen::<[u8; 32]>(),
+        ],
+        vec![
+            rng.gen::<[u8; 32]>(),
+            rng.gen::<[u8; 32]>(),
+            rng.gen::<[u8; 32]>(),
+        ],
+    ];
+    let mut encoded_bytes_vector = Vec::<Vec<FixedBytes<32>>>::new();
     for bytes in byte_vectors.clone() {
-        let mut encoded_bytes = Vec::<FixedBytes::<32>>::new();
+        let mut encoded_bytes = Vec::<FixedBytes<32>>::new();
         for &byte32 in bytes.iter() {
             encoded_bytes.push(FixedBytes::<32>::new(byte32.clone()));
         }
         encoded_bytes_vector.push(encoded_bytes)
     }
-    
-    transcript.append_bytes(&(byte_vectors[0].clone().into_iter().map(|x| {x.into_iter()}).flatten().collect::<Vec<u8>>()));
-    transcript.append_bytes(&(byte_vectors[1].clone().into_iter().map(|x| {x.into_iter()}).flatten().collect::<Vec<u8>>()));
+
+    transcript.append_bytes(
+        &(byte_vectors[0]
+            .clone()
+            .into_iter()
+            .map(|x| x.into_iter())
+            .flatten()
+            .collect::<Vec<u8>>()),
+    );
+    transcript.append_bytes(
+        &(byte_vectors[1]
+            .clone()
+            .into_iter()
+            .map(|x| x.into_iter())
+            .flatten()
+            .collect::<Vec<u8>>()),
+    );
     scalar_responses.push(transcript.challenge_scalar());
     vector_responses.push(transcript.challenge_vector(4));
 
