@@ -204,6 +204,16 @@ impl<F: JoltField> DensePolynomial<F> {
     #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let n = self.len() / 2;
+        for i in 0..n {
+            self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
+        }
+
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
+        let n = self.len() / 2;
         let mut new_z = unsafe_allocate_zero_vec(n);
         new_z.par_iter_mut().enumerate().for_each(|(i, z)| {
             let m = self.Z[2 * i + 1] - self.Z[2 * i];

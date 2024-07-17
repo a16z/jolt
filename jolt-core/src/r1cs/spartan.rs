@@ -112,20 +112,20 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
         let aux = &segmented_padded_witness.segments[I::COUNT..];
         let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
 
-        let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
+        let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
-            if B.is_zero() || C.is_zero() {
-                if D.is_zero() {
+            if az.is_zero() || bz.is_zero() {
+                if cz.is_zero() {
                     F::zero()
                 } else {
-                    *A * (-(*D))
+                    *eq * (-(*cz))
                 }
             } else {
-                let inner = *B * *C - *D;
+                let inner = *az * *bz - *cz;
                 if inner.is_zero() {
                     F::zero()
                 } else {
-                    *A * inner
+                    *eq * inner
                 }
             }
         };
