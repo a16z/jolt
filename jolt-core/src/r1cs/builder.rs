@@ -841,41 +841,35 @@ impl<F: JoltField, I: ConstraintInput> CombinedUniformBuilder<F, I> {
             .1
             .evaluate_batch(&batch_inputs(&constr.b.1), self.uniform_repeat);
 
-        let dense_az_bz: Vec<(F, F)> = (0..self.uniform_repeat)
-            .into_par_iter()
-            .map(|step_index| {
-                // Write corresponding values, if outside the step range, only include the constant.
-                let a_step = step_index + if constr.a.0 { 1 } else { 0 };
-                let b_step = step_index + if constr.b.0 { 1 } else { 0 };
-                let a = eq_a_evals
-                    .get(a_step)
-                    .cloned()
-                    .unwrap_or(constr.a.1.constant_term_field());
-                let b = eq_b_evals
-                    .get(b_step)
-                    .cloned()
-                    .unwrap_or(constr.b.1.constant_term_field());
-                let az = a - b;
+        (0..self.uniform_repeat).into_iter().for_each(|step_index| {
+            // Write corresponding values, if outside the step range, only include the constant.
+            let a_step = step_index + constr.a.0 as usize;
+            let b_step = step_index + constr.b.0 as usize;
+            let a = eq_a_evals
+                .get(a_step)
+                .cloned()
+                .unwrap_or(constr.a.1.constant_term_field());
+            let b = eq_b_evals
+                .get(b_step)
+                .cloned()
+                .unwrap_or(constr.b.1.constant_term_field());
+            let az = a - b;
 
-                let condition_step = step_index + if constr.cond.0 { 1 } else { 0 };
-                let bz = condition_evals
-                    .get(condition_step)
-                    .cloned()
-                    .unwrap_or(constr.cond.1.constant_term_field());
-                (az, bz)
-            })
-            .collect();
-
-        // Sparsify: take only the non-zero elements
-        for (local_index, (az, bz)) in dense_az_bz.iter().enumerate() {
-            let global_index = uniform_constraint_rows + local_index;
+            let global_index = uniform_constraint_rows + step_index;
             if !az.is_zero() {
-                az_sparse.push((*az, global_index));
+                az_sparse.push((az, global_index));
             }
+
+            let condition_step = step_index + constr.cond.0 as usize;
+            let bz = condition_evals
+                .get(condition_step)
+                .cloned()
+                .unwrap_or(constr.cond.1.constant_term_field());
             if !bz.is_zero() {
-                bz_sparse.push((*bz, global_index));
+                bz_sparse.push((bz, global_index));
             }
-        }
+        });
+        drop(_enter);
 
         let num_vars = self.constraint_rows().next_power_of_two().log_2();
         let az_poly = SparsePolynomial::new(num_vars, az_sparse);
