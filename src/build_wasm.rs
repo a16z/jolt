@@ -117,13 +117,13 @@ fn is_std() -> Option<bool> {
     let dependencies = doc["dependencies"]["jolt"].as_inline_table()?;
     let package = dependencies.get("package")?.as_str()?;
 
-    let path = dependencies
-        .get("path")
-        .expect("Failed to get path")
+    let git = dependencies
+        .get("git")
+        .expect("Failed to get git-path")
         .as_str()
-        .expect("Failed to get path");
+        .expect("Failed to get git-path as string");
 
-    if package == "jolt-sdk" && path == "../../wasm-jolt/jolt-sdk" {
+    if package == "jolt-sdk" && git == "https://github.com/a16z/jolt" {
         return Some(
             dependencies
                 .get("features")
