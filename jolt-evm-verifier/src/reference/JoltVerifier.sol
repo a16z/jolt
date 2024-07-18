@@ -2,7 +2,6 @@
 
 pragma solidity >=0.8.21;
 
-import {IVerifier} from "../interfaces/IVerifier.sol";
 import {Transcript, FiatShamirTranscript} from "../subprotocols/FiatShamirTranscript.sol";
 import {Fr, FrLib, sub, MODULUS} from "./Fr.sol";
 import {Jolt} from "./JoltTypes.sol";
@@ -13,7 +12,7 @@ import "forge-std/console.sol";
 error GrandProductArgumentFailed();
 error SumcheckFailed();
 
-contract JoltVerifier is IVerifier {
+library GrandProductArgument {
     using FiatShamirTranscript for Transcript;
 
     function verifySumcheckLayer(
@@ -113,12 +112,13 @@ contract JoltVerifier is IVerifier {
         return (newClaims, newRGrandProduct);
     }
 
-    function verifyGrandProduct(
+    function verify(
         Jolt.BatchedGrandProductProof memory proof,
         Fr[] memory claims,
         Transcript memory transcript
-    ) external pure returns (Fr[] memory) {
+    ) public pure returns (Fr[] memory) {
         Fr[] memory rGrandProduct = new Fr[](0);
+
         for (uint256 i = 0; i < proof.layers.length; i++) {
             //get coeffs
             uint256[] memory loaded = transcript.challenge_scalars(claims.length, MODULUS);
