@@ -215,27 +215,27 @@ impl<F: JoltField> SumcheckInstanceProof<F> {
                     let m_C = c_high - c_low;
 
                     // eval 2
-                    let poly_A_bound_point = poly_eq[dense_index + 1] + m_eq;
-                    let poly_B_bound_point = a_high + m_A;
-                    let poly_C_bound_point = b_high + m_B;
-                    let poly_D_bound_point = c_high + m_C;
+                    let poly_eq_bound_point = poly_eq[dense_index + 1] + m_eq;
+                    let poly_A_bound_point = a_high + m_A;
+                    let poly_B_bound_point = b_high + m_B;
+                    let poly_C_bound_point = c_high + m_C;
                     eval_point_2 += comb_func(
+                        &poly_eq_bound_point,
                         &poly_A_bound_point,
                         &poly_B_bound_point,
                         &poly_C_bound_point,
-                        &poly_D_bound_point,
                     );
 
                     // eval 3
-                    let poly_A_bound_point = poly_A_bound_point + m_eq;
-                    let poly_B_bound_point = poly_B_bound_point + m_A;
-                    let poly_C_bound_point = poly_C_bound_point + m_B;
-                    let poly_D_bound_point = poly_D_bound_point + m_C;
+                    let poly_eq_bound_point = poly_eq_bound_point + m_eq;
+                    let poly_A_bound_point = poly_A_bound_point + m_A;
+                    let poly_B_bound_point = poly_B_bound_point + m_B;
+                    let poly_C_bound_point = poly_C_bound_point + m_C;
                     eval_point_3 += comb_func(
+                        &poly_eq_bound_point,
                         &poly_A_bound_point,
                         &poly_B_bound_point,
                         &poly_C_bound_point,
-                        &poly_D_bound_point,
                     );
                 }
                 (eval_point_0, eval_point_2, eval_point_3)
