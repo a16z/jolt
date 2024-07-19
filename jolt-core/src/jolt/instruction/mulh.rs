@@ -3,8 +3,8 @@ use tracer::{ELFInstruction, RVTraceRow, RegisterState, RV32IM};
 
 use super::VirtualInstructionSequence;
 use crate::jolt::instruction::{
-    add::ADDInstruction, movsign::MOVSIGNInstruction, mulhu::MULHUInstruction,
-    mulu::MULUInstruction, JoltInstruction,
+    add::ADDInstruction, mulhu::MULHUInstruction, mulu::MULUInstruction,
+    virtual_movsign::MOVSIGNInstruction, JoltInstruction,
 };
 
 pub struct MULHInstruction<const WORD_SIZE: usize>;
