@@ -52,7 +52,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidSignedRemainderInstr
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
-        C + 1
+        C + 2
     }
 
     fn subtables<F: JoltField>(

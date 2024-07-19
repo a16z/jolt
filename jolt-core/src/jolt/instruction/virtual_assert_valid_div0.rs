@@ -1,6 +1,6 @@
 use crate::{
     field::JoltField,
-    jolt::subtable::{left_is_zero::LeftIsZeroSubtable, right_is_ones::RightIsOnesSubtable},
+    jolt::subtable::{div_by_zero::DivByZeroSubtable, left_is_zero::LeftIsZeroSubtable},
 };
 use rand::prelude::StdRng;
 use rand::RngCore;
@@ -24,9 +24,9 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
     fn combine_lookups<F: JoltField>(&self, vals: &[F], C: usize, M: usize) -> F {
         let vals_by_subtable = self.slice_values(vals, C, M);
         let divisor_is_zero: F = vals_by_subtable[0].iter().product();
-        let quotient_is_ones: F = vals_by_subtable[1].iter().product();
+        let is_valid_div_by_zero: F = vals_by_subtable[1].iter().product();
 
-        F::one() - divisor_is_zero + divisor_is_zero * quotient_is_ones
+        F::one() - divisor_is_zero + is_valid_div_by_zero
     }
 
     fn g_poly_degree(&self, C: usize) -> usize {
@@ -44,7 +44,7 @@ impl<const WORD_SIZE: usize> JoltInstruction for AssertValidDiv0Instruction<WORD
                 SubtableIndices::from(0..C),
             ),
             (
-                Box::new(RightIsOnesSubtable::new()),
+                Box::new(DivByZeroSubtable::new()),
                 SubtableIndices::from(0..C),
             ),
         ]

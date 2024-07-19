@@ -1,7 +1,7 @@
 use crate::field::JoltField;
 use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruction;
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
-use crate::jolt::subtable::right_is_ones::RightIsOnesSubtable;
+use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
@@ -146,7 +146,7 @@ subtable_enum!(
   XOR: XorSubtable<F>,
   LEFT_IS_ZERO: LeftIsZeroSubtable<F>,
   RIGHT_IS_ZERO: RightIsZeroSubtable<F>,
-  RIGHT_IS_ONES: RightIsOnesSubtable<F>
+  DIV_BY_ZERO: DivByZeroSubtable<F>
 );
 
 // ==================== JOLT ====================
