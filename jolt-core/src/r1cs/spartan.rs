@@ -4,14 +4,13 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::BatchType;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::r1cs::key::UniformSpartanKey;
-use crate::utils::compute_dotproduct_low_optimized;
+use crate::r1cs::special_polys::SegmentedPaddedWitness;
 use crate::utils::math::Math;
 use crate::utils::thread::drop_in_background_thread;
 
 use crate::utils::transcript::ProofTranscript;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
-use rayon::prelude::*;
 
 use thiserror::Error;
 
@@ -56,87 +55,6 @@ pub enum SpartanError {
     /// returned when an invalid PCS proof is provided
     #[error("InvalidPCSProof")]
     InvalidPCSProof,
-}
-
-// TODO: Rather than use these adhoc virtual indexable polys – create a DensePolynomial which takes any impl Index<usize> inner
-// and can run all the normal DensePolynomial ops.
-#[derive(Clone)]
-pub struct SegmentedPaddedWitness<F: JoltField> {
-    total_len: usize,
-    segments: Vec<Vec<F>>,
-    segment_len: usize,
-    zero: F,
-}
-
-impl<F: JoltField> SegmentedPaddedWitness<F> {
-    pub fn new(total_len: usize, segments: Vec<Vec<F>>) -> Self {
-        let segment_len = segments[0].len();
-        assert!(segment_len.is_power_of_two());
-        for segment in &segments {
-            assert_eq!(
-                segment.len(),
-                segment_len,
-                "All segments must be the same length"
-            );
-        }
-        SegmentedPaddedWitness {
-            total_len,
-            segments,
-            segment_len,
-            zero: F::zero(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.total_len
-    }
-
-    #[tracing::instrument(skip_all, name = "SegmentedPaddedWitness::evaluate_all")]
-    pub fn evaluate_all(&self, point: Vec<F>) -> Vec<F> {
-        let chi = EqPolynomial::evals(&point);
-        assert!(chi.len() >= self.segment_len);
-
-        let evals = self
-            .segments
-            .par_iter()
-            .map(|segment| compute_dotproduct_low_optimized(&chi[0..self.segment_len], segment))
-            .collect();
-        drop_in_background_thread(chi);
-        evals
-    }
-
-    pub fn into_dense_polys(self) -> Vec<DensePolynomial<F>> {
-        self.segments
-            .into_iter()
-            .map(|poly| DensePolynomial::new(poly))
-            .collect()
-    }
-}
-
-impl<F: JoltField> std::ops::Index<usize> for SegmentedPaddedWitness<F> {
-    type Output = F;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        if index >= self.segments.len() * self.segment_len {
-            &self.zero
-        } else if index >= self.total_len {
-            panic!("index too high");
-        } else {
-            let segment_index = index / self.segment_len;
-            let inner_index = index % self.segment_len;
-            &self.segments[segment_index][inner_index]
-        }
-    }
-}
-
-impl<F: JoltField> IndexablePoly<F> for SegmentedPaddedWitness<F> {
-    fn len(&self) -> usize {
-        self.total_len
-    }
-}
-
-pub trait IndexablePoly<F: JoltField>: std::ops::Index<usize, Output = F> + Sync {
-    fn len(&self) -> usize;
 }
 
 /// A succinct proof of knowledge of a witness to a relaxed R1CS instance
@@ -192,45 +110,23 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
 
         let inputs = &segmented_padded_witness.segments[0..I::COUNT];
         let aux = &segmented_padded_witness.segments[I::COUNT..];
-        let (az, bz, cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
-        // TODO: Do not require these padded, Sumcheck should handle sparsity.
-        assert!(az.len().is_power_of_two());
-        assert!(bz.len().is_power_of_two());
-        assert!(cz.len().is_power_of_two());
+        let (mut az, mut bz, mut cz) = constraint_builder.compute_spartan_Az_Bz_Cz(inputs, aux);
 
-        let mut poly_Az = DensePolynomial::new(az);
-        let mut poly_Bz = DensePolynomial::new(bz);
-        let mut poly_Cz = DensePolynomial::new(cz);
-
-        #[cfg(test)]
-        {
-            // Check that Z is a satisfying assignment
-            for (i, ((az, bz), cz)) in poly_Az
-                .evals_ref()
-                .iter()
-                .zip(poly_Bz.evals_ref())
-                .zip(poly_Cz.evals_ref())
-                .enumerate()
-            {
-                if *az * *bz != *cz {
-                    let padded_segment_len = segmented_padded_witness.segment_len;
-                    let error_segment_index = i / padded_segment_len;
-                    let error_step_index = i % padded_segment_len;
-                    panic!("witness is not a satisfying assignment. Failed on segment {error_segment_index} at step {error_step_index}");
-                }
-            }
-        }
-
-        let comb_func_outer = |A: &F, B: &F, C: &F, D: &F| -> F {
+        let comb_func_outer = |eq: &F, az: &F, bz: &F, cz: &F| -> F {
             // Below is an optimized form of: *A * (*B * *C - *D)
-            if B.is_zero() || C.is_zero() {
-                if D.is_zero() {
+            if az.is_zero() || bz.is_zero() {
+                if cz.is_zero() {
                     F::zero()
                 } else {
-                    *A * (-(*D))
+                    *eq * (-(*cz))
                 }
             } else {
-                *A * (*B * *C - *D)
+                let inner = *az * *bz - *cz;
+                if inner.is_zero() {
+                    F::zero()
+                } else {
+                    *eq * inner
+                }
             }
         };
 
@@ -239,16 +135,14 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
                 &F::zero(), // claim is zero
                 num_rounds_x,
                 &mut poly_tau,
-                &mut poly_Az,
-                &mut poly_Bz,
-                &mut poly_Cz,
+                &mut az,
+                &mut bz,
+                &mut cz,
                 comb_func_outer,
                 transcript,
             );
-        drop_in_background_thread(poly_Az);
-        drop_in_background_thread(poly_Bz);
-        drop_in_background_thread(poly_Cz);
-        drop_in_background_thread(poly_tau);
+        let outer_sumcheck_r: Vec<F> = outer_sumcheck_r.into_iter().rev().collect();
+        drop_in_background_thread((az, bz, cz, poly_tau));
 
         // claims from the end of sum-check
         // claim_Az is the (scalar) value v_A = \sum_y A(r_x, y) * z(r_x) where r_x is the sumcheck randomness
@@ -341,6 +235,9 @@ impl<F: JoltField, C: CommitmentScheme<Field = F>> UniformSpartanProof<F, C> {
             .outer_sumcheck_proof
             .verify(F::zero(), num_rounds_x, 3, transcript)
             .map_err(|_| SpartanError::InvalidOuterSumcheckProof)?;
+
+        // Outer sumcheck is bound from the top, reverse the fiat shamir randomness
+        let r_x: Vec<F> = r_x.into_iter().rev().collect();
 
         // verify claim_outer_final
         let (claim_Az, claim_Bz, claim_Cz) = self.outer_sumcheck_claims;
