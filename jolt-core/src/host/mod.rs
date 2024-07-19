@@ -113,7 +113,7 @@ impl Program {
                 "panic=abort",
             ];
 
-            let toolchain = "riscv32i-jolt-zkvm-elf";
+            let toolchain = "riscv32im-jolt-zkvm-elf";
             let mut envs = vec![
                 ("CARGO_ENCODED_RUSTFLAGS", rust_flags.join("\x1f")),
                 ("RUSTUP_TOOLCHAIN", toolchain.to_string()),
