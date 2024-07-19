@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 use crate::poly::eq_poly::EqPolynomial;
-use crate::utils::thread::unsafe_allocate_zero_vec;
+use crate::utils::thread::{drop_in_background_thread, unsafe_allocate_zero_vec};
 use crate::utils::{self, compute_dotproduct, compute_dotproduct_low_optimized};
 
 use crate::field::JoltField;
@@ -201,11 +201,35 @@ impl<F: JoltField> DensePolynomial<F> {
         }
     }
 
+    /// Note: does not truncate
+    #[tracing::instrument(skip_all)]
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let n = self.len() / 2;
         for i in 0..n {
             self.Z[i] = self.Z[2 * i] + *r * (self.Z[2 * i + 1] - self.Z[2 * i]);
         }
+
+        self.num_vars -= 1;
+        self.len = n;
+    }
+
+    pub fn bound_poly_var_bot_01_optimized(&mut self, r: &F) {
+        let n = self.len() / 2;
+        let mut new_z = unsafe_allocate_zero_vec(n);
+        new_z.par_iter_mut().enumerate().for_each(|(i, z)| {
+            let m = self.Z[2 * i + 1] - self.Z[2 * i];
+            *z = if m.is_zero() {
+                self.Z[2 * i]
+            } else if m.is_one() {
+                self.Z[2 * i] + r
+            } else {
+                self.Z[2 * i] + *r * m
+            }
+        });
+
+        let old_Z = std::mem::replace(&mut self.Z, new_z);
+        drop_in_background_thread(old_Z);
+
         self.num_vars -= 1;
         self.len = n;
     }
