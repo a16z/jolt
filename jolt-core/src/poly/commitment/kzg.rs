@@ -1,5 +1,5 @@
 use crate::field::JoltField;
-use crate::msm::VariableBaseMSM;
+use crate::msm::{Icicle, VariableBaseMSM};
 use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::fixed_base::FixedBase;
@@ -118,6 +118,7 @@ pub struct UnivariateKZG<P: Pairing> {
 impl<P: Pairing> UnivariateKZG<P>
 where
     <P as Pairing>::ScalarField: JoltField,
+    <P as Pairing>::G1: Icicle,
 {
     #[tracing::instrument(skip_all, name = "KZG::commit_offset")]
     pub fn commit_offset(
