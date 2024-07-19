@@ -3,6 +3,9 @@ use crate::jolt::instruction::virtual_assert_valid_div0::AssertValidDiv0Instruct
 use crate::jolt::instruction::virtual_assert_valid_unsigned_remainder::AssertValidUnsignedRemainderInstruction;
 use crate::jolt::subtable::div_by_zero::DivByZeroSubtable;
 use crate::jolt::subtable::right_is_zero::RightIsZeroSubtable;
+use crate::poly::commitment::hyrax::HyraxScheme;
+use ark_bn254::{Fr, G1Projective};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use enum_dispatch::enum_dispatch;
 use rand::{prelude::StdRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -10,7 +13,7 @@ use std::any::TypeId;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
-use super::{Jolt, JoltProof};
+use super::{Jolt, JoltCommitments, JoltProof};
 use crate::jolt::instruction::{
     add::ADDInstruction, and::ANDInstruction, beq::BEQInstruction, bge::BGEInstruction,
     bgeu::BGEUInstruction, bne::BNEInstruction, lb::LBInstruction, lh::LHInstruction,
@@ -62,7 +65,7 @@ macro_rules! instruction_set {
 macro_rules! subtable_enum {
     ($enum_name:ident, $($alias:ident: $struct:ty),+) => {
         #[allow(non_camel_case_types)]
-        #[repr(usize)]
+        #[repr(u8)]
         #[enum_dispatch(LassoSubtable<F>)]
         #[derive(EnumCountMacro, EnumIter)]
         pub enum $enum_name<F: JoltField> { $($alias($struct)),+ }
@@ -79,7 +82,9 @@ macro_rules! subtable_enum {
 
         impl<F: JoltField> From<$enum_name<F>> for usize {
             fn from(subtable: $enum_name<F>) -> usize {
-                unsafe { *<*const _>::from(&subtable).cast::<usize>() }
+                // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+                let byte = unsafe { *(&subtable as *const $enum_name<F> as *const u8) };
+                byte as usize
             }
         }
         impl<F: JoltField> JoltSubtableSet<F> for $enum_name<F> {}
@@ -166,6 +171,40 @@ where
 }
 
 pub type RV32IJoltProof<F, CS> = JoltProof<C, M, F, CS, RV32I, RV32ISubtables<F>>;
+
+use eyre::Result;
+use std::fs::File;
+use std::path::PathBuf;
+
+pub type PCS = HyraxScheme<G1Projective>;
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct RV32IHyraxProof {
+    pub proof: RV32IJoltProof<Fr, PCS>,
+    pub commitments: JoltCommitments<PCS>,
+}
+
+impl RV32IHyraxProof {
+    /// Gets the byte size of the full proof
+    pub fn size(&self) -> Result<usize> {
+        let mut buffer = Vec::new();
+        self.serialize_compressed(&mut buffer)?;
+        Ok(buffer.len())
+    }
+
+    /// Saves the proof to a file
+    pub fn save_to_file<P: Into<PathBuf>>(&self, path: P) -> Result<()> {
+        let file = File::create(path.into())?;
+        self.serialize_compressed(file)?;
+        Ok(())
+    }
+
+    /// Reads a proof from a file
+    pub fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
+        let file = File::open(path.into())?;
+        Ok(RV32IHyraxProof::deserialize_compressed(file)?)
+    }
+}
 
 // ==================== TEST ====================
 

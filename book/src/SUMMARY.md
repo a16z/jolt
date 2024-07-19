@@ -32,3 +32,6 @@
     - [Roadmap](./tasks.md)
         - [Optimizations](./future/opts.md)
         - [Zero Knowledge](./future/zk.md)
+        - [Groth16 Recursion](./future/groth-16.md)
+        - [Precompiles](./future/precompiles.md)
+        - [Continuations](./future/continuations.md)

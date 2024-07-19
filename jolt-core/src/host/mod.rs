@@ -3,7 +3,7 @@
 use core::str::FromStr;
 use std::{
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::PathBuf,
     process::Command,
 };
@@ -19,7 +19,7 @@ use common::{
     rv_trace::{JoltDevice, NUM_CIRCUIT_FLAGS},
 };
 use strum::EnumCount;
-use tracer::ELFInstruction;
+pub use tracer::ELFInstruction;
 
 use crate::{
     field::JoltField,
@@ -32,9 +32,12 @@ use crate::{
     utils::thread::unsafe_allocate_zero_vec,
 };
 
-use self::{analyze::ProgramSummary, toolchain::install_toolchain};
+use self::analyze::ProgramSummary;
+#[cfg(not(target_arch = "wasm32"))]
+use self::toolchain::install_toolchain;
 
 pub mod analyze;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod toolchain;
 
 #[derive(Clone)]
@@ -97,6 +100,7 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build")]
     pub fn build(&mut self) {
         if self.elf.is_none() {
+            #[cfg(not(target_arch = "wasm32"))]
             install_toolchain().unwrap();
             self.save_linker();
 
@@ -138,8 +142,6 @@ impl Program {
                     &target,
                     "--target",
                     toolchain,
-                    "--bin",
-                    "guest",
                 ])
                 .output()
                 .expect("failed to build guest");
@@ -157,7 +159,10 @@ impl Program {
     pub fn decode(&mut self) -> (Vec<ELFInstruction>, Vec<(u64, u8)>) {
         self.build();
         let elf = self.elf.as_ref().unwrap();
-        tracer::decode(elf)
+        let mut elf_file = File::open(elf).unwrap();
+        let mut elf_contents = Vec::new();
+        elf_file.read_to_end(&mut elf_contents).unwrap();
+        tracer::decode(&elf_contents)
     }
 
     // TODO(moodlezoup): Make this generic over InstructionSet

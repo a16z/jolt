@@ -74,7 +74,9 @@ pub trait JoltInstructionSet:
     JoltInstruction + IntoEnumIterator + EnumCount + for<'a> TryFrom<&'a ELFInstruction> + Send + Sync
 {
     fn enum_index(instruction: &Self) -> usize {
-        unsafe { *<*const _>::from(instruction).cast::<u8>() as usize }
+        // Discriminant: https://doc.rust-lang.org/reference/items/enumerations.html#pointer-casting
+        let byte = unsafe { *(instruction as *const Self as *const u8) };
+        byte as usize
     }
 }
 
