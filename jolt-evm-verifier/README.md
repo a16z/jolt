@@ -1,66 +1,32 @@
-## Foundry
+# Jolt EVM Verifier
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+This packages implements a verifier for the Jolt prover which can run in the EVM. 
 
-Foundry consists of:
+## *WARNING THIS PACKAGE IS NEITHER COMPLETE NOR REVIEWED FOR SECURITY. DO NOT USE IN PRODUCTION.*
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Install 
 
-## Documentation
+To run the tests you must install both the rust dependencies and also those for solidity.
 
-https://book.getfoundry.sh/
+## Build
 
-## Usage
-
-### Build
+First build the rust integration scripts as they will be run to get examples for the integration tests.
 
 ```shell
-$ forge build
+$ cargo build --manifest-path script/Cargo.toml --release
 ```
 
-### Test
+Then we can build the solidity contracts with:
+
 
 ```shell
-$ forge test
+$ forge build --deny-warnings
 ```
 
-### Format
+## Test
+
+You must run the tests with FFI as it is used to run the rust programs which get proofs for the integration tests
 
 ```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+$ forge test --via-ir --ffi
 ```
